@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Heading, Text } from "@aws-amplify/ui-react";
 
 import { client } from "@/app/amplify-client";
+import { Alert } from "@/app/ui/primitives/alert";
+import { Button } from "@/app/ui/primitives/button";
+import { Panel } from "@/app/ui/primitives/panel";
+import { SectionHeading } from "@/app/ui/primitives/section-heading";
+import { StatCard } from "@/app/ui/primitives/stat-card";
 import type { PredictionJobRecord, SyncRunRecord } from "@/app/types";
 
 const terminalPredictionStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const terminalSyncStatuses = new Set(["SUCCEEDED", "FAILED", "IDLE"]);
+const listClassName = "grid list-none gap-3 p-0";
+const listItemClassName =
+  "grid gap-1 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
+const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
+const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 
 export function OperationsPanel() {
   const [syncRuns, setSyncRuns] = useState<SyncRunRecord[]>([]);
@@ -85,56 +94,52 @@ export function OperationsPanel() {
   ).length;
 
   return (
-    <section className="dashboard-card">
-      <div className="section-header">
-        <div>
-          <Text className="eyebrow">Operations</Text>
-          <Heading level={2}>Sync and prediction visibility</Heading>
-        </div>
-        <Button
-          className="secondary-button"
-          onClick={() => void loadOperations()}
-          isLoading={isLoading}
-        >
-          Refresh ops
-        </Button>
-      </div>
+    <Panel>
+      <SectionHeading
+        actions={
+          <Button loading={isLoading} onClick={() => void loadOperations()} variant="secondary">
+            Refresh ops
+          </Button>
+        }
+        description="Track manual workspace refreshes and prediction jobs without leaving the product."
+        eyebrow="Operations"
+        title="Sync and prediction visibility"
+      />
 
-      <Text className="status-copy">
-        Track manual workspace refreshes and prediction jobs without leaving the
-        product.
-      </Text>
+      {opsError ? <Alert>{opsError}</Alert> : null}
 
-      {opsError ? <div className="inline-alert">{opsError}</div> : null}
-
-      <div className="summary-strip">
-        <div className="summary-card">
-          <span className="summary-label">Active syncs</span>
-          <strong className="summary-value">{activeSyncCount}</strong>
-          <span className="summary-detail">
-            {failedSyncCount ? `${failedSyncCount} recent failure(s)` : "Recent syncs are healthy."}
-          </span>
-        </div>
-        <div className="summary-card">
-          <span className="summary-label">Prediction queue</span>
-          <strong className="summary-value">{activePredictionCount}</strong>
-          <span className="summary-detail">
-            {predictionJobs[0]?.modelVersion
+      <div className="grid gap-4 md:grid-cols-2">
+        <StatCard
+          detail={
+            failedSyncCount
+              ? `${failedSyncCount} recent failure(s)`
+              : "Recent syncs are healthy."
+          }
+          label="Active syncs"
+          value={activeSyncCount}
+        />
+        <StatCard
+          detail={
+            predictionJobs[0]?.modelVersion
               ? `Latest model ${predictionJobs[0].modelVersion}`
-              : "No model version resolved yet."}
-          </span>
-        </div>
+              : "No model version resolved yet."
+          }
+          label="Prediction queue"
+          value={activePredictionCount}
+        />
       </div>
 
-      <div className="dashboard-grid two-column">
-        <article className="subpanel">
-          <Heading level={4}>Recent sync runs</Heading>
+      <div className={twoColumnGridClassName}>
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading title="Recent sync runs" titleAs="h4" />
           {syncRuns.length ? (
-            <ul className="data-list">
+            <ul className={listClassName}>
               {syncRuns.map((run) => (
-                <li key={run.id}>
-                  <strong>{run.kind ?? "Workspace sync"}</strong>
-                  <span>
+                <li className={listItemClassName} key={run.id}>
+                  <strong className="text-sm text-ink">
+                    {run.kind ?? "Workspace sync"}
+                  </strong>
+                  <span className={statusCopyClassName}>
                     {humanizeStatus(run.status)} • {formatTimestamp(run.startedAt ?? null)}
                     {run.error ? ` • ${run.error}` : ""}
                   </span>
@@ -142,18 +147,20 @@ export function OperationsPanel() {
               ))}
             </ul>
           ) : (
-            <Text>No sync runs have been recorded yet.</Text>
+            <p className={statusCopyClassName}>No sync runs have been recorded yet.</p>
           )}
-        </article>
+        </Panel>
 
-        <article className="subpanel">
-          <Heading level={4}>Recent prediction jobs</Heading>
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading title="Recent prediction jobs" titleAs="h4" />
           {predictionJobs.length ? (
-            <ul className="data-list">
+            <ul className={listClassName}>
               {predictionJobs.map((job) => (
-                <li key={job.id}>
-                  <strong>{humanizeStatus(job.status)}</strong>
-                  <span>
+                <li className={listItemClassName} key={job.id}>
+                  <strong className="text-sm text-ink">
+                    {humanizeStatus(job.status)}
+                  </strong>
+                  <span className={statusCopyClassName}>
                     {job.modelVersion ? `${job.modelVersion} • ` : ""}
                     {formatTimestamp(job.updatedAt ?? job.createdAt ?? null)}
                     {job.error ? ` • ${job.error}` : ""}
@@ -162,11 +169,13 @@ export function OperationsPanel() {
               ))}
             </ul>
           ) : (
-            <Text>No prediction jobs have been recorded yet.</Text>
+            <p className={statusCopyClassName}>
+              No prediction jobs have been recorded yet.
+            </p>
           )}
-        </article>
+        </Panel>
       </div>
-    </section>
+    </Panel>
   );
 }
 

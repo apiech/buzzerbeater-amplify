@@ -7,7 +7,9 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build --webpack",
+    "build": "next build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "start": "next start",
     "lint": "eslint app amplify tests scripts lib infra next.config.js eslint.config.mjs",
     "test": "node --test --import tsx ./tests/*.test.ts",
@@ -25,10 +27,12 @@
     "@aws-sdk/client-sqs": "^3.1009.0",
     "@aws-sdk/lib-dynamodb": "^3.1009.0",
     "aws-amplify": "^6.16.3",
+    "clsx": "^2.1.1",
     "fast-xml-parser": "^5.5.5",
     "next": "16.1.6",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
     "@aws-amplify/backend": "1.21.1",
@@ -37,6 +41,7 @@
     "@opentelemetry/context-async-hooks": "2.5.0",
     "@opentelemetry/core": "2.5.0",
     "@opentelemetry/sdk-trace-base": "2.5.0",
+    "@tailwindcss/postcss": "^4.2.1",
     "@types/node": "^22.19.15",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -46,6 +51,10 @@
     "esbuild": "^0.27.4",
     "eslint": "^9.39.4",
     "eslint-config-next": "16.1.6",
+    "postcss": "^8.5.8",
+    "prettier": "^3.8.1",
+    "prettier-plugin-tailwindcss": "^0.7.2",
+    "tailwindcss": "^4.2.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

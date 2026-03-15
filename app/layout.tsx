@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
 import { Space_Grotesk } from "next/font/google";
 import "@aws-amplify/ui-react/styles.css";
-import "./app.css";
+import "./globals.css";
 
-const spaceGrotesk = Space_Grotesk({ subsets: ["latin"] });
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-space-grotesk",
+});
 
 export const metadata: Metadata = {
   title: "BB Amplify",
@@ -18,7 +21,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={spaceGrotesk.className}>{children}</body>
+      <body className={`${spaceGrotesk.variable} font-sans`}>{children}</body>
     </html>
   );
 }

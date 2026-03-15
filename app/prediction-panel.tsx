@@ -6,9 +6,19 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Button, Heading, Text } from "@aws-amplify/ui-react";
 
 import { client } from "@/app/amplify-client";
+import { Alert } from "@/app/ui/primitives/alert";
+import { Button } from "@/app/ui/primitives/button";
+import { cn } from "@/app/ui/primitives/cn";
+import { Field, Input, Select } from "@/app/ui/primitives/field";
+import { Panel } from "@/app/ui/primitives/panel";
+import { SectionHeading } from "@/app/ui/primitives/section-heading";
+import { StatCard } from "@/app/ui/primitives/stat-card";
+import {
+  StatusBadge,
+  statusToneFromValue,
+} from "@/app/ui/primitives/status-badge";
 import type {
   DashboardWorkspace,
   ManualPredictionInput,
@@ -126,6 +136,14 @@ type NumericManualField =
 type TextManualField = Exclude<keyof ManualPredictionInput, NumericManualField>;
 
 const terminalStatuses = new Set(["SUCCEEDED", "FAILED"]);
+const statusCopyClassName = "text-sm leading-7 text-ink-muted";
+const listClassName = "grid list-none gap-3 p-0";
+const listItemClassName =
+  "grid gap-1 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
+const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
+const formGridClassName = "grid gap-4 md:grid-cols-2";
+const ratingGridClassName =
+  "grid min-w-[32rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-3";
 
 export function PredictionPanel({ workspace }: PredictionPanelProps) {
   const [mode, setMode] = useState<SubmissionMode>("CONNECTED");
@@ -239,355 +257,362 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
     : [];
 
   return (
-    <section className="dashboard-card">
-      <div className="section-header">
-        <div>
-          <Text className="eyebrow">Prediction Lab</Text>
-          <Heading level={2}>Async matchup predictions via SageMaker</Heading>
-        </div>
-        <div className="prediction-toolbar">
-          <div className="mode-toggle" role="tablist" aria-label="Prediction mode">
-            <button
-              type="button"
-              className={`mode-button ${mode === "CONNECTED" ? "active" : ""}`}
-              onClick={() => setMode("CONNECTED")}
+    <Panel>
+      <SectionHeading
+        actions={
+          <>
+            <div
+              aria-label="Prediction mode"
+              className="inline-flex rounded-full bg-black/5 p-1"
+              role="tablist"
             >
-              Connected
-            </button>
-            <button
-              type="button"
-              className={`mode-button ${mode === "MANUAL" ? "active" : ""}`}
-              onClick={() => setMode("MANUAL")}
+              <button
+                className={cn(
+                  "rounded-full px-4 py-2 text-sm font-semibold transition",
+                  mode === "CONNECTED"
+                    ? "bg-accent text-accent-contrast"
+                    : "text-ink-muted hover:text-ink",
+                )}
+                onClick={() => setMode("CONNECTED")}
+                role="tab"
+                type="button"
+              >
+                Connected
+              </button>
+              <button
+                className={cn(
+                  "rounded-full px-4 py-2 text-sm font-semibold transition",
+                  mode === "MANUAL"
+                    ? "bg-accent text-accent-contrast"
+                    : "text-ink-muted hover:text-ink",
+                )}
+                onClick={() => setMode("MANUAL")}
+                role="tab"
+                type="button"
+              >
+                Manual
+              </button>
+            </div>
+            <Button
+              disabled={mode === "CONNECTED" && !connectedReady}
+              loading={isSubmitting}
+              onClick={() => void handleSubmit()}
             >
-              Manual
-            </button>
-          </div>
-          <Button
-            onClick={() => void handleSubmit()}
-            isLoading={isSubmitting}
-            isDisabled={mode === "CONNECTED" && !connectedReady}
-          >
-            {mode === "CONNECTED" ? "Queue connected prediction" : "Queue manual prediction"}
-          </Button>
-        </div>
-      </div>
+              {mode === "CONNECTED"
+                ? "Queue connected prediction"
+                : "Queue manual prediction"}
+            </Button>
+          </>
+        }
+        eyebrow="Prediction Lab"
+        title="Async matchup predictions via SageMaker"
+      />
 
-      <Text className="status-copy">
+      <p className={statusCopyClassName}>
         The web app submits a prediction job, the backend resolves the final
         matchup payload, and the worker invokes a SageMaker Serverless endpoint.
         Connected mode uses cached source box scores plus the manual form as a
         fallback.
-      </Text>
+      </p>
 
-      {predictionError ? <div className="inline-alert">{predictionError}</div> : null}
+      {predictionError ? <Alert>{predictionError}</Alert> : null}
 
-      <div className="dashboard-grid two-column">
-        <article className="subpanel">
-          <Heading level={4}>Connected sources</Heading>
-          <Text>
-            Choose one recent game for your team and one for the opponent. The
-            worker will reuse the cached ratings from those box scores.
-          </Text>
+      <div className={twoColumnGridClassName}>
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading
+            description="Choose one recent game for your team and one for the opponent. The worker will reuse the cached ratings from those box scores."
+            title="Connected sources"
+            titleAs="h4"
+          />
 
-          <div className="prediction-form-grid">
-            <label className="field-group">
-              <span>Home source match</span>
-              <select
-                className="prediction-select"
-                value={connectedSelection.homeSourceMatchId}
+          <div className={formGridClassName}>
+            <Field label="Home source match">
+              <Select
                 onChange={(event) =>
                   setConnectedSelection((current) => ({
                     ...current,
                     homeSourceMatchId: event.target.value,
                   }))
                 }
+                value={connectedSelection.homeSourceMatchId}
               >
                 <option value="">Select a recent home match</option>
                 {homeMatchOptions.map((match) => (
                   <option key={match.matchId} value={match.matchId ?? ""}>
-                    {formatMatchOption(match.opponentTeamName, match.startTime, match.teamScore, match.opponentScore)}
+                    {formatMatchOption(
+                      match.opponentTeamName,
+                      match.startTime,
+                      match.teamScore,
+                      match.opponentScore,
+                    )}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </Field>
 
-            <label className="field-group">
-              <span>Away source match</span>
-              <select
-                className="prediction-select"
-                value={connectedSelection.awaySourceMatchId}
+            <Field label="Away source match">
+              <Select
                 onChange={(event) =>
                   setConnectedSelection((current) => ({
                     ...current,
                     awaySourceMatchId: event.target.value,
                   }))
                 }
+                value={connectedSelection.awaySourceMatchId}
               >
                 <option value="">Select a recent opponent match</option>
                 {awayMatchOptions.map((match) => (
                   <option key={match.matchId} value={match.matchId ?? ""}>
-                    {formatMatchOption(match.opponentTeamName, match.startTime, match.teamScore, match.opponentScore)}
+                    {formatMatchOption(
+                      match.opponentTeamName,
+                      match.startTime,
+                      match.teamScore,
+                      match.opponentScore,
+                    )}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </Field>
           </div>
 
-          <div className="summary-strip prediction-status-strip">
-            <div className="summary-card">
-              <span className="summary-label">Home team</span>
-              <strong className="summary-value">
-                {workspace.home.team.teamName ?? "Unavailable"}
-              </strong>
-              <span className="summary-detail">Uses your workspace cache.</span>
-            </div>
-            <div className="summary-card">
-              <span className="summary-label">Opponent</span>
-              <strong className="summary-value">
-                {workspace.scout.summary?.teamName ?? "No cached opponent"}
-              </strong>
-              <span className="summary-detail">
-                {awayMatchOptions.length
+          <div className="grid gap-4 md:grid-cols-2">
+            <StatCard
+              detail="Uses your workspace cache."
+              label="Home team"
+              value={workspace.home.team.teamName ?? "Unavailable"}
+            />
+            <StatCard
+              detail={
+                awayMatchOptions.length
                   ? `${awayMatchOptions.length} recent opponent games cached`
-                  : "Refresh the workspace to populate opponent samples."}
-              </span>
+                  : "Refresh the workspace to populate opponent samples."
+              }
+              label="Opponent"
+              value={workspace.scout.summary?.teamName ?? "No cached opponent"}
+            />
+          </div>
+        </Panel>
+
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading
+            description="Ratings are required for manual predictions and serve as the fallback payload when connected source matches are unavailable."
+            title={mode === "MANUAL" ? "Manual matchup payload" : "Manual fallback payload"}
+            titleAs="h4"
+          />
+
+          <div className="overflow-x-auto">
+            <div className={ratingGridClassName}>
+              <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                Metric
+              </div>
+              <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                Home
+              </div>
+              <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                Away
+              </div>
+              {RATING_FIELDS.map((field) => (
+                <div className="contents" key={field.label}>
+                  <span className="font-semibold text-ink">{field.label}</span>
+                  <Input
+                    onChange={(event) =>
+                      updateNumericField(
+                        field.homeKey,
+                        event.target.value,
+                        setManualInput,
+                      )
+                    }
+                    step="0.1"
+                    type="number"
+                    value={manualInput[field.homeKey]}
+                  />
+                  <Input
+                    onChange={(event) =>
+                      updateNumericField(
+                        field.awayKey,
+                        event.target.value,
+                        setManualInput,
+                      )
+                    }
+                    step="0.1"
+                    type="number"
+                    value={manualInput[field.awayKey]}
+                  />
+                </div>
+              ))}
             </div>
           </div>
-        </article>
-
-        <article className="subpanel">
-          <Heading level={4}>
-            {mode === "MANUAL" ? "Manual matchup payload" : "Manual fallback payload"}
-          </Heading>
-          <Text>
-            Ratings are required for manual predictions and serve as the fallback
-            payload when connected source matches are unavailable.
-          </Text>
-
-          <div className="rating-table">
-            <div className="rating-table-header">Metric</div>
-            <div className="rating-table-header">Home</div>
-            <div className="rating-table-header">Away</div>
-            {RATING_FIELDS.map((field) => (
-              <div className="rating-table-row" key={field.label}>
-                <span className="rating-label">{field.label}</span>
-                <input
-                  className="prediction-input"
-                  type="number"
-                  step="0.1"
-                  value={manualInput[field.homeKey]}
-                  onChange={(event) =>
-                    updateNumericField(
-                      field.homeKey,
-                      event.target.value,
-                      setManualInput,
-                    )
-                  }
-                />
-                <input
-                  className="prediction-input"
-                  type="number"
-                  step="0.1"
-                  value={manualInput[field.awayKey]}
-                  onChange={(event) =>
-                    updateNumericField(
-                      field.awayKey,
-                      event.target.value,
-                      setManualInput,
-                    )
-                  }
-                />
-              </div>
-            ))}
-          </div>
-        </article>
+        </Panel>
       </div>
 
-      <div className="dashboard-grid two-column">
-        <article className="subpanel">
-          <Heading level={4}>Tactics and prep</Heading>
-          <div className="prediction-form-grid">
-            <label className="field-group">
-              <span>Home offense</span>
-              <select
-                className="prediction-select"
-                value={manualInput.home_offStrategy}
+      <div className={twoColumnGridClassName}>
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading title="Tactics and prep" titleAs="h4" />
+          <div className={formGridClassName}>
+            <Field label="Home offense">
+              <Select
                 onChange={(event) =>
                   updateTextField("home_offStrategy", event.target.value, setManualInput)
                 }
+                value={manualInput.home_offStrategy}
               >
                 {OFFENSE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Home defense</span>
-              <select
-                className="prediction-select"
-                value={manualInput.home_defStrategy}
+              </Select>
+            </Field>
+            <Field label="Home defense">
+              <Select
                 onChange={(event) =>
                   updateTextField("home_defStrategy", event.target.value, setManualInput)
                 }
+                value={manualInput.home_defStrategy}
               >
                 {DEFENSE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Away offense</span>
-              <select
-                className="prediction-select"
-                value={manualInput.away_offStrategy}
+              </Select>
+            </Field>
+            <Field label="Away offense">
+              <Select
                 onChange={(event) =>
                   updateTextField("away_offStrategy", event.target.value, setManualInput)
                 }
+                value={manualInput.away_offStrategy}
               >
                 {OFFENSE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Away defense</span>
-              <select
-                className="prediction-select"
-                value={manualInput.away_defStrategy}
+              </Select>
+            </Field>
+            <Field label="Away defense">
+              <Select
                 onChange={(event) =>
                   updateTextField("away_defStrategy", event.target.value, setManualInput)
                 }
+                value={manualInput.away_defStrategy}
               >
                 {DEFENSE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Home GDP focus</span>
-              <select
-                className="prediction-select"
-                value={manualInput.home_gdp_focus}
+              </Select>
+            </Field>
+            <Field label="Home GDP focus">
+              <Select
                 onChange={(event) =>
                   updateTextField("home_gdp_focus", event.target.value, setManualInput)
                 }
+                value={manualInput.home_gdp_focus}
               >
                 {GDP_FOCUS_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Home GDP pace</span>
-              <select
-                className="prediction-select"
-                value={manualInput.home_gdp_pace}
+              </Select>
+            </Field>
+            <Field label="Home GDP pace">
+              <Select
                 onChange={(event) =>
                   updateTextField("home_gdp_pace", event.target.value, setManualInput)
                 }
+                value={manualInput.home_gdp_pace}
               >
                 {GDP_PACE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Away GDP focus</span>
-              <select
-                className="prediction-select"
-                value={manualInput.away_gdp_focus}
+              </Select>
+            </Field>
+            <Field label="Away GDP focus">
+              <Select
                 onChange={(event) =>
                   updateTextField("away_gdp_focus", event.target.value, setManualInput)
                 }
+                value={manualInput.away_gdp_focus}
               >
                 {GDP_FOCUS_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Away GDP pace</span>
-              <select
-                className="prediction-select"
-                value={manualInput.away_gdp_pace}
+              </Select>
+            </Field>
+            <Field label="Away GDP pace">
+              <Select
                 onChange={(event) =>
                   updateTextField("away_gdp_pace", event.target.value, setManualInput)
                 }
+                value={manualInput.away_gdp_pace}
               >
                 {GDP_PACE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </Field>
           </div>
-        </article>
+        </Panel>
 
-        <article className="subpanel">
-          <Heading level={4}>Game context and queue status</Heading>
-          <div className="prediction-form-grid">
-            <label className="field-group">
-              <span>Neutral site</span>
-              <select
-                className="prediction-select"
-                value={manualInput.neutral}
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading title="Game context and queue status" titleAs="h4" />
+          <div className={formGridClassName}>
+            <Field label="Neutral site">
+              <Select
                 onChange={(event) =>
                   updateTextField("neutral", event.target.value, setManualInput)
                 }
+                value={manualInput.neutral}
               >
                 <option value="0">Home court</option>
                 <option value="1">Neutral site</option>
-              </select>
-            </label>
-            <label className="field-group">
-              <span>Effort delta</span>
-              <input
-                className="prediction-input"
-                type="number"
-                min={-2}
+              </Select>
+            </Field>
+            <Field label="Effort delta">
+              <Input
                 max={2}
-                step={1}
-                value={manualInput.effortDelta}
+                min={-2}
                 onChange={(event) =>
                   updateNumericField("effortDelta", event.target.value, setManualInput)
                 }
+                step={1}
+                type="number"
+                value={manualInput.effortDelta}
               />
-            </label>
+            </Field>
           </div>
 
           {latestJob ? (
-            <div className="job-summary">
-              <span className={`status-badge status-${latestJob.status?.toLowerCase()}`}>
+            <div className="grid gap-2 rounded-card border border-black/5 bg-white/65 p-4">
+              <StatusBadge tone={statusToneFromValue(latestJob.status)}>
                 {humanizeJobStatus(latestJob.status)}
-              </span>
-              <strong>{describePredictionJob(latestJob)}</strong>
-              <span className="summary-detail">
+              </StatusBadge>
+              <strong className="text-base text-ink">{describePredictionJob(latestJob)}</strong>
+              <span className="text-sm text-ink-muted">
                 Updated {formatTimestamp(latestJob.updatedAt ?? latestJob.createdAt ?? null)}
               </span>
               {latestResult ? (
-                <span className="summary-detail">
+                <span className="text-sm text-ink-muted">
                   Model {latestResult.modelVersion}
                 </span>
               ) : null}
               {latestExplanation.length ? (
-                <div className="chip-group prediction-explainer">
+                <div className="flex flex-wrap gap-2">
                   {latestExplanation.map((item) => (
-                    <span className="chip" key={item}>
+                    <span
+                      className="inline-flex rounded-full bg-note-bg px-3 py-1.5 text-sm font-semibold text-note"
+                      key={item}
+                    >
                       {item}
                     </span>
                   ))}
@@ -595,21 +620,21 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
               ) : null}
             </div>
           ) : (
-            <Text>No prediction jobs submitted yet.</Text>
+            <p className={statusCopyClassName}>No prediction jobs submitted yet.</p>
           )}
-        </article>
+        </Panel>
       </div>
 
-      <article className="subpanel">
-        <Heading level={4}>Recent prediction jobs</Heading>
+      <Panel as="article" padding="sm" variant="solid">
+        <SectionHeading title="Recent prediction jobs" titleAs="h4" />
         {isLoadingJobs ? (
-          <Text>Loading prediction job history.</Text>
+          <p className={statusCopyClassName}>Loading prediction job history.</p>
         ) : jobs.length ? (
-          <ul className="data-list">
+          <ul className={listClassName}>
             {jobs.map((job) => (
-              <li key={job.id}>
-                <strong>{describePredictionJob(job)}</strong>
-                <span>
+              <li className={listItemClassName} key={job.id}>
+                <strong className="text-sm text-ink">{describePredictionJob(job)}</strong>
+                <span className={statusCopyClassName}>
                   {humanizeJobStatus(job.status)}
                   {job.modelVersion ? ` • ${job.modelVersion}` : ""}
                   {" • "}
@@ -619,10 +644,10 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             ))}
           </ul>
         ) : (
-          <Text>No prediction jobs are stored yet.</Text>
+          <p className={statusCopyClassName}>No prediction jobs are stored yet.</p>
         )}
-      </article>
-    </section>
+      </Panel>
+    </Panel>
   );
 }
 

@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState } from "react";
-import { Button, Heading, Text, TextField } from "@aws-amplify/ui-react";
 
 import { client } from "@/app/amplify-client";
+import { Alert } from "@/app/ui/primitives/alert";
+import { Button } from "@/app/ui/primitives/button";
+import { Field, Input } from "@/app/ui/primitives/field";
+import { Panel } from "@/app/ui/primitives/panel";
+import { SectionHeading } from "@/app/ui/primitives/section-heading";
+import { StatCard } from "@/app/ui/primitives/stat-card";
 import type {
   LineupPlan,
   LineupScenario,
@@ -17,6 +22,13 @@ type LineupPlayer = {
   projectedStarterCount?: number | null;
   score?: number | null;
 };
+
+const listClassName = "grid list-none gap-3 p-0";
+const listItemClassName =
+  "grid gap-1 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
+const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
+const formGridClassName = "grid gap-4 md:grid-cols-2";
+const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 
 export function LineupPlanner() {
   const [plan, setPlan] = useState<LineupPlan | null>(null);
@@ -115,61 +127,52 @@ export function LineupPlanner() {
   const matchupRationale = toStringList(plan?.matchupRationale);
 
   return (
-    <article className="subpanel">
-      <div className="section-header">
-        <div>
-          <Heading level={4}>Lineup Planner</Heading>
-          <Text>
-            Recommendation engine for starters, minutes, and saved lineup scenarios.
-          </Text>
-        </div>
-        <Button
-          className="secondary-button"
-          onClick={() => void loadPlan()}
-          isLoading={isLoadingPlan}
-        >
-          Refresh plan
-        </Button>
-      </div>
+    <div className="grid gap-4">
+      <SectionHeading
+        actions={
+          <Button
+            loading={isLoadingPlan}
+            onClick={() => void loadPlan()}
+            variant="secondary"
+          >
+            Refresh plan
+          </Button>
+        }
+        description="Recommendation engine for starters, minutes, and saved lineup scenarios."
+        title="Lineup Planner"
+        titleAs="h4"
+      />
 
-      {plannerError ? <div className="inline-alert">{plannerError}</div> : null}
+      {plannerError ? <Alert>{plannerError}</Alert> : null}
 
       {plan ? (
         <>
-          <div className="summary-strip">
-            <div className="summary-card">
-              <span className="summary-label">Confidence</span>
-              <strong className="summary-value">
-                {Math.round(Number(plan.confidence ?? 0) * 100)}%
-              </strong>
-              <span className="summary-detail">
-                Generated {formatTimestamp(plan.generatedAt ?? null)}
-              </span>
-            </div>
-            <div className="summary-card">
-              <span className="summary-label">Starter core</span>
-              <strong className="summary-value">{starters.length}/5</strong>
-              <span className="summary-detail">
-                {starters[0]?.fullName ?? "No locked anchor yet"}
-              </span>
-            </div>
-            <div className="summary-card">
-              <span className="summary-label">Saved scenarios</span>
-              <strong className="summary-value">{savedScenarios.length}</strong>
-              <span className="summary-detail">
-                {lastSavedScenario?.name ?? "No scenario saved this session"}
-              </span>
-            </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <StatCard
+              detail={`Generated ${formatTimestamp(plan.generatedAt ?? null)}`}
+              label="Confidence"
+              value={`${Math.round(Number(plan.confidence ?? 0) * 100)}%`}
+            />
+            <StatCard
+              detail={starters[0]?.fullName ?? "No locked anchor yet"}
+              label="Starter core"
+              value={`${starters.length}/5`}
+            />
+            <StatCard
+              detail={lastSavedScenario?.name ?? "No scenario saved this session"}
+              label="Saved scenarios"
+              value={savedScenarios.length}
+            />
           </div>
 
-          <div className="dashboard-grid two-column">
-            <div>
-              <Heading level={5}>Recommended starters</Heading>
-              <ul className="data-list">
+          <div className={twoColumnGridClassName}>
+            <Panel as="article" padding="sm" variant="solid">
+              <SectionHeading title="Recommended starters" titleAs="h5" />
+              <ul className={listClassName}>
                 {starters.map((player) => (
-                  <li key={player.playerId}>
-                    <strong>{player.fullName}</strong>
-                    <span>
+                  <li className={listItemClassName} key={player.playerId}>
+                    <strong className="text-sm text-ink">{player.fullName}</strong>
+                    <span className={statusCopyClassName}>
                       {player.bestPosition ?? "Flex"} • Starts{" "}
                       {player.projectedStarterCount ?? 0} • Score{" "}
                       {formatDecimal(player.score)}
@@ -177,125 +180,142 @@ export function LineupPlanner() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </Panel>
 
-            <div>
-              <Heading level={5}>Bench order</Heading>
-              <ul className="data-list">
+            <Panel as="article" padding="sm" variant="solid">
+              <SectionHeading title="Bench order" titleAs="h5" />
+              <ul className={listClassName}>
                 {bench.length ? (
                   bench.map((player) => (
-                    <li key={player.playerId}>
-                      <strong>{player.fullName}</strong>
-                      <span>
+                    <li className={listItemClassName} key={player.playerId}>
+                      <strong className="text-sm text-ink">{player.fullName}</strong>
+                      <span className={statusCopyClassName}>
                         {player.bestPosition ?? "Flex"} • Score{" "}
                         {formatDecimal(player.score)}
                       </span>
                     </li>
                   ))
                 ) : (
-                  <li>No bench depth has been ranked yet.</li>
+                  <li className="text-sm text-ink-muted">
+                    No bench depth has been ranked yet.
+                  </li>
                 )}
               </ul>
-            </div>
+            </Panel>
           </div>
 
-          <div className="dashboard-grid two-column">
-            <div>
-              <Heading level={5}>Minute targets</Heading>
-              <div className="prediction-form-grid">
+          <div className={twoColumnGridClassName}>
+            <Panel as="article" padding="sm" variant="solid">
+              <SectionHeading title="Minute targets" titleAs="h5" />
+              <div className={formGridClassName}>
                 {starters.map((player) => (
-                  <label className="field-group" key={`minutes-${player.playerId}`}>
-                    <span>{player.fullName}</span>
-                    <input
-                      className="prediction-input"
-                      type="number"
-                      min={12}
+                  <Field key={`minutes-${player.playerId}`} label={player.fullName}>
+                    <Input
                       max={48}
-                      value={minuteTargets[player.playerId] ?? 0}
+                      min={12}
                       onChange={(event) =>
                         setMinuteTargets((current) => ({
                           ...current,
                           [player.playerId]: Number(event.target.value) || 0,
                         }))
                       }
+                      type="number"
+                      value={minuteTargets[player.playerId] ?? 0}
                     />
-                  </label>
+                  </Field>
                 ))}
               </div>
-            </div>
+            </Panel>
 
-            <div>
-              <Heading level={5}>Matchup rationale</Heading>
-              <ul className="data-list">
+            <Panel as="article" padding="sm" variant="solid">
+              <SectionHeading title="Matchup rationale" titleAs="h5" />
+              <ul className={listClassName}>
                 {matchupRationale.length ? (
-                  matchupRationale.map((note) => <li key={note}>{note}</li>)
+                  matchupRationale.map((note) => (
+                    <li className={listItemClassName} key={note}>
+                      <span className={statusCopyClassName}>{note}</span>
+                    </li>
+                  ))
                 ) : (
-                  <li>No matchup rationale is available yet.</li>
+                  <li className="text-sm text-ink-muted">
+                    No matchup rationale is available yet.
+                  </li>
                 )}
               </ul>
-              <div className="subpanel-spacer" />
-              <Heading level={5}>Rotation notes</Heading>
-              <ul className="data-list">
+              <div className="h-1" />
+              <SectionHeading title="Rotation notes" titleAs="h5" />
+              <ul className={listClassName}>
                 {rotationNotes.length ? (
-                  rotationNotes.map((note) => <li key={note}>{note}</li>)
+                  rotationNotes.map((note) => (
+                    <li className={listItemClassName} key={note}>
+                      <span className={statusCopyClassName}>{note}</span>
+                    </li>
+                  ))
                 ) : (
-                  <li>No rotation notes are available yet.</li>
+                  <li className="text-sm text-ink-muted">
+                    No rotation notes are available yet.
+                  </li>
                 )}
               </ul>
-            </div>
+            </Panel>
           </div>
 
-          <div className="prediction-form-grid">
-            <TextField
-              label="Scenario name"
-              value={scenarioName}
-              onChange={(event) => setScenarioName(event.target.value)}
-              placeholder="Primary lineup"
-            />
-            <TextField
-              label="Coach note"
-              value={scenarioNote}
-              onChange={(event) => setScenarioNote(event.target.value)}
-              placeholder="Plan for a press-heavy scout"
-            />
+          <div className={formGridClassName}>
+            <Field label="Scenario name">
+              <Input
+                onChange={(event) => setScenarioName(event.target.value)}
+                placeholder="Primary lineup"
+                value={scenarioName}
+              />
+            </Field>
+            <Field label="Coach note">
+              <Input
+                onChange={(event) => setScenarioNote(event.target.value)}
+                placeholder="Plan for a press-heavy scout"
+                value={scenarioNote}
+              />
+            </Field>
           </div>
 
-          <div className="action-row">
-            <Button onClick={() => void handleSaveScenario()} isLoading={isSavingScenario}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button loading={isSavingScenario} onClick={() => void handleSaveScenario()}>
               Save scenario
             </Button>
             {lastSavedScenario ? (
-              <Text className="status-copy">
+              <p className={statusCopyClassName}>
                 Saved {lastSavedScenario.name} at{" "}
                 {formatTimestamp(lastSavedScenario.savedAt ?? null)}.
-              </Text>
+              </p>
             ) : null}
           </div>
 
-          <div className="subpanel-spacer" />
-          <Heading level={5}>Saved scenarios</Heading>
-          <ul className="data-list">
-            {savedScenarios.length ? (
-              savedScenarios.map((scenario) => (
-                <li key={scenario.scenarioId}>
-                  <strong>{scenario.name ?? "Saved lineup"}</strong>
-                  <span>
-                    {formatTimestamp(scenario.savedAt ?? scenario.createdAt ?? null)}
-                    {scenario.note ? ` • ${scenario.note}` : ""}
-                  </span>
-                </li>
-              ))
-            ) : (
-              <li>No saved lineup scenarios yet.</li>
-            )}
-          </ul>
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading title="Saved scenarios" titleAs="h5" />
+            <ul className={listClassName}>
+              {savedScenarios.length ? (
+                savedScenarios.map((scenario) => (
+                  <li className={listItemClassName} key={scenario.scenarioId}>
+                    <strong className="text-sm text-ink">
+                      {scenario.name ?? "Saved lineup"}
+                    </strong>
+                    <span className={statusCopyClassName}>
+                      {formatTimestamp(scenario.savedAt ?? scenario.createdAt ?? null)}
+                      {scenario.note ? ` • ${scenario.note}` : ""}
+                    </span>
+                  </li>
+                ))
+              ) : (
+                <li className="text-sm text-ink-muted">No saved lineup scenarios yet.</li>
+              )}
+            </ul>
+          </Panel>
         </>
       ) : isLoadingPlan ? (
-        <Text>Building the current lineup plan.</Text>
+        <p className={statusCopyClassName}>Building the current lineup plan.</p>
       ) : (
-        <Text>No lineup plan is available yet.</Text>
+        <p className={statusCopyClassName}>No lineup plan is available yet.</p>
       )}
-    </article>
+    </div>
   );
 }
 
