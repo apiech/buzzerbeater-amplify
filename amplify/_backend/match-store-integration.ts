@@ -1,7 +1,6 @@
 import { Stack } from "aws-cdk-lib";
 import { AttributeType, BillingMode, Table, type ITable } from "aws-cdk-lib/aws-dynamodb";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
-import { Function as LambdaFunction, type IFunction } from "aws-cdk-lib/aws-lambda";
+import { type IFunction } from "aws-cdk-lib/aws-lambda";
 import { Bucket, type IBucket } from "aws-cdk-lib/aws-s3";
 
 type FunctionResource = {
@@ -15,16 +14,20 @@ type MatchStoreBackend = {
   createStack(name: string): Stack;
   connectBbAccount: FunctionResource;
   disconnectBbAccount: FunctionResource;
+  generateSharedPlayerCard: FunctionResource;
   getAccessibleMatch: FunctionResource;
   getAccessiblePlayByPlay: FunctionResource;
   getHomeWorkspace: FunctionResource;
   getLeagueIntel: FunctionResource;
   getMatchBoxscoreDetails: FunctionResource;
+  getPlayerTrend: FunctionResource;
   getPlayerLab: FunctionResource;
+  getSalaryProjection: FunctionResource;
   getScoutWorkspace: FunctionResource;
   getTeamHub: FunctionResource;
   listAccessibleMatches: FunctionResource;
   refreshBbWorkspaces: FunctionResource;
+  refreshBbWorkspaceWorker: FunctionResource;
   refreshWorkspace: FunctionResource;
 };
 
@@ -33,13 +36,12 @@ type ExternalMatchStoreConfig = {
   catalogTableName: string;
   projectionTableName: string;
   activeTrackedTeamsTableName: string;
+  playerSkillSnapshotTableName: string;
 };
 
 export function configureMatchStoreIntegration(backend: MatchStoreBackend): void {
   const stack = backend.createStack("match-store-integration");
   const externalConfig = resolveExternalMatchStoreConfig();
-  const bbConnectionSecretPrefix =
-    process.env.BB_CONNECTION_SECRET_PREFIX ?? "bb-connections";
 
   const matchStoreBucket = externalConfig
     ? Bucket.fromBucketName(
@@ -95,6 +97,23 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
           type: AttributeType.STRING,
         },
       });
+  const playerSkillSnapshotTable = externalConfig
+    ? Table.fromTableName(
+        stack,
+        "ImportedPlayerSkillSnapshotTable",
+        externalConfig.playerSkillSnapshotTableName,
+      )
+    : new Table(stack, "PlayerSkillSnapshotTable", {
+        billingMode: BillingMode.PAY_PER_REQUEST,
+        partitionKey: {
+          name: "playerId",
+          type: AttributeType.STRING,
+        },
+        sortKey: {
+          name: "weekKey",
+          type: AttributeType.STRING,
+        },
+      });
 
   const matchStoreBucketName =
     externalConfig?.bucketName ?? matchStoreBucket.bucketName;
@@ -105,6 +124,9 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
   const activeTrackedTeamsTableName =
     externalConfig?.activeTrackedTeamsTableName ??
     activeTrackedTeamsTable.tableName;
+  const playerSkillSnapshotTableName =
+    externalConfig?.playerSkillSnapshotTableName ??
+    playerSkillSnapshotTable.tableName;
 
   const matchStoreReadFunctions = [
     backend.listAccessibleMatches,
@@ -122,6 +144,12 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
     backend.getLeagueIntel,
     backend.getPlayerLab,
     backend.refreshBbWorkspaces,
+    backend.refreshBbWorkspaceWorker,
+  ];
+  const playerSnapshotReadFunctions = [
+    backend.getPlayerTrend,
+    backend.getSalaryProjection,
+    backend.generateSharedPlayerCard,
   ];
 
   for (const resource of matchStoreReadFunctions) {
@@ -141,21 +169,20 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
       "ACTIVE_TRACKED_TEAMS_TABLE_NAME",
       activeTrackedTeamsTableName,
     );
-    resource.addEnvironment("BB_CONNECTION_SECRET_PREFIX", bbConnectionSecretPrefix);
-    activeTrackedTeamsTable.grantReadWriteData(resource.resources.lambda);
-    (resource.resources.lambda as LambdaFunction).addToRolePolicy(
-      new PolicyStatement({
-        actions: [
-          "secretsmanager:CreateSecret",
-          "secretsmanager:DeleteSecret",
-          "secretsmanager:DescribeSecret",
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:PutSecretValue",
-          "secretsmanager:UpdateSecret",
-        ],
-        resources: ["*"],
-      }),
+    resource.addEnvironment(
+      "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
+      playerSkillSnapshotTableName,
     );
+    activeTrackedTeamsTable.grantReadWriteData(resource.resources.lambda);
+    playerSkillSnapshotTable.grantReadWriteData(resource.resources.lambda);
+  }
+
+  for (const resource of playerSnapshotReadFunctions) {
+    resource.addEnvironment(
+      "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
+      playerSkillSnapshotTableName,
+    );
+    playerSkillSnapshotTable.grantReadData(resource.resources.lambda);
   }
 }
 
@@ -186,12 +213,14 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
   const catalogTableName = process.env.MATCH_CATALOG_TABLE_NAME;
   const projectionTableName = process.env.TEAM_MATCH_PROJECTION_TABLE_NAME;
   const activeTrackedTeamsTableName = process.env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
+  const playerSkillSnapshotTableName = process.env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
 
   const values = [
     bucketName,
     catalogTableName,
     projectionTableName,
     activeTrackedTeamsTableName,
+    playerSkillSnapshotTableName,
   ];
 
   if (values.every((value) => !value)) {
@@ -200,7 +229,7 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
 
   if (values.some((value) => !value)) {
     throw new Error(
-      "When configuring the external match data plane, MATCH_STORE_BUCKET_NAME, MATCH_CATALOG_TABLE_NAME, TEAM_MATCH_PROJECTION_TABLE_NAME, and ACTIVE_TRACKED_TEAMS_TABLE_NAME must all be set.",
+      "When configuring the external match data plane, MATCH_STORE_BUCKET_NAME, MATCH_CATALOG_TABLE_NAME, TEAM_MATCH_PROJECTION_TABLE_NAME, ACTIVE_TRACKED_TEAMS_TABLE_NAME, and PLAYER_SKILL_SNAPSHOT_TABLE_NAME must all be set.",
     );
   }
 
@@ -209,5 +238,6 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
     catalogTableName: catalogTableName!,
     projectionTableName: projectionTableName!,
     activeTrackedTeamsTableName: activeTrackedTeamsTableName!,
+    playerSkillSnapshotTableName: playerSkillSnapshotTableName!,
   };
 }

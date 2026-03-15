@@ -12,18 +12,21 @@ import type {
   BBApiTeamStats,
 } from "../../../lib/bbapi";
 import {
+  buildActiveTrackedTeamCredentialProjection,
   deactivateActiveTrackedTeamsForUser,
+  listActiveTrackedTeamsForUser,
+  type ActiveTrackedTeamCredentialProjection,
   upsertActiveTrackedTeam,
 } from "./active-tracked-teams";
 import {
-  deleteBbConnectionSecret,
-  getBbConnectionSecretReference,
-  upsertBbConnectionSecret,
-} from "./bb-secrets";
-import { decryptValue, encryptValue, getEncryptionSecret } from "./encryption";
+  listCanonicalPlayerSkillSnapshots,
+  upsertCanonicalPlayerSkillSnapshot,
+} from "./canonical-player-snapshots";
+import { encryptValue, getEncryptionSecret } from "./encryption";
 import {
   createSavedLineupScenario,
   type BbConnectionRecord,
+  type BbCredentialRecord,
   type ConnectionStatus,
   createSharedPlayerCard,
   createSyncRun,
@@ -32,19 +35,13 @@ import {
   getBbCredential,
   getMatchBoxscore,
   getSharedPlayerCardRecord,
-  getTrackedPlayer,
-  listWeeklyPlayerSnapshots,
   listBbConnections,
   upsertBbConnection,
   upsertBbCredential,
   updateSharedPlayerCard,
   updateSyncRun,
-  upsertLeagueStanding,
   upsertMatchBoxscore,
-  upsertTrackedMatch,
-  upsertTrackedPlayer,
   upsertTrackedTeam,
-  upsertWeeklyPlayerSnapshot,
 } from "./repository";
 import { resolveBbAccessKey } from "./credentials";
 
@@ -76,10 +73,29 @@ type SharedPlayerCardResponse = {
   payload: Record<string, unknown> | null;
 };
 
+export type ActiveTrackedTeamCredentialBackfillResult = {
+  connectedUsers: number;
+  usersWithProjectedCredentials: number;
+  usersMissingCredentials: number;
+  trackedTeamsUpdated: number;
+};
+
+type ActiveTrackedTeamCredentialContext = ActiveTrackedTeamCredentialProjection & {
+  bbLoginName: string;
+};
+
 type WorkspaceDependencies = {
   getSharedPlayerCardRecord: typeof getSharedPlayerCardRecord;
-  getTrackedPlayer: typeof getTrackedPlayer;
-  listWeeklyPlayerSnapshots: typeof listWeeklyPlayerSnapshots;
+  getTrackedPlayer: (
+    env: GraphqlEnv,
+    userId: string,
+    playerId: string,
+  ) => Promise<Record<string, unknown> | null>;
+  listWeeklyPlayerSnapshots: (
+    env: GraphqlEnv,
+    userId: string,
+    playerId: string,
+  ) => Promise<Record<string, unknown>[]>;
   getMatchBoxscore: typeof getMatchBoxscore;
   updateSharedPlayerCard: typeof updateSharedPlayerCard;
 };
@@ -88,13 +104,22 @@ const SHARED_PLAYER_CARD_TTL_DAYS = 30;
 
 const defaultWorkspaceDependencies: WorkspaceDependencies = {
   getSharedPlayerCardRecord,
-  getTrackedPlayer,
-  listWeeklyPlayerSnapshots,
+  getTrackedPlayer: getCachedWorkspacePlayer,
+  listWeeklyPlayerSnapshots: async (env, _userId, playerId) =>
+    listCanonicalPlayerSkillSnapshots(env, playerId),
   getMatchBoxscore,
   updateSharedPlayerCard,
 };
 
+const backfillRuntime = {
+  getBbCredential,
+  listActiveTrackedTeamsForUser,
+  listConnectedUsers,
+  upsertActiveTrackedTeam,
+};
+
 export const __testing = {
+  backfillRuntime,
   readCachedWorkspace,
   shouldSyncWorkspace,
 };
@@ -135,7 +160,6 @@ export async function connectAccount(args: {
 
     const encryptionSecret = getEncryptionSecret(args.env);
     const encryptedAccessKey = encryptValue(accessKey, encryptionSecret);
-    await upsertBbConnectionSecret(args.env, userId, accessKey);
     await upsertBbCredential(args.env, {
       userId,
       ...encryptedAccessKey,
@@ -150,6 +174,10 @@ export async function connectAccount(args: {
         accessKeyLast4: maskAccessKey(accessKey),
       }),
       credentialsOverride: { bbLoginName, accessKey },
+      credentialOverride: {
+        userId,
+        ...encryptedAccessKey,
+      },
     });
 
     return synced.connection;
@@ -184,7 +212,6 @@ export async function disconnectAccount(args: {
   }
 
   await deleteBbCredential(args.env, userId);
-  await deleteBbConnectionSecret(args.env, userId);
   await deactivateActiveTrackedTeamsForUser(args.env, userId);
   const updated = buildConnectionRecord(userId, existingConnection, {
     bbLoginName: existingConnection.bbLoginName,
@@ -219,6 +246,75 @@ export async function listConnectedUsers(env: GraphqlEnv): Promise<BbConnectionR
   return connections.filter((connection) => connection.status === "CONNECTED");
 }
 
+export async function listStaleConnectedUsers(args: {
+  env: GraphqlEnv;
+  staleAfterHours: number;
+  maxUsers?: number;
+  dedupeByTeam?: boolean;
+}): Promise<BbConnectionRecord[]> {
+  const connections = await listConnectedUsers(args.env);
+  const staleConnections = connections
+    .filter((connection) => isConnectionStale(connection, args.staleAfterHours))
+    .sort((left, right) => connectionFreshnessSortKey(left) - connectionFreshnessSortKey(right));
+
+  const selected = args.dedupeByTeam
+    ? dedupeConnectionsByTeam(staleConnections)
+    : staleConnections;
+  const maxUsers = Math.max(1, args.maxUsers ?? staleConnections.length);
+  return selected.slice(0, maxUsers);
+}
+
+export async function backfillActiveTrackedTeamCredentialProjection(
+  env: GraphqlEnv,
+): Promise<ActiveTrackedTeamCredentialBackfillResult> {
+  const connections = await backfillRuntime.listConnectedUsers(env);
+  let usersWithProjectedCredentials = 0;
+  let usersMissingCredentials = 0;
+  let trackedTeamsUpdated = 0;
+
+  for (const connection of connections) {
+    const credential = await backfillRuntime.getBbCredential(env, connection.userId);
+    if (!credential) {
+      usersMissingCredentials += 1;
+      continue;
+    }
+
+    usersWithProjectedCredentials += 1;
+    const credentialContext = buildActiveTrackedTeamCredentialContext(
+      connection.bbLoginName,
+      credential,
+    );
+    const activeTrackedTeams = await backfillRuntime.listActiveTrackedTeamsForUser(
+      env,
+      connection.userId,
+    );
+
+    for (const trackedTeam of activeTrackedTeams) {
+      if (!trackedTeam.active) {
+        continue;
+      }
+
+      await backfillRuntime.upsertActiveTrackedTeam(env, {
+        ...trackedTeam,
+        bbLoginName: connection.bbLoginName,
+        credentialCipherText: credentialContext.credentialCipherText,
+        credentialIv: credentialContext.credentialIv,
+        credentialAuthTag: credentialContext.credentialAuthTag,
+        credentialAlgorithm: credentialContext.credentialAlgorithm,
+        updatedAt: new Date().toISOString(),
+      });
+      trackedTeamsUpdated += 1;
+    }
+  }
+
+  return {
+    connectedUsers: connections.length,
+    usersWithProjectedCredentials,
+    usersMissingCredentials,
+    trackedTeamsUpdated,
+  };
+}
+
 export async function generatePlayerCard(args: {
   env: GraphqlEnv;
   identity: unknown;
@@ -230,7 +326,7 @@ export async function generatePlayerCard(args: {
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
-  const player = await getTrackedPlayer(args.env, userId, args.playerId);
+  const player = await getCachedWorkspacePlayer(args.env, userId, args.playerId);
   if (!player) {
     throw new Error("The requested player is not available in the current workspace.");
   }
@@ -344,7 +440,11 @@ export async function getScoutWorkspaceForTeam(args: {
     currentWorkspace,
   );
   const fetchedAt = new Date().toISOString();
-  const secretReference = await getBbConnectionSecretReference(args.env, userId);
+  const credentialContext = await loadActiveTrackedTeamCredentialContext(
+    args.env,
+    userId,
+    baseWorkspace.connection.bbLoginName,
+  );
 
   await persistWorkspace(
     args.env,
@@ -354,11 +454,7 @@ export async function getScoutWorkspaceForTeam(args: {
     currentBoxScores,
     opponentWorkspace,
     fetchedAt,
-    {
-      bbLoginName: baseWorkspace.connection.bbLoginName,
-      credentialSecretArn: secretReference?.secretArn ?? null,
-      credentialSecretName: secretReference?.secretName ?? null,
-    },
+    credentialContext,
   );
 
   return {
@@ -433,13 +529,15 @@ export async function getPlayerTrend(args: {
 
   const history = snapshots
     .sort((left, right) =>
-      String(left.fetchedAt ?? left.weekKey ?? "").localeCompare(
-        String(right.fetchedAt ?? right.weekKey ?? ""),
+      String(
+        left.capturedAt ?? left.fetchedAt ?? left.weekKey ?? "",
+      ).localeCompare(
+        String(right.capturedAt ?? right.fetchedAt ?? right.weekKey ?? ""),
       ),
     )
     .map((snapshot) => ({
       weekKey: asString(snapshot.weekKey),
-      fetchedAt: asString(snapshot.fetchedAt),
+      fetchedAt: asString(snapshot.capturedAt ?? snapshot.fetchedAt),
       salary: asNumber(snapshot.salary),
       dmi: asNumber(snapshot.dmi),
       injuryWeeks: asNumber(snapshot.injuryWeeks),
@@ -749,8 +847,8 @@ export function buildSalaryProjectionPayload(args: {
   const profile = toRecord(player.profileJson);
   const profileNationality = toRecord(profile?.nationality);
   const orderedSnapshots = [...args.snapshots].sort((left, right) =>
-    String(left.fetchedAt ?? left.weekKey ?? "").localeCompare(
-      String(right.fetchedAt ?? right.weekKey ?? ""),
+    String(left.capturedAt ?? left.fetchedAt ?? left.weekKey ?? "").localeCompare(
+      String(right.capturedAt ?? right.fetchedAt ?? right.weekKey ?? ""),
     ),
   );
   const salarySeries = orderedSnapshots
@@ -806,6 +904,7 @@ async function syncWorkspace(args: {
   force?: boolean;
   connectionOverride?: BbConnectionRecord;
   credentialsOverride?: { bbLoginName: string; accessKey: string };
+  credentialOverride?: BbCredentialRecord;
 }): Promise<WorkspaceBundle> {
   const connection =
     args.connectionOverride ?? (await getBbConnection(args.env, args.userId));
@@ -900,7 +999,12 @@ async function syncWorkspace(args: {
         playerLab,
       },
     });
-    const secretReference = await getBbConnectionSecretReference(args.env, args.userId);
+    const credentialContext = await loadActiveTrackedTeamCredentialContext(
+      args.env,
+      args.userId,
+      bbLoginName,
+      args.credentialOverride,
+    );
 
     await upsertBbConnection(args.env, updatedConnection);
     await persistWorkspace(
@@ -911,11 +1015,7 @@ async function syncWorkspace(args: {
       currentBoxScores,
       opponentWorkspace,
       now,
-      {
-        bbLoginName,
-        credentialSecretArn: secretReference?.secretArn ?? null,
-        credentialSecretName: secretReference?.secretName ?? null,
-      },
+      credentialContext,
     );
 
     await updateSyncRun(args.env, {
@@ -963,11 +1063,7 @@ async function persistWorkspace(
   currentBoxScores: BBApiBoxScore[],
   opponentWorkspace: OpponentWorkspace | null,
   fetchedAt: string,
-  connectionSecret: {
-    bbLoginName: string;
-    credentialSecretArn: string | null;
-    credentialSecretName: string | null;
-  },
+  connectionCredential: ActiveTrackedTeamCredentialContext,
 ): Promise<void> {
   const primaryTeamId = workspace.teamInfo.teamId;
   if (!primaryTeamId) {
@@ -992,9 +1088,11 @@ async function persistWorkspace(
     userId,
     teamId: primaryTeamId,
     teamName: workspace.teamInfo.teamName ?? "Unknown team",
-    bbLoginName: connectionSecret.bbLoginName,
-    credentialSecretArn: connectionSecret.credentialSecretArn,
-    credentialSecretName: connectionSecret.credentialSecretName,
+    bbLoginName: connectionCredential.bbLoginName,
+    credentialCipherText: connectionCredential.credentialCipherText,
+    credentialIv: connectionCredential.credentialIv,
+    credentialAuthTag: connectionCredential.credentialAuthTag,
+    credentialAlgorithm: connectionCredential.credentialAlgorithm,
     active: true,
     isPrimary: true,
     fetchedAt,
@@ -1020,9 +1118,11 @@ async function persistWorkspace(
       userId,
       teamId: opponentWorkspace.teamInfo.teamId,
       teamName: opponentWorkspace.teamInfo.teamName ?? "Unknown opponent",
-      bbLoginName: connectionSecret.bbLoginName,
-      credentialSecretArn: connectionSecret.credentialSecretArn,
-      credentialSecretName: connectionSecret.credentialSecretName,
+      bbLoginName: connectionCredential.bbLoginName,
+      credentialCipherText: connectionCredential.credentialCipherText,
+      credentialIv: connectionCredential.credentialIv,
+      credentialAuthTag: connectionCredential.credentialAuthTag,
+      credentialAlgorithm: connectionCredential.credentialAlgorithm,
       active: true,
       isPrimary: false,
       fetchedAt,
@@ -1031,36 +1131,14 @@ async function persistWorkspace(
   }
 
   for (const player of workspace.roster.players) {
-    await upsertTrackedPlayer(env, playerToTrackedPlayer(userId, workspace.teamInfo.teamId, workspace.teamInfo.teamName, player, fetchedAt));
-    await upsertWeeklyPlayerSnapshot(env, {
+    const snapshot = playerToCanonicalPlayerSnapshot(
       userId,
-      playerId: player.id,
-      weekKey: getWeekKey(),
-      teamId: workspace.teamInfo.teamId,
-      gameShape: asString(player.skills.gameShape),
-      dmi: player.dmi,
-      injuryWeeks: player.injuryWeeks,
-      salary: player.salary,
-      snapshotJson: player,
+      workspace.teamInfo.teamId,
+      workspace.teamInfo.teamName,
+      player,
       fetchedAt,
-    });
-  }
-
-  for (const player of opponentWorkspace?.roster.players ?? []) {
-    await upsertTrackedPlayer(
-      env,
-      playerToTrackedPlayer(
-        userId,
-        opponentWorkspace?.teamInfo.teamId ?? null,
-        opponentWorkspace?.teamInfo.teamName ?? null,
-        player,
-        fetchedAt,
-      ),
     );
-  }
-
-  for (const match of workspace.schedule.matches) {
-    await upsertTrackedMatch(env, scheduleMatchToTrackedMatch(userId, workspace.teamInfo.teamId, match, fetchedAt));
+    await upsertCanonicalPlayerSkillSnapshot(env, snapshot);
   }
 
   for (const boxScore of [...currentBoxScores, ...(opponentWorkspace?.recentBoxScores ?? [])]) {
@@ -1082,27 +1160,6 @@ async function persistWorkspace(
       boxscoreJson: boxScore,
       fetchedAt,
     });
-  }
-
-  for (const conference of workspace.standings?.conferences ?? []) {
-    for (const standing of conference.teams) {
-      await upsertLeagueStanding(env, {
-        userId,
-        season: workspace.standings?.season ?? 0,
-        teamId: standing.id,
-        leagueId: workspace.standings?.league?.id ?? null,
-        leagueName: workspace.standings?.league?.name ?? null,
-        conferenceIndex: conference.index,
-        teamName: standing.teamName,
-        wins: standing.wins,
-        losses: standing.losses,
-        pf: standing.pf,
-        pa: standing.pa,
-        isBot: standing.isBot,
-        standingJson: standing,
-        fetchedAt,
-      });
-    }
   }
 }
 
@@ -1240,6 +1297,7 @@ function buildTeamHub(
       playerId: player.id,
       fullName: player.fullName,
       bestPosition: player.bestPosition,
+      nationalityName: player.nationality?.name ?? null,
       salary: player.salary,
       age: player.age,
       gameShape: asString(player.skills.gameShape),
@@ -1410,6 +1468,7 @@ function buildPlayerLab(
       playerId: player.id,
       fullName: player.fullName,
       bestPosition: player.bestPosition,
+      nationalityName: player.nationality?.name ?? null,
       salary: player.salary,
       age: player.age,
       gameShape: asString(player.skills.gameShape),
@@ -1421,56 +1480,54 @@ function buildPlayerLab(
   };
 }
 
-function playerToTrackedPlayer(
+function playerToCanonicalPlayerSnapshot(
   userId: string,
   teamId: string | null,
   teamName: string | null,
   player: BBApiRosterPlayer,
   fetchedAt: string,
-): Record<string, unknown> {
+): {
+  playerId: string;
+  weekKey: string;
+  teamId: string;
+  teamName: string | null;
+  sourceUserId: string;
+  capturedAt: string;
+  firstName: string | null;
+  lastName: string | null;
+  salary: number | null;
+  bestPosition: string | null;
+  gameShape: string | null;
+  dmi: number | null;
+  injuryWeeks: number | null;
+  payload: Record<string, unknown>;
+} {
+  if (!player.id || !teamId) {
+    throw new Error("Canonical player snapshots require both a player id and team id.");
+  }
+
   return {
-    userId,
     playerId: player.id,
+    weekKey: getWeekKey(new Date(fetchedAt)),
     teamId,
     teamName,
+    sourceUserId: userId,
+    capturedAt: fetchedAt,
     firstName: player.firstName,
     lastName: player.lastName,
-    fullName: player.fullName,
-    bestPosition: player.bestPosition,
     salary: player.salary,
-    age: player.age,
-    height: player.height,
-    nationalityName: player.nationality?.name ?? null,
+    bestPosition: player.bestPosition,
     gameShape: asString(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
-    profileJson: player,
-    fetchedAt,
-  };
-}
-
-function scheduleMatchToTrackedMatch(
-  userId: string,
-  teamId: string | null,
-  match: BBApiScheduleMatch,
-  fetchedAt: string,
-): Record<string, unknown> {
-  return {
-    userId,
-    matchId: match.id,
-    teamId,
-    opponentTeamId: deriveOpponentTeamId(match, teamId),
-    opponentTeamName: deriveOpponentTeamName(match, teamId),
-    type: match.type,
-    season: inferSeasonFromDate(match.startTime),
-    startTime: match.startTime,
-    isHome: isTeamHome(match, teamId),
-    isNeutral: false,
-    teamScore: deriveTeamScore(match, teamId),
-    opponentScore: deriveOpponentScore(match, teamId),
-    outcome: deriveOutcome(match, teamId),
-    matchJson: match,
-    fetchedAt,
+    payload: {
+      playerId: player.id,
+      fullName: player.fullName,
+      age: player.age,
+      height: player.height,
+      nationalityName: player.nationality?.name ?? null,
+      profile: player,
+    },
   };
 }
 
@@ -1757,13 +1814,6 @@ function normalizeSharedCardText(value: string | null | undefined): string | nul
   return trimmed ? trimmed : null;
 }
 
-function inferSeasonFromDate(value: string | null): number | null {
-  if (!value) {
-    return null;
-  }
-  return Number.parseInt(value.slice(0, 4), 10);
-}
-
 function asString(value: unknown): string | null {
   if (typeof value === "string") {
     return value;
@@ -1809,6 +1859,38 @@ function resolveUserId(identity: unknown): string | null {
 
   const claimsSub = typedIdentity.claims?.sub;
   return typeof claimsSub === "string" && claimsSub ? claimsSub : null;
+}
+
+async function loadActiveTrackedTeamCredentialContext(
+  env: GraphqlEnv,
+  userId: string,
+  bbLoginName: string,
+  credentialOverride?: BbCredentialRecord,
+): Promise<ActiveTrackedTeamCredentialContext> {
+  const credential =
+    credentialOverride ?? (await requireBbCredentialRecord(env, userId));
+  return buildActiveTrackedTeamCredentialContext(bbLoginName, credential);
+}
+
+async function requireBbCredentialRecord(
+  env: GraphqlEnv,
+  userId: string,
+): Promise<BbCredentialRecord> {
+  const credential = await getBbCredential(env, userId);
+  if (!credential) {
+    throw new Error("No encrypted BuzzerBeater credential is available.");
+  }
+  return credential;
+}
+
+function buildActiveTrackedTeamCredentialContext(
+  bbLoginName: string,
+  credential: BbCredentialRecord,
+): ActiveTrackedTeamCredentialContext {
+  return {
+    bbLoginName,
+    ...buildActiveTrackedTeamCredentialProjection(credential),
+  };
 }
 
 async function resolveAccessKey(env: GraphqlEnv, userId: string): Promise<string> {
@@ -1871,6 +1953,29 @@ function readCachedWorkspace(connection: BbConnectionRecord): WorkspaceBundle | 
     leagueIntel,
     playerLab,
   };
+}
+
+async function getCachedWorkspacePlayer(
+  env: GraphqlEnv,
+  userId: string,
+  playerId: string,
+): Promise<Record<string, unknown> | null> {
+  const connection = await getBbConnection(env, userId);
+  const cachedWorkspace = connection ? readCachedWorkspace(connection) : null;
+  if (!cachedWorkspace) {
+    return null;
+  }
+
+  const teamHub = toRecord(cachedWorkspace.teamHub);
+  const playerLab = toRecord(cachedWorkspace.playerLab);
+  const candidates = [
+    ...toRecordArray(teamHub?.roster),
+    ...toRecordArray(playerLab?.players),
+  ];
+
+  return (
+    candidates.find((player) => asString(player.playerId) === playerId) ?? null
+  );
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -2009,6 +2114,44 @@ function getWeekKey(date = new Date()): string {
   const day = Math.floor((date.getTime() - start.getTime()) / 86400000);
   const week = Math.floor((day + start.getUTCDay()) / 7);
   return `${year}-W${String(week).padStart(2, "0")}`;
+}
+
+function isConnectionStale(
+  connection: BbConnectionRecord,
+  staleAfterHours: number,
+): boolean {
+  const lastSyncAt = connection.lastSyncAt ?? connection.connectedAt ?? null;
+  if (!lastSyncAt) {
+    return true;
+  }
+
+  const parsed = new Date(lastSyncAt).getTime();
+  if (!Number.isFinite(parsed)) {
+    return true;
+  }
+
+  return Date.now() - parsed >= staleAfterHours * 60 * 60 * 1000;
+}
+
+function connectionFreshnessSortKey(connection: BbConnectionRecord): number {
+  const value = connection.lastSyncAt ?? connection.connectedAt ?? "";
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function dedupeConnectionsByTeam(
+  connections: BbConnectionRecord[],
+): BbConnectionRecord[] {
+  const selected = new Map<string, BbConnectionRecord>();
+
+  for (const connection of connections) {
+    const key = connection.teamId ?? `user:${connection.userId}`;
+    if (!selected.has(key)) {
+      selected.set(key, connection);
+    }
+  }
+
+  return Array.from(selected.values());
 }
 
 function byStartTimeAscending(left: BBApiScheduleMatch, right: BBApiScheduleMatch): number {

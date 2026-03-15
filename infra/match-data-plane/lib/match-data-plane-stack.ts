@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import {
   CfnOutput,
   Duration,
@@ -11,7 +13,8 @@ import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
-import * as iam from "aws-cdk-lib/aws-iam";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
@@ -19,7 +22,7 @@ import { Construct } from "constructs";
 
 type MatchDataPlaneStackProps = StackProps & {
   imageTag: string;
-  secretPrefix: string;
+  encryptionSecret: string;
 };
 
 export class MatchDataPlaneStack extends Stack {
@@ -147,6 +150,7 @@ export class MatchDataPlaneStack extends Stack {
       MATCH_MATERIALIZE_QUEUE_URL: materializeQueue.queueUrl,
       PLAYER_SKILL_SNAPSHOT_TABLE_NAME: playerSkillSnapshotTable.tableName,
       MATCH_STORE_LATEST_MANIFEST_KEY: "derived/manifests/latest.json",
+      BB_CONNECTION_ENCRYPTION_SECRET: props.encryptionSecret,
     };
 
     const logGroup = new logs.LogGroup(this, "MatchDataPlaneLogs", {
@@ -170,74 +174,71 @@ export class MatchDataPlaneStack extends Stack {
       commonEnvironment,
       ["snapshot-players"],
     );
-    const ingestTask = this.createTaskDefinition(
-      "IngestTask",
-      repository,
-      props.imageTag,
-      logGroup,
-      commonEnvironment,
-      ["worker-ingest"],
-    );
-    const materializeTask = this.createTaskDefinition(
-      "MaterializeTask",
-      repository,
-      props.imageTag,
-      logGroup,
-      commonEnvironment,
-      ["worker-materialize"],
-    );
-
-    bucket.grantReadWrite(ingestTask.taskRole);
-    bucket.grantReadWrite(materializeTask.taskRole);
-    matchCatalogTable.grantReadWriteData(ingestTask.taskRole);
-    matchCatalogTable.grantReadWriteData(materializeTask.taskRole);
-    teamMatchProjectionTable.grantReadWriteData(ingestTask.taskRole);
     activeTrackedTeamsTable.grantReadData(discoveryTask.taskRole);
     activeTrackedTeamsTable.grantReadData(playerSnapshotTask.taskRole);
     playerSkillSnapshotTable.grantReadWriteData(playerSnapshotTask.taskRole);
 
     ingestQueue.grantSendMessages(discoveryTask.taskRole);
-    ingestQueue.grantConsumeMessages(ingestTask.taskRole);
-    materializeQueue.grantSendMessages(ingestTask.taskRole);
-    materializeQueue.grantConsumeMessages(materializeTask.taskRole);
 
-    const secretArnPattern = `arn:aws:secretsmanager:${this.region}:${this.account}:secret:${props.secretPrefix}*`;
-    discoveryTask.taskRole.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"],
-        resources: [secretArnPattern],
-      }),
-    );
-    playerSnapshotTask.taskRole.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"],
-        resources: [secretArnPattern],
-      }),
-    );
-    ingestTask.taskRole.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        actions: ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"],
-        resources: [secretArnPattern],
-      }),
-    );
-
-    const ingestService = new ecs.FargateService(this, "MatchIngestService", {
-      cluster,
-      taskDefinition: ingestTask,
-      desiredCount: 1,
-      assignPublicIp: true,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-    });
-    const materializeService = new ecs.FargateService(
+    const ingestFunction = new lambda.DockerImageFunction(
       this,
-      "MatchMaterializeService",
+      "MatchIngestWorker",
       {
-        cluster,
-        taskDefinition: materializeTask,
-        desiredCount: 1,
-        assignPublicIp: true,
-        vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+        code: lambda.DockerImageCode.fromImageAsset(
+          join(__dirname, "..", "..", "..", ".."),
+          {
+            file: "bb-machine-learning/apps/match_data_plane/Dockerfile.lambda",
+            cmd: ["apps.match_data_plane.lambda_handlers.ingest_handler"],
+            exclude: ["bb-amplify", "bb-amplify/**", ".git", ".git/**"],
+          },
+        ),
+        timeout: Duration.minutes(5),
+        memorySize: 2048,
+        environment: commonEnvironment,
       },
+    );
+    const materializeFunction = new lambda.DockerImageFunction(
+      this,
+      "MatchMaterializeWorker",
+      {
+        code: lambda.DockerImageCode.fromImageAsset(
+          join(__dirname, "..", "..", "..", ".."),
+          {
+            file: "bb-machine-learning/apps/match_data_plane/Dockerfile.lambda",
+            cmd: ["apps.match_data_plane.lambda_handlers.materialize_handler"],
+            exclude: ["bb-amplify", "bb-amplify/**", ".git", ".git/**"],
+          },
+        ),
+        timeout: Duration.minutes(5),
+        memorySize: 2048,
+        environment: commonEnvironment,
+      },
+    );
+
+    bucket.grantReadWrite(ingestFunction);
+    bucket.grantReadWrite(materializeFunction);
+    matchCatalogTable.grantReadWriteData(ingestFunction);
+    matchCatalogTable.grantReadWriteData(materializeFunction);
+    teamMatchProjectionTable.grantReadWriteData(ingestFunction);
+    activeTrackedTeamsTable.grantReadData(ingestFunction);
+    playerSkillSnapshotTable.grantReadWriteData(materializeFunction);
+    ingestQueue.grantConsumeMessages(ingestFunction);
+    materializeQueue.grantSendMessages(ingestFunction);
+    materializeQueue.grantConsumeMessages(materializeFunction);
+
+    ingestFunction.addEventSource(
+      new SqsEventSource(ingestQueue, {
+        batchSize: 5,
+        maxConcurrency: 5,
+        reportBatchItemFailures: true,
+      }),
+    );
+    materializeFunction.addEventSource(
+      new SqsEventSource(materializeQueue, {
+        batchSize: 5,
+        maxConcurrency: 5,
+        reportBatchItemFailures: true,
+      }),
     );
 
     // EventBridge Rules use UTC. `10:00` lines up with 6:00 AM America/New_York during DST.

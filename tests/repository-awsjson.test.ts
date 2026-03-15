@@ -5,6 +5,7 @@ import {
   __testing as repositoryTesting,
   createSyncRun,
   getBbConnection,
+  listBbConnections,
   upsertTrackedPlayer,
 } from "../amplify/data/_backend/repository";
 
@@ -45,6 +46,7 @@ test("createSyncRun uses the Amplify data client without manual JSON serializati
     status: "SYNCING",
     startedAt: "2026-03-15T00:00:00.000Z",
     detailsJson: { teamId: "123" },
+    expiresAt: "2026-03-29T00:00:00.000Z",
   });
   assert.deepStrictEqual(record.detailsJson, { teamId: "123" });
 });
@@ -139,5 +141,65 @@ test("getBbConnection returns JSON fields as plain objects", async (t) => {
     scout: {},
     leagueIntel: {},
     playerLab: {},
+  });
+});
+
+test("listBbConnections follows nextToken pagination", async (t) => {
+  const listInputs: Array<Record<string, unknown>> = [];
+
+  t.mock.method(repositoryTesting.runtime, "getClient", async () => ({
+    models: {
+      BbConnection: {
+        list: async (input: Record<string, unknown>) => {
+          listInputs.push(input);
+          if (!input.nextToken) {
+            return {
+              data: [
+                {
+                  userId: "u1",
+                  bbLoginName: "coach-1",
+                  status: "CONNECTED",
+                  workspaceCacheJson: {
+                    home: { team: { teamId: "1" } },
+                  },
+                },
+              ],
+              nextToken: "page-2",
+            };
+          }
+
+          return {
+            data: [
+              {
+                userId: "u2",
+                bbLoginName: "coach-2",
+                status: "CONNECTED",
+                workspaceCacheJson: {
+                  home: { team: { teamId: "2" } },
+                },
+              },
+            ],
+            nextToken: null,
+          };
+        },
+      },
+    },
+  }) as any);
+
+  const records = await listBbConnections({} as any, 1);
+
+  assert.deepStrictEqual(
+    listInputs,
+    [
+      { limit: 1 },
+      { limit: 1, nextToken: "page-2" },
+    ],
+  );
+  assert.deepStrictEqual(
+    records.map((record) => record.userId),
+    ["u1", "u2"],
+  );
+  assert.deepStrictEqual(records[1]?.workspaceCacheJson, {
+    home: { team: { teamId: "2" } },
   });
 });

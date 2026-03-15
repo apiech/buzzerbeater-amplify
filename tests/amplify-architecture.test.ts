@@ -23,3 +23,19 @@ test("backend.ts does not manually wire GraphQL endpoint environment variables",
   assert.doesNotMatch(backendSource, /AMPLIFY_DATA_GRAPHQL_ENDPOINT/);
   assert.doesNotMatch(backendSource, /_GRAPHQL_ENDPOINT/);
 });
+
+test("match-store runtime wiring no longer uses per-user Secrets Manager", () => {
+  const integrationSource = readFileSync(
+    join(repoRoot, "amplify", "_backend", "match-store-integration.ts"),
+    "utf8",
+  );
+  const dataPlaneStackSource = readFileSync(
+    join(repoRoot, "infra", "match-data-plane", "lib", "match-data-plane-stack.ts"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(integrationSource, /BB_CONNECTION_SECRET_PREFIX/);
+  assert.doesNotMatch(integrationSource, /secretsmanager:/);
+  assert.doesNotMatch(dataPlaneStackSource, /secretsmanager:/);
+  assert.match(dataPlaneStackSource, /BB_CONNECTION_ENCRYPTION_SECRET/);
+});

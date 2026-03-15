@@ -89,7 +89,7 @@ export const getPlayerLab = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-const getPlayerTrend = defineFunction({
+export const getPlayerTrend = defineFunction({
   resourceGroupName: "data",
   name: "get-player-trend",
   entry: "./get-player-trend/handler.ts",
@@ -116,7 +116,7 @@ const saveLineupScenario = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-const getSalaryProjection = defineFunction({
+export const getSalaryProjection = defineFunction({
   resourceGroupName: "data",
   name: "get-salary-projection",
   entry: "./get-salary-projection/handler.ts",
@@ -125,7 +125,7 @@ const getSalaryProjection = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-const generateSharedPlayerCard = defineFunction({
+export const generateSharedPlayerCard = defineFunction({
   resourceGroupName: "data",
   name: "generate-shared-player-card",
   entry: "./generate-shared-player-card/handler.ts",
@@ -161,6 +161,24 @@ export const refreshBbWorkspaces = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const refreshBbWorkspaceWorker = defineFunction({
+  resourceGroupName: "data",
+  name: "refresh-bb-workspace-worker",
+  entry: "./refresh-bb-workspace-worker/handler.ts",
+  timeoutSeconds: 120,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
+export const pruneOperationalData = defineFunction({
+  resourceGroupName: "data",
+  name: "prune-operational-data",
+  entry: "./prune-operational-data/handler.ts",
+  timeoutSeconds: 300,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
 const dataFunctions = [
   connectBbAccount,
   disconnectBbAccount,
@@ -182,6 +200,8 @@ const dataFunctions = [
   revokeSharedPlayerCard,
   lookupSharedPlayerCard,
   refreshBbWorkspaces,
+  refreshBbWorkspaceWorker,
+  pruneOperationalData,
   predictionSubmit,
   predictionWorker,
 ];
@@ -449,6 +469,7 @@ const schema = a
         completedAt: a.datetime(),
         error: a.string(),
         detailsJson: a.json(),
+        expiresAt: a.datetime(),
       })
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
@@ -489,6 +510,7 @@ const schema = a
         result: a.json(),
         error: a.string(),
         modelVersion: a.string(),
+        expiresAt: a.datetime(),
       })
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 

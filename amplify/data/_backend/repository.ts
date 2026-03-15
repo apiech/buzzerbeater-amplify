@@ -65,6 +65,7 @@ export type SyncRunRecord = {
   completedAt?: string | null;
   error?: string | null;
   detailsJson?: unknown;
+  expiresAt?: string | null;
 };
 
 export type PredictionJobRecord = {
@@ -79,6 +80,7 @@ export type PredictionJobRecord = {
   modelVersion?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  expiresAt?: string | null;
 };
 
 export type SharedPlayerCardRecord = {
@@ -109,6 +111,7 @@ type ClientError = { message?: string };
 type ClientResult<TData> = {
   data?: TData | null;
   errors?: ReadonlyArray<ClientError> | null;
+  nextToken?: string | null;
 };
 
 type ModelApi<TRecord> = {
@@ -211,9 +214,13 @@ export async function createSyncRun(
   input: Omit<SyncRunRecord, "id">,
 ): Promise<SyncRunRecord> {
   const model = await getModel<SyncRunRecord>(env, "SyncRun");
+  const recordInput = omitUndefinedValues({
+    ...input,
+    expiresAt: input.expiresAt ?? addDays(input.startedAt, 14),
+  });
   const record = assertPresent(
     await assertSuccessful(
-      model.create(omitUndefinedValues(input)),
+      model.create(recordInput),
       "create sync run",
     ),
     "create sync run",
@@ -233,14 +240,42 @@ export async function updateSyncRun(
   );
 }
 
+export async function listSyncRuns(
+  env: RepositoryEnv,
+  limit = 1000,
+): Promise<SyncRunRecord[]> {
+  const records = await listModelRecords<SyncRunRecord>(
+    env,
+    "SyncRun",
+    { limit },
+    "list sync runs",
+  );
+
+  return decodeAwsJsonList("SyncRun", records);
+}
+
+export async function deleteSyncRun(
+  env: RepositoryEnv,
+  id: string,
+): Promise<void> {
+  const model = await getModel<SyncRunRecord>(env, "SyncRun");
+  await assertSuccessful(model.delete({ id }), "delete sync run");
+}
+
 export async function createPredictionJob(
   env: RepositoryEnv,
   input: Omit<PredictionJobRecord, "createdAt" | "updatedAt">,
 ): Promise<PredictionJobRecord> {
   const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
+  const now = new Date().toISOString();
   const record = assertPresent(
     await assertSuccessful(
-      model.create(omitUndefinedValues(input)),
+      model.create(
+        omitUndefinedValues({
+          ...input,
+          expiresAt: input.expiresAt ?? addDays(now, 30),
+        }),
+      ),
       "create prediction job",
     ),
     "create prediction job",
@@ -272,6 +307,28 @@ export async function updatePredictionJob(
     model.update(omitUndefinedValues(input)),
     "update prediction job",
   );
+}
+
+export async function listPredictionJobs(
+  env: RepositoryEnv,
+  limit = 1000,
+): Promise<PredictionJobRecord[]> {
+  const records = await listModelRecords<PredictionJobRecord>(
+    env,
+    "PredictionJob",
+    { limit },
+    "list prediction jobs",
+  );
+
+  return decodeAwsJsonList("PredictionJob", records);
+}
+
+export async function deletePredictionJob(
+  env: RepositoryEnv,
+  id: string,
+): Promise<void> {
+  const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
+  await assertSuccessful(model.delete({ id }), "delete prediction job");
 }
 
 export async function getMatchBoxscore(
@@ -499,11 +556,30 @@ async function listModelRecords<TRecord>(
   context: string,
 ): Promise<TRecord[]> {
   const model = await getModel<TRecord>(env, modelName);
-  const records = await assertSuccessful(
-    model.list(omitUndefinedValues(input)),
-    context,
-  );
-  return [...(records ?? [])];
+  const records: TRecord[] = [];
+  let nextToken: string | null | undefined;
+
+  do {
+    const result = await model.list(
+      omitUndefinedValues({
+        ...input,
+        nextToken,
+      }),
+    );
+
+    if (result.errors?.length) {
+      throw new Error(
+        `${context} failed: ${result.errors
+          .map((error) => error.message ?? "Unknown Amplify data client error")
+          .join("; ")}`,
+      );
+    }
+
+    records.push(...(result.data ?? []));
+    nextToken = result.nextToken;
+  } while (nextToken);
+
+  return records;
 }
 
 async function getModel<TRecord>(
@@ -565,4 +641,15 @@ function pickFields(
     selected[field] = input[field];
     return selected;
   }, {});
+}
+
+function addDays(value: string, days: number): string {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) {
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  return new Date(
+    parsed.getTime() + days * 24 * 60 * 60 * 1000,
+  ).toISOString();
 }
