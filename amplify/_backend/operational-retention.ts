@@ -11,14 +11,13 @@ type FunctionResource = {
 };
 
 type OperationalRetentionBackend = {
-  createStack(name: string): Stack;
   pruneOperationalData: FunctionResource;
 };
 
 export function configureOperationalRetention(
   backend: OperationalRetentionBackend,
 ): void {
-  const stack = backend.createStack("operational-retention");
+  const stack = Stack.of(backend.pruneOperationalData.resources.lambda);
   backend.pruneOperationalData.addEnvironment(
     "SYNC_RUN_RETENTION_DAYS",
     process.env.SYNC_RUN_RETENTION_DAYS ?? "14",

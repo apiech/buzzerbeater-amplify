@@ -74,8 +74,9 @@ export function configureRefreshJobs(backend: RefreshJobsBackend): void {
     process.env.WORKSPACE_REFRESH_MAX_USERS_PER_RUN ?? DEFAULT_MAX_USERS_PER_RUN,
   );
 
-  // UTC schedule keeps the queue warm without forcing every user refresh on each run.
-  new events.Rule(stack, "WorkspaceRefreshSchedule", {
+  // Keep the schedule in the Lambda's owning stack to avoid a nested-stack cycle.
+  const scheduleStack = Stack.of(backend.refreshBbWorkspaces.resources.lambda);
+  new events.Rule(scheduleStack, "WorkspaceRefreshSchedule", {
     schedule: events.Schedule.rate(Duration.hours(6)),
     targets: [new targets.LambdaFunction(backend.refreshBbWorkspaces.resources.lambda)],
   });

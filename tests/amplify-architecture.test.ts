@@ -39,3 +39,23 @@ test("match-store runtime wiring no longer uses per-user Secrets Manager", () =>
   assert.doesNotMatch(dataPlaneStackSource, /secretsmanager:/);
   assert.match(dataPlaneStackSource, /BB_CONNECTION_ENCRYPTION_SECRET/);
 });
+
+test("scheduled maintenance rules live in the data lambda stack", () => {
+  const refreshJobsSource = readFileSync(
+    join(repoRoot, "amplify", "_backend", "refresh-jobs.ts"),
+    "utf8",
+  );
+  const retentionSource = readFileSync(
+    join(repoRoot, "amplify", "_backend", "operational-retention.ts"),
+    "utf8",
+  );
+
+  assert.match(
+    refreshJobsSource,
+    /Stack\.of\(backend\.refreshBbWorkspaces\.resources\.lambda\)/,
+  );
+  assert.match(
+    retentionSource,
+    /Stack\.of\(backend\.pruneOperationalData\.resources\.lambda\)/,
+  );
+});
