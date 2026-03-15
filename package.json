@@ -2,30 +2,51 @@
   "name": "aws-amplify-gen2",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint app amplify tests scripts lib infra next.config.js eslint.config.mjs",
+    "test": "node --test --import tsx ./tests/*.test.ts",
+    "test:bbapi": "node --test --import tsx ./tests/bbapi-parser.test.ts",
+    "generate:bbapi-goldens": "node --import tsx ./scripts/generate-bbapi-goldens.ts",
+    "cdk:match-data-plane:synth": "cdk synth --app 'tsx infra/match-data-plane/bin/match-data-plane.ts'",
+    "cdk:match-data-plane:deploy": "cdk deploy --app 'tsx infra/match-data-plane/bin/match-data-plane.ts'"
   },
   "dependencies": {
-    "@aws-amplify/ui-react": "^6.5.5",
-    "aws-amplify": "^6.6.6",
-    "next": "14.2.10",
-    "react": "^18",
-    "react-dom": "^18"
+    "@aws-amplify/ui-react": "^6.15.2",
+    "@aws-sdk/client-dynamodb": "^3.1009.0",
+    "@aws-sdk/client-s3": "^3.1009.0",
+    "@aws-sdk/client-sagemaker-runtime": "^3.1009.0",
+    "@aws-sdk/client-secrets-manager": "^3.1009.0",
+    "@aws-sdk/client-sqs": "^3.1009.0",
+    "@aws-sdk/lib-dynamodb": "^3.1009.0",
+    "aws-amplify": "^6.16.3",
+    "fast-xml-parser": "^5.5.5",
+    "next": "16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@aws-amplify/backend": "^1.5.1",
-    "@aws-amplify/backend-cli": "^1.3.0",
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
+    "@aws-amplify/backend": "1.21.1",
+    "@aws-amplify/backend-cli": "1.8.2",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/context-async-hooks": "2.5.0",
+    "@opentelemetry/core": "2.5.0",
+    "@opentelemetry/sdk-trace-base": "2.5.0",
+    "@types/node": "^22.19.15",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "aws-cdk": "^2",
     "aws-cdk-lib": "^2",
     "constructs": "^10.3.0",
-    "esbuild": "^0.23.1",
-    "tsx": "^4.19.0",
-    "typescript": "^5.6.2"
+    "esbuild": "^0.27.4",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.1.6",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,0 +1,38 @@
+{
+  "version": "1",
+  "retrievedAt": "2026-03-15T00:00:00Z",
+  "teamId": "29656",
+  "season": 72,
+  "matches": [
+    {
+      "id": "3001",
+      "startTime": "2026-03-10T17:35:00Z",
+      "type": "league.rs",
+      "awayTeam": {
+        "id": "50",
+        "teamName": "Road Team",
+        "score": 85
+      },
+      "homeTeam": {
+        "id": "29656",
+        "teamName": "Visionaries",
+        "score": 91
+      }
+    },
+    {
+      "id": "3002",
+      "startTime": "2026-03-12T17:35:00Z",
+      "type": "friendly",
+      "awayTeam": {
+        "id": "29656",
+        "teamName": "Visionaries",
+        "score": null
+      },
+      "homeTeam": {
+        "id": "77",
+        "teamName": "Practice Team",
+        "score": null
+      }
+    }
+  ]
+}

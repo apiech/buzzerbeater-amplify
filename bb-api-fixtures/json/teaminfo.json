@@ -1,0 +1,25 @@
+{
+  "version": "1",
+  "retrievedAt": "2026-03-15T00:00:00Z",
+  "teamId": "29656",
+  "teamName": "Visionaries",
+  "shortName": "Vision",
+  "ownerName": null,
+  "isBot": true,
+  "league": {
+    "id": "1",
+    "name": "B3",
+    "attributes": {
+      "id": "1"
+    }
+  },
+  "country": {
+    "id": "1",
+    "name": "USA",
+    "attributes": {
+      "id": "1"
+    }
+  },
+  "rival": null,
+  "fields": {}
+}

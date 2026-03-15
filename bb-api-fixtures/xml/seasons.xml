@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <seasons retrieved='2026-03-15T00:00:00Z'>
+    <season id='71'>
+      <start>2025-10-01</start>
+      <finish>2025-12-31</finish>
+    </season>
+    <season id='72'>
+      <start>2026-01-01</start>
+      <finish>2026-03-31</finish>
+    </season>
+  </seasons>
+</bbapi>

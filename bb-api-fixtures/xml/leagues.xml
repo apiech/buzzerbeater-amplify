@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <division countryid='1' level='1' retrieved='2026-03-15T00:00:00Z'>
+    <country id='1'>USA</country>
+    <league id='1'>B3</league>
+    <league id='2'>D.I</league>
+  </division>
+</bbapi>

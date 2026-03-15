@@ -1,0 +1,45 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <standings season='72' retrieved='2026-03-15T00:00:00Z'>
+    <league id='1' level='1'>B3</league>
+    <country id='1'>USA</country>
+    <regularSeason>
+      <conference>
+        <team id='29656'>
+          <teamName>Visionaries</teamName>
+          <wins>14</wins>
+          <losses>8</losses>
+          <pf>2100</pf>
+          <pa>1800</pa>
+          <isBot>0</isBot>
+          <forfeits>0</forfeits>
+        </team>
+      </conference>
+      <conference>
+        <team id='77'>
+          <teamName>Practice Team</teamName>
+          <wins>12</wins>
+          <losses>10</losses>
+          <pf>1900</pf>
+          <pa>1850</pa>
+          <isBot>1</isBot>
+          <forfeits>0</forfeits>
+        </team>
+      </conference>
+    </regularSeason>
+    <playoffs>
+      <quarterfinals>
+        <match id='4001' start='2026-03-20T17:35:00Z' type='league.quarterfinal'>
+          <awayTeam id='77'>
+            <teamName>Practice Team</teamName>
+            <score>80</score>
+          </awayTeam>
+          <homeTeam id='29656'>
+            <teamName>Visionaries</teamName>
+            <score>95</score>
+          </homeTeam>
+        </match>
+      </quarterfinals>
+    </playoffs>
+  </standings>
+</bbapi>

@@ -1,0 +1,21 @@
+import { env } from "$amplify/env/get-scout-workspace";
+
+import type { Schema } from "../resource";
+import { getScoutWorkspaceForTeam } from "../_backend/workspace";
+
+type Handler = Schema["getScoutWorkspace"]["functionHandler"];
+
+export const handler: Handler = async (event) => {
+  const workspace = await getScoutWorkspaceForTeam({
+    env,
+    identity: event.identity,
+    teamId: event.arguments.teamId ?? null,
+  });
+
+  return {
+    status: "READY",
+    syncedAt: workspace.connection.lastSyncAt ?? null,
+    payload: workspace.scout,
+    error: workspace.connection.lastSyncError ?? null,
+  };
+};

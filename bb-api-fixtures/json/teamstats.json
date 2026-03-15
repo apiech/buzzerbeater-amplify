@@ -1,0 +1,21 @@
+{
+  "version": "1",
+  "retrievedAt": "2026-03-15T00:00:00Z",
+  "teamId": "29656",
+  "season": 72,
+  "mode": "averages",
+  "fields": {
+    "pace": 102.5
+  },
+  "categories": {
+    "ratings": {
+      "insideAttack": "proficient",
+      "outsideAttack": "respectable"
+    },
+    "totals": {
+      "pts": 91.2,
+      "reb": 42.4
+    }
+  },
+  "players": []
+}

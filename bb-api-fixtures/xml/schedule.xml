@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <schedule teamid='29656' season='72' retrieved='2026-03-15T00:00:00Z'>
+    <match id='3001' start='2026-03-10T17:35:00Z' type='league.rs'>
+      <awayTeam id='50'>
+        <teamName>Road Team</teamName>
+        <score>85</score>
+      </awayTeam>
+      <homeTeam id='29656'>
+        <teamName>Visionaries</teamName>
+        <score>91</score>
+      </homeTeam>
+    </match>
+    <match id='3002' start='2026-03-12T17:35:00Z' type='friendly'>
+      <awayTeam id='29656'>
+        <teamName>Visionaries</teamName>
+      </awayTeam>
+      <homeTeam id='77'>
+        <teamName>Practice Team</teamName>
+      </homeTeam>
+    </match>
+  </schedule>
+</bbapi>

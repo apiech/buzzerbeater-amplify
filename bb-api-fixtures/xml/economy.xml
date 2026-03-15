@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <economy retrieved='2026-03-15T00:00:00Z'>
+    <cash>125000</cash>
+    <availableBalance>101000</availableBalance>
+    <transactions>
+      <transaction type='merchandise' amount='5500' date='2026-03-12T00:00:00Z'>
+        <description>Merchandise</description>
+      </transaction>
+    </transactions>
+  </economy>
+</bbapi>

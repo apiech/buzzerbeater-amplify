@@ -1,0 +1,76 @@
+{
+  "version": "1",
+  "retrievedAt": "2026-03-15T00:00:00Z",
+  "season": 72,
+  "league": {
+    "id": "1",
+    "name": "B3",
+    "attributes": {
+      "id": "1",
+      "level": "1"
+    }
+  },
+  "country": {
+    "id": "1",
+    "name": "USA",
+    "attributes": {
+      "id": "1"
+    }
+  },
+  "conferences": [
+    {
+      "index": 0,
+      "teams": [
+        {
+          "id": "29656",
+          "teamName": "Visionaries",
+          "wins": 14,
+          "losses": 8,
+          "pf": 2100,
+          "pa": 1800,
+          "isBot": false,
+          "forfeits": 0,
+          "fields": {}
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "teams": [
+        {
+          "id": "77",
+          "teamName": "Practice Team",
+          "wins": 12,
+          "losses": 10,
+          "pf": 1900,
+          "pa": 1850,
+          "isBot": true,
+          "forfeits": 0,
+          "fields": {}
+        }
+      ]
+    }
+  ],
+  "brackets": [
+    {
+      "name": "quarterfinals",
+      "matches": [
+        {
+          "id": "4001",
+          "startTime": "2026-03-20T17:35:00Z",
+          "type": "league.quarterfinal",
+          "awayTeam": {
+            "id": "77",
+            "teamName": "Practice Team",
+            "score": 80
+          },
+          "homeTeam": {
+            "id": "29656",
+            "teamName": "Visionaries",
+            "score": 95
+          }
+        }
+      ]
+    }
+  ]
+}

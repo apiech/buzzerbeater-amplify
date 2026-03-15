@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <team id='29656' retrieved='2026-03-15T00:00:00Z'>
+    <teamName>Visionaries</teamName>
+    <shortName>Vision</shortName>
+    <league id='1'>B3</league>
+    <country id='1'>USA</country>
+    <botTeam />
+  </team>
+</bbapi>

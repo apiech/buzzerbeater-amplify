@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <teamstats teamid='29656' season='72' mode='averages' retrieved='2026-03-15T00:00:00Z'>
+    <pace>102.5</pace>
+    <ratings>
+      <insideAttack>proficient</insideAttack>
+      <outsideAttack>respectable</outsideAttack>
+    </ratings>
+    <totals>
+      <pts>91.2</pts>
+      <reb>42.4</reb>
+    </totals>
+  </teamstats>
+</bbapi>

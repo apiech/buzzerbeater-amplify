@@ -1,0 +1,144 @@
+{
+  "version": "1",
+  "retrievedAt": "2026-03-15T00:00:00Z",
+  "matchId": "123456",
+  "type": null,
+  "startTime": null,
+  "endTime": null,
+  "neutral": null,
+  "effortDelta": null,
+  "attendance": {},
+  "awayTeam": {
+    "id": "10",
+    "teamName": "Away Team",
+    "shortName": null,
+    "offStrategy": "Push The Ball",
+    "defStrategy": "3-2 Zone",
+    "score": 84,
+    "partialScores": [
+      20,
+      18,
+      24,
+      22
+    ],
+    "teamTotals": {
+      "pts": 84,
+      "fgm": 30,
+      "fga": 70,
+      "tpm": 8,
+      "tpa": 20,
+      "ftm": 16,
+      "fta": 20,
+      "oreb": 8,
+      "reb": 35,
+      "ast": 18,
+      "to": 12,
+      "stl": 7,
+      "blk": 3,
+      "pf": 14
+    },
+    "ratings": {},
+    "efficiency": {},
+    "gdp": {},
+    "players": [
+      {
+        "id": "1001",
+        "firstName": "Ada",
+        "lastName": "Guard",
+        "fullName": "Ada Guard",
+        "performance": {
+          "pts": 21,
+          "fgm": 8,
+          "fga": 16,
+          "tpm": 3,
+          "tpa": 7,
+          "ftm": 2,
+          "fta": 2,
+          "oreb": 1,
+          "reb": 5,
+          "ast": 6,
+          "to": 2,
+          "stl": 1,
+          "blk": 0,
+          "pf": 2
+        },
+        "minutesByPosition": {
+          "PG": 32,
+          "SG": 6,
+          "SF": 0,
+          "PF": 0,
+          "C": 0
+        },
+        "details": {}
+      }
+    ],
+    "details": {}
+  },
+  "homeTeam": {
+    "id": "11",
+    "teamName": "Home Team",
+    "shortName": null,
+    "offStrategy": "Motion",
+    "defStrategy": "Man To Man",
+    "score": 83,
+    "partialScores": [
+      18,
+      20,
+      21,
+      24
+    ],
+    "teamTotals": {
+      "pts": 83,
+      "fgm": 31,
+      "fga": 71,
+      "tpm": 6,
+      "tpa": 19,
+      "ftm": 15,
+      "fta": 18,
+      "oreb": 9,
+      "reb": 36,
+      "ast": 19,
+      "to": 11,
+      "stl": 5,
+      "blk": 4,
+      "pf": 15
+    },
+    "ratings": {},
+    "efficiency": {},
+    "gdp": {},
+    "players": [
+      {
+        "id": "1002",
+        "firstName": "Bea",
+        "lastName": "Wing",
+        "fullName": "Bea Wing",
+        "performance": {
+          "pts": 19,
+          "fgm": 7,
+          "fga": 15,
+          "tpm": 2,
+          "tpa": 6,
+          "ftm": 3,
+          "fta": 4,
+          "oreb": 2,
+          "reb": 7,
+          "ast": 4,
+          "to": 1,
+          "stl": 2,
+          "blk": 1,
+          "pf": 3
+        },
+        "minutesByPosition": {
+          "PG": 0,
+          "SG": 18,
+          "SF": 20,
+          "PF": 0,
+          "C": 0
+        },
+        "details": {}
+      }
+    ],
+    "details": {}
+  },
+  "details": {}
+}

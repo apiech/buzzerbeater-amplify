@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <roster teamid='29656' retrieved='2026-03-15T00:00:00Z'>
+    <teamName>Visionaries</teamName>
+    <player id='2001'>
+      <firstName>Alan</firstName>
+      <lastName>Big</lastName>
+      <salary>12000</salary>
+      <bestPosition>C</bestPosition>
+    </player>
+    <player id='2002'>
+      <firstName>Chris</firstName>
+      <lastName>Quick</lastName>
+      <salary>9000</salary>
+      <bestPosition>PG</bestPosition>
+    </player>
+  </roster>
+</bbapi>

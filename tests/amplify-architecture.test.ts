@@ -1,0 +1,25 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(currentDir, "..");
+
+test("lambda data access uses the Amplify runtime client", () => {
+  const clientSource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "data-client.ts"),
+    "utf8",
+  );
+
+  assert.match(clientSource, /getAmplifyDataClientConfig/);
+  assert.match(clientSource, /generateClient<Schema>\(\)/);
+});
+
+test("backend.ts does not manually wire GraphQL endpoint environment variables", () => {
+  const backendSource = readFileSync(join(repoRoot, "amplify", "backend.ts"), "utf8");
+
+  assert.doesNotMatch(backendSource, /AMPLIFY_DATA_GRAPHQL_ENDPOINT/);
+  assert.doesNotMatch(backendSource, /_GRAPHQL_ENDPOINT/);
+});
