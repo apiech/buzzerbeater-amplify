@@ -1,0 +1,19 @@
+{
+  "extends": "./amplify/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "amplify/**/*.ts",
+    "amplify/env.d.ts",
+    "lib/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".amplify",
+    ".next",
+    "cdk.out",
+    "out",
+    "build"
+  ]
+}

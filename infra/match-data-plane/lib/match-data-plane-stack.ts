@@ -18,7 +18,7 @@ import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
-import { Construct } from "constructs";
+import type { Construct } from "constructs";
 
 type MatchDataPlaneStackProps = StackProps & {
   imageTag: string;

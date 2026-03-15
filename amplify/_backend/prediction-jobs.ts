@@ -1,6 +1,6 @@
 import { Duration, Stack } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
-import { Function as LambdaFunction, type IFunction } from "aws-cdk-lib/aws-lambda";
+import type { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Queue } from "aws-cdk-lib/aws-sqs";
 

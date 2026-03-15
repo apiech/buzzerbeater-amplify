@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, Stack } from "aws-cdk-lib";
+import { CfnOutput, Duration } from "aws-cdk-lib";
 import { CfnBudget } from "aws-cdk-lib/aws-budgets";
 import {
   Alarm,
@@ -13,6 +13,7 @@ import {
   EmailSubscription,
   SmsSubscription,
 } from "aws-cdk-lib/aws-sns-subscriptions";
+import type { Stack } from "aws-cdk-lib";
 
 type CostVisibilityBackend = {
   createStack(name: string): Stack;

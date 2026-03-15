@@ -1,5 +1,5 @@
 import { CfnOutput, Stack } from "aws-cdk-lib";
-import { CfnUserPool } from "aws-cdk-lib/aws-cognito";
+import type { CfnUserPool } from "aws-cdk-lib/aws-cognito";
 
 type AuthControlsBackend = {
   auth: {

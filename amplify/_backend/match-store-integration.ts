@@ -1,4 +1,4 @@
-import { Stack } from "aws-cdk-lib";
+import type { Stack } from "aws-cdk-lib";
 import { AttributeType, BillingMode, Table, type ITable } from "aws-cdk-lib/aws-dynamodb";
 import { type IFunction } from "aws-cdk-lib/aws-lambda";
 import { Bucket, type IBucket } from "aws-cdk-lib/aws-s3";

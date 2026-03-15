@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "next-env.d.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "amplify/**/*.ts",
+    "amplify/env.d.ts",
+    "lib/**/*.ts",
+    "infra/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".amplify",
+    ".next",
+    "cdk.out",
+    "out",
+    "build"
+  ]
+}

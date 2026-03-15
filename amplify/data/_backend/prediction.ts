@@ -11,7 +11,6 @@ import {
   getMatchBoxscore,
   getPredictionJob,
   updatePredictionJob,
-  type PredictionRequestMode,
 } from "./repository";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -373,7 +372,7 @@ async function invokePredictionEndpoint(
   );
 
   const rawBody = response.Body?.transformToString
-    ? await response.Body.transformToString()
+    ? await Promise.resolve(response.Body.transformToString())
     : Buffer.from(response.Body ?? []).toString("utf-8");
   const parsed = requireRecord(
     rawBody ? JSON.parse(rawBody) : null,

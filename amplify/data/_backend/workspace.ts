@@ -1646,8 +1646,8 @@ function buildTopPlayers(
       stats: lookupPlayerStats(teamStats, player),
     }))
     .sort((left, right) => {
-      const leftPpg = asNumber((left.stats as Record<string, unknown> | null)?.ppg);
-      const rightPpg = asNumber((right.stats as Record<string, unknown> | null)?.ppg);
+      const leftPpg = asNumber(left.stats?.ppg);
+      const rightPpg = asNumber(right.stats?.ppg);
       return (rightPpg ?? 0) - (leftPpg ?? 0);
     })
     .slice(0, 5);
