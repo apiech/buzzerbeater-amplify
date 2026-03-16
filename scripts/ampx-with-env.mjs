@@ -19,6 +19,21 @@ const billingNestedStackPath =
   "billing-integration.NestedStack/billing-integration.NestedStackResource";
 const billingWebhookOutputKey = "BillingWebhookUrl";
 const sandboxManagementSubcommands = new Set(["delete", "secret", "seed"]);
+const sandboxWatchDirFlag = "--dir-to-watch";
+const sandboxExcludeFlag = "--exclude";
+const sandboxDefaultWatchDir = ".";
+const sandboxDefaultExcludePaths = [
+  "amplify_outputs.json",
+  ".amplify",
+  ".next",
+  "node_modules",
+  "cdk.out",
+  "app",
+  "public",
+  "tests",
+  "docs",
+  "bb-api-fixtures",
+];
 const sandboxStreamLogsFlag = "--stream-function-logs";
 const debounceMs = 750;
 
@@ -43,11 +58,20 @@ export function applySandboxDefaults(argv) {
     return [...argv];
   }
 
-  if (hasExplicitStreamLogsSetting(argv)) {
-    return [...argv];
+  const sandboxArgv = hasExplicitWatchSettings(argv)
+    ? [...argv]
+    : [
+        ...argv,
+        sandboxWatchDirFlag,
+        sandboxDefaultWatchDir,
+        ...sandboxDefaultExcludePaths.flatMap((path) => [sandboxExcludeFlag, path]),
+      ];
+
+  if (hasExplicitStreamLogsSetting(sandboxArgv)) {
+    return sandboxArgv;
   }
 
-  return [...argv, sandboxStreamLogsFlag];
+  return [...sandboxArgv, sandboxStreamLogsFlag];
 }
 
 export function resolveRootStackNameFromManifest(manifest) {
@@ -359,6 +383,16 @@ function hasExplicitStreamLogsSetting(argv) {
       argument === sandboxStreamLogsFlag ||
       argument === `--no-${sandboxStreamLogsFlag.slice(2)}` ||
       argument.startsWith(`${sandboxStreamLogsFlag}=`),
+  );
+}
+
+function hasExplicitWatchSettings(argv) {
+  return argv.some(
+    (argument) =>
+      argument === sandboxWatchDirFlag ||
+      argument.startsWith(`${sandboxWatchDirFlag}=`) ||
+      argument === sandboxExcludeFlag ||
+      argument.startsWith(`${sandboxExcludeFlag}=`),
   );
 }
 

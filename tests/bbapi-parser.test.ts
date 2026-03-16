@@ -48,3 +48,23 @@ for (const [name, parser] of Object.entries(parsers)) {
     assert.deepStrictEqual(parser(xml), expected);
   });
 }
+
+test("parseSeasons reads season bounds from child elements", () => {
+  const xml = readFileSync(join(xmlDir, "seasons.xml"), "utf8");
+
+  assert.deepStrictEqual(parseSeasons(xml), {
+    version: "1",
+    seasons: [
+      {
+        id: 71,
+        start: "2025-10-01",
+        finish: "2025-12-31",
+      },
+      {
+        id: 72,
+        start: "2026-01-01",
+        finish: "2026-03-31",
+      },
+    ],
+  });
+});

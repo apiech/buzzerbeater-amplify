@@ -179,7 +179,13 @@ type ProcessDependencies = {
   createBbClient: (options: BBXmlApiClientOptions) => Pick<
     BBXmlApiClient,
     "getBoxScore" | "getSchedule" | "getSeasons" | "getStandings" | "getTeamInfo"
-  >;
+  > &
+    Partial<
+      Pick<
+        BBXmlApiClient,
+        "getSeasonsXml"
+      >
+    >;
   createProvider: (args: {
     modelId: string;
     region: string | undefined;
@@ -296,6 +302,7 @@ const GAME_DAY_RECAP_RESULT_SCHEMA = {
   required: ["summary", "games"],
   type: "object",
 } as const;
+const GAME_DAY_RECAP_LOG_PREFIX = "[game-day-recap]";
 
 type GameDayRecapEvidenceTag = (typeof GAME_DAY_RECAP_EVIDENCE_TAGS)[number];
 
@@ -345,6 +352,12 @@ export async function submitGameDayRecap(
     throw new Error("Authenticated user identity is missing.");
   }
 
+  logGameDayRecapInfo("submit.received", {
+    gameDate: args.gameDate,
+    leagueId: args.leagueId,
+    userId,
+  });
+
   await dependencies.requireFeatureAccess({
     env: args.env,
     featureKey: "leagueWriteups",
@@ -358,11 +371,32 @@ export async function submitGameDayRecap(
   const targetKey = buildGameDayRecapTargetKey(request.leagueId, request.gameDate);
   const existing = await dependencies.getGameDayRecap(args.env, userId, targetKey);
 
+  logGameDayRecapInfo("submit.normalized", {
+    existingRequestedAt: existing?.requestedAt ?? null,
+    existingStatus: existing?.status ?? null,
+    gameDate: request.gameDate,
+    leagueId: request.leagueId,
+    targetKey,
+    userId,
+  });
+
   if (existing && !TERMINAL_RECAP_STATUSES.has(existing.status)) {
+    logGameDayRecapInfo("submit.skipped_active_job", {
+      existingRequestedAt: existing.requestedAt,
+      existingStatus: existing.status,
+      targetKey,
+      userId,
+    });
     return { targetKey };
   }
 
   const requestedAt = dependencies.now().toISOString();
+
+  logGameDayRecapInfo("submit.persisting_job", {
+    requestedAt,
+    targetKey,
+    userId,
+  });
 
   await dependencies.upsertGameDayRecap(args.env, {
     completedAt: null,
@@ -388,12 +422,28 @@ export async function submitGameDayRecap(
   });
 
   try {
+    logGameDayRecapInfo("submit.enqueue.start", {
+      requestedAt,
+      targetKey,
+      userId,
+    });
     await dependencies.enqueueRecapJob(args.queueUrl, {
       requestedAt,
       targetKey,
       userId,
     });
+    logGameDayRecapInfo("submit.enqueue.succeeded", {
+      requestedAt,
+      targetKey,
+      userId,
+    });
   } catch (error) {
+    logGameDayRecapError("submit.enqueue.failed", {
+      requestedAt,
+      targetKey,
+      userId,
+      ...toLoggableError(error),
+    });
     await dependencies.updateGameDayRecap(args.env, {
       completedAt: dependencies.now().toISOString(),
       error: error instanceof Error ? error.message : String(error),
@@ -404,6 +454,11 @@ export async function submitGameDayRecap(
     throw error;
   }
 
+  logGameDayRecapInfo("submit.completed", {
+    requestedAt,
+    targetKey,
+    userId,
+  });
   return { targetKey };
 }
 
@@ -417,6 +472,11 @@ export async function processGameDayRecap(
   dependencies: ProcessDependencies = defaultProcessDependencies,
 ): Promise<void> {
   const message = parseGameDayRecapQueueMessage(args.messageBody);
+  logGameDayRecapInfo("process.message.received", {
+    requestedAt: message.requestedAt,
+    targetKey: message.targetKey,
+    userId: message.userId,
+  });
   const recap = await dependencies.getGameDayRecap(
     args.env,
     message.userId,
@@ -428,16 +488,37 @@ export async function processGameDayRecap(
     );
   }
 
+  logGameDayRecapInfo("process.recap.loaded", {
+    completedAt: recap.completedAt,
+    requestedAt: recap.requestedAt,
+    status: recap.status,
+    targetKey: recap.targetKey,
+    userId: recap.userId,
+  });
+
   if (
     recap.requestedAt !== message.requestedAt ||
     (recap.status === "SUCCEEDED" && recap.completedAt)
   ) {
+    logGameDayRecapInfo("process.skipped_stale_or_completed", {
+      recapCompletedAt: recap.completedAt,
+      recapRequestedAt: recap.requestedAt,
+      recapStatus: recap.status,
+      requestedAt: message.requestedAt,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
     return;
   }
 
   let coverage: GameDayRecapCoveragePayload | null = null;
 
   try {
+    logGameDayRecapInfo("process.status_transition", {
+      nextStatus: "RESOLVING_SLATE",
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
     await dependencies.updateGameDayRecap(args.env, {
       error: null,
       modelId: args.modelId,
@@ -459,14 +540,114 @@ export async function processGameDayRecap(
       username: connection.bbLoginName,
     });
 
-    const season = resolveSeasonForDate(await bb.getSeasons(), recap.gameDate);
+    logGameDayRecapInfo("process.bb_connection.ready", {
+      bbLoginName: connection.bbLoginName,
+      gameDate: recap.gameDate,
+      leagueId: recap.leagueId,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
+
+    logGameDayRecapInfo("process.fetch_seasons.start", {
+      gameDate: recap.gameDate,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
+    const seasons = await bb.getSeasons();
+    const seasonDiagnostics = summarizeSeasonDiagnostics(seasons, recap.gameDate);
+    logGameDayRecapInfo("process.fetch_seasons.succeeded", {
+      gameDate: recap.gameDate,
+      seasonCount: seasons.seasons.length,
+      seasons: seasonDiagnostics,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
+
+    const parsedSeasonsLookUnusable =
+      seasonDiagnostics.length === 0 ||
+      seasonDiagnostics.every((season) => !season.hasUsableBounds);
+    if (parsedSeasonsLookUnusable) {
+      await logRawSeasonsXmlDiagnostics({
+        bb,
+        gameDate: recap.gameDate,
+        leagueId: recap.leagueId,
+        parsedSeasons: seasons,
+        reason: "parsed_seasons_unusable",
+        targetKey: recap.targetKey,
+        userId: recap.userId,
+      });
+    }
+
+    let season: number;
+    try {
+      logGameDayRecapInfo("process.resolve_season.start", {
+        gameDate: recap.gameDate,
+        targetKey: recap.targetKey,
+        userId: recap.userId,
+      });
+      season = resolveSeasonForDate(seasons, recap.gameDate);
+    } catch (error) {
+      await logRawSeasonsXmlDiagnostics({
+        bb,
+        gameDate: recap.gameDate,
+        leagueId: recap.leagueId,
+        parsedSeasons: seasons,
+        reason: "resolve_season_failed",
+        targetKey: recap.targetKey,
+        userId: recap.userId,
+      });
+      throw error;
+    }
+
+    logGameDayRecapInfo("process.resolve_season.succeeded", {
+      season,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
+
+    logGameDayRecapInfo("process.fetch_standings.start", {
+      leagueId: recap.leagueId,
+      season,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
     const standings = await bb.getStandings(recap.leagueId, season);
+    logGameDayRecapInfo("process.fetch_standings.succeeded", {
+      leagueName: standings.league?.name ?? null,
+      season: standings.season ?? null,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
+
+    logGameDayRecapInfo("process.resolve_slate.start", {
+      gameDate: recap.gameDate,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
     const slate = await resolveLeagueDaySlate({
       bb,
       gameDate: recap.gameDate,
       standings,
     });
+    logGameDayRecapInfo("process.resolve_slate.succeeded", {
+      requestedGames: slate.length,
+      slate: slate.map((game) => ({
+        awayTeamId: game.awayTeamId,
+        homeTeamId: game.homeTeamId,
+        matchId: game.matchId,
+        startTime: game.startTime,
+        type: game.type,
+      })),
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
 
+    logGameDayRecapInfo("process.status_transition", {
+      nextStatus: "BUILDING_CONTEXT",
+      season,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
     await dependencies.updateGameDayRecap(args.env, {
       coverageJson: {
         availableGames: 0,
@@ -492,12 +673,28 @@ export async function processGameDayRecap(
     });
     coverage = promptPayload.coverage;
 
+    logGameDayRecapInfo("process.prompt_payload.ready", {
+      coverage,
+      gameCount: promptPayload.games.length,
+      leagueName: promptPayload.league.leagueName,
+      season: promptPayload.league.season,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
+
     if (!promptPayload.games.length) {
       throw new Error(
         "No completed league games had enough box score coverage to generate a recap.",
       );
     }
 
+    logGameDayRecapInfo("process.status_transition", {
+      coverage,
+      nextStatus: "INVOKING_MODEL",
+      season,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
     await dependencies.updateGameDayRecap(args.env, {
       coverageJson: coverage,
       leagueName: promptPayload.league.leagueName,
@@ -511,7 +708,19 @@ export async function processGameDayRecap(
       modelId: args.modelId,
       region: args.region,
     });
+    logGameDayRecapInfo("process.provider.ready", {
+      modelId: provider.modelId,
+      providerName: provider.providerName,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
     const result = await provider.generate(promptPayload);
+    logGameDayRecapInfo("process.provider.succeeded", {
+      gameCount: result.games.length,
+      summaryHeadline: result.summary.headline,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
 
     await dependencies.updateGameDayRecap(args.env, {
       completedAt: dependencies.now().toISOString(),
@@ -527,7 +736,20 @@ export async function processGameDayRecap(
       targetKey: recap.targetKey,
       userId: recap.userId,
     });
+    logGameDayRecapInfo("process.completed", {
+      coverage,
+      finalStatus: "SUCCEEDED",
+      season,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+    });
   } catch (error) {
+    logGameDayRecapError("process.failed", {
+      coverage,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+      ...toLoggableError(error),
+    });
     await dependencies.updateGameDayRecap(args.env, {
       completedAt: dependencies.now().toISOString(),
       coverageJson: coverage,
@@ -599,30 +821,35 @@ export function resolveSeasonForDate(
   gameDate: string,
 ): number {
   const matchTimestamp = parseDateOnlyToTimestamp(gameDate);
+  const diagnostics = summarizeSeasonDiagnostics(seasons, gameDate);
+  logGameDayRecapInfo("resolveSeasonForDate.evaluate", {
+    gameDate,
+    matchTimestamp: toFiniteNumberOrNull(matchTimestamp),
+    seasons: diagnostics,
+  });
   if (!Number.isFinite(matchTimestamp)) {
+    logGameDayRecapWarn("resolveSeasonForDate.invalid_game_date", {
+      gameDate,
+      matchTimestamp: toFiniteNumberOrNull(matchTimestamp),
+    });
     throw new Error(`Unable to resolve season for invalid date ${gameDate}.`);
   }
 
-  const matchedSeason = seasons.seasons.find((season) => {
-    if (
-      season.id === null ||
-      !season.start ||
-      !season.finish
-    ) {
-      return false;
-    }
-
-    const start = parseDateOnlyToTimestamp(resolveDateKey(season.start));
-    const finish = parseDateOnlyToTimestamp(resolveDateKey(season.finish));
-    return Number.isFinite(start) && Number.isFinite(finish)
-      ? start <= matchTimestamp && matchTimestamp <= finish
-      : false;
-  });
+  const matchedSeason = diagnostics.find((season) => season.matchesGameDate);
 
   if (matchedSeason?.id !== null && matchedSeason?.id !== undefined) {
+    logGameDayRecapInfo("resolveSeasonForDate.matched", {
+      gameDate,
+      seasonId: matchedSeason.id,
+    });
     return matchedSeason.id;
   }
 
+  logGameDayRecapWarn("resolveSeasonForDate.no_match", {
+    gameDate,
+    matchTimestamp: toFiniteNumberOrNull(matchTimestamp),
+    seasons: diagnostics,
+  });
   throw new Error(`No BuzzerBeater season covers ${gameDate}.`);
 }
 
@@ -1355,6 +1582,151 @@ function parseDateOnlyToTimestamp(value: string | null): number {
   return Date.parse(`${value}T00:00:00Z`);
 }
 
+type SeasonResolutionDiagnostic = {
+  finish: string | null;
+  finishTimestamp: number | null;
+  hasUsableBounds: boolean;
+  id: number | null;
+  invalidBounds: boolean;
+  matchesGameDate: boolean;
+  normalizedFinish: string | null;
+  normalizedStart: string | null;
+  start: string | null;
+  startTimestamp: number | null;
+};
+
+function summarizeSeasonDiagnostics(
+  seasons: BBApiSeasons,
+  gameDate: string,
+): SeasonResolutionDiagnostic[] {
+  const matchTimestamp = parseDateOnlyToTimestamp(gameDate);
+
+  return seasons.seasons.map((season) => {
+    const normalizedStart = resolveDateKey(season.start);
+    const normalizedFinish = resolveDateKey(season.finish);
+    const startTimestamp = parseDateOnlyToTimestamp(normalizedStart);
+    const finishTimestamp = parseDateOnlyToTimestamp(normalizedFinish);
+    const hasUsableBounds =
+      season.id !== null &&
+      season.id !== undefined &&
+      Number.isFinite(startTimestamp) &&
+      Number.isFinite(finishTimestamp);
+    const matchesGameDate = hasUsableBounds
+      ? startTimestamp <= matchTimestamp && matchTimestamp <= finishTimestamp
+      : false;
+
+    return {
+      finish: season.finish,
+      finishTimestamp: toFiniteNumberOrNull(finishTimestamp),
+      hasUsableBounds,
+      id: season.id,
+      invalidBounds:
+        Boolean(normalizedStart || normalizedFinish) &&
+        (!Number.isFinite(startTimestamp) || !Number.isFinite(finishTimestamp)),
+      matchesGameDate,
+      normalizedFinish,
+      normalizedStart,
+      start: season.start,
+      startTimestamp: toFiniteNumberOrNull(startTimestamp),
+    };
+  });
+}
+
+async function logRawSeasonsXmlDiagnostics(args: {
+  bb: ProcessDependencies["createBbClient"] extends (...input: never[]) => infer T
+    ? T
+    : never;
+  gameDate: string;
+  leagueId: string;
+  parsedSeasons: BBApiSeasons;
+  reason: string;
+  targetKey: string;
+  userId: string;
+}): Promise<void> {
+  if (typeof args.bb.getSeasonsXml !== "function") {
+    logGameDayRecapWarn("process.fetch_seasons_xml.unavailable", {
+      gameDate: args.gameDate,
+      leagueId: args.leagueId,
+      parsedSeasons: summarizeSeasonDiagnostics(args.parsedSeasons, args.gameDate),
+      reason: args.reason,
+      targetKey: args.targetKey,
+      userId: args.userId,
+    });
+    return;
+  }
+
+  try {
+    const xml = await args.bb.getSeasonsXml();
+    logGameDayRecapInfo("process.fetch_seasons_xml.succeeded", {
+      gameDate: args.gameDate,
+      leagueId: args.leagueId,
+      parsedSeasons: summarizeSeasonDiagnostics(args.parsedSeasons, args.gameDate),
+      rawXmlHasFinishElement: xml.includes("<finish>"),
+      rawXmlHasSeasonTag: xml.includes("<season"),
+      rawXmlHasStartElement: xml.includes("<start>"),
+      rawXmlLength: xml.length,
+      rawXmlPreview: summarizeXmlPreview(xml),
+      reason: args.reason,
+      targetKey: args.targetKey,
+      userId: args.userId,
+    });
+  } catch (error) {
+    logGameDayRecapWarn("process.fetch_seasons_xml.failed", {
+      gameDate: args.gameDate,
+      leagueId: args.leagueId,
+      reason: args.reason,
+      targetKey: args.targetKey,
+      userId: args.userId,
+      ...toLoggableError(error),
+    });
+  }
+}
+
+function summarizeXmlPreview(xml: string, maxLength = 500): string {
+  const normalized = xml.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength)}...`;
+}
+
+function toFiniteNumberOrNull(value: number): number | null {
+  return Number.isFinite(value) ? value : null;
+}
+
+function logGameDayRecapInfo(event: string, details: Record<string, unknown>): void {
+  console.info(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
+}
+
+function logGameDayRecapWarn(event: string, details: Record<string, unknown>): void {
+  console.warn(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
+}
+
+function logGameDayRecapError(event: string, details: Record<string, unknown>): void {
+  console.error(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
+}
+
+function toLoggableError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { errorMessage: String(error) };
+  }
+
+  const details: Record<string, unknown> = {
+    errorMessage: error.message,
+    errorName: error.name,
+  };
+
+  if ("endpoint" in error && typeof error.endpoint === "string") {
+    details.endpoint = error.endpoint;
+  }
+  if ("status" in error && typeof error.status === "number") {
+    details.status = error.status;
+  }
+
+  return details;
+}
+
 function resolveDateKey(value: string | null | undefined): string | null {
   if (!value) {
     return null;
@@ -1579,5 +1951,6 @@ export const __testing = {
   parseGameDayRecapQueueMessage,
   resolveLeagueDaySlate,
   resolveSeasonForDate,
+  summarizeSeasonDiagnostics,
   validateGameDayRecapResult,
 };

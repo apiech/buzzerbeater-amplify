@@ -122,8 +122,8 @@ export function parseSeasons(xml: string): BBApiSeasons {
   const seasons = toArray(container.season).map(
     (season): BBApiSeason => ({
       id: asNumber(getObject(season)?.["@_id"]),
-      start: asString(getObject(season)?.["@_start"]),
-      finish: asString(getObject(season)?.["@_finish"]),
+      start: readText(getObject(season)?.start),
+      finish: readText(getObject(season)?.finish),
     }),
   );
   return {

@@ -118,6 +118,10 @@ export class BBXmlApiClient {
     return parseSeasons(await this.request("seasons.aspx"));
   }
 
+  async getSeasonsXml(): Promise<string> {
+    return this.request("seasons.aspx");
+  }
+
   async getStandings(leagueId?: string, season?: number): Promise<BBApiStandings> {
     const params: Record<string, string | number> = {};
     if (leagueId) {

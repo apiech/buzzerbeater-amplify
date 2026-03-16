@@ -6,6 +6,10 @@ import { submitGameDayRecap } from "../data/_backend/game-day-recap";
 type Handler = Schema["submitGameDayRecap"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
+  console.info("[game-day-recap-submit] received", {
+    gameDate: event.arguments.gameDate,
+    leagueId: event.arguments.leagueId,
+  });
   const queueUrl = env.GAME_DAY_RECAP_QUEUE_URL;
   if (!queueUrl) {
     throw new Error(
@@ -13,11 +17,26 @@ export const handler: Handler = async (event) => {
     );
   }
 
-  return submitGameDayRecap({
-    env,
-    gameDate: event.arguments.gameDate,
-    identity: event.identity,
-    leagueId: event.arguments.leagueId,
-    queueUrl,
-  });
+  try {
+    const result = await submitGameDayRecap({
+      env,
+      gameDate: event.arguments.gameDate,
+      identity: event.identity,
+      leagueId: event.arguments.leagueId,
+      queueUrl,
+    });
+
+    console.info("[game-day-recap-submit] succeeded", {
+      targetKey: result.targetKey,
+    });
+    return result;
+  } catch (error) {
+    console.error("[game-day-recap-submit] failed", {
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorName: error instanceof Error ? error.name : null,
+      gameDate: event.arguments.gameDate,
+      leagueId: event.arguments.leagueId,
+    });
+    throw error;
+  }
 };

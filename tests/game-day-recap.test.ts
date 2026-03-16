@@ -226,6 +226,43 @@ test("resolveSeasonForDate picks the season whose date range covers the slate", 
   assert.equal(__testing.resolveSeasonForDate(seasons, "2026-03-15"), 64);
 });
 
+test("summarizeSeasonDiagnostics marks matching and unusable seasons", () => {
+  const seasons: BBApiSeasons = {
+    seasons: [
+      { finish: null, id: 63, start: "2025-10-01" },
+      { finish: "2026-05-01", id: 64, start: "2026-02-02" },
+    ],
+    version: "1",
+  };
+
+  assert.deepStrictEqual(__testing.summarizeSeasonDiagnostics(seasons, "2026-03-15"), [
+    {
+      finish: null,
+      finishTimestamp: null,
+      hasUsableBounds: false,
+      id: 63,
+      invalidBounds: true,
+      matchesGameDate: false,
+      normalizedFinish: null,
+      normalizedStart: "2025-10-01",
+      start: "2025-10-01",
+      startTimestamp: Date.parse("2025-10-01T00:00:00Z"),
+    },
+    {
+      finish: "2026-05-01",
+      finishTimestamp: Date.parse("2026-05-01T00:00:00Z"),
+      hasUsableBounds: true,
+      id: 64,
+      invalidBounds: false,
+      matchesGameDate: true,
+      normalizedFinish: "2026-05-01",
+      normalizedStart: "2026-02-02",
+      start: "2026-02-02",
+      startTimestamp: Date.parse("2026-02-02T00:00:00Z"),
+    },
+  ]);
+});
+
 test("resolveLeagueDaySlate deduplicates games and excludes non-league opponents", async () => {
   const standings = createStandings();
   const schedules = new Map<string, BBApiSchedule>([

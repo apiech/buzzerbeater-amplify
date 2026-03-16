@@ -47,3 +47,33 @@ test("BBXmlApiClient does not retry invalid credentials", async () => {
   await assert.rejects(() => client.login(), BBXmlApiError);
   assert.equal(attempts, 1);
 });
+
+test("BBXmlApiClient exposes raw seasons XML", async () => {
+  const requests: string[] = [];
+  const client = new BBXmlApiClient({
+    username: "coach",
+    securityCode: "secret",
+    fetchImpl: async (input) => {
+      const url = input instanceof URL ? input : new URL(String(input));
+      requests.push(url.pathname);
+
+      if (url.pathname.endsWith("/login.aspx")) {
+        return new Response("<loggedIn />", {
+          status: 200,
+          headers: {
+            "set-cookie": "bb_session=ok; Path=/; HttpOnly",
+          },
+        });
+      }
+
+      return new Response("<bbapi><seasons /></bbapi>", {
+        status: 200,
+      });
+    },
+  });
+
+  const xml = await client.getSeasonsXml();
+
+  assert.equal(xml, "<bbapi><seasons /></bbapi>");
+  assert.deepStrictEqual(requests, ["/login.aspx", "/seasons.aspx"]);
+});
