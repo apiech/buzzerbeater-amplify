@@ -80,6 +80,12 @@ Stripe billing configuration:
   - `STRIPE_PREMIUM_PRICE_ID`
   - `BILLING_DEFAULT_PLAN` (optional)
 
+Cost visibility guardrails:
+
+- The AWS Budgets and billing alarms in [`amplify/_backend/cost-visibility.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/cost-visibility.ts) are account-global resources.
+- They stay disabled unless `ENABLE_COST_VISIBILITY=true` is set for the one environment that should own them.
+- Use that flag in exactly one environment, ideally production, to avoid name collisions with local sandboxes and non-prod branches.
+
 The billing integration reads `APP_BASE_URL` and `STRIPE_PREMIUM_PRICE_ID` during backend synthesis in [`amplify/_backend/billing-integration.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/billing-integration.ts), so they need to exist in the shell or CI job that runs the Amplify deploy.
 
 Premium access defaults:

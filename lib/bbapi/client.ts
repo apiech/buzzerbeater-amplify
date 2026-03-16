@@ -250,15 +250,16 @@ export class BBXmlApiClient {
   }
 
   private captureCookies(response: Response): void {
-    const getSetCookie = (
-      response.headers as Headers & { getSetCookie?: () => string[] }
-    ).getSetCookie?.();
-    const rawCookies = getSetCookie ?? splitSetCookieHeader(response.headers.get("set-cookie"));
+    const headers = response.headers as Headers & Partial<{ getSetCookie: () => string[] }>;
+    const rawCookies =
+      "getSetCookie" in headers && typeof headers.getSetCookie === "function"
+        ? headers.getSetCookie()
+        : splitSetCookieHeader(response.headers.get("set-cookie"));
     if (!rawCookies.length) {
       return;
     }
     const cookiePairs = rawCookies
-      .map((cookie) => cookie.split(";", 1)[0]?.trim())
+      .map((cookie) => cookie.split(";", 1)[0].trim())
       .filter((cookie): cookie is string => Boolean(cookie));
     if (!cookiePairs.length) {
       return;

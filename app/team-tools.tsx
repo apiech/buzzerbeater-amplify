@@ -89,11 +89,7 @@ export function LineupPlanner() {
     }
 
     setSavedScenarios(
-      [...response.data].sort((left, right) =>
-        String(right.savedAt ?? right.createdAt ?? "").localeCompare(
-          String(left.savedAt ?? left.createdAt ?? ""),
-        ),
-      ),
+      [...response.data].sort((left, right) => right.savedAt.localeCompare(left.savedAt)),
     );
   }
 
@@ -159,9 +155,9 @@ export function LineupPlanner() {
         <>
           <div className="grid gap-4 md:grid-cols-3">
             <StatCard
-              detail={`Generated ${formatTimestamp(plan.generatedAt ?? null)}`}
+              detail={`Generated ${formatTimestamp(plan.generatedAt)}`}
               label="Confidence"
-              value={`${Math.round(Number(plan.confidence ?? 0) * 100)}%`}
+              value={`${Math.round(plan.confidence * 100)}%`}
             />
             <StatCard
               detail={starters[0]?.fullName ?? "No locked anchor yet"}
@@ -294,7 +290,7 @@ export function LineupPlanner() {
             {lastSavedScenario ? (
               <p className={statusCopyClassName}>
                 Saved {lastSavedScenario.name} at{" "}
-                {formatTimestamp(lastSavedScenario.savedAt ?? null)}.
+                {formatTimestamp(lastSavedScenario.savedAt)}.
               </p>
             ) : null}
           </div>
@@ -306,10 +302,10 @@ export function LineupPlanner() {
                 savedScenarios.map((scenario) => (
                   <li className={listItemClassName} key={scenario.scenarioId}>
                     <strong className="text-sm text-ink">
-                      {scenario.name ?? "Saved lineup"}
+                      {scenario.name}
                     </strong>
                     <span className={statusCopyClassName}>
-                      {formatTimestamp(scenario.savedAt ?? scenario.createdAt ?? null)}
+                      {formatTimestamp(scenario.savedAt)}
                       {scenario.note ? ` • ${scenario.note}` : ""}
                     </span>
                   </li>

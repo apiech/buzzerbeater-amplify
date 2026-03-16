@@ -38,9 +38,9 @@ type XmlObject = Record<string, unknown>;
 
 export function parseTeamInfo(xml: string): BBApiTeamInfo {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.team, "team");
+  const container = requireObject(root.bbapi.team, "team");
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     teamId: asString(container["@_id"]),
     teamName: readText(container.teamName),
@@ -66,10 +66,10 @@ export function parseTeamInfo(xml: string): BBApiTeamInfo {
 
 export function parseRoster(xml: string): BBApiRoster {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.roster, "roster");
+  const container = requireObject(root.bbapi.roster, "roster");
   const players = toArray(container.player).map(parseRosterPlayer);
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     teamId: asString(container["@_teamid"]),
     teamName: readText(container.teamName),
@@ -79,11 +79,11 @@ export function parseRoster(xml: string): BBApiRoster {
 
 export function parsePlayer(xml: string): BBApiPlayer {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.player, "player");
+  const container = requireObject(root.bbapi.player, "player");
   const firstName = readText(container.firstName);
   const lastName = readText(container.lastName);
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     playerId: asString(container["@_id"]),
     firstName,
@@ -106,9 +106,9 @@ export function parsePlayer(xml: string): BBApiPlayer {
 
 export function parseSchedule(xml: string): BBApiSchedule {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.schedule, "schedule");
+  const container = requireObject(root.bbapi.schedule, "schedule");
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     teamId: asString(container["@_teamid"]),
     season: asNumber(container["@_season"]),
@@ -118,7 +118,7 @@ export function parseSchedule(xml: string): BBApiSchedule {
 
 export function parseSeasons(xml: string): BBApiSeasons {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.seasons, "seasons");
+  const container = requireObject(root.bbapi.seasons, "seasons");
   const seasons = toArray(container.season).map(
     (season): BBApiSeason => ({
       id: asNumber(getObject(season)?.["@_id"]),
@@ -127,14 +127,14 @@ export function parseSeasons(xml: string): BBApiSeasons {
     }),
   );
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     seasons,
   };
 }
 
 export function parseStandings(xml: string): BBApiStandings {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.standings, "standings");
+  const container = requireObject(root.bbapi.standings, "standings");
   const regularSeason = getObject(container.regularSeason);
   const conferences = toArray(regularSeason?.conference).map(
     (conference, index): BBApiConferenceStandings => ({
@@ -153,7 +153,7 @@ export function parseStandings(xml: string): BBApiStandings {
     }));
 
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     season: asNumber(container["@_season"]),
     league: parseNamedReference(container.league),
@@ -165,9 +165,9 @@ export function parseStandings(xml: string): BBApiStandings {
 
 export function parseBoxScore(xml: string): BBApiBoxScore {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.match, "match");
+  const container = requireObject(root.bbapi.match, "match");
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     matchId: asString(container["@_id"]),
     type: asString(container["@_type"]),
@@ -195,7 +195,7 @@ export function parseBoxScore(xml: string): BBApiBoxScore {
 
 export function parseArena(xml: string): BBApiArena {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.arena, "arena");
+  const container = requireObject(root.bbapi.arena, "arena");
   const seatsObject = getObject(container.seats);
   const seats = Object.entries(seatsObject ?? {}).reduce<Record<string, BBApiArenaSeat>>(
     (accumulator, [section, value]) => {
@@ -215,7 +215,7 @@ export function parseArena(xml: string): BBApiArena {
   );
   const expansionObject = getObject(container.expansion);
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     teamId: asString(container["@_teamid"]),
     name: readText(container.name),
@@ -239,7 +239,7 @@ export function parseArena(xml: string): BBApiArena {
 
 export function parseEconomy(xml: string): BBApiEconomy {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.economy, "economy");
+  const container = requireObject(root.bbapi.economy, "economy");
   const transactions = toArray(container.transaction).map(
     (transaction): BBApiEconomyTransaction => {
       const node = getObject(transaction);
@@ -253,7 +253,7 @@ export function parseEconomy(xml: string): BBApiEconomy {
     },
   );
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     fields: stripKeys(container, ["@_retrieved", "transaction"]),
     transactions,
@@ -262,7 +262,7 @@ export function parseEconomy(xml: string): BBApiEconomy {
 
 export function parseTeamStats(xml: string): BBApiTeamStats {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.teamstats ?? root.bbapi?.teamStats, "teamstats");
+  const container = requireObject(root.bbapi.teamstats ?? root.bbapi.teamStats, "teamstats");
   const categories = Object.entries(container)
     .filter(([key, value]) => !key.startsWith("@_") && isObject(value) && key !== "player")
     .reduce<Record<string, Record<string, number | string | null>>>(
@@ -286,7 +286,7 @@ export function parseTeamStats(xml: string): BBApiTeamStats {
   });
 
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     teamId: asString(container["@_teamid"]),
     season: asNumber(container["@_season"]),
@@ -304,7 +304,7 @@ export function parseTeamStats(xml: string): BBApiTeamStats {
 
 export function parseLeagues(xml: string): BBApiLeagues {
   const root = parseRoot(xml);
-  const container = requireObject(root.bbapi?.leagues ?? root.bbapi?.division, "leagues");
+  const container = requireObject(root.bbapi.leagues ?? root.bbapi.division, "leagues");
   const leagues = toArray(container.league).map(
     (league): BBApiLeague => {
       const node = getObject(league);
@@ -317,7 +317,7 @@ export function parseLeagues(xml: string): BBApiLeagues {
     },
   );
   return {
-    version: asString(root.bbapi?.["@_version"]) ?? "1",
+    version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
     country: parseNamedReference(container.country),
     level: asNumber(container["@_level"]),
@@ -542,14 +542,15 @@ function asNumber(value: unknown): number | null {
 }
 
 function asBoolean(value: unknown): boolean | null {
-  const stringValue = asString(value)?.toLowerCase();
-  if (stringValue === undefined || stringValue === null) {
+  const stringValue = asString(value);
+  if (stringValue === null) {
     return null;
   }
-  if (["1", "true", "yes"].includes(stringValue)) {
+  const normalizedValue = stringValue.toLowerCase();
+  if (["1", "true", "yes"].includes(normalizedValue)) {
     return true;
   }
-  if (["0", "false", "no"].includes(stringValue)) {
+  if (["0", "false", "no"].includes(normalizedValue)) {
     return false;
   }
   return null;

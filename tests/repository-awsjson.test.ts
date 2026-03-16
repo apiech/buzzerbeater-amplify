@@ -159,8 +159,9 @@ test("getBbConnection returns JSON fields as plain objects", async (t) => {
 
   const record = await getBbConnection({} as any, "u1");
 
-  assert.deepStrictEqual(record?.profileJson, { teamId: "123" });
-  assert.deepStrictEqual(record?.workspaceCacheJson, {
+  assert.ok(record);
+  assert.deepStrictEqual(record.profileJson, { teamId: "123" });
+  assert.deepStrictEqual(record.workspaceCacheJson, {
     home: { team: { teamId: "123" } },
     teamHub: {},
     scout: {},

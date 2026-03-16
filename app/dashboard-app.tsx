@@ -2300,7 +2300,7 @@ function WorkspaceDashboard({
                   <StatCard
                     detail={salaryProjection.bestPosition ?? "No listed role"}
                     label="Player"
-                    value={salaryProjection.fullName ?? "Unknown player"}
+                    value={salaryProjection.fullName}
                   />
                   <StatCard
                     detail={`Trend ${salaryProjection.trend}`}
@@ -2495,10 +2495,6 @@ function formatAuthError(error: unknown): string {
 }
 
 function humanizeStatus(status: BbConnectionRecord["status"]) {
-  if (!status) {
-    return "Unknown";
-  }
-
   return status
     .toLowerCase()
     .split("_")
@@ -2606,9 +2602,7 @@ function humanizeKey(value: string): string {
 function formatPlayerMeta(player: PlayerSummary): string {
   const parts = [
     player.bestPosition,
-    player.salary !== null && player.salary !== undefined
-      ? formatCurrency(player.salary)
-      : null,
+    player.salary !== null ? formatCurrency(player.salary) : null,
     player.stats && typeof player.stats.ppg === "number"
       ? `${player.stats.ppg} PPG`
       : null,

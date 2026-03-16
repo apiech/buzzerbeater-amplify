@@ -36,13 +36,9 @@ export function OperationsPanel() {
 
   useEffect(() => {
     const hasActiveWork =
-      syncRuns.some((run) => run.status && !terminalSyncStatuses.has(run.status)) ||
-      gameDayRecaps.some(
-        (recap) => recap.status && !terminalRecapStatuses.has(recap.status),
-      ) ||
-      predictionJobs.some(
-        (job) => job.status && !terminalPredictionStatuses.has(job.status),
-      );
+      syncRuns.some((run) => !terminalSyncStatuses.has(run.status)) ||
+      gameDayRecaps.some((recap) => !terminalRecapStatuses.has(recap.status)) ||
+      predictionJobs.some((job) => !terminalPredictionStatuses.has(job.status));
 
     if (!hasActiveWork) {
       return;
@@ -85,38 +81,26 @@ export function OperationsPanel() {
     }
 
     setSyncRuns(
-      [...syncResponse.data].sort((left, right) =>
-        String(right.startedAt ?? right.createdAt ?? "").localeCompare(
-          String(left.startedAt ?? left.createdAt ?? ""),
-        ),
-      ),
+      [...syncResponse.data].sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
     );
     setGameDayRecaps(
-      [...recapResponse.data].sort((left, right) =>
-        String(right.updatedAt ?? right.requestedAt ?? "").localeCompare(
-          String(left.updatedAt ?? left.requestedAt ?? ""),
-        ),
-      ),
+      [...recapResponse.data].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
     setPredictionJobs(
       [...predictionResponse.data].sort((left, right) =>
-        String(right.updatedAt ?? right.createdAt ?? "").localeCompare(
-          String(left.updatedAt ?? left.createdAt ?? ""),
-        ),
+        right.updatedAt.localeCompare(left.updatedAt),
       ),
     );
     setIsLoading(false);
   }
 
-  const activeSyncCount = syncRuns.filter(
-    (run) => run.status && !terminalSyncStatuses.has(run.status),
-  ).length;
+  const activeSyncCount = syncRuns.filter((run) => !terminalSyncStatuses.has(run.status)).length;
   const failedSyncCount = syncRuns.filter((run) => run.status === "FAILED").length;
   const activePredictionCount = predictionJobs.filter(
-    (job) => job.status && !terminalPredictionStatuses.has(job.status),
+    (job) => !terminalPredictionStatuses.has(job.status),
   ).length;
   const activeRecapCount = gameDayRecaps.filter(
-    (recap) => recap.status && !terminalRecapStatuses.has(recap.status),
+    (recap) => !terminalRecapStatuses.has(recap.status),
   ).length;
 
   return (
@@ -172,10 +156,10 @@ export function OperationsPanel() {
               {syncRuns.map((run) => (
                 <li className={listItemClassName} key={run.id}>
                   <strong className="text-sm text-ink">
-                    {run.kind ?? "Club refresh"}
+                    {run.kind}
                   </strong>
                   <span className={statusCopyClassName}>
-                    {humanizeStatus(run.status)} • {formatTimestamp(run.startedAt ?? null)}
+                    {humanizeStatus(run.status)} • {formatTimestamp(run.startedAt)}
                     {run.error ? ` • ${run.error}` : ""}
                   </span>
                 </li>
@@ -197,7 +181,7 @@ export function OperationsPanel() {
                   </strong>
                   <span className={statusCopyClassName}>
                     {job.modelVersion ? `${job.modelVersion} • ` : ""}
-                    {formatTimestamp(job.updatedAt ?? job.createdAt ?? null)}
+                    {formatTimestamp(job.updatedAt)}
                     {job.error ? ` • ${job.error}` : ""}
                   </span>
                 </li>

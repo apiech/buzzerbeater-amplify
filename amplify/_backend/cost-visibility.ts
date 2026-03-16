@@ -89,6 +89,10 @@ const SERVICE_GUARDRAILS: readonly ServiceCostGuardrail[] = [
 export function configureCostVisibility(
   backend: CostVisibilityBackend,
 ): void {
+  if (!shouldConfigureCostVisibility()) {
+    return;
+  }
+
   const stack = backend.createStack("cost-visibility");
   const topic = new Topic(stack, "CostAlertsTopic", {
     displayName: "BuzzerBeater cost alerts",
@@ -160,6 +164,10 @@ export function configureCostVisibility(
   });
 }
 
+function shouldConfigureCostVisibility(): boolean {
+  return parseBooleanEnv(process.env.ENABLE_COST_VISIBILITY);
+}
+
 function buildBudgetNotification(
   topicArn: string,
   threshold: number,
@@ -222,4 +230,13 @@ function normalizePhoneNumber(value: string): string | null {
   }
 
   return null;
+}
+
+function parseBooleanEnv(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }

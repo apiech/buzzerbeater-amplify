@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
 import { decodeGraphqlJsonPayload } from "@/app/graphql-json";
@@ -57,8 +57,12 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
+  const loadHighlightsEffect = useEffectEvent(() => {
     void loadHighlights();
+  });
+
+  useEffect(() => {
+    loadHighlightsEffect();
   }, [perspective, onlyOutcomeChange]);
 
   useEffect(() => {
@@ -67,11 +71,11 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     }
 
     const interval = window.setInterval(() => {
-      void loadHighlights();
+      loadHighlightsEffect();
     }, 4000);
 
     return () => window.clearInterval(interval);
-  }, [payload?.scanStatus, perspective, onlyOutcomeChange]);
+  }, [payload?.scanStatus]);
 
   async function loadHighlights(
     options: LoadHighlightsOptions = {},

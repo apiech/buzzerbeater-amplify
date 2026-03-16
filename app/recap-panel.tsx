@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
 import { Alert } from "@/app/ui/primitives/alert";
@@ -41,6 +41,10 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   const [isLoadingRecaps, setIsLoadingRecaps] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const loadRecapsEffect = useEffectEvent((preferredTargetKey: string | null = selectedTargetKey) => {
+    void loadRecaps(preferredTargetKey);
+  });
+
   useEffect(() => {
     if (!leagueId && workspace.home.connection.leagueId) {
       setLeagueId(workspace.home.connection.leagueId);
@@ -48,7 +52,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   }, [leagueId, workspace.home.connection.leagueId]);
 
   useEffect(() => {
-    void loadRecaps();
+    loadRecapsEffect();
   }, []);
 
   useEffect(() => {
@@ -57,7 +61,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
     }
 
     const interval = window.setInterval(() => {
-      void loadRecaps(selectedTargetKey);
+      loadRecapsEffect(selectedTargetKey);
     }, 4000);
 
     return () => window.clearInterval(interval);
@@ -114,12 +118,12 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   }
 
   const selectedRecap =
-    recaps.find((recap) => recap.targetKey === selectedTargetKey) ?? recaps[0] ?? null;
+    recaps.find((recap) => recap.targetKey === selectedTargetKey) ?? recaps.at(0) ?? null;
   const selectedResult = toGameDayRecapResult(selectedRecap?.resultJson);
   const selectedCoverage = toGameDayRecapCoverage(selectedRecap?.coverageJson);
   const recapDetail =
-    selectedRecap?.leagueName || selectedRecap?.leagueId
-      ? `${selectedRecap?.leagueName ?? selectedRecap?.leagueId} • ${selectedRecap?.gameDate}`
+    selectedRecap && (selectedRecap.leagueName || selectedRecap.leagueId)
+      ? `${selectedRecap.leagueName ?? selectedRecap.leagueId} • ${selectedRecap.gameDate}`
       : "No recap selected";
   const currentLeagueName = workspace.home.connection.leagueName ?? "Connected league";
 
@@ -235,7 +239,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
                         </StatusBadge>
                       </div>
                       <span className={statusCopyClassName}>
-                        {recap.gameDate} • {formatTimestamp(recap.updatedAt ?? recap.requestedAt)}
+                        {recap.gameDate} • {formatTimestamp(recap.updatedAt)}
                       </span>
                       {recap.error ? (
                         <span className="text-sm text-danger">{recap.error}</span>
@@ -353,11 +357,7 @@ export function resolveDefaultRecapDate(workspace: DashboardWorkspace): string {
 export function sortGameDayRecaps(
   recaps: readonly GameDayRecapRecord[],
 ): GameDayRecapRecord[] {
-  return [...recaps].sort((left, right) =>
-    String(right.updatedAt ?? right.requestedAt ?? "").localeCompare(
-      String(left.updatedAt ?? left.requestedAt ?? ""),
-    ),
-  );
+  return [...recaps].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export function hasActiveGameDayRecap(

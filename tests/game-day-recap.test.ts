@@ -729,13 +729,15 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
     },
   });
 
-  assert.equal(request.outputConfig?.textFormat?.type, "json_schema");
+  const schema = request.outputConfig.textFormat.structure.jsonSchema.schema;
+
+  assert.equal(request.outputConfig.textFormat.type, "json_schema");
   assert.match(
-    request.outputConfig?.textFormat?.structure?.jsonSchema?.schema ?? "",
+    schema,
     /"summary"/,
   );
   assert.match(
-    request.outputConfig?.textFormat?.structure?.jsonSchema?.schema ?? "",
+    schema,
     /"games"/,
   );
 });

@@ -147,7 +147,7 @@ test("deactivateActiveTrackedTeamsForUser clears projected credentials while lea
       }
 
       if (command instanceof PutCommand) {
-        putItems.push((command as PutCommand).input.Item as Record<string, unknown>);
+        putItems.push(command.input.Item as Record<string, unknown>);
         return {};
       }
 
