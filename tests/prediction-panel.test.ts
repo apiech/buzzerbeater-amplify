@@ -32,9 +32,10 @@ test("connected submission always carries the manual fallback payload", () => {
   });
 
   assert.equal(submission.mode, "CONNECTED");
-  if (submission.mode !== "CONNECTED") {
-    throw new Error("Expected a connected prediction request.");
-  }
-
-  assert.deepStrictEqual(submission.connectedInput.manualFallback, manualInput);
+  const connectedInput = (submission as { connectedInput: Record<string, unknown> }).connectedInput;
+  assert.deepStrictEqual(connectedInput.manualFallback, manualInput);
+  assert.equal("home_gdp_focus" in connectedInput, false);
+  assert.equal("home_gdp_pace" in connectedInput, false);
+  assert.equal("away_gdp_focus" in connectedInput, false);
+  assert.equal("away_gdp_pace" in connectedInput, false);
 });

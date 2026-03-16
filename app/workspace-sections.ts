@@ -31,8 +31,8 @@ export const workspaceSections = [
   },
   {
     id: "predictions",
-    label: "Game Prep",
-    description: "Preview likely outcomes and compare matchup inputs.",
+    label: "Predictions",
+    description: "Matchup previews from saved box scores or manual ratings.",
     group: "Competition",
   },
   {

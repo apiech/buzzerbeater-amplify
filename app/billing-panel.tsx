@@ -68,7 +68,7 @@ export function BillingPanel({
       <SectionHeading
         actions={
           <>
-            {summary?.planId !== "premium" ? (
+            {shouldOfferCheckout(summary) ? (
               <Button
                 loading={isStartingCheckout}
                 onClick={() => void handleCheckout()}
@@ -121,7 +121,7 @@ export function BillingPanel({
           <StatCard
             detail={
               summary.planId === "premium"
-                ? "Premium features are unlocked."
+                ? describePremiumAccess(summary.accessSource)
                 : "Upgrade when you want predictions and league writeups."
             }
             label="Premium access"
@@ -212,6 +212,8 @@ export function PremiumFeatureGatePanel({
 
 function describeAccessSource(accessSource: BillingSummary["accessSource"]): string {
   switch (accessSource) {
+    case "environment":
+      return "Premium access is currently granted by the sandbox or dev environment.";
     case "override":
       return "Access is currently granted by a manual override.";
     case "subscription":
@@ -234,8 +236,26 @@ function describeSubscription(summary: BillingSummary): string {
   return `Current billing period ends ${formattedDate}.`;
 }
 
+function describePremiumAccess(
+  accessSource: BillingSummary["accessSource"],
+): string {
+  if (accessSource === "environment") {
+    return "Premium features are unlocked by the current sandbox or dev environment.";
+  }
+
+  return "Premium features are unlocked.";
+}
+
 function humanizePlanId(planId: BillingSummary["planId"]): string {
   return planId === "premium" ? "Premium" : "Free";
+}
+
+function shouldOfferCheckout(summary: BillingSummary | null): boolean {
+  if (!summary) {
+    return false;
+  }
+
+  return summary.planId !== "premium" || summary.accessSource === "environment";
 }
 
 function humanizeSubscriptionStatus(status: string | null | undefined): string {

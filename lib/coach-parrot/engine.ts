@@ -4,6 +4,7 @@ import {
   normalizeEnthusiasm,
   normalizeLocation,
   normalizeOffense,
+  resolveHomeCourtFlag,
 } from "./artifacts";
 import type {
   CoachParrotContext,
@@ -430,6 +431,26 @@ function ratingLabel(value: number) {
   };
 }
 
+function contextAdjustment(args: {
+  rating: Rating;
+  baseRating: number;
+  context: CoachParrotContext;
+}) {
+  const enthusiasmCoefficient =
+    coachParrotArtifacts.enthusiasm_adjustments[args.rating] ?? 0;
+  const homeCourtCoefficient =
+    coachParrotArtifacts.home_court_adjustments[args.rating] ?? 0;
+  if (!enthusiasmCoefficient && !homeCourtCoefficient) {
+    return 0;
+  }
+
+  const magnitude = Math.log1p(args.baseRating);
+  return (
+    magnitude * ((args.context.enthusiasm - 5) * enthusiasmCoefficient) +
+    magnitude * (resolveHomeCourtFlag(args.context.homeCourt) * homeCourtCoefficient)
+  );
+}
+
 function normalizeAssignments(assignments: LineupAssignment[]): LineupAssignment[] {
   const merged = new Map<string, LineupAssignment>();
   for (const assignment of assignments) {
@@ -509,16 +530,25 @@ export function evaluateLineup(args: {
     }
   }
 
-  const rawRatings = Object.fromEntries(
-    RATING_SEQUENCE.map((rating) => [
+  const rawRatings = {} as Record<Rating, number>;
+  for (const rating of RATING_SEQUENCE) {
+    const baseRating = Object.values(perPositionContributions[rating]).reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    const adjustedRating = baseRating + contextAdjustment({
       rating,
-      Number(
-        Object.values(perPositionContributions[rating])
-          .reduce((sum, value) => sum + value, 0)
-          .toFixed(12),
-      ),
-    ]),
-  ) as Record<Rating, number>;
+      baseRating,
+      context,
+    });
+    if (baseRating > 0 && adjustedRating !== baseRating) {
+      const ratio = adjustedRating / baseRating;
+      for (const position of POSITION_SEQUENCE) {
+        perPositionContributions[rating][position] *= ratio;
+      }
+    }
+    rawRatings[rating] = Number(adjustedRating.toFixed(12));
+  }
 
   const roundedRatings = {} as Record<Rating, number>;
   const ratingLabels = {} as Record<Rating, string>;

@@ -37,6 +37,28 @@ test("verifyStripeWebhookEvent accepts a valid Stripe signature", () => {
   assert.equal(event.type, "checkout.session.completed");
 });
 
+test("buildBillingSummary applies the configured environment default plan", () => {
+  const summary = billingTesting.buildBillingSummary(
+    null,
+    billingTesting.resolveConfiguredDefaultPlan({
+      BILLING_DEFAULT_PLAN: "premium",
+    }),
+  );
+
+  assert.equal(summary.planId, "premium");
+  assert.equal(summary.accessSource, "environment");
+});
+
+test("resolveConfiguredDefaultPlan rejects invalid plan ids", () => {
+  assert.throws(
+    () =>
+      billingTesting.resolveConfiguredDefaultPlan({
+        BILLING_DEFAULT_PLAN: "enterprise",
+      }),
+    /BILLING_DEFAULT_PLAN/i,
+  );
+});
+
 test("handleStripeWebhook syncs a completed checkout into BillingAccount", async () => {
   const body = JSON.stringify({
     type: "checkout.session.completed",
@@ -222,4 +244,32 @@ test("setBillingOverride stores a complimentary premium plan", async () => {
     subscriptionPlanId: null,
     userId: "user-1",
   });
+});
+
+test("setBillingOverride can force free access even when the environment default is premium", async () => {
+  const summary = await setBillingOverride(
+    {
+      env: {
+        BILLING_DEFAULT_PLAN: "premium",
+      },
+      overrideExpiresAt: "2099-03-15T00:00:00.000Z",
+      overrideReason: "free plan test",
+      planId: "free",
+      userId: "user-1",
+    },
+    {
+      createPortalSession: async () => ({ url: "https://example.com/portal" }),
+      createSubscriptionCheckoutSession: async () => ({
+        url: "https://example.com/checkout",
+      }),
+      getBillingAccount: async () => null,
+      getStripeSubscription: async () => ({
+        id: "sub_123",
+      }),
+      upsertBillingAccount: async () => {},
+    },
+  );
+
+  assert.equal(summary.planId, "free");
+  assert.equal(summary.accessSource, "override");
 });

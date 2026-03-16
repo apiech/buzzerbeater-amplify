@@ -341,10 +341,6 @@ export type ManualPredictionInput = {
   away_defStrategy: string;
   neutral: string;
   effortDelta: number;
-  home_gdp_focus: string;
-  home_gdp_pace: string;
-  away_gdp_focus: string;
-  away_gdp_pace: string;
 };
 
 export type ConnectedPredictionInput = {
@@ -358,10 +354,6 @@ export type ConnectedPredictionInput = {
   away_defStrategy?: string;
   neutral?: string;
   effortDelta?: number;
-  home_gdp_focus?: string;
-  home_gdp_pace?: string;
-  away_gdp_focus?: string;
-  away_gdp_pace?: string;
   manualFallback?: ManualPredictionInput;
 };
 

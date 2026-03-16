@@ -1,4 +1,4 @@
-import artifactData from "./data/coach_parrot_v1.json";
+import artifactData from "./data/coach_parrot_v2.json";
 
 import type { CoachParrotArtifacts } from "./types";
 
@@ -80,6 +80,11 @@ export function normalizeDefense(value: string | null | undefined): string {
 
 export function normalizeLocation(value: string | null | undefined): string {
   return value === "Home Court" ? "Home Court" : "Away or Neutral";
+}
+
+export function resolveHomeCourtFlag(value: string | null | undefined): number {
+  const normalized = normalizeLocation(value);
+  return Number(coachParrotArtifacts.home_court_flags[normalized] ?? 0);
 }
 
 export function normalizeEnthusiasm(value: unknown): number {

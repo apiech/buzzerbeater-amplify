@@ -18,11 +18,21 @@ type BillingBackend = {
   createBillingCheckoutSession: FunctionResource;
   createBillingPortalSession: FunctionResource;
   createStack(name: string): Stack;
+  gameDayRecapSubmit: FunctionResource;
+  getBillingSummary: FunctionResource;
+  predictionSubmit: FunctionResource;
 };
 
 export function configureBillingIntegration(backend: BillingBackend): void {
   const appBaseUrl = resolveRequiredEnv("APP_BASE_URL");
+  const defaultPlanId = resolveBillingDefaultPlan();
   const premiumPriceId = resolveRequiredEnv("STRIPE_PREMIUM_PRICE_ID");
+
+  if (defaultPlanId) {
+    backend.getBillingSummary.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
+    backend.predictionSubmit.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
+    backend.gameDayRecapSubmit.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
+  }
 
   backend.createBillingCheckoutSession.addEnvironment("APP_BASE_URL", appBaseUrl);
   backend.createBillingCheckoutSession.addEnvironment(
@@ -58,4 +68,18 @@ function resolveRequiredEnv(name: string): string {
   }
 
   return value;
+}
+
+function resolveBillingDefaultPlan(): string | null {
+  if (Object.hasOwn(process.env, "BILLING_DEFAULT_PLAN")) {
+    const configuredValue = process.env.BILLING_DEFAULT_PLAN?.trim();
+    return configuredValue ? configuredValue : null;
+  }
+
+  const branchName = (process.env.AWS_BRANCH ?? "dev").toLowerCase();
+  if (branchName === "main" || branchName === "master" || branchName === "prod") {
+    return null;
+  }
+
+  return "premium";
 }

@@ -2100,7 +2100,7 @@ function WorkspaceDashboard({
                 <SectionHeading title="Saved game context" titleAs="h4" />
                 <p className={statusCopyClassName}>
                   Match {boxscoreDetails.matchId}. This saved snapshot keeps the
-                  strategy and effort context available for later prep.
+                  strategy and effort context available for later comparison.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {renderBoxscoreContext(boxscoreDetails.boxscore)}

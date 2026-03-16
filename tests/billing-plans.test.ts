@@ -17,6 +17,13 @@ test("resolvePlan defaults to free without billing state", () => {
   });
 });
 
+test("resolvePlan grants premium through an environment default", () => {
+  assert.deepStrictEqual(resolvePlan(null, { defaultPlanId: "premium" }), {
+    accessSource: "environment",
+    planId: "premium",
+  });
+});
+
 test("resolvePlan grants premium through an active subscription", () => {
   assert.deepStrictEqual(
     resolvePlan({
@@ -78,9 +85,47 @@ test("resolvePlan honors unexpired manual overrides", () => {
       overrideExpiresAt: "2099-03-15T00:00:00.000Z",
       stripeSubscriptionStatus: "past_due",
       subscriptionPlanId: "free",
+    }, {
+      defaultPlanId: "free",
     }),
     {
       accessSource: "override",
+      planId: "premium",
+    },
+  );
+});
+
+test("resolvePlan allows manual free overrides to beat an environment premium default", () => {
+  assert.deepStrictEqual(
+    resolvePlan({
+      grantedPlanId: "free",
+      overrideExpiresAt: "2099-03-15T00:00:00.000Z",
+      stripeSubscriptionStatus: "past_due",
+      subscriptionPlanId: "premium",
+    }, {
+      defaultPlanId: "premium",
+    }),
+    {
+      accessSource: "override",
+      planId: "free",
+    },
+  );
+});
+
+test("resolvePlan keeps active subscriptions ahead of an environment default", () => {
+  assert.deepStrictEqual(
+    resolvePlan(
+      {
+        currentPeriodEndAt: "2099-03-15T00:00:00.000Z",
+        stripeSubscriptionStatus: "active",
+        subscriptionPlanId: "premium",
+      },
+      {
+        defaultPlanId: "free",
+      },
+    ),
+    {
+      accessSource: "subscription",
       planId: "premium",
     },
   );

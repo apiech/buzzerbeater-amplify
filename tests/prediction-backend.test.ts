@@ -6,6 +6,7 @@ import {
   resolveConnectedInput,
   submitPredictionJob,
 } from "../amplify/data/_backend/prediction";
+import { requireFeatureAccess } from "../amplify/data/_backend/billing";
 
 const manualFallback = {
   home_outsideScoring: 8,
@@ -26,10 +27,6 @@ const manualFallback = {
   away_defStrategy: "23Zone",
   neutral: "0",
   effortDelta: 0,
-  home_gdp_focus: "N/A",
-  home_gdp_pace: "N/A",
-  away_gdp_focus: "N/A",
-  away_gdp_pace: "N/A",
 };
 
 function createMatchBoxscoreRecord(args: {
@@ -54,17 +51,9 @@ function createMatchBoxscoreRecord(args: {
     boxscoreJson: {
       homeTeam: {
         id: args.teamId,
-        gdp: {
-          focus: "Balanced.hit",
-          pace: "Normal.hit",
-        },
       },
       awayTeam: {
         id: args.opponentTeamId,
-        gdp: {
-          focus: "Inside.miss",
-          pace: "Slow.miss",
-        },
       },
     },
   };
@@ -147,8 +136,8 @@ test("resolveConnectedInput prefers cached boxscores and merges direct overrides
   assert.equal(resolved.home_offStrategy, "Motion");
   assert.equal(resolved.away_outsideScoring, 10.2);
   assert.equal(resolved.away_defStrategy, "23Zone");
-  assert.equal(resolved.home_gdp_focus, "Balanced.hit");
-  assert.equal(resolved.away_gdp_pace, "Normal.hit");
+  assert.equal("home_gdp_focus" in resolved, false);
+  assert.equal("away_gdp_pace" in resolved, false);
   assert.equal(resolved.neutral, "1");
   assert.equal(resolved.effortDelta, 1);
 });
@@ -168,6 +157,22 @@ test("resolveConnectedInput falls back to manual values when cache misses occur"
   );
 
   assert.deepStrictEqual(resolved, manualFallback);
+});
+
+test("normalizePredictionRequest tolerates historical GDP keys in stored jobs", () => {
+  const normalized = normalizePredictionRequest({
+    mode: "MANUAL",
+    manualInput: {
+      ...manualFallback,
+      home_gdp_focus: "Balanced.hit",
+      home_gdp_pace: "Normal.hit",
+    },
+  });
+
+  assert.equal(normalized.mode, "MANUAL");
+  const manualInput = (normalized as { manualInput: Record<string, unknown> }).manualInput;
+  assert.equal(manualInput.home_gdp_focus, "Balanced.hit");
+  assert.equal(manualInput.home_gdp_pace, "Normal.hit");
 });
 
 test("resolveConnectedInput still fails without any usable source data", async () => {
@@ -249,8 +254,56 @@ test("submitPredictionJob queues work for premium users", async () => {
   );
 
   assert.match(String(result.jobId), /^[0-9a-f-]{36}$/i);
-  assert.equal(createdRecord?.userId, "user-1");
-  assert.equal(createdRecord?.status, "QUEUED");
+  assert.ok(createdRecord);
+  assert.equal(createdRecord.userId, "user-1");
+  assert.equal(createdRecord.status, "QUEUED");
+  assert.deepStrictEqual(queuedMessage, {
+    jobId: result.jobId,
+    userId: "user-1",
+  });
+});
+
+test("submitPredictionJob allows access when premium is granted by the environment default", async () => {
+  let queuedMessage: Record<string, string> | null = null;
+
+  const result = await submitPredictionJob(
+    {
+      env: {
+        BILLING_DEFAULT_PLAN: "premium",
+      },
+      identity: { sub: "user-1" },
+      queueUrl: "https://queue.example.com",
+      request: {
+        mode: "MANUAL",
+        manualInput: manualFallback,
+      },
+    },
+    {
+      createPredictionJob: async (_env, input) =>
+        ({
+          ...(input as Record<string, unknown>),
+          createdAt: "2026-03-15T00:00:00.000Z",
+          updatedAt: "2026-03-15T00:00:00.000Z",
+        }) as any,
+      requireFeatureAccess: (args) =>
+        requireFeatureAccess(args, {
+          createPortalSession: async () => ({ url: "https://example.com/portal" }),
+          createSubscriptionCheckoutSession: async () => ({
+            url: "https://example.com/checkout",
+          }),
+          getBillingAccount: async () => null,
+          getStripeSubscription: async () => ({
+            id: "sub_123",
+          }),
+          upsertBillingAccount: async () => {},
+        }),
+      sendQueueMessage: async (_queueUrl, message) => {
+        queuedMessage = message;
+      },
+      updatePredictionJob: async () => {},
+    },
+  );
+
   assert.deepStrictEqual(queuedMessage, {
     jobId: result.jobId,
     userId: "user-1",

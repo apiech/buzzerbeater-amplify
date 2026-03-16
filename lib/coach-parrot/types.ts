@@ -116,7 +116,9 @@ export type CoachParrotArtifacts = {
   gs_slopes: Record<Rating, number>;
   default_minutes: number;
   coefficients: Record<Position, Record<Rating, Record<SkillKey, number>>>;
+  enthusiasm_adjustments: Partial<Record<Rating, number>>;
+  home_court_adjustments: Partial<Record<Rating, number>>;
+  home_court_flags: Record<string, number>;
   tactic_energy: Record<string, Record<Rating, { exponent: number; base: number }>>;
   sample: CoachParrotSample;
 };
-

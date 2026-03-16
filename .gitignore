@@ -21,6 +21,8 @@
 # misc
 .DS_Store
 *.pem
+*.swp
+*.swo
 
 # debug
 npm-debug.log*
@@ -41,3 +43,6 @@ next-env.d.ts
 .amplify
 amplify_outputs*
 amplifyconfiguration*
+
+# cdk
+cdk.out/

@@ -113,6 +113,7 @@ export type { BillingSummary };
 
 export const __testing = {
   buildBillingSummary,
+  resolveConfiguredDefaultPlan,
   verifyStripeWebhookEvent,
 };
 
@@ -122,7 +123,7 @@ export async function getBillingSummary(args: {
 }, runtime: StripeRuntime = defaultRuntime): Promise<BillingSummary> {
   const userId = requireUserId(args.identity);
   const billingAccount = await runtime.getBillingAccount(args.env, userId);
-  return buildBillingSummary(billingAccount);
+  return buildBillingSummary(billingAccount, resolveConfiguredDefaultPlan(args.env));
 }
 
 export async function createBillingCheckoutSession(args: {
@@ -181,7 +182,9 @@ export async function requireFeatureAccess(args: {
   userId: string;
 }, runtime: StripeRuntime = defaultRuntime): Promise<PlanId> {
   const billingAccount = await runtime.getBillingAccount(args.env, args.userId);
-  const { planId } = resolvePlan(billingAccount);
+  const { planId } = resolvePlan(billingAccount, {
+    defaultPlanId: resolveConfiguredDefaultPlan(args.env),
+  });
   if (hasFeature(planId, args.featureKey)) {
     return planId;
   }
@@ -221,7 +224,7 @@ export async function setBillingOverride(args: {
   };
 
   await runtime.upsertBillingAccount(args.env, nextRecord);
-  return buildBillingSummary(nextRecord);
+  return buildBillingSummary(nextRecord, resolveConfiguredDefaultPlan(args.env));
 }
 
 export async function handleStripeWebhook(args: {
@@ -312,8 +315,9 @@ export function verifyStripeWebhookEvent(args: {
 
 export function buildBillingSummary(
   billingAccount: BillingAccountRecord | null | undefined,
+  defaultPlanId: PlanId | null = null,
 ): BillingSummary {
-  const planResolution = resolvePlan(billingAccount);
+  const planResolution = resolvePlan(billingAccount, { defaultPlanId });
   return {
     accessSource: planResolution.accessSource,
     cancelAtPeriodEnd: Boolean(billingAccount?.cancelAtPeriodEnd),
@@ -322,6 +326,19 @@ export function buildBillingSummary(
     planId: planResolution.planId,
     subscriptionStatus: billingAccount?.stripeSubscriptionStatus ?? null,
   };
+}
+
+function resolveConfiguredDefaultPlan(env: GraphqlEnv): PlanId | null {
+  const configuredValue = normalizeOptionalString(env.BILLING_DEFAULT_PLAN ?? null);
+  if (!configuredValue) {
+    return null;
+  }
+
+  if (!isPlanId(configuredValue)) {
+    throw new Error("BILLING_DEFAULT_PLAN must be set to a recognized plan id.");
+  }
+
+  return configuredValue;
 }
 
 async function syncFromCheckoutSession(

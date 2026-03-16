@@ -51,26 +51,6 @@ const DEFENSE_OPTIONS = [
   "OutsideBoxAndOne",
 ];
 
-const GDP_FOCUS_OPTIONS = [
-  "N/A",
-  "Inside.hit",
-  "Inside.miss",
-  "outside.hit",
-  "outside.miss",
-  "Balanced.hit",
-  "Balanced.miss",
-];
-
-const GDP_PACE_OPTIONS = [
-  "N/A",
-  "Fast.hit",
-  "Fast.miss",
-  "Normal.hit",
-  "Normal.miss",
-  "Slow.hit",
-  "Slow.miss",
-];
-
 const RATING_FIELDS: Array<{
   label: string;
   homeKey: NumericManualField;
@@ -184,9 +164,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
   }, []);
 
   useEffect(() => {
-    const hasActiveJob = jobs.some(
-      (job) => job.status && !terminalStatuses.has(job.status),
-    );
+    const hasActiveJob = jobs.some((job) => !terminalStatuses.has(job.status));
     if (!hasActiveJob) {
       return;
     }
@@ -210,9 +188,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
     }
 
     const sorted = [...data].sort((left, right) =>
-      (right.updatedAt ?? right.createdAt ?? "").localeCompare(
-        left.updatedAt ?? left.createdAt ?? "",
-      ),
+      right.updatedAt.localeCompare(left.updatedAt),
     );
     setJobs(sorted);
     setIsLoadingJobs(false);
@@ -251,7 +227,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
       homeTeamId &&
       awayTeamId,
   );
-  const latestJob = jobs[0] ?? null;
+  const latestJob = jobs.length ? jobs[0] : null;
   const latestResult = latestJob ? toPredictionResult(latestJob.result) : null;
   const latestExplanation = latestJob
     ? describeResolvedInput(latestJob.resolvedInputSnapshot)
@@ -305,7 +281,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             </Button>
           </>
         }
-        eyebrow="Game Prep"
+        eyebrow="Predictions"
         title="Matchup preview"
       />
 
@@ -446,7 +422,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
 
       <div className={twoColumnGridClassName}>
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Tactics and prep" titleAs="h4" />
+          <SectionHeading title="Tactics" titleAs="h4" />
           <div className={formGridClassName}>
             <Field label="Home offense">
               <Select
@@ -504,62 +480,6 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                 ))}
               </Select>
             </Field>
-            <Field label="Home GDP focus">
-              <Select
-                onChange={(event) =>
-                  updateTextField("home_gdp_focus", event.target.value, setManualInput)
-                }
-                value={manualInput.home_gdp_focus}
-              >
-                {GDP_FOCUS_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Home GDP pace">
-              <Select
-                onChange={(event) =>
-                  updateTextField("home_gdp_pace", event.target.value, setManualInput)
-                }
-                value={manualInput.home_gdp_pace}
-              >
-                {GDP_PACE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Away GDP focus">
-              <Select
-                onChange={(event) =>
-                  updateTextField("away_gdp_focus", event.target.value, setManualInput)
-                }
-                value={manualInput.away_gdp_focus}
-              >
-                {GDP_FOCUS_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Away GDP pace">
-              <Select
-                onChange={(event) =>
-                  updateTextField("away_gdp_pace", event.target.value, setManualInput)
-                }
-                value={manualInput.away_gdp_pace}
-              >
-                {GDP_PACE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
           </div>
         </Panel>
 
@@ -598,7 +518,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
               </StatusBadge>
               <strong className="text-base text-ink">{describePredictionJob(latestJob)}</strong>
               <span className="text-sm text-ink-muted">
-                Updated {formatTimestamp(latestJob.updatedAt ?? latestJob.createdAt ?? null)}
+                Updated {formatTimestamp(latestJob.updatedAt)}
               </span>
               {latestResult ? (
                 <span className="text-sm text-ink-muted">
@@ -637,7 +557,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                   {humanizeJobStatus(job.status)}
                   {job.modelVersion ? ` • ${job.modelVersion}` : ""}
                   {" • "}
-                  {formatTimestamp(job.updatedAt ?? job.createdAt ?? null)}
+                  {formatTimestamp(job.updatedAt)}
                 </span>
               </li>
             ))}
@@ -676,10 +596,6 @@ export function buildSubmissionRequest(args: {
       home_defStrategy: args.manualInput.home_defStrategy,
       away_offStrategy: args.manualInput.away_offStrategy,
       away_defStrategy: args.manualInput.away_defStrategy,
-      home_gdp_focus: args.manualInput.home_gdp_focus,
-      home_gdp_pace: args.manualInput.home_gdp_pace,
-      away_gdp_focus: args.manualInput.away_gdp_focus,
-      away_gdp_pace: args.manualInput.away_gdp_pace,
       neutral: args.manualInput.neutral,
       effortDelta: args.manualInput.effortDelta,
       manualFallback: args.manualInput,
@@ -707,10 +623,6 @@ export function createDefaultManualPredictionInput(): ManualPredictionInput {
     away_defStrategy: "ManToMan",
     neutral: "0",
     effortDelta: 0,
-    home_gdp_focus: "N/A",
-    home_gdp_pace: "N/A",
-    away_gdp_focus: "N/A",
-    away_gdp_pace: "N/A",
   };
 }
 
@@ -820,10 +732,6 @@ function formatAmplifyErrors(
 }
 
 function humanizeJobStatus(status: PredictionJobRecord["status"]): string {
-  if (!status) {
-    return "Unknown";
-  }
-
   return status
     .toLowerCase()
     .split("_")

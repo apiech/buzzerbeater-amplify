@@ -1,0 +1,1573 @@
+{
+  "coefficients": {
+    "C": {
+      "insideDefense": {
+        "DR": 0.0,
+        "HA": 0.00677367293962998,
+        "ID": 0.21813075930269302,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.00732597659030713,
+        "PA": 0.0059148376795907995,
+        "RB": 0.0110232112023244,
+        "SB": 0.013480389709551002
+      },
+      "insideScoring": {
+        "DR": 0.0036983023580640303,
+        "HA": 0.005296371658243561,
+        "ID": 0.0,
+        "IS": 0.265421101169725,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.0,
+        "RB": 0.0102109156678367,
+        "SB": 0.0
+      },
+      "offensiveFlow": {
+        "DR": 0.0114313982359245,
+        "HA": 0.0,
+        "ID": 0.0,
+        "IS": 0.0160607533712612,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.0,
+        "RB": 0.0131911301692307,
+        "SB": 0.0
+      },
+      "outsideDefense": {
+        "DR": 0.0,
+        "HA": 0.0192259708078775,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0195364208122904,
+        "PA": 0.0040298752882016306,
+        "RB": 0.0051607658885203,
+        "SB": 0.0097804388096854
+      },
+      "outsideScoring": {
+        "DR": 0.021288649097129003,
+        "HA": 0.0,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0182635401765824,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.0006866592185607531,
+        "RB": 0.011955501929693699,
+        "SB": 0.0
+      },
+      "rebounding": {
+        "DR": 0.0,
+        "HA": 0.0,
+        "ID": 0.0013086172365250081,
+        "IS": 0.00426697421130647,
+        "JR": 0.01006287321824551,
+        "JS": 2.92229121768916e-05,
+        "OD": 0.0,
+        "PA": 0.008527632908427469,
+        "RB": 0.119392695590985,
+        "SB": 0.0
+      }
+    },
+    "PF": {
+      "insideDefense": {
+        "DR": 0.0,
+        "HA": 0.00664855095944733,
+        "ID": 0.174938647557131,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.00520620234855675,
+        "PA": 0.007863212125003741,
+        "RB": 0.0076686491641347705,
+        "SB": 0.0148594266898326
+      },
+      "insideScoring": {
+        "DR": 0.0043239614556649306,
+        "HA": 0.00397450716079409,
+        "ID": 0.0,
+        "IS": 0.17549497509515202,
+        "JR": 0.0168010881741563,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.00219637776904091,
+        "RB": 0.0019065559527587101,
+        "SB": 0.0
+      },
+      "offensiveFlow": {
+        "DR": 0.007172459438372741,
+        "HA": 0.00964567210095266,
+        "ID": 0.0,
+        "IS": 0.009077388863039751,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.0,
+        "RB": 0.0071804183682491205,
+        "SB": 0.0
+      },
+      "outsideDefense": {
+        "DR": 0.0,
+        "HA": 0.0202316070657454,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.038929546307319006,
+        "PA": 0.00433278468696503,
+        "RB": 0.00410610829860369,
+        "SB": 0.00883290718338656
+      },
+      "outsideScoring": {
+        "DR": 0.0052361871668553306,
+        "HA": 0.0,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0217107033881514,
+        "JS": 0.0141233769547199,
+        "OD": 0.0,
+        "PA": 0.000813383403276314,
+        "RB": 0.006600287145220831,
+        "SB": 0.0
+      },
+      "rebounding": {
+        "DR": 0.0,
+        "HA": 0.0,
+        "ID": 0.0012722949505512126,
+        "IS": 0.0039882672512250306,
+        "JR": 0.01176651616021246,
+        "JS": 2.83334068277995e-05,
+        "OD": 0.0,
+        "PA": 0.00916856782915827,
+        "RB": 0.1252254409535843,
+        "SB": 0.0
+      }
+    },
+    "PG": {
+      "insideDefense": {
+        "DR": 0.0,
+        "HA": 0.004239090186179141,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0022603248612880003,
+        "PA": 0.00674584641812905,
+        "RB": 0.000269451158434859,
+        "SB": 0.00785922076240593
+      },
+      "insideScoring": {
+        "DR": 0.00193777547226753,
+        "HA": 0.0,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.00688234567694371,
+        "JS": 0.000368953668553083,
+        "OD": 0.0,
+        "PA": 0.00810400808854971,
+        "RB": 0.00018535431455650702,
+        "SB": 0.0
+      },
+      "offensiveFlow": {
+        "DR": 0.0009193073216197291,
+        "HA": 0.0740564891431652,
+        "ID": 0.0,
+        "IS": 0.005196057742003521,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.240280923106708,
+        "RB": 0.00291597195886008,
+        "SB": 0.0
+      },
+      "outsideDefense": {
+        "DR": 0.0,
+        "HA": 0.0175371972818045,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.142150527464484,
+        "PA": 0.0049758633540620805,
+        "RB": 0.00459779050227566,
+        "SB": 0.00849229906820665
+      },
+      "outsideScoring": {
+        "DR": 0.00123903505012986,
+        "HA": 0.0,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.116628471742448,
+        "JS": 0.0922432703762188,
+        "OD": 0.0,
+        "PA": 0.0014896926101709,
+        "RB": 0.009876220480937462,
+        "SB": 0.0
+      },
+      "rebounding": {
+        "DR": 0.0,
+        "HA": 0.0,
+        "ID": 0.00023583563461595155,
+        "IS": 0.0037260881405198802,
+        "JR": 0.013885084681144012,
+        "JS": 3.70133325420673e-05,
+        "OD": 0.0,
+        "PA": 0.00848162386458615,
+        "RB": 0.06800048894286259,
+        "SB": 0.0
+      }
+    },
+    "SF": {
+      "insideDefense": {
+        "DR": 0.0,
+        "HA": 0.00595323891104591,
+        "ID": 0.0886837209645858,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.005539266804892561,
+        "PA": 0.00913634706683657,
+        "RB": 0.00201810543477086,
+        "SB": 0.0153085202745611
+      },
+      "insideScoring": {
+        "DR": 0.00419083260685663,
+        "HA": 0.004510112137512331,
+        "ID": 0.0,
+        "IS": 0.12475253781040001,
+        "JR": 0.025919578543272002,
+        "JS": 0.0008504858032975151,
+        "OD": 0.0,
+        "PA": 0.0023595610222560603,
+        "RB": 0.0,
+        "SB": 0.0
+      },
+      "offensiveFlow": {
+        "DR": 0.00864471758372202,
+        "HA": 0.0448968466325355,
+        "ID": 0.0,
+        "IS": 0.0046820053860837305,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.0928635819697103,
+        "RB": 0.000995040119079486,
+        "SB": 0.0
+      },
+      "outsideDefense": {
+        "DR": 0.0,
+        "HA": 0.0185943697596024,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.10853197429399301,
+        "PA": 0.005453342383921381,
+        "RB": 0.00275876413647118,
+        "SB": 0.00927335994346516
+      },
+      "outsideScoring": {
+        "DR": 0.00470468377341847,
+        "HA": 0.0,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0301436303702152,
+        "JS": 0.0954133528289968,
+        "OD": 0.0,
+        "PA": 0.000974935675108679,
+        "RB": 0.006443286924180781,
+        "SB": 0.0
+      },
+      "rebounding": {
+        "DR": 0.0,
+        "HA": 0.0,
+        "ID": 0.0009028126286983637,
+        "IS": 0.0040901268151088506,
+        "JR": 0.01235300327973437,
+        "JS": 2.99028778316438e-05,
+        "OD": 0.0,
+        "PA": 0.00894701414924056,
+        "RB": 0.07978572727042339,
+        "SB": 0.0
+      }
+    },
+    "SG": {
+      "insideDefense": {
+        "DR": 0.0,
+        "HA": 0.00448117334538713,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0026603221448228903,
+        "PA": 0.007360176324222351,
+        "RB": 0.0,
+        "SB": 0.0120817625762225
+      },
+      "insideScoring": {
+        "DR": 0.00137395682819584,
+        "HA": 1.3815006161548399e-06,
+        "ID": 0.0,
+        "IS": 0.0156276503293185,
+        "JR": 0.0164352877236189,
+        "JS": 0.000574544248363485,
+        "OD": 0.0,
+        "PA": 0.0017134897957154101,
+        "RB": 0.00134134619422635,
+        "SB": 0.0
+      },
+      "offensiveFlow": {
+        "DR": 0.0,
+        "HA": 0.0299378915973036,
+        "ID": 0.0,
+        "IS": 0.0037980819794164403,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.0,
+        "PA": 0.0763832375628679,
+        "RB": 0.0,
+        "SB": 0.0
+      },
+      "outsideDefense": {
+        "DR": 0.0,
+        "HA": 0.0158225786042993,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0,
+        "JS": 0.0,
+        "OD": 0.18568194506583,
+        "PA": 0.0050574719063199705,
+        "RB": 0.0034277891467958204,
+        "SB": 0.00986387852391731
+      },
+      "outsideScoring": {
+        "DR": 0.0,
+        "HA": 0.0,
+        "ID": 0.0,
+        "IS": 0.0,
+        "JR": 0.0967031904370204,
+        "JS": 0.12362230005701601,
+        "OD": 0.0,
+        "PA": 0.0010468742081140001,
+        "RB": 0.0060706230347766,
+        "SB": 0.0
+      },
+      "rebounding": {
+        "DR": 0.0,
+        "HA": 0.0,
+        "ID": 0.000632186551391913,
+        "IS": 0.00427636572879698,
+        "JR": 0.01311945014686967,
+        "JS": 3.4566079171881196e-05,
+        "OD": 0.0,
+        "PA": 0.00830025975676678,
+        "RB": 0.058181916327365794,
+        "SB": 0.0
+      }
+    }
+  },
+  "default_minutes": 30,
+  "dictionary": {
+    "1-3-1 Zone": "1-3-1 Zone",
+    "2-3 Zone": "2-3 Zone",
+    "3-2 Zone": "3-2 Zone",
+    "AGE": "Age",
+    "Away": "Away or Neutral",
+    "Base Offense": "Base Offense",
+    "C": "C",
+    "ChoosePlayer": "Training plan for:",
+    "Coach level": "Coach level",
+    "Copy players": "Either copy-and-paste all the player names from the MyData-sheet, or select the player names individually below. Then manually enter their age, height, mix of designated positions, and involvement in training groups.",
+    "Copy roster": "Select and then copy (Ctrl-c) your roster table in Buzzerbeater from the 'Set Lineup' page of an upcoming game and 'Paste Special' as unformatted text (Chrome, Firefox) to the one highlighted field (B10). If you use Internet Explorer, do a normal Paste.",
+    "DR": "DR",
+    "Default minutes": "Default minutes",
+    "Defense": "Defense",
+    "EX": "EX",
+    "EnableTrainings": "Enable(1) or disable(0) individual training types",
+    "Energy": "Energy",
+    "Enthusiasm": "Enthusiasm",
+    "Enthusiasm_short": "ENT",
+    "FT": "FT",
+    "Full Court Press": "Full Court Press",
+    "GS": "GS",
+    "HA": "HA",
+    "Height": "Height",
+    "Home Court": "Home Court",
+    "HomeCourt_short": "HCA",
+    "ID": "ID",
+    "IS": "IS",
+    "Inside Defense": "Inside Defense",
+    "Inside Scoring": "Inside Scoring",
+    "JR": "JR",
+    "JS": "JS",
+    "Just guesses": "These values are just wild guesses!",
+    "Language": "Language",
+    "Level": "Level",
+    "Location": "Location",
+    "Logscore": "Logscore",
+    "Look Inside": "Look Inside",
+    "Low Post": "Low Post",
+    "MIN": "MIN",
+    "Man-to-man": "Man to man",
+    "MinSalaryEfficiency": "Max. $ per .01 LS:",
+    "Minutes": "Minutes",
+    "Motion": "Motion",
+    "OD": "OD",
+    "OF": "OF",
+    "OS": "OS",
+    "Offense": "Offense",
+    "Offensive Flow": "Offensive Flow",
+    "Output range": "Output range",
+    "Outside Scoring": "Outside Scoring",
+    "PA": "PA",
+    "PF": "PF",
+    "PG": "PG",
+    "POS": "POS",
+    "Patient": "Patient",
+    "Perimeter Defense": "Perimeter Defense",
+    "PlayerDisplay": "Player display",
+    "Players": "Players",
+    "Please complete!": "Incomplete defense",
+    "Princeton": "Princeton",
+    "Priority Tactics": "Priority Tactics",
+    "Push the Ball": "Push the Ball",
+    "RB": "RB",
+    "Rating": "Rating",
+    "Rebounding": "Rebounding",
+    "Roster": "Roster",
+    "RotationLength": "Training rotation:",
+    "Run and Gun": "Run and Gun",
+    "SB": "SB",
+    "SF": "SF",
+    "SG": "SG",
+    "ST": "ST",
+    "Salary": "Salary",
+    "SalaryEfficiency": "Rel. cost [+k$/+LS ]",
+    "Season_short": "s",
+    "Skillsum": "Skillsum",
+    "SortOrder": "Player sort order",
+    "StandardSort": "Standard [LS]",
+    "Sum": "Sum",
+    "Sum of Ratings": "Sum of team ratings",
+    "Total output": "Total output",
+    "Training Groups": "Training groups",
+    "Training Targets": "Target values for Logscore-based training",
+    "Unassigned minutes_afternumber": " min!",
+    "Unassigned minutes_beforenumber": "Add ",
+    "Use tabs": "Hint for spreadsheet-newbies: Use the tabs at the bottom of the window to navigate!",
+    "Week": "Week",
+    "Week_short": "w",
+    "atrocious": "atrocious",
+    "average": "average",
+    "awful": "awful",
+    "colossal": "colossal",
+    "defends": "defends",
+    "for": "for",
+    "height units": "Height units",
+    "high": "high",
+    "inept": "inept",
+    "legendary": "legendary ",
+    "low": "low",
+    "marvelous": "marvelous",
+    "mediocre": "mediocre",
+    "medium": "medium",
+    "phenomenal": "phenomenal",
+    "pitiful": "pitiful",
+    "prodigious": "prodigious",
+    "proficient": "proficient",
+    "prolific": "prolific",
+    "prominent": "prominent",
+    "respectable": "respectable",
+    "sensational": "sensational",
+    "strong": "strong",
+    "stupendous": "stupendous",
+    "tremendous": "tremendous",
+    "weeks": "weeks",
+    "wondrous": "wondrous"
+  },
+  "enthusiasm_adjustments": {
+    "insideDefense": 0.0928645087917641,
+    "outsideDefense": 0.08699294095437379,
+    "rebounding": 0.09891117903848069
+  },
+  "extracted_from": "/Users/karey/Documents/cp_2_1_excel.xlsx",
+  "fractional_band_labels": {
+    "0": "low",
+    "1": "medium",
+    "2": "high"
+  },
+  "gs_slopes": {
+    "insideDefense": 0.044761862679577005,
+    "insideScoring": 0.0726313217211739,
+    "offensiveFlow": 0.07312617885465719,
+    "outsideDefense": 0.054642552279772896,
+    "outsideScoring": 0.0758158386719105,
+    "rebounding": 0.0421696397285041
+  },
+  "home_court_adjustments": {
+    "insideDefense": 0.24065095370951303,
+    "outsideDefense": 0.23973399548758,
+    "rebounding": 0.22492498452612203
+  },
+  "home_court_flags": {
+    "Away or Neutral": 0,
+    "Home Court": 1
+  },
+  "rating_word_labels": {
+    "1": "atrocious",
+    "10": "prominent",
+    "11": "prolific",
+    "12": "sensational",
+    "13": "tremendous",
+    "14": "wondrous",
+    "15": "marvelous",
+    "16": "prodigious",
+    "17": "stupendous",
+    "18": "phenomenal",
+    "19": "colossal",
+    "2": "pitiful",
+    "20": "legendary",
+    "3": "awful",
+    "4": "inept",
+    "5": "mediocre",
+    "6": "average",
+    "7": "respectable",
+    "8": "strong",
+    "9": "proficient"
+  },
+  "sample": {
+    "context": {
+      "defense": "Full Court Press",
+      "enthusiasm": 5,
+      "home_court": "Away or Neutral",
+      "offense": "Base Offense"
+    },
+    "lineup": [
+      {
+        "minutes": 48,
+        "player_id": "12",
+        "position": "PG"
+      },
+      {
+        "minutes": 48,
+        "player_id": "13",
+        "position": "SG"
+      },
+      {
+        "minutes": 48,
+        "player_id": "14",
+        "position": "SF"
+      },
+      {
+        "minutes": 48,
+        "player_id": "15",
+        "position": "PF"
+      },
+      {
+        "minutes": 48,
+        "player_id": "16",
+        "position": "C"
+      }
+    ],
+    "players": [
+      {
+        "ex": 14,
+        "ft": 21,
+        "gs": 9,
+        "name": "Ade Taylor",
+        "player_id": "2",
+        "position_outputs": {
+          "C": 15.452347279151478,
+          "PF": 13.039757176057257,
+          "PG": 14.426926936231263,
+          "SF": 15.120110984140112,
+          "SG": 12.421259647748638
+        },
+        "skills": {
+          "DR": 22,
+          "HA": 20,
+          "ID": 18,
+          "IS": 19,
+          "JR": 12,
+          "JS": 18,
+          "OD": 19,
+          "PA": 13,
+          "RB": 10,
+          "SB": 11
+        },
+        "st": 9
+      },
+      {
+        "ex": 11,
+        "ft": 20,
+        "gs": 9,
+        "name": "Quentin Laperche",
+        "player_id": "10",
+        "position_outputs": {
+          "C": 16.020987850593784,
+          "PF": 13.484299055715129,
+          "PG": 14.67093044103121,
+          "SF": 14.786066975867609,
+          "SG": 11.525677798082388
+        },
+        "skills": {
+          "DR": 19,
+          "HA": 18,
+          "ID": 18,
+          "IS": 18,
+          "JR": 11,
+          "JS": 13,
+          "OD": 15,
+          "PA": 17,
+          "RB": 16,
+          "SB": 13
+        },
+        "st": 7
+      },
+      {
+        "ex": 14,
+        "ft": 13,
+        "gs": 8,
+        "name": "Larry Henderson",
+        "player_id": "1",
+        "position_outputs": {
+          "C": 14.199669528236521,
+          "PF": 11.916361093662854,
+          "PG": 12.176537682166483,
+          "SF": 13.23645210083754,
+          "SG": 10.760708638017757
+        },
+        "skills": {
+          "DR": 18,
+          "HA": 16,
+          "ID": 17,
+          "IS": 19,
+          "JR": 11,
+          "JS": 16,
+          "OD": 18,
+          "PA": 11,
+          "RB": 11,
+          "SB": 11
+        },
+        "st": 9
+      },
+      {
+        "ex": 21,
+        "ft": 18,
+        "gs": 9,
+        "name": "Tun\u00e7 Akalin",
+        "player_id": "4",
+        "position_outputs": {
+          "C": 12.486888442767974,
+          "PF": 10.951290520151293,
+          "PG": 13.662952558466836,
+          "SF": 13.241575004739113,
+          "SG": 11.826828117592447
+        },
+        "skills": {
+          "DR": 15,
+          "HA": 16,
+          "ID": 16,
+          "IS": 14,
+          "JR": 17,
+          "JS": 17,
+          "OD": 17,
+          "PA": 12,
+          "RB": 8,
+          "SB": 8
+        },
+        "st": 4
+      },
+      {
+        "ex": 14,
+        "ft": 26,
+        "gs": 9,
+        "name": "Stephan Babic",
+        "player_id": "5",
+        "position_outputs": {
+          "C": 12.880270481881697,
+          "PF": 10.477661868147203,
+          "PG": 7.928087815633532,
+          "SF": 9.741994168419087,
+          "SG": 6.618569081572154
+        },
+        "skills": {
+          "DR": 10,
+          "HA": 10,
+          "ID": 15,
+          "IS": 16,
+          "JR": 7,
+          "JS": 8,
+          "OD": 7,
+          "PA": 7,
+          "RB": 14,
+          "SB": 7
+        },
+        "st": 5
+      },
+      {
+        "ex": 16,
+        "ft": 18,
+        "gs": 8,
+        "name": "Tomislav Ganza",
+        "player_id": "9",
+        "position_outputs": {
+          "C": 7.967697088352388,
+          "PF": 6.838617928827104,
+          "PG": 7.760664017739595,
+          "SF": 8.096525584393497,
+          "SG": 6.92800873650753
+        },
+        "skills": {
+          "DR": 13,
+          "HA": 12,
+          "ID": 8,
+          "IS": 10,
+          "JR": 7,
+          "JS": 13,
+          "OD": 10,
+          "PA": 6,
+          "RB": 8,
+          "SB": 7
+        },
+        "st": 5
+      },
+      {
+        "ex": 7,
+        "ft": 7,
+        "gs": 8,
+        "name": "3 Some Prospect",
+        "player_id": "14",
+        "position_outputs": {
+          "C": 6.504505538243485,
+          "PF": 5.59779638325305,
+          "PG": 6.466029496367117,
+          "SF": 6.384801332310337,
+          "SG": 5.388592097282197
+        },
+        "skills": {
+          "DR": 7,
+          "HA": 7,
+          "ID": 7,
+          "IS": 8,
+          "JR": 7,
+          "JS": 8,
+          "OD": 7,
+          "PA": 7,
+          "RB": 7,
+          "SB": 7
+        },
+        "st": 7
+      },
+      {
+        "ex": 7,
+        "ft": 7,
+        "gs": 8,
+        "name": "5 Some Prospect",
+        "player_id": "16",
+        "position_outputs": {
+          "C": 6.378219701743841,
+          "PF": 5.540447111789095,
+          "PG": 6.446709551807007,
+          "SF": 6.234855262830931,
+          "SG": 5.3019988991225
+        },
+        "skills": {
+          "DR": 7,
+          "HA": 7,
+          "ID": 7,
+          "IS": 7,
+          "JR": 7,
+          "JS": 7,
+          "OD": 7,
+          "PA": 7,
+          "RB": 8,
+          "SB": 7
+        },
+        "st": 7
+      },
+      {
+        "ex": 7,
+        "ft": 7,
+        "gs": 8,
+        "name": "1 Some Prospect",
+        "player_id": "12",
+        "position_outputs": {
+          "C": 6.219761626372008,
+          "PF": 5.407051110159383,
+          "PG": 6.64510147813965,
+          "SF": 6.266438286429086,
+          "SG": 5.336253725041119
+        },
+        "skills": {
+          "DR": 7,
+          "HA": 7,
+          "ID": 7,
+          "IS": 7,
+          "JR": 7,
+          "JS": 7,
+          "OD": 7,
+          "PA": 8,
+          "RB": 7,
+          "SB": 7
+        },
+        "st": 7
+      },
+      {
+        "ex": 2,
+        "ft": 8,
+        "gs": 8,
+        "name": "Raffy Elegido",
+        "player_id": "8",
+        "position_outputs": {
+          "C": 4.42022540245875,
+          "PF": 4.303819314793529,
+          "PG": 7.663383522553794,
+          "SF": 5.869375997703257,
+          "SG": 5.678454236088978
+        },
+        "skills": {
+          "DR": 9,
+          "HA": 10,
+          "ID": 6,
+          "IS": 1,
+          "JR": 9,
+          "JS": 6,
+          "OD": 7,
+          "PA": 10,
+          "RB": 7,
+          "SB": 6
+        },
+        "st": 9
+      },
+      {
+        "ex": 7,
+        "ft": 7,
+        "gs": 8,
+        "name": "4 Some Prospect",
+        "player_id": "15",
+        "position_outputs": {
+          "C": 5.895133045536569,
+          "PF": 5.1805961986803,
+          "PG": 6.347817523914244,
+          "SF": 5.996904025317314,
+          "SG": 5.205008162400481
+        },
+        "skills": {
+          "DR": 7,
+          "HA": 7,
+          "ID": 7,
+          "IS": 6,
+          "JR": 7,
+          "JS": 7,
+          "OD": 7,
+          "PA": 7,
+          "RB": 7,
+          "SB": 7
+        },
+        "st": 7
+      },
+      {
+        "ex": 7,
+        "ft": 7,
+        "gs": 8,
+        "name": "2 Some Prospect",
+        "player_id": "13",
+        "position_outputs": {
+          "C": 6.169782745813274,
+          "PF": 5.328200722775738,
+          "PG": 6.210377934749128,
+          "SF": 6.0664179310063915,
+          "SG": 5.09529462582921
+        },
+        "skills": {
+          "DR": 7,
+          "HA": 7,
+          "ID": 7,
+          "IS": 7,
+          "JR": 6,
+          "JS": 7,
+          "OD": 7,
+          "PA": 7,
+          "RB": 7,
+          "SB": 7
+        },
+        "st": 7
+      },
+      {
+        "ex": 1,
+        "ft": 4,
+        "gs": 7,
+        "name": "Oreste Mannazzu",
+        "player_id": "11",
+        "position_outputs": {
+          "C": 5.315595424132529,
+          "PF": 4.8268995357632924,
+          "PG": 5.378952882276677,
+          "SF": 5.034196828269712,
+          "SG": 4.40458646159068
+        },
+        "skills": {
+          "DR": 4,
+          "HA": 5,
+          "ID": 10,
+          "IS": 3,
+          "JR": 9,
+          "JS": 4,
+          "OD": 6,
+          "PA": 6,
+          "RB": 7,
+          "SB": 11
+        },
+        "st": 8
+      },
+      {
+        "ex": 23,
+        "ft": 15,
+        "gs": 4,
+        "name": "Chris Driscoll",
+        "player_id": "7",
+        "position_outputs": {
+          "C": 0.8539526476528719,
+          "PF": 0.8293876204213079,
+          "PG": 1.451301243879418,
+          "SF": 1.1722738156464059,
+          "SG": 1.1759110821366718
+        },
+        "skills": {
+          "DR": 2,
+          "HA": 3,
+          "ID": 1,
+          "IS": 1,
+          "JR": 3,
+          "JS": 2,
+          "OD": 2,
+          "PA": 2,
+          "RB": 1,
+          "SB": 1
+        },
+        "st": 4
+      },
+      {
+        "ex": 13,
+        "ft": 10,
+        "gs": 4,
+        "name": "Ernest Davidson",
+        "player_id": "6",
+        "position_outputs": {
+          "C": 0.6838945482653102,
+          "PF": 0.5972475021829987,
+          "PG": 0.6761645504041912,
+          "SF": 0.6644914404019823,
+          "SG": 0.5627444316058109
+        },
+        "skills": {
+          "DR": 1,
+          "HA": 1,
+          "ID": 1,
+          "IS": 1,
+          "JR": 1,
+          "JS": 1,
+          "OD": 1,
+          "PA": 1,
+          "RB": 1,
+          "SB": 1
+        },
+        "st": 2
+      },
+      {
+        "ex": 8,
+        "ft": 4,
+        "gs": 4,
+        "name": "Ilmar Castell",
+        "player_id": "3",
+        "position_outputs": {
+          "C": 0.6838945482653102,
+          "PF": 0.5972475021829987,
+          "PG": 0.6761645504041912,
+          "SF": 0.6644914404019823,
+          "SG": 0.5627444316058109
+        },
+        "skills": {
+          "DR": 1,
+          "HA": 1,
+          "ID": 1,
+          "IS": 1,
+          "JR": 1,
+          "JS": 1,
+          "OD": 1,
+          "PA": 1,
+          "RB": 1,
+          "SB": 1
+        },
+        "st": 2
+      },
+      {
+        "ex": 0,
+        "ft": 0,
+        "gs": 0,
+        "name": "0",
+        "player_id": "18",
+        "position_outputs": {
+          "C": 0.0,
+          "PF": 0.0,
+          "PG": 0.0,
+          "SF": 0.0,
+          "SG": 0.0
+        },
+        "skills": {
+          "DR": 0,
+          "HA": 0,
+          "ID": 0,
+          "IS": 0,
+          "JR": 0,
+          "JS": 0,
+          "OD": 0,
+          "PA": 0,
+          "RB": 0,
+          "SB": 0
+        },
+        "st": 0
+      },
+      {
+        "ex": 0,
+        "ft": 0,
+        "gs": 0,
+        "name": "0",
+        "player_id": "17",
+        "position_outputs": {
+          "C": 0.0,
+          "PF": 0.0,
+          "PG": 0.0,
+          "SF": 0.0,
+          "SG": 0.0
+        },
+        "skills": {
+          "DR": 0,
+          "HA": 0,
+          "ID": 0,
+          "IS": 0,
+          "JR": 0,
+          "JS": 0,
+          "OD": 0,
+          "PA": 0,
+          "RB": 0,
+          "SB": 0
+        },
+        "st": 0
+      }
+    ],
+    "position_outputs": {
+      "1": {
+        "C": 14.199669528236521,
+        "PF": 11.916361093662854,
+        "PG": 12.176537682166483,
+        "SF": 13.23645210083754,
+        "SG": 10.760708638017757
+      },
+      "10": {
+        "C": 16.020987850593784,
+        "PF": 13.484299055715129,
+        "PG": 14.67093044103121,
+        "SF": 14.786066975867609,
+        "SG": 11.525677798082388
+      },
+      "11": {
+        "C": 5.315595424132529,
+        "PF": 4.8268995357632924,
+        "PG": 5.378952882276677,
+        "SF": 5.034196828269712,
+        "SG": 4.40458646159068
+      },
+      "12": {
+        "C": 6.219761626372008,
+        "PF": 5.407051110159383,
+        "PG": 6.64510147813965,
+        "SF": 6.266438286429086,
+        "SG": 5.336253725041119
+      },
+      "13": {
+        "C": 6.169782745813274,
+        "PF": 5.328200722775738,
+        "PG": 6.210377934749128,
+        "SF": 6.0664179310063915,
+        "SG": 5.09529462582921
+      },
+      "14": {
+        "C": 6.504505538243485,
+        "PF": 5.59779638325305,
+        "PG": 6.466029496367117,
+        "SF": 6.384801332310337,
+        "SG": 5.388592097282197
+      },
+      "15": {
+        "C": 5.895133045536569,
+        "PF": 5.1805961986803,
+        "PG": 6.347817523914244,
+        "SF": 5.996904025317314,
+        "SG": 5.205008162400481
+      },
+      "16": {
+        "C": 6.378219701743841,
+        "PF": 5.540447111789095,
+        "PG": 6.446709551807007,
+        "SF": 6.234855262830931,
+        "SG": 5.3019988991225
+      },
+      "17": {
+        "C": 0.0,
+        "PF": 0.0,
+        "PG": 0.0,
+        "SF": 0.0,
+        "SG": 0.0
+      },
+      "18": {
+        "C": 0.0,
+        "PF": 0.0,
+        "PG": 0.0,
+        "SF": 0.0,
+        "SG": 0.0
+      },
+      "2": {
+        "C": 15.452347279151478,
+        "PF": 13.039757176057257,
+        "PG": 14.426926936231263,
+        "SF": 15.120110984140112,
+        "SG": 12.421259647748638
+      },
+      "3": {
+        "C": 0.6838945482653102,
+        "PF": 0.5972475021829987,
+        "PG": 0.6761645504041912,
+        "SF": 0.6644914404019823,
+        "SG": 0.5627444316058109
+      },
+      "4": {
+        "C": 12.486888442767974,
+        "PF": 10.951290520151293,
+        "PG": 13.662952558466836,
+        "SF": 13.241575004739113,
+        "SG": 11.826828117592447
+      },
+      "5": {
+        "C": 12.880270481881697,
+        "PF": 10.477661868147203,
+        "PG": 7.928087815633532,
+        "SF": 9.741994168419087,
+        "SG": 6.618569081572154
+      },
+      "6": {
+        "C": 0.6838945482653102,
+        "PF": 0.5972475021829987,
+        "PG": 0.6761645504041912,
+        "SF": 0.6644914404019823,
+        "SG": 0.5627444316058109
+      },
+      "7": {
+        "C": 0.8539526476528719,
+        "PF": 0.8293876204213079,
+        "PG": 1.451301243879418,
+        "SF": 1.1722738156464059,
+        "SG": 1.1759110821366718
+      },
+      "8": {
+        "C": 4.42022540245875,
+        "PF": 4.303819314793529,
+        "PG": 7.663383522553794,
+        "SF": 5.869375997703257,
+        "SG": 5.678454236088978
+      },
+      "9": {
+        "C": 7.967697088352388,
+        "PF": 6.838617928827104,
+        "PG": 7.760664017739595,
+        "SF": 8.096525584393497,
+        "SG": 6.92800873650753
+      }
+    },
+    "ratings": {
+      "insideDefense": {
+        "band": "high",
+        "label": "inept",
+        "raw": 4.674598749988259,
+        "rounded": 4.666666666666667
+      },
+      "insideScoring": {
+        "band": "low",
+        "label": "mediocre",
+        "raw": 5.060733631725702,
+        "rounded": 5.0
+      },
+      "offensiveFlow": {
+        "band": "low",
+        "label": "mediocre",
+        "raw": 5.055251144686872,
+        "rounded": 5.0
+      },
+      "outsideDefense": {
+        "band": "high",
+        "label": "inept",
+        "raw": 4.848103242820042,
+        "rounded": 4.666666666666667
+      },
+      "outsideScoring": {
+        "band": "low",
+        "label": "mediocre",
+        "raw": 5.0941175173101785,
+        "rounded": 5.0
+      },
+      "rebounding": {
+        "band": "low",
+        "label": "inept",
+        "raw": 4.191855078782829,
+        "rounded": 4.0
+      }
+    }
+  },
+  "tactic_energy": {
+    "1-3-1 Zone": {
+      "insideDefense": {
+        "base": 0.728624165212818,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 1.04032319210828,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.8940603052613361,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.574114952250048,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.9574223768409821,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.66331794549664,
+        "exponent": 4.0
+      }
+    },
+    "2-3 Zone": {
+      "insideDefense": {
+        "base": 0.805865433193886,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.87792956206735,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.6773058661704461,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.55,
+        "exponent": 3.99999072622052
+      },
+      "outsideScoring": {
+        "base": 0.98409891290801,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.6438408783697911,
+        "exponent": 4.0
+      }
+    },
+    "3-2 Zone": {
+      "insideDefense": {
+        "base": 0.777139154645413,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.8765094239055651,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.847213052170325,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.6504434222932131,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.550000000067786,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.703457161725017,
+        "exponent": 4.0
+      }
+    },
+    "Base Offense": {
+      "insideDefense": {
+        "base": 0.9108253120384081,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.5598793046942191,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.5500000027706391,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.55,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.8731641796655,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.55,
+        "exponent": 4.0
+      }
+    },
+    "Full Court Press": {
+      "insideDefense": {
+        "base": 0.55,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.550000000463171,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.6602339091832511,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.673020535122526,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.813777475417046,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.5587995004656731,
+        "exponent": 4.0
+      }
+    },
+    "Look Inside": {
+      "insideDefense": {
+        "base": 0.690188909105901,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 1.14829865339472,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.9130554282470831,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.55,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.9362276094954941,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.55,
+        "exponent": 4.0
+      }
+    },
+    "Low Post": {
+      "insideDefense": {
+        "base": 0.774823335352214,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.92405678716289,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.8787509755121531,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.55,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.8356816032937531,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.694347713261346,
+        "exponent": 4.0
+      }
+    },
+    "Man to man": {
+      "insideDefense": {
+        "base": 0.8730181919219681,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 1.14181061791928,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.9738996945392521,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.6381942523534321,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.6475336387891281,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.670541363172731,
+        "exponent": 4.0
+      }
+    },
+    "Motion": {
+      "insideDefense": {
+        "base": 0.7893301987780481,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.88994741420157,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.879368710407683,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.681013437829545,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.848217806497053,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.658432876503204,
+        "exponent": 4.0
+      }
+    },
+    "Patient": {
+      "insideDefense": {
+        "base": 0.55,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.8218617603458621,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.7761926796864811,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.55,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.7866482561921311,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.55,
+        "exponent": 4.0
+      }
+    },
+    "Princeton": {
+      "insideDefense": {
+        "base": 0.557109879505674,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.9331171066957441,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.87346210907933,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.6557259926287771,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.8719036137925251,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.6890264331644941,
+        "exponent": 4.0
+      }
+    },
+    "Push the Ball": {
+      "insideDefense": {
+        "base": 0.75904130167978,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.9036016119924061,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.7667824793919831,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.55,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.8753801841236251,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.6439248128064641,
+        "exponent": 4.0
+      }
+    },
+    "Run and Gun": {
+      "insideDefense": {
+        "base": 0.7080373249742441,
+        "exponent": 4.0
+      },
+      "insideScoring": {
+        "base": 0.9970190080729451,
+        "exponent": 4.0
+      },
+      "offensiveFlow": {
+        "base": 0.866999575199028,
+        "exponent": 4.0
+      },
+      "outsideDefense": {
+        "base": 0.6391408823358861,
+        "exponent": 4.0
+      },
+      "outsideScoring": {
+        "base": 0.889168939111959,
+        "exponent": 4.0
+      },
+      "rebounding": {
+        "base": 0.55,
+        "exponent": 4.0
+      }
+    }
+  },
+  "version": "coach_parrot_v2"
+}

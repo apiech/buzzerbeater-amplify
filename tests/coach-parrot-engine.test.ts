@@ -6,6 +6,7 @@ import {
   evaluateRoster,
   rankRoster,
   sampleFixture,
+  coachParrotArtifacts,
   type CoachParrotRoster,
   type LineupAssignment,
   type Position,
@@ -114,6 +115,66 @@ test("CoachParrot roster-only autofill allocates 48 minutes at every position", 
 });
 
 test("CoachParrot context changes alter the generated ratings", () => {
+  const { roster, lineup, context } = buildSampleInputs();
+  const base = evaluateLineup({
+    roster,
+    lineup,
+    context,
+  });
+  const home = evaluateLineup({
+    roster,
+    lineup,
+    context: {
+      ...context,
+      homeCourt: "Home Court",
+    },
+  });
+  const alternate = evaluateLineup({
+    roster,
+    lineup,
+    context: {
+      ...context,
+      homeCourt: "Home Court",
+      enthusiasm: 12,
+    },
+  });
+
+  for (const rating of ["outsideScoring", "insideScoring", "offensiveFlow"] as const) {
+    assert.ok(Math.abs(base.rawRatings[rating] - home.rawRatings[rating]) < 1e-10);
+    assert.ok(Math.abs(base.rawRatings[rating] - alternate.rawRatings[rating]) < 1e-10);
+  }
+
+  for (const rating of ["outsideDefense", "insideDefense", "rebounding"] as const) {
+    const expectedHome =
+      base.rawRatings[rating] +
+      Math.log1p(base.rawRatings[rating]) *
+        (coachParrotArtifacts.home_court_adjustments[rating] ?? 0);
+    const expectedAlternate =
+      expectedHome +
+      Math.log1p(base.rawRatings[rating]) *
+        ((12 - 5) * (coachParrotArtifacts.enthusiasm_adjustments[rating] ?? 0));
+    assert.ok(Math.abs(home.rawRatings[rating] - expectedHome) < 1e-10);
+    assert.ok(Math.abs(alternate.rawRatings[rating] - expectedAlternate) < 1e-10);
+  }
+});
+
+test("CoachParrot artifact includes extracted context coefficients", () => {
+  assert.equal(coachParrotArtifacts.version, "coach_parrot_v2");
+  assert.deepEqual(coachParrotArtifacts.home_court_flags, {
+    "Away or Neutral": 0,
+    "Home Court": 1,
+  });
+  assert.equal(
+    Object.keys(coachParrotArtifacts.enthusiasm_adjustments).sort().join(","),
+    "insideDefense,outsideDefense,rebounding",
+  );
+  assert.equal(
+    Object.keys(coachParrotArtifacts.home_court_adjustments).sort().join(","),
+    "insideDefense,outsideDefense,rebounding",
+  );
+});
+
+test("CoachParrot tactic context still changes ratings independently of venue modifiers", () => {
   const { roster, context } = buildSampleInputs();
   const base = evaluateRoster({
     roster,
@@ -125,11 +186,12 @@ test("CoachParrot context changes alter the generated ratings", () => {
       ...context,
       offense: "Run and Gun",
       defense: "Man to man",
-      enthusiasm: 12,
       homeCourt: "Home Court",
     },
   });
 
-  assert.notDeepEqual(base.rawRatings, alternate.rawRatings);
+  assert.notDeepEqual(
+    base.rawRatings.outsideScoring + base.rawRatings.offensiveFlow,
+    alternate.rawRatings.outsideScoring + alternate.rawRatings.offensiveFlow,
+  );
 });
-

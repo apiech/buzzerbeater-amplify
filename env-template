@@ -1,3 +1,11 @@
 BB_CONNECTION_ENCRYPTION_SECRET=sandboxsecret
 GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 AWS_REGION=us-east-1
+COST_ALERT_SMS_NUMBERS=your-phone-number
+COST_ALERT_EMAILS=your@email.com
+STRIPE_SECRET_KEY=sk_test_fillmein
+BILLING_ADMIN_TOKEN=write_some_random_stuff
+STRIPE_WEBHOOK_SECRET=find_me_somewhere
+STRIPE_PREMIUM_PRICE_ID=price_1TBQFNHKRhctIQksl3NJPp3f
+APP_BASE_URL=dunno_yet
+

@@ -24,13 +24,21 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    npm install
    ```
 
-2. Start the Next.js app:
+2. Configure required backend secrets for your local sandbox:
+
+   ```bash
+   npx ampx sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET
+   ```
+
+   If you also keep a local `.env` or `.env.local` file, treat it as shell convenience only. The backend sandbox source of truth is the Amplify sandbox secret.
+
+3. Start the Next.js app:
 
    ```bash
    npm run dev
    ```
 
-3. Run the verification gate:
+4. Run the verification gate:
 
    ```bash
    npm test
@@ -45,6 +53,8 @@ Required secret:
 
 - `BB_CONNECTION_ENCRYPTION_SECRET`
   - Used by the account-connection Lambdas to encrypt and decrypt stored BB access keys.
+  - Required in every environment, including local sandbox development.
+  - For local sandbox use `npx ampx sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET`.
 
 Stripe billing configuration:
 
@@ -55,8 +65,15 @@ Stripe billing configuration:
 - Deploy-time environment variables:
   - `APP_BASE_URL`
   - `STRIPE_PREMIUM_PRICE_ID`
+  - `BILLING_DEFAULT_PLAN` (optional)
 
 The billing integration reads `APP_BASE_URL` and `STRIPE_PREMIUM_PRICE_ID` during backend synthesis in [`amplify/_backend/billing-integration.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/billing-integration.ts), so they need to exist in the shell or CI job that runs the Amplify deploy.
+
+Premium access defaults:
+
+- Non-prod branches and sandbox-like environments default `BILLING_DEFAULT_PLAN` to `premium` unless you explicitly set `BILLING_DEFAULT_PLAN` yourself.
+- Prod branches leave `BILLING_DEFAULT_PLAN` unset by default.
+- Manual overrides still win over the environment default, so you can force a test account back to `free` when you want to verify gated UX.
 
 Prediction infrastructure requirements:
 
@@ -118,8 +135,8 @@ Use `npm run billing:override -- --help` for the full CLI options.
 
 ## Deploy Notes
 
-- Deploy the predictor with `./scripts/matchup-predictor-release dev --version <version> --data-dir <local-data-dir>` before testing `/workspace/predictions`; otherwise prediction jobs fail with `Endpoint bb-matchup-predictor-<stage> not found`.
-- Promote with `./scripts/matchup-predictor-release prod --version <version>` only after the same version passes in `dev`.
+- Deploy the predictor with `./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>` before testing `/workspace/predictions`; otherwise prediction jobs fail with `Endpoint bb-matchup-predictor-<stage> not found`.
+- Promote with `./scripts/matchup-predictor-release prod --release-id <release-id>` only after the same release passes in `dev`.
 - The workspace sync path stores encrypted BB credentials server-side and refreshes cached data only on initial connect plus explicit manual refresh.
 - The ops section surfaces recent `SyncRun` and `PredictionJob` records so failures are visible inside the product.
 - The BB XML client now retries transient upstream failures with bounded exponential backoff.

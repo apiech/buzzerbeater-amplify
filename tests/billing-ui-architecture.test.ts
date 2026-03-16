@@ -15,3 +15,21 @@ test("dashboard app gates premium sections through the shared feature registry",
   assert.match(source, /<BillingPanel/);
   assert.match(source, /<PremiumFeatureGatePanel/);
 });
+
+test("billing panel keeps checkout available for environment-based premium access", () => {
+  const source = readFileSync(join(repoRoot, "app", "billing-panel.tsx"), "utf8");
+
+  assert.match(source, /summary\.planId !== "premium" \|\| summary\.accessSource === "environment"/);
+  assert.match(source, /sandbox or dev environment/);
+});
+
+test("billing integration wires the environment default into premium-gated lambdas", () => {
+  const source = readFileSync(
+    join(repoRoot, "amplify", "_backend", "billing-integration.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /getBillingSummary\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /predictionSubmit\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /gameDayRecapSubmit\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
+});

@@ -19,14 +19,14 @@ Stable endpoint names:
 Use the repo-root wrapper instead of raw CDK commands:
 
 ```bash
-./scripts/matchup-predictor-release dev --version <version> --data-dir <local-data-dir>
-./scripts/matchup-predictor-release prod --version <version>
+./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>
+./scripts/matchup-predictor-release prod --release-id <release-id>
 ```
 
 That wrapper:
 
-- retrains locally for `dev`
-- deploys the explicit local tarball through this CDK app
+- snapshots one chosen model/config artifact pair into the repo-local release directory
+- packages an explicit local tarball through this CDK app
 - waits for SageMaker
 - smoke tests the endpoint
 - records the release manifest used for later `prod` promotion

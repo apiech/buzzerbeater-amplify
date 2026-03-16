@@ -7,6 +7,7 @@ import {
   processGameDayRecap,
   submitGameDayRecap,
 } from "../amplify/data/_backend/game-day-recap";
+import { requireFeatureAccess } from "../amplify/data/_backend/billing";
 import type {
   BBApiBoxScore,
   BBApiSchedule,
@@ -467,6 +468,46 @@ test("submitGameDayRecap reruns terminal jobs in place", async () => {
   );
 
   assert.equal(savedStatus, "QUEUED");
+  assert.equal(queuedMessage?.targetKey, "100#2026-03-15");
+});
+
+test("submitGameDayRecap allows access when premium is granted by the environment default", async () => {
+  let queuedMessage: { requestedAt: string; targetKey: string; userId: string } | null = null;
+
+  const result = await submitGameDayRecap(
+    {
+      env: {
+        BILLING_DEFAULT_PLAN: "premium",
+      },
+      gameDate: "2026-03-15",
+      identity: { sub: "user-1" },
+      leagueId: "100",
+      queueUrl: "queue-url",
+    },
+    {
+      enqueueRecapJob: async (_queueUrl, message) => {
+        queuedMessage = message;
+      },
+      getGameDayRecap: async () => null,
+      now: () => new Date("2026-03-15T22:30:00Z"),
+      requireFeatureAccess: (args) =>
+        requireFeatureAccess(args, {
+          createPortalSession: async () => ({ url: "https://example.com/portal" }),
+          createSubscriptionCheckoutSession: async () => ({
+            url: "https://example.com/checkout",
+          }),
+          getBillingAccount: async () => null,
+          getStripeSubscription: async () => ({
+            id: "sub_123",
+          }),
+          upsertBillingAccount: async () => {},
+        }),
+      updateGameDayRecap: async () => {},
+      upsertGameDayRecap: async () => {},
+    },
+  );
+
+  assert.deepStrictEqual(result, { targetKey: "100#2026-03-15" });
   assert.equal(queuedMessage?.targetKey, "100#2026-03-15");
 });
 
