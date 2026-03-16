@@ -27,18 +27,29 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 2. Configure required backend secrets for your local sandbox:
 
    ```bash
-   npx ampx sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET
+   npm run ampx -- sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET
    ```
 
-   If you also keep a local `.env` or `.env.local` file, treat it as shell convenience only. The backend sandbox source of truth is the Amplify sandbox secret.
+3. Add local non-secret sandbox env vars to `.env`.
 
-3. Start the Next.js app:
+   ```bash
+   APP_BASE_URL=http://localhost:3000
+   STRIPE_PREMIUM_PRICE_ID=price_sandbox_placeholder
+   ```
+
+   The repo-local `npm run ampx -- ...` and `npm run sandbox` wrappers load `.env` automatically before running `ampx`, so local sandbox deploys pick up synth-time values like `APP_BASE_URL` without extra shell setup.
+
+4. Start the backend sandbox and Next.js app:
+
+   ```bash
+   npm run sandbox
+   ```
 
    ```bash
    npm run dev
    ```
 
-4. Run the verification gate:
+5. Run the verification gate:
 
    ```bash
    npm test
@@ -54,7 +65,7 @@ Required secret:
 - `BB_CONNECTION_ENCRYPTION_SECRET`
   - Used by the account-connection Lambdas to encrypt and decrypt stored BB access keys.
   - Required in every environment, including local sandbox development.
-  - For local sandbox use `npx ampx sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET`.
+  - For local sandbox use `npm run ampx -- sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET`.
 
 Stripe billing configuration:
 

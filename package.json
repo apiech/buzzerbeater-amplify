@@ -6,6 +6,8 @@
     "node": "22.x"
   },
   "scripts": {
+    "ampx": "node ./scripts/ampx-with-env.mjs",
+    "sandbox": "node ./scripts/ampx-with-env.mjs sandbox",
     "dev": "next dev",
     "dev:3003": "next dev -p 3003",
     "build": "next build",
