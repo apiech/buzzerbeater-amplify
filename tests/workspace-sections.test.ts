@@ -12,9 +12,13 @@ test("normalizeWorkspaceSection accepts known product routes", () => {
   }
 });
 
-test("workspace sections expose the dedicated lineups route", () => {
+test("workspace sections expose the dedicated highlights and lineups routes", () => {
   assert.equal(
     workspaceSections.some((section) => section.id === "lineups"),
+    true,
+  );
+  assert.equal(
+    workspaceSections.some((section) => section.id === "highlights"),
     true,
   );
 });

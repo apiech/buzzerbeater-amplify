@@ -131,6 +131,36 @@ export class MatchDataPlaneStack extends Stack {
       },
     );
 
+    const teamMomentsTable = new dynamodb.Table(this, "TeamMomentsTable", {
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: {
+        name: "teamId",
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: "momentSortKey",
+        type: dynamodb.AttributeType.STRING,
+      },
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    const teamHighlightsStatusTable = new dynamodb.Table(
+      this,
+      "TeamHighlightsStatusTable",
+      {
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        partitionKey: {
+          name: "userId",
+          type: dynamodb.AttributeType.STRING,
+        },
+        sortKey: {
+          name: "teamId",
+          type: dynamodb.AttributeType.STRING,
+        },
+        removalPolicy: RemovalPolicy.RETAIN,
+      },
+    );
+
     const playerSkillSnapshotTable = new dynamodb.Table(
       this,
       "PlayerSkillSnapshotTable",
@@ -172,6 +202,18 @@ export class MatchDataPlaneStack extends Stack {
       },
     });
 
+    const teamHighlightsScanDlq = new sqs.Queue(this, "TeamHighlightsScanDlq", {
+      retentionPeriod: Duration.days(14),
+    });
+    const teamHighlightsScanQueue = new sqs.Queue(this, "TeamHighlightsScanQueue", {
+      visibilityTimeout: Duration.minutes(15),
+      retentionPeriod: Duration.days(4),
+      deadLetterQueue: {
+        maxReceiveCount: 3,
+        queue: teamHighlightsScanDlq,
+      },
+    });
+
     const repository = new ecr.Repository(this, "MatchDataPlaneRepository", {
       repositoryName: "bb-match-data-plane",
       imageScanOnPush: true,
@@ -181,9 +223,12 @@ export class MatchDataPlaneStack extends Stack {
       MATCH_STORE_BUCKET_NAME: bucket.bucketName,
       MATCH_CATALOG_TABLE_NAME: matchCatalogTable.tableName,
       TEAM_MATCH_PROJECTION_TABLE_NAME: teamMatchProjectionTable.tableName,
+      TEAM_MOMENTS_TABLE_NAME: teamMomentsTable.tableName,
+      TEAM_HIGHLIGHTS_STATUS_TABLE_NAME: teamHighlightsStatusTable.tableName,
       ACTIVE_TRACKED_TEAMS_TABLE_NAME: activeTrackedTeamsTable.tableName,
       MATCH_INGEST_QUEUE_URL: ingestQueue.queueUrl,
       MATCH_MATERIALIZE_QUEUE_URL: materializeQueue.queueUrl,
+      TEAM_HIGHLIGHTS_SCAN_QUEUE_URL: teamHighlightsScanQueue.queueUrl,
       PLAYER_SKILL_SNAPSHOT_TABLE_NAME: playerSkillSnapshotTable.tableName,
       MATCH_STORE_LATEST_MANIFEST_KEY: "derived/manifests/latest.json",
       BB_CONNECTION_ENCRYPTION_SECRET: props.encryptionSecret,
@@ -250,17 +295,40 @@ export class MatchDataPlaneStack extends Stack {
         environment: commonEnvironment,
       },
     );
+    const teamHighlightsScanFunction = new lambda.DockerImageFunction(
+      this,
+      "TeamHighlightsScanWorker",
+      {
+        code: lambda.DockerImageCode.fromImageAsset(
+          join(__dirname, "..", "..", "..", ".."),
+          {
+            file: "bb-machine-learning/apps/match_data_plane/Dockerfile.lambda",
+            cmd: ["apps.match_data_plane.lambda_handlers.team_highlights_scan_handler"],
+            exclude: MATCH_DATA_PLANE_IMAGE_EXCLUDES,
+          },
+        ),
+        timeout: Duration.minutes(10),
+        memorySize: 2048,
+        environment: commonEnvironment,
+      },
+    );
 
     bucket.grantReadWrite(ingestFunction);
     bucket.grantReadWrite(materializeFunction);
     matchCatalogTable.grantReadWriteData(ingestFunction);
     matchCatalogTable.grantReadWriteData(materializeFunction);
     teamMatchProjectionTable.grantReadWriteData(ingestFunction);
+    teamMomentsTable.grantReadWriteData(materializeFunction);
+    teamHighlightsStatusTable.grantReadWriteData(teamHighlightsScanFunction);
     activeTrackedTeamsTable.grantReadData(ingestFunction);
+    activeTrackedTeamsTable.grantReadData(teamHighlightsScanFunction);
     playerSkillSnapshotTable.grantReadWriteData(materializeFunction);
     ingestQueue.grantConsumeMessages(ingestFunction);
     materializeQueue.grantSendMessages(ingestFunction);
     materializeQueue.grantConsumeMessages(materializeFunction);
+    ingestQueue.grantSendMessages(teamHighlightsScanFunction);
+    materializeQueue.grantSendMessages(teamHighlightsScanFunction);
+    teamHighlightsScanQueue.grantConsumeMessages(teamHighlightsScanFunction);
 
     ingestFunction.addEventSource(
       new SqsEventSource(ingestQueue, {
@@ -273,6 +341,13 @@ export class MatchDataPlaneStack extends Stack {
       new SqsEventSource(materializeQueue, {
         batchSize: 5,
         maxConcurrency: 5,
+        reportBatchItemFailures: true,
+      }),
+    );
+    teamHighlightsScanFunction.addEventSource(
+      new SqsEventSource(teamHighlightsScanQueue, {
+        batchSize: 1,
+        maxConcurrency: 2,
         reportBatchItemFailures: true,
       }),
     );
@@ -319,6 +394,12 @@ export class MatchDataPlaneStack extends Stack {
     new CfnOutput(this, "TeamMatchProjectionTableName", {
       value: teamMatchProjectionTable.tableName,
     });
+    new CfnOutput(this, "TeamMomentsTableName", {
+      value: teamMomentsTable.tableName,
+    });
+    new CfnOutput(this, "TeamHighlightsStatusTableName", {
+      value: teamHighlightsStatusTable.tableName,
+    });
     new CfnOutput(this, "ActiveTrackedTeamsTableName", {
       value: activeTrackedTeamsTable.tableName,
     });
@@ -330,6 +411,9 @@ export class MatchDataPlaneStack extends Stack {
     });
     new CfnOutput(this, "MatchMaterializeQueueUrl", {
       value: materializeQueue.queueUrl,
+    });
+    new CfnOutput(this, "TeamHighlightsScanQueueUrl", {
+      value: teamHighlightsScanQueue.queueUrl,
     });
     new CfnOutput(this, "MatchDataPlaneRepositoryUri", {
       value: repository.repositoryUri,

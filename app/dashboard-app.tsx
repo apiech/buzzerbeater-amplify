@@ -26,6 +26,7 @@ import {
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import { fetchBillingSummary } from "@/app/billing-client";
 import { decodeGraphqlJsonPayload } from "@/app/graphql-json";
+import { HighlightsPanel } from "@/app/highlights-panel";
 import { LineupHelper } from "@/app/lineup-helper";
 import { OperationsPanel } from "@/app/operations-panel";
 import { PredictionPanel } from "@/app/prediction-panel";
@@ -1537,6 +1538,9 @@ function WorkspaceDashboard({
   const canUseLeagueWriteups = billingSummary
     ? hasFeature(billingPlanId, "leagueWriteups")
     : false;
+  const canUseTeamHighlights = billingSummary
+    ? hasFeature(billingPlanId, "teamHighlights")
+    : false;
 
   async function handleScoutLoad() {
     if (!selectedScoutTeamId) {
@@ -2121,6 +2125,20 @@ function WorkspaceDashboard({
             featureName="Prediction engine"
             isLoading={isLoadingBilling}
             message="Run matchup forecasts and compare connected or manual inputs with the premium prediction engine."
+          />
+        )
+      ) : null}
+
+      {activeSection === "highlights" ? (
+        canUseTeamHighlights ? (
+          <HighlightsPanel workspace={displayWorkspace} />
+        ) : (
+          <PremiumFeatureGatePanel
+            billingSummary={billingSummary}
+            error={billingError}
+            featureName="Team highlights"
+            isLoading={isLoadingBilling}
+            message="Scan your club's full history and browse all-time buzzerbeater-derived moments with a premium subscription."
           />
         )
       ) : null}

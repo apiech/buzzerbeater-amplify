@@ -36,6 +36,9 @@ export type SubmitGameDayRecapResult = NonNullable<
 export type SubmitPredictionJobResult = NonNullable<
   Schema["submitPredictionJob"]["returnType"]
 >;
+export type SubmitMyTeamHighlightsScanResult = NonNullable<
+  Schema["submitMyTeamHighlightsScan"]["returnType"]
+>;
 export type SharedPlayerCardResult = NonNullable<
   Schema["generateSharedPlayerCard"]["returnType"]
 >;
@@ -300,6 +303,87 @@ export type GameDayRecapResultPayload = {
   summary: {
     headline: string;
     lede: string;
+  };
+};
+
+export type TeamHighlightsScanStatus = {
+  completedAt: string | null;
+  error: string | null;
+  matchesDiscovered: number | null;
+  matchesEnqueuedForIngest: number | null;
+  matchesEnqueuedForMaterialize: number | null;
+  matchesReused: number | null;
+  requestedAt: string;
+  seasonsFrom: number | null;
+  seasonsTo: number | null;
+  startedAt: string | null;
+  status: string;
+  teamId: string;
+  teamName: string | null;
+  updatedAt: string | null;
+};
+
+export type TeamHighlightsMoment = {
+  comment: string | null;
+  eventKind: string | null;
+  finalOpponentScore: number | null;
+  finalScoreAway: number | null;
+  finalScoreHome: number | null;
+  finalTeamScore: number | null;
+  freeThrowType: string | null;
+  gameclock: number | null;
+  isHome: boolean | null;
+  matchId: string;
+  matchType: string | null;
+  momentId: string;
+  opponentId: string | null;
+  opponentName: string | null;
+  opponentScoreAfter: number | null;
+  opponentScoreBefore: number | null;
+  outcomeChanged: boolean;
+  period: string | null;
+  perspective: string;
+  playerId: string | null;
+  playerName: string | null;
+  recordId: string;
+  scoreAfterAway: number | null;
+  scoreAfterHome: number | null;
+  scoreBeforeAway: number | null;
+  scoreBeforeHome: number | null;
+  scoringTeamId: string | null;
+  scoringTeamName: string | null;
+  season: number | null;
+  shotDistanceFt: number | null;
+  shotResult: string | null;
+  shotType: string | null;
+  shotTypeLabel: string | null;
+  shotX: number | null;
+  shotY: number | null;
+  startTime: string | null;
+  teamId: string;
+  teamName: string | null;
+  teamScoreAfter: number | null;
+  teamScoreBefore: number | null;
+};
+
+export type TeamHighlightsPayload = {
+  filters: {
+    onlyOutcomeChange: boolean;
+    perspective: string;
+  };
+  items: TeamHighlightsMoment[];
+  nextCursor: string | null;
+  scanStatus: TeamHighlightsScanStatus | null;
+  summary: {
+    againstMoments: number;
+    filteredMoments: number;
+    forMoments: number;
+    outcomeChangeMoments: number;
+    totalMoments: number;
+  };
+  team: {
+    teamId: string;
+    teamName: string | null;
   };
 };
 

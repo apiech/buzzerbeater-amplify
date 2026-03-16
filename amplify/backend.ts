@@ -23,6 +23,7 @@ import {
   getHomeWorkspace,
   getLeagueIntel,
   getLineupHelperWorkspace,
+  getMyTeamHighlights,
   getPlayerTrend,
   getPlayerLab,
   getSalaryProjection,
@@ -32,6 +33,7 @@ import {
   refreshBbWorkspaces,
   refreshBbWorkspaceWorker,
   refreshWorkspace,
+  submitMyTeamHighlightsScan,
 } from "./data/resource.js";
 import { getAccessibleMatch } from "./get-accessible-match/resource.js";
 import { getAccessiblePlayByPlay } from "./get-accessible-play-by-play/resource.js";
@@ -59,6 +61,7 @@ const backend = defineBackend({
   evaluateLineupHelper,
   getPlayerTrend,
   getBillingSummary,
+  getMyTeamHighlights,
   getSalaryProjection,
   generateSharedPlayerCard,
   refreshBbWorkspaces,
@@ -72,6 +75,7 @@ const backend = defineBackend({
   gameDayRecapWorker,
   predictionSubmit,
   predictionWorker,
+  submitMyTeamHighlightsScan,
   billingWebhook,
   billingAdminOverride,
 });

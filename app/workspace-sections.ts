@@ -12,6 +12,12 @@ export const workspaceSections = [
     group: "Club",
   },
   {
+    id: "highlights",
+    label: "Highlights",
+    description: "All-time team moments, buzzerbeaters, and late-game swings from your club perspective.",
+    group: "Club",
+  },
+  {
     id: "lineups",
     label: "Lineups",
     description: "CoachParrot lineup helper with minute grids, tactics, and rating outputs.",

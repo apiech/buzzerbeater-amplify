@@ -468,6 +468,8 @@ function buildFeatureAccessError(featureKey: FeatureKey): string {
       return "Premium is required to generate league writeups.";
     case "predictions":
       return "Premium is required to use the prediction engine.";
+    case "teamHighlights":
+      return "Premium is required to scan team highlights.";
     default:
       return "Your current plan does not include this feature.";
   }

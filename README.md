@@ -45,6 +45,8 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    npm run sandbox
    ```
 
+   By default, the wrapper starts sandbox with Lambda log streaming enabled. After a successful local sandbox deploy, it also prints the deployed Stripe webhook URL as `Stripe webhook URL: https://...` so you can paste it into Stripe without opening CloudFormation outputs.
+
    ```bash
    npm run dev
    ```

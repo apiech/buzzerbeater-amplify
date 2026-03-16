@@ -1,7 +1,9 @@
 import type { Stack } from "aws-cdk-lib";
 import { AttributeType, BillingMode, Table, type ITable } from "aws-cdk-lib/aws-dynamodb";
 import { type IFunction } from "aws-cdk-lib/aws-lambda";
+import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Bucket, type IBucket } from "aws-cdk-lib/aws-s3";
+import { Queue } from "aws-cdk-lib/aws-sqs";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
@@ -20,6 +22,7 @@ type MatchStoreBackend = {
   getHomeWorkspace: FunctionResource;
   getLeagueIntel: FunctionResource;
   getMatchBoxscoreDetails: FunctionResource;
+  getMyTeamHighlights: FunctionResource;
   getPlayerTrend: FunctionResource;
   getPlayerLab: FunctionResource;
   getSalaryProjection: FunctionResource;
@@ -29,6 +32,7 @@ type MatchStoreBackend = {
   refreshBbWorkspaces: FunctionResource;
   refreshBbWorkspaceWorker: FunctionResource;
   refreshWorkspace: FunctionResource;
+  submitMyTeamHighlightsScan: FunctionResource;
 };
 
 type ExternalMatchStoreConfig = {
@@ -37,6 +41,9 @@ type ExternalMatchStoreConfig = {
   projectionTableName: string;
   activeTrackedTeamsTableName: string;
   playerSkillSnapshotTableName: string;
+  teamMomentsTableName: string;
+  teamHighlightsStatusTableName: string;
+  teamHighlightsScanQueueUrl: string;
 };
 
 export function configureMatchStoreIntegration(backend: MatchStoreBackend): void {
@@ -114,6 +121,43 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
           type: AttributeType.STRING,
         },
       });
+  const teamMomentsTable = externalConfig
+    ? Table.fromTableName(
+        stack,
+        "ImportedTeamMomentsTable",
+        externalConfig.teamMomentsTableName,
+      )
+    : new Table(stack, "TeamMomentsTable", {
+        billingMode: BillingMode.PAY_PER_REQUEST,
+        partitionKey: {
+          name: "teamId",
+          type: AttributeType.STRING,
+        },
+        sortKey: {
+          name: "momentSortKey",
+          type: AttributeType.STRING,
+        },
+      });
+  const teamHighlightsStatusTable = externalConfig
+    ? Table.fromTableName(
+        stack,
+        "ImportedTeamHighlightsStatusTable",
+        externalConfig.teamHighlightsStatusTableName,
+      )
+    : new Table(stack, "TeamHighlightsStatusTable", {
+        billingMode: BillingMode.PAY_PER_REQUEST,
+        partitionKey: {
+          name: "userId",
+          type: AttributeType.STRING,
+        },
+        sortKey: {
+          name: "teamId",
+          type: AttributeType.STRING,
+        },
+      });
+  const teamHighlightsScanQueue = externalConfig
+    ? null
+    : new Queue(stack, "TeamHighlightsScanQueue");
 
   const matchStoreBucketName =
     externalConfig?.bucketName ?? matchStoreBucket.bucketName;
@@ -127,6 +171,17 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
   const playerSkillSnapshotTableName =
     externalConfig?.playerSkillSnapshotTableName ??
     playerSkillSnapshotTable.tableName;
+  const teamMomentsTableName =
+    externalConfig?.teamMomentsTableName ?? teamMomentsTable.tableName;
+  const teamHighlightsStatusTableName =
+    externalConfig?.teamHighlightsStatusTableName ??
+    teamHighlightsStatusTable.tableName;
+  const teamHighlightsScanQueueUrl =
+    externalConfig?.teamHighlightsScanQueueUrl ??
+    teamHighlightsScanQueue?.queueUrl;
+  if (!teamHighlightsScanQueueUrl) {
+    throw new Error("Team highlights scan queue URL could not be resolved.");
+  }
 
   const matchStoreReadFunctions = [
     backend.listAccessibleMatches,
@@ -151,6 +206,7 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
     backend.getSalaryProjection,
     backend.generateSharedPlayerCard,
   ];
+  const teamHighlightsReadFunctions = [backend.getMyTeamHighlights];
 
   for (const resource of matchStoreReadFunctions) {
     resource.addEnvironment("MATCH_STORE_BUCKET_NAME", matchStoreBucketName);
@@ -184,6 +240,39 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
     );
     playerSkillSnapshotTable.grantReadData(resource.resources.lambda);
   }
+
+  for (const resource of teamHighlightsReadFunctions) {
+    resource.addEnvironment("TEAM_MOMENTS_TABLE_NAME", teamMomentsTableName);
+    resource.addEnvironment(
+      "TEAM_HIGHLIGHTS_STATUS_TABLE_NAME",
+      teamHighlightsStatusTableName,
+    );
+    teamMomentsTable.grantReadData(resource.resources.lambda);
+    teamHighlightsStatusTable.grantReadData(resource.resources.lambda);
+  }
+
+  backend.submitMyTeamHighlightsScan.addEnvironment(
+    "TEAM_HIGHLIGHTS_STATUS_TABLE_NAME",
+    teamHighlightsStatusTableName,
+  );
+  backend.submitMyTeamHighlightsScan.addEnvironment(
+    "TEAM_HIGHLIGHTS_SCAN_QUEUE_URL",
+    teamHighlightsScanQueueUrl,
+  );
+  teamHighlightsStatusTable.grantReadWriteData(
+    backend.submitMyTeamHighlightsScan.resources.lambda,
+  );
+  if (teamHighlightsScanQueue) {
+    teamHighlightsScanQueue.grantSendMessages(
+      backend.submitMyTeamHighlightsScan.resources.lambda,
+    );
+  } else {
+    grantSqsSendAccessFromQueueUrl(
+      stack,
+      backend.submitMyTeamHighlightsScan.resources.lambda,
+      teamHighlightsScanQueueUrl,
+    );
+  }
 }
 
 function grantMatchStoreReadAccess(
@@ -214,6 +303,10 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
   const projectionTableName = process.env.TEAM_MATCH_PROJECTION_TABLE_NAME;
   const activeTrackedTeamsTableName = process.env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
   const playerSkillSnapshotTableName = process.env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
+  const teamMomentsTableName = process.env.TEAM_MOMENTS_TABLE_NAME;
+  const teamHighlightsStatusTableName =
+    process.env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME;
+  const teamHighlightsScanQueueUrl = process.env.TEAM_HIGHLIGHTS_SCAN_QUEUE_URL;
 
   const values = [
     bucketName,
@@ -221,6 +314,9 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
     projectionTableName,
     activeTrackedTeamsTableName,
     playerSkillSnapshotTableName,
+    teamMomentsTableName,
+    teamHighlightsStatusTableName,
+    teamHighlightsScanQueueUrl,
   ];
 
   if (values.every((value) => !value)) {
@@ -229,7 +325,7 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
 
   if (values.some((value) => !value)) {
     throw new Error(
-      "When configuring the external match data plane, MATCH_STORE_BUCKET_NAME, MATCH_CATALOG_TABLE_NAME, TEAM_MATCH_PROJECTION_TABLE_NAME, ACTIVE_TRACKED_TEAMS_TABLE_NAME, and PLAYER_SKILL_SNAPSHOT_TABLE_NAME must all be set.",
+      "When configuring the external match data plane, MATCH_STORE_BUCKET_NAME, MATCH_CATALOG_TABLE_NAME, TEAM_MATCH_PROJECTION_TABLE_NAME, ACTIVE_TRACKED_TEAMS_TABLE_NAME, PLAYER_SKILL_SNAPSHOT_TABLE_NAME, TEAM_MOMENTS_TABLE_NAME, TEAM_HIGHLIGHTS_STATUS_TABLE_NAME, and TEAM_HIGHLIGHTS_SCAN_QUEUE_URL must all be set.",
     );
   }
 
@@ -239,5 +335,34 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
     projectionTableName: projectionTableName!,
     activeTrackedTeamsTableName: activeTrackedTeamsTableName!,
     playerSkillSnapshotTableName: playerSkillSnapshotTableName!,
+    teamMomentsTableName: teamMomentsTableName!,
+    teamHighlightsStatusTableName: teamHighlightsStatusTableName!,
+    teamHighlightsScanQueueUrl: teamHighlightsScanQueueUrl!,
   };
+}
+
+function grantSqsSendAccessFromQueueUrl(
+  stack: Stack,
+  lambda: IFunction,
+  queueUrl: string,
+): void {
+  const parsed = new URL(queueUrl);
+  const [, accountId, queueName] = parsed.pathname.split("/");
+  const regionMatch = parsed.hostname.match(/^sqs[.-]([a-z0-9-]+)\./i);
+  const region = regionMatch?.[1];
+
+  if (!accountId || !queueName || !region) {
+    throw new Error(
+      `Unable to resolve an SQS ARN from TEAM_HIGHLIGHTS_SCAN_QUEUE_URL: ${queueUrl}`,
+    );
+  }
+
+  lambda.grantPrincipal.addToPrincipalPolicy(
+    new PolicyStatement({
+      actions: ["sqs:SendMessage"],
+      resources: [
+        `arn:${stack.partition}:sqs:${region}:${accountId}:${queueName}`,
+      ],
+    }),
+  );
 }

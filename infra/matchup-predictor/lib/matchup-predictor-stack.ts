@@ -86,25 +86,58 @@ export class MatchupPredictorStack extends Stack {
     const executionRole = new iam.Role(this, "ExecutionRole", {
       assumedBy: new iam.ServicePrincipal("sagemaker.amazonaws.com"),
     });
-    servingImage.repository.grantPull(executionRole);
-    modelTarball.grantRead(executionRole);
-    logGroup.grantWrite(executionRole);
+    const executionRolePolicy = new iam.Policy(this, "ExecutionRolePolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: [
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:BatchGetImage",
+            "ecr:DescribeImages",
+            "ecr:GetDownloadUrlForLayer",
+          ],
+          resources: [servingImage.repository.repositoryArn],
+        }),
+        new iam.PolicyStatement({
+          actions: ["ecr:GetAuthorizationToken"],
+          resources: ["*"],
+        }),
+        new iam.PolicyStatement({
+          actions: ["s3:GetBucket*", "s3:List*"],
+          resources: [modelTarball.bucket.bucketArn],
+        }),
+        new iam.PolicyStatement({
+          actions: ["s3:GetObject*"],
+          resources: [modelTarball.bucket.arnForObjects(modelTarball.s3ObjectKey)],
+        }),
+        new iam.PolicyStatement({
+          actions: ["logs:CreateLogStream", "logs:PutLogEvents"],
+          resources: [logGroup.logGroupArn, `${logGroup.logGroupArn}:*`],
+        }),
+      ],
+    });
+    executionRolePolicy.attachToRole(executionRole);
+    const assetNameSuffix = `${modelTarball.assetHash.slice(0, 8)}-${servingImage.assetHash.slice(0, 8)}`;
+    const predictorModelName = `bb-matchup-predictor-${props.stage}-mdl-${assetNameSuffix}`;
+    const endpointConfigName = `bb-matchup-predictor-${props.stage}-cfg-${assetNameSuffix}`;
 
     const model = new sagemaker.CfnModel(this, "PredictorModel", {
+      modelName: predictorModelName,
       executionRoleArn: executionRole.roleArn,
       primaryContainer: {
         image: servingImage.imageUri,
         modelDataUrl: modelTarball.s3ObjectUrl,
       },
     });
+    model.addDependency(executionRolePolicy.node.defaultChild as iam.CfnPolicy);
 
     const endpointConfig = new sagemaker.CfnEndpointConfig(
       this,
       "EndpointConfig",
       {
+        endpointConfigName,
         productionVariants: [
           {
-            modelName: model.ref,
+            modelName: model.attrModelName,
             variantName: "AllTraffic",
             serverlessConfig: {
               maxConcurrency: ENDPOINT_MAX_CONCURRENCY,
@@ -117,7 +150,7 @@ export class MatchupPredictorStack extends Stack {
 
     const endpoint = new sagemaker.CfnEndpoint(this, "Endpoint", {
       endpointName,
-      endpointConfigName: endpointConfig.ref,
+      endpointConfigName: endpointConfig.attrEndpointConfigName,
     });
     endpoint.addDependency(endpointConfig);
     endpointConfig.addDependency(model);

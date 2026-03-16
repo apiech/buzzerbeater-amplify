@@ -6,8 +6,10 @@ import { hasFeature, resolvePlan } from "../lib/billing/plans";
 test("hasFeature exposes premium-only billing gates", () => {
   assert.equal(hasFeature("free", "predictions"), false);
   assert.equal(hasFeature("free", "leagueWriteups"), false);
+  assert.equal(hasFeature("free", "teamHighlights"), false);
   assert.equal(hasFeature("premium", "predictions"), true);
   assert.equal(hasFeature("premium", "leagueWriteups"), true);
+  assert.equal(hasFeature("premium", "teamHighlights"), true);
 });
 
 test("resolvePlan defaults to free without billing state", () => {

@@ -21,6 +21,7 @@ type BillingBackend = {
   gameDayRecapSubmit: FunctionResource;
   getBillingSummary: FunctionResource;
   predictionSubmit: FunctionResource;
+  submitMyTeamHighlightsScan: FunctionResource;
 };
 
 export function configureBillingIntegration(backend: BillingBackend): void {
@@ -32,6 +33,10 @@ export function configureBillingIntegration(backend: BillingBackend): void {
     backend.getBillingSummary.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
     backend.predictionSubmit.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
     backend.gameDayRecapSubmit.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
+    backend.submitMyTeamHighlightsScan.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      defaultPlanId,
+    );
   }
 
   backend.createBillingCheckoutSession.addEnvironment("APP_BASE_URL", appBaseUrl);

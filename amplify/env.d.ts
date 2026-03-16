@@ -58,6 +58,10 @@ declare module "$amplify/env/get-player-trend" {
   export const env: Record<string, string | undefined>;
 }
 
+declare module "$amplify/env/get-my-team-highlights" {
+  export const env: Record<string, string | undefined>;
+}
+
 declare module "$amplify/env/get-player-lab" {
   export const env: Record<string, string | undefined>;
 }
@@ -91,6 +95,10 @@ declare module "$amplify/env/prediction-worker" {
 }
 
 declare module "$amplify/env/game-day-recap-submit" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/submit-my-team-highlights-scan" {
   export const env: Record<string, string | undefined>;
 }
 

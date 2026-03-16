@@ -1,6 +1,9 @@
 export type PlanId = "free" | "premium";
 
-export type FeatureKey = "predictions" | "leagueWriteups";
+export type FeatureKey =
+  | "predictions"
+  | "leagueWriteups"
+  | "teamHighlights";
 
 export type BillingAccessSource =
   | "default"
@@ -30,7 +33,7 @@ const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
 
 export const PLAN_FEATURES: Record<PlanId, readonly FeatureKey[]> = {
   free: [],
-  premium: ["predictions", "leagueWriteups"],
+  premium: ["predictions", "leagueWriteups", "teamHighlights"],
 };
 
 export function hasFeature(planId: PlanId, featureKey: FeatureKey): boolean {

@@ -124,6 +124,22 @@ export const getPlayerTrend = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const submitMyTeamHighlightsScan = defineFunction({
+  resourceGroupName: "data",
+  name: "submit-my-team-highlights-scan",
+  entry: "./submit-my-team-highlights-scan/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
+export const getMyTeamHighlights = defineFunction({
+  resourceGroupName: "data",
+  name: "get-my-team-highlights",
+  entry: "./get-my-team-highlights/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
 export const getBillingSummary = defineFunction({
   resourceGroupName: "data",
   name: "get-billing-summary",
@@ -243,6 +259,8 @@ const dataFunctions = [
   getLineupHelperWorkspace,
   evaluateLineupHelper,
   getPlayerTrend,
+  submitMyTeamHighlightsScan,
+  getMyTeamHighlights,
   getBillingSummary,
   createBillingCheckoutSession,
   createBillingPortalSession,
@@ -358,6 +376,14 @@ const schema = a
       status: a.string().required(),
       payload: a.json(),
       error: a.string(),
+    }),
+
+    TeamHighlightsScanSubmitResult: a.customType({
+      queued: a.boolean().required(),
+      requestedAt: a.datetime().required(),
+      status: a.string().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
     }),
 
     LineupPlan: a.customType({
@@ -749,6 +775,17 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getPlayerTrend)),
 
+    getMyTeamHighlights: a
+      .query()
+      .arguments({
+        cursor: a.string(),
+        onlyOutcomeChange: a.boolean(),
+        perspective: a.string(),
+      })
+      .returns(a.ref("JsonLookupResponse"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getMyTeamHighlights)),
+
     getBillingSummary: a
       .query()
       .returns(a.ref("BillingSummary"))
@@ -879,6 +916,12 @@ const schema = a
       .returns(a.ref("GameDayRecapSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(gameDayRecapSubmit)),
+
+    submitMyTeamHighlightsScan: a
+      .mutation()
+      .returns(a.ref("TeamHighlightsScanSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(submitMyTeamHighlightsScan)),
   })
   .authorization((allow) =>
     dataFunctions.map((resource) => allow.resource(resource).to(["query", "mutate"])),

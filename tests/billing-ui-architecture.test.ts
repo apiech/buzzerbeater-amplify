@@ -12,6 +12,7 @@ test("dashboard app gates premium sections through the shared feature registry",
 
   assert.match(source, /hasFeature\(billingPlanId, "predictions"\)/);
   assert.match(source, /hasFeature\(billingPlanId, "leagueWriteups"\)/);
+  assert.match(source, /hasFeature\(billingPlanId, "teamHighlights"\)/);
   assert.match(source, /<BillingPanel/);
   assert.match(source, /<PremiumFeatureGatePanel/);
 });
@@ -32,4 +33,5 @@ test("billing integration wires the environment default into premium-gated lambd
   assert.match(source, /getBillingSummary\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
   assert.match(source, /predictionSubmit\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
   assert.match(source, /gameDayRecapSubmit\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /submitMyTeamHighlightsScan\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
 });
