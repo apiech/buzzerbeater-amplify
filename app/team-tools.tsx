@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
+import { encodeGraphqlJsonInput } from "@/app/graphql-json";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input } from "@/app/ui/primitives/field";
@@ -105,8 +106,8 @@ export function LineupPlanner() {
 
     const response = await client.mutations.saveLineupScenario({
       name: scenarioName.trim() || "Primary lineup",
-      starters: toLineupPlayers(plan.recommendedStarters),
-      minuteTargets,
+      starters: encodeGraphqlJsonInput(toLineupPlayers(plan.recommendedStarters)),
+      minuteTargets: encodeGraphqlJsonInput(minuteTargets),
       note: scenarioNote.trim() || undefined,
     });
 
@@ -271,7 +272,7 @@ export function LineupPlanner() {
             <Field label="Coach note">
               <Input
                 onChange={(event) => setScenarioNote(event.target.value)}
-                placeholder="Plan for a press-heavy scout"
+                placeholder="Plan for a press-heavy opponent"
                 value={scenarioNote}
               />
             </Field>

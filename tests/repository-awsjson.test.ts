@@ -6,10 +6,11 @@ import {
   createSyncRun,
   getBbConnection,
   listBbConnections,
+  updateSyncRun,
   upsertTrackedPlayer,
 } from "../amplify/data/_backend/repository";
 
-test("createSyncRun uses the Amplify data client without manual JSON serialization", async (t) => {
+test("createSyncRun serializes AWSJSON payloads before model.create", async (t) => {
   let createInput: Record<string, unknown> | null = null;
 
   t.mock.method(repositoryTesting.runtime, "getClient", async () => ({
@@ -45,13 +46,40 @@ test("createSyncRun uses the Amplify data client without manual JSON serializati
     kind: "workspace-refresh",
     status: "SYNCING",
     startedAt: "2026-03-15T00:00:00.000Z",
-    detailsJson: { teamId: "123" },
+    detailsJson: "{\"teamId\":\"123\"}",
     expiresAt: "2026-03-29T00:00:00.000Z",
   });
   assert.deepStrictEqual(record.detailsJson, { teamId: "123" });
 });
 
-test("generic upserts use model get/create calls with plain JSON objects", async (t) => {
+test("updateSyncRun serializes AWSJSON payloads before model.update", async (t) => {
+  let updateInput: Record<string, unknown> | null = null;
+
+  t.mock.method(repositoryTesting.runtime, "getClient", async () => ({
+    models: {
+      SyncRun: {
+        update: async (input: Record<string, unknown>) => {
+          updateInput = input;
+          return { data: { id: "sync-1" } };
+        },
+      },
+    },
+  }) as any);
+
+  await updateSyncRun({} as any, {
+    id: "sync-1",
+    status: "SUCCEEDED",
+    detailsJson: { nextOpponentTeamId: "opp-1" },
+  });
+
+  assert.deepStrictEqual(updateInput, {
+    id: "sync-1",
+    status: "SUCCEEDED",
+    detailsJson: "{\"nextOpponentTeamId\":\"opp-1\"}",
+  });
+});
+
+test("generic upserts serialize AWSJSON payloads before model.create", async (t) => {
   let getInput: Record<string, unknown> | null = null;
   let createInput: Record<string, unknown> | null = null;
 
@@ -90,10 +118,7 @@ test("generic upserts use model get/create calls with plain JSON objects", async
     playerId: "p1",
     teamId: "t1",
     fullName: "Prospect",
-    profileJson: {
-      playerId: "p1",
-      skills: { outsideScoring: 12 },
-    },
+    profileJson: "{\"playerId\":\"p1\",\"skills\":{\"outsideScoring\":12}}",
   });
 });
 

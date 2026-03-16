@@ -120,6 +120,7 @@ const backfillRuntime = {
 
 export const __testing = {
   backfillRuntime,
+  buildConnectionRecord,
   readCachedWorkspace,
   shouldSyncWorkspace,
 };
@@ -1341,6 +1342,11 @@ export function buildScoutWorkspace(
       .map((boxScore) => boxScore.matchId)
       .filter((matchId): matchId is string => Boolean(matchId)),
   );
+  const effortByMatchId = new Map(
+    opponentWorkspace.recentBoxScores
+      .filter((boxScore) => Boolean(boxScore.matchId))
+      .map((boxScore) => [boxScore.matchId as string, boxScore.effortDelta ?? null]),
+  );
   const recentMatchups = buildRecentMatchups(
     currentWorkspace.schedule.matches,
     currentWorkspace.teamInfo.teamId,
@@ -1362,6 +1368,17 @@ export function buildScoutWorkspace(
         opponentTeamId: opponentWorkspace.teamInfo.teamId,
       },
       tendencies,
+      roster: opponentWorkspace.roster.players.map((player) => ({
+        playerId: player.id,
+        fullName: player.fullName,
+        bestPosition: player.bestPosition,
+        age: player.age,
+        salary: player.salary,
+        gameShape: asString(player.skills.gameShape),
+        dmi: player.dmi,
+        injuryWeeks: player.injuryWeeks,
+        projectedStarterCount: null,
+      })),
       topPlayers: buildTopPlayers(opponentWorkspace.roster.players, opponentWorkspace.teamStats),
       recentGames: opponentWorkspace.recentMatches.map((match) => ({
         matchId: match.id,
@@ -1371,6 +1388,7 @@ export function buildScoutWorkspace(
         teamScore: deriveTeamScore(match, opponentWorkspace.teamInfo.teamId),
         opponentScore: deriveOpponentScore(match, opponentWorkspace.teamInfo.teamId),
         outcome: deriveOutcome(match, opponentWorkspace.teamInfo.teamId),
+        effortDelta: match.id ? (effortByMatchId.get(match.id) ?? null) : null,
         hasBoxscore: Boolean(match.id && cachedOpponentMatchIds.has(match.id)),
       })),
     },
@@ -1904,28 +1922,76 @@ function buildConnectionRecord(
 ): BbConnectionRecord {
   return {
     userId,
-    bbLoginName: updates.bbLoginName ?? existingConnection?.bbLoginName ?? "",
-    status: updates.status ?? existingConnection?.status ?? "UNSET",
-    accessKeyLast4:
-      updates.accessKeyLast4 ?? existingConnection?.accessKeyLast4 ?? null,
-    teamId: updates.teamId ?? existingConnection?.teamId ?? null,
-    teamName: updates.teamName ?? existingConnection?.teamName ?? null,
-    shortName: updates.shortName ?? existingConnection?.shortName ?? null,
-    leagueId: updates.leagueId ?? existingConnection?.leagueId ?? null,
-    leagueName: updates.leagueName ?? existingConnection?.leagueName ?? null,
-    countryId: updates.countryId ?? existingConnection?.countryId ?? null,
-    countryName:
-      updates.countryName ?? existingConnection?.countryName ?? null,
-    connectedAt: updates.connectedAt ?? existingConnection?.connectedAt ?? null,
-    lastValidatedAt:
-      updates.lastValidatedAt ?? existingConnection?.lastValidatedAt ?? null,
-    lastSyncAt: updates.lastSyncAt ?? existingConnection?.lastSyncAt ?? null,
-    lastSyncError:
-      updates.lastSyncError ?? existingConnection?.lastSyncError ?? null,
-    profileJson: updates.profileJson ?? existingConnection?.profileJson ?? null,
-    workspaceCacheJson:
-      updates.workspaceCacheJson ?? existingConnection?.workspaceCacheJson ?? null,
+    bbLoginName: resolveConnectionField(
+      existingConnection,
+      updates,
+      "bbLoginName",
+      "",
+    ),
+    status: resolveConnectionField(existingConnection, updates, "status", "UNSET"),
+    accessKeyLast4: resolveConnectionField(
+      existingConnection,
+      updates,
+      "accessKeyLast4",
+      null,
+    ),
+    teamId: resolveConnectionField(existingConnection, updates, "teamId", null),
+    teamName: resolveConnectionField(existingConnection, updates, "teamName", null),
+    shortName: resolveConnectionField(existingConnection, updates, "shortName", null),
+    leagueId: resolveConnectionField(existingConnection, updates, "leagueId", null),
+    leagueName: resolveConnectionField(
+      existingConnection,
+      updates,
+      "leagueName",
+      null,
+    ),
+    countryId: resolveConnectionField(existingConnection, updates, "countryId", null),
+    countryName: resolveConnectionField(
+      existingConnection,
+      updates,
+      "countryName",
+      null,
+    ),
+    connectedAt: resolveConnectionField(
+      existingConnection,
+      updates,
+      "connectedAt",
+      null,
+    ),
+    lastValidatedAt: resolveConnectionField(
+      existingConnection,
+      updates,
+      "lastValidatedAt",
+      null,
+    ),
+    lastSyncAt: resolveConnectionField(existingConnection, updates, "lastSyncAt", null),
+    lastSyncError: resolveConnectionField(
+      existingConnection,
+      updates,
+      "lastSyncError",
+      null,
+    ),
+    profileJson: resolveConnectionField(existingConnection, updates, "profileJson", null),
+    workspaceCacheJson: resolveConnectionField(
+      existingConnection,
+      updates,
+      "workspaceCacheJson",
+      null,
+    ),
   };
+}
+
+function resolveConnectionField<Key extends keyof BbConnectionRecord>(
+  existingConnection: BbConnectionRecord | null,
+  updates: Partial<BbConnectionRecord>,
+  key: Key,
+  fallback: BbConnectionRecord[Key],
+): BbConnectionRecord[Key] {
+  const value = Object.prototype.hasOwnProperty.call(updates, key)
+    ? updates[key]
+    : existingConnection?.[key];
+
+  return value === undefined ? fallback : value;
 }
 
 function readCachedWorkspace(connection: BbConnectionRecord): WorkspaceBundle | null {

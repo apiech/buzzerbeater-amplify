@@ -1,37 +1,44 @@
 export const workspaceSections = [
   {
     id: "home",
-    label: "Home",
-    description: "Club overview, readiness, and recent form.",
+    label: "My Team",
+    description: "Club overview, roster health, and lineup planning.",
+    group: "Club",
   },
   {
     id: "scout",
-    label: "Scout",
-    description: "Opponent tendencies, matchups, and boxscore drilldowns.",
+    label: "Opponents",
+    description: "Public team view, tendencies, recent games, and box scores.",
+    group: "Club",
   },
   {
     id: "league",
     label: "League",
-    description: "Standings and conference context.",
+    description: "Standings, conference races, and context around your club.",
+    group: "Competition",
   },
   {
     id: "players",
     label: "Players",
-    description: "Trend analysis, salary, and flag fit.",
+    description: "Player trends, salaries, and squad decisions.",
+    group: "Competition",
   },
   {
     id: "predictions",
-    label: "Predictions",
-    description: "Connected and manual matchup predictions.",
+    label: "Game Prep",
+    description: "Preview likely outcomes and compare matchup inputs.",
+    group: "Competition",
   },
   {
     id: "ops",
-    label: "Ops",
-    description: "Sync runs and prediction queue health.",
+    label: "Account",
+    description: "Connection settings, appearance, and recent activity.",
+    group: "Settings",
   },
 ] as const;
 
 export type WorkspaceSection = (typeof workspaceSections)[number]["id"];
+export type WorkspaceSectionGroup = (typeof workspaceSections)[number]["group"];
 
 export function normalizeWorkspaceSection(
   value: string | null | undefined,

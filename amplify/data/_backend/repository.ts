@@ -1,6 +1,7 @@
 import type { CipherGCMTypes } from "node:crypto";
 
 import {
+  encodeAwsJsonFields,
   decodeAwsJsonFields,
   decodeAwsJsonList,
   type AwsJsonModelName,
@@ -214,7 +215,7 @@ export async function createSyncRun(
   input: Omit<SyncRunRecord, "id">,
 ): Promise<SyncRunRecord> {
   const model = await getModel<SyncRunRecord>(env, "SyncRun");
-  const recordInput = omitUndefinedValues({
+  const recordInput = prepareModelInput("SyncRun", {
     ...input,
     expiresAt: input.expiresAt ?? addDays(input.startedAt, 14),
   });
@@ -235,7 +236,7 @@ export async function updateSyncRun(
 ): Promise<void> {
   const model = await getModel<SyncRunRecord>(env, "SyncRun");
   await assertSuccessful(
-    model.update(omitUndefinedValues(input)),
+    model.update(prepareModelInput("SyncRun", input)),
     "update sync run",
   );
 }
@@ -271,7 +272,7 @@ export async function createPredictionJob(
   const record = assertPresent(
     await assertSuccessful(
       model.create(
-        omitUndefinedValues({
+        prepareModelInput("PredictionJob", {
           ...input,
           expiresAt: input.expiresAt ?? addDays(now, 30),
         }),
@@ -304,7 +305,7 @@ export async function updatePredictionJob(
 ): Promise<void> {
   const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
   await assertSuccessful(
-    model.update(omitUndefinedValues(input)),
+    model.update(prepareModelInput("PredictionJob", input)),
     "update prediction job",
   );
 }
@@ -439,7 +440,7 @@ export async function createSharedPlayerCard(
 ): Promise<void> {
   const model = await getModel<Record<string, unknown>>(env, "SharedPlayerCard");
   await assertSuccessful(
-    model.create(omitUndefinedValues(input)),
+    model.create(prepareModelInput("SharedPlayerCard", input)),
     "create shared player card",
   );
 }
@@ -451,7 +452,7 @@ export async function updateSharedPlayerCard(
 ): Promise<void> {
   const model = await getModel<SharedPlayerCardRecord>(env, "SharedPlayerCard");
   await assertSuccessful(
-    model.update(omitUndefinedValues(input)),
+    model.update(prepareModelInput("SharedPlayerCard", input)),
     "update shared player card",
   );
 }
@@ -466,7 +467,7 @@ export async function createSavedLineupScenario(
   );
   const record = assertPresent(
     await assertSuccessful(
-      model.create(omitUndefinedValues(input)),
+      model.create(prepareModelInput("SavedLineupScenario", input)),
       "create saved lineup scenario",
     ),
     "create saved lineup scenario",
@@ -523,7 +524,7 @@ async function upsertModelRecord(
     model.get(identifier),
     `load ${modelName} record`,
   );
-  const payload = omitUndefinedValues(input);
+  const payload = prepareModelInput(modelName, input);
 
   if (currentRecord) {
     await assertSuccessful(
@@ -537,6 +538,13 @@ async function upsertModelRecord(
     model.create(payload),
     `create ${modelName} record`,
   );
+}
+
+function prepareModelInput<TRecord extends Record<string, unknown>>(
+  modelName: AwsJsonModelName,
+  input: TRecord,
+): TRecord {
+  return omitUndefinedValues(encodeAwsJsonFields(modelName, input));
 }
 
 async function getModelRecord<TRecord>(

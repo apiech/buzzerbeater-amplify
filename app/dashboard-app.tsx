@@ -1,9 +1,29 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Authenticator, ThemeProvider } from "@aws-amplify/ui-react";
+import {
+  confirmResetPassword,
+  confirmSignUp,
+  getCurrentUser,
+  resetPassword,
+  resendSignUpCode,
+  signIn,
+  signOut,
+  signUp,
+} from "aws-amplify/auth";
 
 import { client } from "@/app/amplify-client";
+import {
+  createAuthUiState,
+  resolveConfirmResetPasswordSuccess,
+  resolveConfirmSignUpStep,
+  resolveResetPasswordStep,
+  resolveSignInStep,
+  resolveSignUpStep,
+  type AuthNotice,
+  type AuthUiState,
+} from "@/app/auth-flow";
+import { decodeGraphqlJsonPayload } from "@/app/graphql-json";
 import { OperationsPanel } from "@/app/operations-panel";
 import { PredictionPanel } from "@/app/prediction-panel";
 import { LineupPlanner } from "@/app/team-tools";
@@ -26,7 +46,6 @@ import type {
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
-import { cn } from "@/app/ui/primitives/cn";
 import { Field, Input, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
@@ -40,24 +59,41 @@ import {
   TableHeadCell,
   TableShell,
 } from "@/app/ui/primitives/table-shell";
-import { authTheme } from "@/app/ui/workspace/auth-theme";
 import { PlayerTrendChart } from "@/app/ui/workspace/player-trend-chart";
+import { ThemeSelect } from "@/app/ui/theme/theme-select";
 import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
 import {
   type WorkspaceSection,
 } from "@/app/workspace-sections";
 
+type AuthenticatedUser = Awaited<ReturnType<typeof getCurrentUser>>;
+
 type AuthenticatedProps = {
-  signOut?: () => void;
-  user?: {
-    username?: string;
-    signInDetails?: {
-      loginId?: string;
-    };
-  };
+  signOut?: () => Promise<void>;
+  user?: AuthenticatedUser;
 };
 
 type ConnectionFormState = ConnectBbAccountInput;
+type SignInFormState = {
+  email: string;
+  password: string;
+};
+type SignUpFormState = {
+  confirmPassword: string;
+  email: string;
+  password: string;
+};
+type ConfirmSignUpFormState = {
+  confirmationCode: string;
+};
+type RequestResetFormState = {
+  email: string;
+};
+type ConfirmResetFormState = {
+  confirmationCode: string;
+  confirmPassword: string;
+  newPassword: string;
+};
 
 const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-4";
@@ -72,54 +108,868 @@ const mutedMetaClassName = "text-xs font-semibold text-ink-muted";
 const ratingGridClassName =
   "grid min-w-[30rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-2";
 
-const authenticatorComponents = {
-  Header() {
-    return (
-      <div className="mb-5 grid gap-3">
-        <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
-          BB Amplify
-        </p>
-        <h2 className="text-2xl font-semibold tracking-[-0.04em] text-ink">
-          Sign in, then connect your BuzzerBeater account.
-        </h2>
-        <p className={statusCopyClassName}>
-          App authentication stays separate from BuzzerBeater credentials. The
-          sync layer is server-side TypeScript, so this workspace can own live
-          imports, caching, and analytics without a Python runtime boundary.
-        </p>
-      </div>
-    );
-  },
-};
-
-const authenticatorFormFields = {
-  signIn: {
-    username: {
-      label: "Email",
-      placeholder: "coach@example.com",
-    },
-  },
-  signUp: {
-    email: {
-      order: 1,
-      label: "Email",
-      placeholder: "coach@example.com",
-    },
-    password: {
-      order: 2,
-      label: "Password",
-      placeholder: "Create a password",
-    },
-    confirm_password: {
-      order: 3,
-      label: "Confirm password",
-      placeholder: "Confirm your password",
-    },
-  },
-};
-
 export default function DashboardHomePage() {
   return <DashboardApp activeSection="home" />;
+}
+
+function LocalAuthShell({
+  activeSection,
+}: {
+  activeSection: WorkspaceSection;
+}) {
+  const [authState, setAuthState] = useState<AuthUiState>(() => createAuthUiState());
+  const [user, setUser] = useState<AuthenticatedUser | null>(null);
+  const [signInForm, setSignInForm] = useState<SignInFormState>({
+    email: "",
+    password: "",
+  });
+  const [signUpForm, setSignUpForm] = useState<SignUpFormState>({
+    confirmPassword: "",
+    email: "",
+    password: "",
+  });
+  const [confirmSignUpForm, setConfirmSignUpForm] =
+    useState<ConfirmSignUpFormState>({
+      confirmationCode: "",
+    });
+  const [requestResetForm, setRequestResetForm] = useState<RequestResetFormState>({
+    email: "",
+  });
+  const [confirmResetForm, setConfirmResetForm] = useState<ConfirmResetFormState>({
+    confirmationCode: "",
+    confirmPassword: "",
+    newPassword: "",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initialize() {
+      try {
+        const currentUser = await getCurrentUser();
+        if (cancelled) {
+          return;
+        }
+
+        const email = currentUser.signInDetails?.loginId ?? currentUser.username;
+        setUser(currentUser);
+        setSignInForm({ email, password: "" });
+        setRequestResetForm({ email });
+        setAuthState(createAuthUiState({ email, screen: "signedIn" }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setUser(null);
+        setAuthState(createAuthUiState({ screen: "signIn" }));
+      }
+    }
+
+    void initialize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function beginAuthRequest() {
+    setAuthState((current) => ({
+      ...current,
+      isBusy: true,
+      notice: null,
+    }));
+  }
+
+  function completeAuthRequest(nextState: Omit<AuthUiState, "isBusy">) {
+    setAuthState(createAuthUiState(nextState));
+  }
+
+  function failAuthRequest(
+    notice: AuthNotice,
+    overrides: Partial<Omit<AuthUiState, "isBusy">> = {},
+  ) {
+    setAuthState((current) => ({
+      ...current,
+      ...overrides,
+      isBusy: false,
+      notice,
+    }));
+  }
+
+  function openSignIn(email = authState.email, notice: AuthNotice | null = null) {
+    setSignInForm({ email, password: "" });
+    completeAuthRequest({
+      email,
+      notice,
+      pendingUsername: null,
+      screen: "signIn",
+    });
+  }
+
+  function openSignUp() {
+    const email = signInForm.email.trim() || authState.email;
+    setSignUpForm({
+      confirmPassword: "",
+      email,
+      password: "",
+    });
+    completeAuthRequest({
+      email,
+      notice: null,
+      pendingUsername: null,
+      screen: "signUp",
+    });
+  }
+
+  function openRequestReset(email = signInForm.email.trim() || authState.email) {
+    setRequestResetForm({ email });
+    completeAuthRequest({
+      email,
+      notice: null,
+      pendingUsername: email || null,
+      screen: "requestReset",
+    });
+  }
+
+  async function handleSignInSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const email = signInForm.email.trim();
+    const password = signInForm.password;
+    beginAuthRequest();
+
+    try {
+      const result = await signIn({
+        password,
+        username: email,
+      });
+      const nextState = resolveSignInStep(result.nextStep.signInStep, email);
+
+      setSignInForm({ email, password: "" });
+      if (nextState.screen === "confirmSignUp") {
+        setConfirmSignUpForm({ confirmationCode: "" });
+      }
+      if (nextState.screen === "requestReset") {
+        setRequestResetForm({ email });
+        setConfirmResetForm({
+          confirmationCode: "",
+          confirmPassword: "",
+          newPassword: "",
+        });
+      }
+
+      if (nextState.screen === "signedIn") {
+        const currentUser = await getCurrentUser();
+        const signedInEmail =
+          currentUser.signInDetails?.loginId ?? currentUser.username;
+        setUser(currentUser);
+        setRequestResetForm({ email: signedInEmail });
+        completeAuthRequest({
+          email: signedInEmail,
+          notice: null,
+          pendingUsername: null,
+          screen: "signedIn",
+        });
+        return;
+      }
+
+      setUser(null);
+      completeAuthRequest(nextState);
+    } catch (error) {
+      setUser(null);
+      failAuthRequest(
+        {
+          message: formatAuthError(error),
+          tone: "danger",
+        },
+        {
+          email,
+          pendingUsername: null,
+          screen: "signIn",
+        },
+      );
+    }
+  }
+
+  async function handleSignUpSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const email = signUpForm.email.trim();
+    if (signUpForm.password !== signUpForm.confirmPassword) {
+      failAuthRequest(
+        {
+          message: "Passwords must match before creating the account.",
+          tone: "danger",
+        },
+        {
+          email,
+          screen: "signUp",
+        },
+      );
+      return;
+    }
+
+    beginAuthRequest();
+
+    try {
+      const result = await signUp({
+        options: {
+          userAttributes: {
+            email,
+          },
+        },
+        password: signUpForm.password,
+        username: email,
+      });
+      const nextState = resolveSignUpStep(result.nextStep.signUpStep, email);
+
+      setSignUpForm({
+        confirmPassword: "",
+        email,
+        password: "",
+      });
+      if (nextState.screen === "confirmSignUp") {
+        setConfirmSignUpForm({ confirmationCode: "" });
+      }
+      if (nextState.screen === "signIn") {
+        setSignInForm({ email, password: "" });
+      }
+
+      completeAuthRequest(nextState);
+    } catch (error) {
+      failAuthRequest(
+        {
+          message: formatAuthError(error),
+          tone: "danger",
+        },
+        {
+          email,
+          pendingUsername: null,
+          screen: "signUp",
+        },
+      );
+    }
+  }
+
+  async function handleConfirmSignUpSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const username = authState.pendingUsername ?? authState.email;
+    if (!username) {
+      failAuthRequest(
+        {
+          message: "The confirmation flow is missing the account email.",
+          tone: "danger",
+        },
+        {
+          screen: "signIn",
+        },
+      );
+      return;
+    }
+
+    beginAuthRequest();
+
+    try {
+      const result = await confirmSignUp({
+        confirmationCode: confirmSignUpForm.confirmationCode.trim(),
+        username,
+      });
+      const nextState = resolveConfirmSignUpStep(
+        result.nextStep.signUpStep,
+        username,
+      );
+
+      setConfirmSignUpForm({ confirmationCode: "" });
+      setSignInForm({ email: username, password: "" });
+      completeAuthRequest(nextState);
+    } catch (error) {
+      failAuthRequest(
+        {
+          message: formatAuthError(error),
+          tone: "danger",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmSignUp",
+        },
+      );
+    }
+  }
+
+  async function handleResendSignUpCode() {
+    const username = authState.pendingUsername ?? authState.email;
+    if (!username) {
+      return;
+    }
+
+    beginAuthRequest();
+
+    try {
+      const result = await resendSignUpCode({ username });
+      const destination = result.destination?.trim();
+      failAuthRequest(
+        {
+          message: destination
+            ? `A new confirmation code was sent to ${destination}.`
+            : "A new confirmation code was sent.",
+          tone: "note",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmSignUp",
+        },
+      );
+    } catch (error) {
+      failAuthRequest(
+        {
+          message: formatAuthError(error),
+          tone: "danger",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmSignUp",
+        },
+      );
+    }
+  }
+
+  async function handleRequestResetSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const email = requestResetForm.email.trim();
+    beginAuthRequest();
+
+    try {
+      const result = await resetPassword({ username: email });
+      const nextState = resolveResetPasswordStep(
+        result.nextStep.resetPasswordStep,
+        email,
+      );
+      const destination = result.nextStep.codeDeliveryDetails.destination?.trim();
+
+      setConfirmResetForm({
+        confirmationCode: "",
+        confirmPassword: "",
+        newPassword: "",
+      });
+      completeAuthRequest({
+        ...nextState,
+        notice:
+          nextState.screen === "confirmReset"
+            ? {
+                message: destination
+                  ? `A password reset code was sent to ${destination}.`
+                  : "A password reset code was sent.",
+                tone: "note",
+              }
+            : nextState.notice,
+      });
+    } catch (error) {
+      failAuthRequest(
+        {
+          message: formatAuthError(error),
+          tone: "danger",
+        },
+        {
+          email,
+          pendingUsername: email,
+          screen: "requestReset",
+        },
+      );
+    }
+  }
+
+  async function handleResendResetCode() {
+    const username = authState.pendingUsername ?? authState.email;
+    if (!username) {
+      return;
+    }
+
+    beginAuthRequest();
+
+    try {
+      const result = await resetPassword({ username });
+      const destination = result.nextStep.codeDeliveryDetails.destination?.trim();
+      failAuthRequest(
+        {
+          message: destination
+            ? `A fresh password reset code was sent to ${destination}.`
+            : "A fresh password reset code was sent.",
+          tone: "note",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmReset",
+        },
+      );
+    } catch (error) {
+      failAuthRequest(
+        {
+          message: formatAuthError(error),
+          tone: "danger",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmReset",
+        },
+      );
+    }
+  }
+
+  async function handleConfirmResetSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const username = authState.pendingUsername ?? authState.email;
+    if (!username) {
+      failAuthRequest(
+        {
+          message: "The password reset flow is missing the account email.",
+          tone: "danger",
+        },
+        {
+          screen: "signIn",
+        },
+      );
+      return;
+    }
+
+    if (confirmResetForm.newPassword !== confirmResetForm.confirmPassword) {
+      failAuthRequest(
+        {
+          message: "Passwords must match before updating the account password.",
+          tone: "danger",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmReset",
+        },
+      );
+      return;
+    }
+
+    beginAuthRequest();
+
+    try {
+      await confirmResetPassword({
+        confirmationCode: confirmResetForm.confirmationCode.trim(),
+        newPassword: confirmResetForm.newPassword,
+        username,
+      });
+      setConfirmResetForm({
+        confirmationCode: "",
+        confirmPassword: "",
+        newPassword: "",
+      });
+      setSignInForm({ email: username, password: "" });
+      completeAuthRequest(resolveConfirmResetPasswordSuccess(username));
+    } catch (error) {
+      failAuthRequest(
+        {
+          message: formatAuthError(error),
+          tone: "danger",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmReset",
+        },
+      );
+    }
+  }
+
+  async function handleSignOut() {
+    await signOut();
+    setUser(null);
+    openSignIn(authState.email, {
+      message: "Signed out.",
+      tone: "note",
+    });
+  }
+
+  function renderAuthForm() {
+    switch (authState.screen) {
+      case "loading":
+        return (
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              eyebrow="Sign in"
+              title="Checking your session."
+            />
+            <p className={statusCopyClassName}>
+              Loading your account session before the app opens.
+            </p>
+          </Panel>
+        );
+      case "signIn":
+        return (
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description="Use your companion-app email and password to open your club view."
+              eyebrow="Sign In"
+              title="Sign in to your account."
+            />
+            <form className="grid gap-4" onSubmit={(event) => void handleSignInSubmit(event)}>
+              <Field label="Email">
+                <Input
+                  autoComplete="email"
+                  onChange={(event) =>
+                    setSignInForm((current) => ({
+                      ...current,
+                      email: event.target.value,
+                    }))
+                  }
+                  placeholder="coach@example.com"
+                  required
+                  type="email"
+                  value={signInForm.email}
+                />
+              </Field>
+              <Field label="Password">
+                <Input
+                  autoComplete="current-password"
+                  onChange={(event) =>
+                    setSignInForm((current) => ({
+                      ...current,
+                      password: event.target.value,
+                    }))
+                  }
+                  placeholder="Enter your password"
+                  required
+                  type="password"
+                  value={signInForm.password}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                <Button loading={authState.isBusy} type="submit">
+                  Sign in
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() => openSignUp()}
+                  type="button"
+                  variant="secondary"
+                >
+                  Create account
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() => openRequestReset()}
+                  type="button"
+                  variant="ghost"
+                >
+                  Forgot password
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        );
+      case "signUp":
+        return (
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description="Create the email/password account that stores your private club tools and settings."
+              eyebrow="Sign Up"
+              title="Create your account."
+            />
+            <form className="grid gap-4" onSubmit={(event) => void handleSignUpSubmit(event)}>
+              <Field label="Email">
+                <Input
+                  autoComplete="email"
+                  onChange={(event) =>
+                    setSignUpForm((current) => ({
+                      ...current,
+                      email: event.target.value,
+                    }))
+                  }
+                  placeholder="coach@example.com"
+                  required
+                  type="email"
+                  value={signUpForm.email}
+                />
+              </Field>
+              <Field label="Password">
+                <Input
+                  autoComplete="new-password"
+                  onChange={(event) =>
+                    setSignUpForm((current) => ({
+                      ...current,
+                      password: event.target.value,
+                    }))
+                  }
+                  placeholder="Create a password"
+                  required
+                  type="password"
+                  value={signUpForm.password}
+                />
+              </Field>
+              <Field label="Confirm password">
+                <Input
+                  autoComplete="new-password"
+                  onChange={(event) =>
+                    setSignUpForm((current) => ({
+                      ...current,
+                      confirmPassword: event.target.value,
+                    }))
+                  }
+                  placeholder="Confirm your password"
+                  required
+                  type="password"
+                  value={signUpForm.confirmPassword}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                <Button loading={authState.isBusy} type="submit">
+                  Create account
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() => openSignIn(signUpForm.email.trim())}
+                  type="button"
+                  variant="secondary"
+                >
+                  Back to sign in
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        );
+      case "confirmSignUp":
+        return (
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description={`Enter the code sent to ${
+                authState.pendingUsername ?? authState.email
+              } to activate your account.`}
+              eyebrow="Confirm Email"
+              title="Confirm your account."
+            />
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => void handleConfirmSignUpSubmit(event)}
+            >
+              <Field label="Confirmation code">
+                <Input
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  onChange={(event) =>
+                    setConfirmSignUpForm({
+                      confirmationCode: event.target.value,
+                    })
+                  }
+                  placeholder="123456"
+                  required
+                  value={confirmSignUpForm.confirmationCode}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                <Button loading={authState.isBusy} type="submit">
+                  Confirm account
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() => void handleResendSignUpCode()}
+                  type="button"
+                  variant="secondary"
+                >
+                  Resend code
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() =>
+                    openSignIn(authState.pendingUsername ?? authState.email)
+                  }
+                  type="button"
+                  variant="ghost"
+                >
+                  Back to sign in
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        );
+      case "requestReset":
+        return (
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description="Request a reset code, then enter it with your new password."
+              eyebrow="Reset Password"
+              title="Send a password reset code."
+            />
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => void handleRequestResetSubmit(event)}
+            >
+              <Field label="Email">
+                <Input
+                  autoComplete="email"
+                  onChange={(event) =>
+                    setRequestResetForm({
+                      email: event.target.value,
+                    })
+                  }
+                  placeholder="coach@example.com"
+                  required
+                  type="email"
+                  value={requestResetForm.email}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                <Button loading={authState.isBusy} type="submit">
+                  Send reset code
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() => openSignIn(requestResetForm.email.trim())}
+                  type="button"
+                  variant="secondary"
+                >
+                  Back to sign in
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        );
+      case "confirmReset":
+        return (
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description={`Complete the password reset for ${
+                authState.pendingUsername ?? authState.email
+              }.`}
+              eyebrow="Reset Password"
+              title="Set a new password."
+            />
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => void handleConfirmResetSubmit(event)}
+            >
+              <Field label="Confirmation code">
+                <Input
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  onChange={(event) =>
+                    setConfirmResetForm((current) => ({
+                      ...current,
+                      confirmationCode: event.target.value,
+                    }))
+                  }
+                  placeholder="123456"
+                  required
+                  value={confirmResetForm.confirmationCode}
+                />
+              </Field>
+              <Field label="New password">
+                <Input
+                  autoComplete="new-password"
+                  onChange={(event) =>
+                    setConfirmResetForm((current) => ({
+                      ...current,
+                      newPassword: event.target.value,
+                    }))
+                  }
+                  placeholder="Create a new password"
+                  required
+                  type="password"
+                  value={confirmResetForm.newPassword}
+                />
+              </Field>
+              <Field label="Confirm new password">
+                <Input
+                  autoComplete="new-password"
+                  onChange={(event) =>
+                    setConfirmResetForm((current) => ({
+                      ...current,
+                      confirmPassword: event.target.value,
+                    }))
+                  }
+                  placeholder="Confirm the new password"
+                  required
+                  type="password"
+                  value={confirmResetForm.confirmPassword}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-3">
+                <Button loading={authState.isBusy} type="submit">
+                  Update password
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() => void handleResendResetCode()}
+                  type="button"
+                  variant="secondary"
+                >
+                  Resend code
+                </Button>
+                <Button
+                  disabled={authState.isBusy}
+                  onClick={() =>
+                    openSignIn(authState.pendingUsername ?? authState.email)
+                  }
+                  type="button"
+                  variant="ghost"
+                >
+                  Back to sign in
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        );
+      case "signedIn":
+        return user ? (
+          <AuthenticatedWorkspace
+            activeSection={activeSection}
+            signOut={handleSignOut}
+            user={user}
+          />
+        ) : (
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              eyebrow="Sign in"
+              title="Finishing your session."
+            />
+            <p className={statusCopyClassName}>
+              Your session is active, but your club data is still loading.
+            </p>
+          </Panel>
+        );
+      default:
+        return null;
+    }
+  }
+
+  return (
+    <div className="grid gap-4">
+      {authState.screen !== "signedIn" ? (
+        <>
+          <div className="grid gap-3">
+            <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
+              BuzzerBeater Companion
+            </p>
+            <h2 className="text-2xl font-semibold tracking-[-0.04em] text-ink">
+              Sign in, then connect your BuzzerBeater account.
+            </h2>
+            <p className={statusCopyClassName}>
+              Your app login stays separate from your BuzzerBeater access key.
+              Once connected, this companion keeps your club view, opponent reads,
+              and league context ready for quick game prep.
+            </p>
+          </div>
+          {authState.notice ? (
+            <Alert tone={authState.notice.tone}>{authState.notice.message}</Alert>
+          ) : null}
+        </>
+      ) : null}
+      {renderAuthForm()}
+    </div>
+  );
 }
 
 export function DashboardApp({
@@ -135,44 +985,44 @@ export function DashboardApp({
       >
         <div className="grid gap-4">
           <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
-            TypeScript Canonical
+            BuzzerBeater Companion
           </p>
           <h1 className="max-w-none text-[clamp(2.4rem,4vw,4.4rem)] font-semibold leading-none tracking-[-0.06em] text-ink lg:max-w-[10ch]">
-            Modern BuzzerBeater intelligence on Amplify Gen 2.
+            One home for your club, your opponents, and your next decision.
           </h1>
           <p className="max-w-[56ch] text-base leading-8 text-ink-muted">
-            `bb-amplify` now owns the BB XML transport, parsing, sync jobs, and
-            app-facing workspaces. Python remains useful for offline tooling and
-            analysis, but the product runtime is TypeScript-native end to end.
+            Keep roster context, league movement, opponent tendencies, and game
+            prep in a single companion built around the way managers actually
+            review teams.
           </p>
         </div>
 
         <div className="grid gap-4">
           <article className="grid gap-2 rounded-[1.35rem] border border-black/5 bg-surface-strong p-5">
             <h2 className="text-lg font-semibold tracking-[-0.02em] text-ink">
-              Canonical BBAPI layer
+              Team-first layout
             </h2>
             <p className={statusCopyClassName}>
-              Native TypeScript client, shared XML fixtures, and parser goldens
-              for the BB endpoints this app actively uses.
+              Start from your current club, then move naturally into roster, opponents,
+              league context, and game prep.
             </p>
           </article>
           <article className="grid gap-2 rounded-[1.35rem] border border-black/5 bg-surface-strong p-5">
             <h2 className="text-lg font-semibold tracking-[-0.02em] text-ink">
-              Secure account boundary
+              Opponent reads that matter
             </h2>
             <p className={statusCopyClassName}>
-              Users authenticate with Amplify, then store BB credentials in an
-              encrypted server-side record with owner-scoped access.
+              Review public rosters, recent box scores, effort clues, and tendency
+              snapshots before a matchup.
             </p>
           </article>
           <article className="grid gap-2 rounded-[1.35rem] border border-black/5 bg-surface-strong p-5">
             <h2 className="text-lg font-semibold tracking-[-0.02em] text-ink">
-              Workspace-first UX
+              Built for quick prep
             </h2>
             <p className={statusCopyClassName}>
-              Home, team, opponent, league, and player views are rendered from a
-              cached analytics workspace instead of a legacy page clone.
+              Jump from league table to player movement to matchup previews without
+              losing the current team context.
             </p>
           </article>
         </div>
@@ -180,23 +1030,9 @@ export function DashboardApp({
 
       <Panel
         as="section"
-        className="bb-auth-shell rounded-panel p-6 sm:rounded-[2rem]"
+        className="rounded-panel p-6 sm:rounded-[2rem]"
       >
-        <ThemeProvider theme={authTheme}>
-          <Authenticator
-            components={authenticatorComponents}
-            formFields={authenticatorFormFields}
-            loginMechanisms={["email"]}
-          >
-            {({ signOut, user }) => (
-              <AuthenticatedWorkspace
-                activeSection={activeSection}
-                signOut={signOut}
-                user={user}
-              />
-            )}
-          </Authenticator>
-        </ThemeProvider>
+        <LocalAuthShell activeSection={activeSection} />
       </Panel>
     </main>
   );
@@ -207,9 +1043,11 @@ function AuthenticatedWorkspace({
   signOut,
   user,
 }: AuthenticatedProps & { activeSection: WorkspaceSection }) {
+  const [authError, setAuthError] = useState<string | null>(null);
   const [connection, setConnection] = useState<BbConnectionRecord | null>(null);
   const [workspace, setWorkspace] = useState<DashboardWorkspace | null>(null);
   const [isLoadingConnection, setIsLoadingConnection] = useState(true);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -336,131 +1174,162 @@ function AuthenticatedWorkspace({
     setIsDisconnecting(false);
   }
 
+  async function handleSignOut(): Promise<void> {
+    if (!signOut) {
+      return;
+    }
+
+    setIsSigningOut(true);
+    setAuthError(null);
+
+    try {
+      await signOut();
+    } catch (error) {
+      setAuthError(formatAuthError(error));
+      setIsSigningOut(false);
+    }
+  }
+
   return (
-    <div className="grid gap-4">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="grid gap-2">
-          <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
-            Authenticated
-          </p>
-          <h2 className="text-xl font-semibold tracking-[-0.03em] text-ink">
-            {loginEmail}
-          </h2>
-        </div>
-        <Button onClick={signOut} variant="secondary">
-          Sign out
-        </Button>
-      </header>
-
-      <WorkspaceRouteNav activeSection={activeSection} />
-
-      {isLoadingConnection ? (
-        <Panel>
-          <SectionHeading title="Checking your workspace" titleAs="h4" />
-          <p className={statusCopyClassName}>
-            Loading your current BuzzerBeater connection.
-          </p>
-        </Panel>
-      ) : connectionError ? (
-        <Panel variant="danger">
-          <SectionHeading title="Connection status unavailable" titleAs="h4" />
-          <p className={statusCopyClassName}>{connectionError}</p>
-        </Panel>
-      ) : !connected || showCredentialForm ? (
-        <ConnectionOnboarding
-          connection={connection}
-          onCancel={connected ? () => setShowCredentialForm(false) : undefined}
-          onConnected={async (status) => {
-            await loadConnection();
-            if (status === "CONNECTED") {
-              setShowCredentialForm(false);
-              await loadWorkspace(false);
-            } else {
-              setWorkspace(null);
-            }
-          }}
-        />
-      ) : (
-        <>
-          <Panel>
-            <SectionHeading
-              actions={
-                <>
-                  <StatusBadge tone={statusToneFromValue(connection.status)}>
-                    {humanizeStatus(connection.status)}
-                  </StatusBadge>
-                  <Button loading={isLoadingWorkspace} onClick={() => void handleRefresh()}>
-                    Refresh data
-                  </Button>
-                  <Button
-                    onClick={() => setShowCredentialForm(true)}
-                    variant="secondary"
-                  >
-                    Replace credentials
-                  </Button>
-                  <Button
-                    loading={isDisconnecting}
-                    onClick={() => void handleDisconnect()}
-                    variant="secondary"
-                  >
-                    Disconnect
-                  </Button>
-                </>
-              }
-              eyebrow="Workspace"
-              title={connection.teamName ?? "Connected BuzzerBeater workspace"}
-            />
-
-            <div className={summaryGridClassName}>
-              <StatCard
-                detail={connection.accessKeyLast4 ?? "Access key stored server-side"}
-                label="BuzzerBeater login"
-                value={connection.bbLoginName || "Not set"}
-              />
-              <StatCard
-                detail={connection.countryName ?? "Country unavailable"}
-                label="League"
-                value={connection.leagueName ?? "Unassigned"}
-              />
-              <StatCard
-                detail={`Connected ${formatTimestamp(connection.connectedAt)}`}
-                label="Last validation"
-                value={formatTimestamp(connection.lastValidatedAt)}
-              />
-              <StatCard
-                detail={connection.lastSyncError ?? "Workspace cache is healthy."}
-                label="Last sync"
-                value={formatTimestamp(workspace?.syncedAt ?? connection.lastSyncAt)}
-              />
+    <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start">
+      <WorkspaceRouteNav
+        accountActions={
+          <>
+            <div className="grid gap-1">
+              <p className="m-0 text-[0.72rem] font-bold uppercase tracking-[0.16em] text-ink-muted">
+                Signed in
+              </p>
+              <strong className="text-sm text-ink">{loginEmail}</strong>
             </div>
+            <Button
+              loading={isSigningOut}
+              onClick={() => void handleSignOut()}
+              variant="secondary"
+            >
+              Sign out
+            </Button>
+          </>
+        }
+        activeSection={activeSection}
+        currentTeamName={workspace?.home.team.teamName ?? connection?.teamName ?? null}
+        currentTeamRecord={
+          workspace
+            ? `Record ${formatRecord(workspace.home.team.record)}`
+            : connection?.leagueName ?? "Connect a club to see team context."
+        }
+        nextOpponentName={workspace?.home.nextMatch?.opponentTeamName ?? null}
+        secondaryActions={<ThemeSelect />}
+      />
 
-            {workspaceError ? <Alert>{workspaceError}</Alert> : null}
+      <main className="grid gap-4">
+        {authError ? <Alert>{authError}</Alert> : null}
+
+        {isLoadingConnection ? (
+          <Panel>
+            <SectionHeading title="Checking your club link" titleAs="h4" />
+            <p className={statusCopyClassName}>
+              Looking up your saved BuzzerBeater connection.
+            </p>
           </Panel>
+        ) : connectionError ? (
+          <Panel variant="danger">
+            <SectionHeading title="Club link unavailable" titleAs="h4" />
+            <p className={statusCopyClassName}>{connectionError}</p>
+          </Panel>
+        ) : !connected || showCredentialForm ? (
+          <ConnectionOnboarding
+            connection={connection}
+            onCancel={connected ? () => setShowCredentialForm(false) : undefined}
+            onConnected={async (status) => {
+              await loadConnection();
+              if (status === "CONNECTED") {
+                setShowCredentialForm(false);
+                await loadWorkspace(false);
+              } else {
+                setWorkspace(null);
+              }
+            }}
+          />
+        ) : (
+          <>
+            <Panel>
+              <SectionHeading
+                actions={
+                  <>
+                    <StatusBadge tone={statusToneFromValue(connection.status)}>
+                      {humanizeStatus(connection.status)}
+                    </StatusBadge>
+                    <Button loading={isLoadingWorkspace} onClick={() => void handleRefresh()}>
+                      Refresh club data
+                    </Button>
+                    <Button
+                      onClick={() => setShowCredentialForm(true)}
+                      variant="secondary"
+                    >
+                      Update credentials
+                    </Button>
+                    <Button
+                      loading={isDisconnecting}
+                      onClick={() => void handleDisconnect()}
+                      variant="secondary"
+                    >
+                      Disconnect club
+                    </Button>
+                  </>
+                }
+                eyebrow="Club connection"
+                title={connection.teamName ?? "Connected club"}
+              />
 
-          {isLoadingWorkspace && !workspace ? (
-            <Panel>
-              <SectionHeading title="Building your dashboard" titleAs="h4" />
-              <p className={statusCopyClassName}>
-                Pulling your team, upcoming opponent, league table, and player
-                comparison workspace.
-              </p>
+              <div className={summaryGridClassName}>
+                <StatCard
+                  detail={connection.accessKeyLast4 ?? "Securely stored"}
+                  label="Login name"
+                  value={connection.bbLoginName || "Not set"}
+                />
+                <StatCard
+                  detail={connection.countryName ?? "Country unavailable"}
+                  label="League"
+                  value={connection.leagueName ?? "Unassigned"}
+                />
+                <StatCard
+                  detail={`Connected ${formatTimestamp(connection.connectedAt)}`}
+                  label="Last check"
+                  value={formatTimestamp(connection.lastValidatedAt)}
+                />
+                <StatCard
+                  detail={connection.lastSyncError ?? "Your latest sync completed cleanly."}
+                  label="Latest refresh"
+                  value={formatTimestamp(workspace?.syncedAt ?? connection.lastSyncAt)}
+                />
+              </div>
+
+              {workspaceError ? <Alert>{workspaceError}</Alert> : null}
             </Panel>
-          ) : workspace ? (
-            <WorkspaceDashboard
-              activeSection={activeSection}
-              workspace={workspace}
-            />
-          ) : (
-            <Panel>
-              <SectionHeading title="Workspace is ready to sync" titleAs="h4" />
-              <p className={statusCopyClassName}>
-                Refresh the connection or reconnect your BuzzerBeater account to
-                populate the dashboard.
-              </p>
-            </Panel>
-          )}
-        </>
-      )}
+
+            {isLoadingWorkspace && !workspace ? (
+              <Panel>
+                <SectionHeading title="Building your club view" titleAs="h4" />
+                <p className={statusCopyClassName}>
+                  Pulling your team, next opponent, league table, and player snapshots.
+                </p>
+              </Panel>
+            ) : workspace ? (
+              <WorkspaceDashboard
+                activeSection={activeSection}
+                workspace={workspace}
+              />
+            ) : (
+              <Panel>
+                <SectionHeading title="Your club is ready to load" titleAs="h4" />
+                <p className={statusCopyClassName}>
+                  Refresh your club link or reconnect your BuzzerBeater account to start filling in the companion view.
+                </p>
+              </Panel>
+            )}
+          </>
+        )}
+      </main>
     </div>
   );
 }
@@ -523,16 +1392,15 @@ function ConnectionOnboarding({
       <SectionHeading
         description={
           <>
-            Enter your BuzzerBeater login name and access key. The server validates
-            them immediately, stores the key in encrypted form, and runs the initial
-            sync into the TypeScript workspace cache.
+            Enter your BuzzerBeater login name and access key. The app checks
+            them right away, stores the key securely, and starts your first club refresh.
           </>
         }
         eyebrow="Connect BuzzerBeater"
         title={
           connection?.status === "CONNECTED"
             ? "Replace or revalidate your credentials."
-            : "Unlock your scouting workspace."
+            : "Unlock your club companion."
         }
       />
 
@@ -558,7 +1426,7 @@ function ConnectionOnboarding({
                 accessKey: event.target.value,
               }))
             }
-            placeholder="Enter your BB access key"
+            placeholder="Enter your BuzzerBeater access key"
             required
             type="password"
             value={formState.accessKey}
@@ -569,7 +1437,7 @@ function ConnectionOnboarding({
 
         <div className="flex flex-wrap gap-3">
           <Button loading={isSubmitting} type="submit">
-            Validate and sync
+            Connect and refresh
           </Button>
           {onCancel ? (
             <Button onClick={onCancel} variant="secondary">
@@ -716,13 +1584,13 @@ function WorkspaceDashboard({
       {activeSection === "home" ? (
         <Panel>
           <SectionHeading
-            eyebrow="Home"
-            title={home.team.teamName ?? "Team overview"}
+            eyebrow="My Team"
+            title={home.team.teamName ?? "Club overview"}
           />
 
           <div className={summaryGridClassName}>
             <StatCard
-              detail={home.team.shortName ?? "Primary team"}
+              detail={home.team.shortName ?? "Current club"}
               label="Record"
               value={formatRecord(home.team.record)}
             />
@@ -730,7 +1598,7 @@ function WorkspaceDashboard({
               detail={
                 home.nextMatch
                   ? `${formatMatchVenue(home.nextMatch.isHome)} • ${formatTimestamp(home.nextMatch.startTime)}`
-                  : "Schedule feed has no future match."
+                  : "No future game is listed yet."
               }
               label="Next matchup"
               value={home.nextMatch?.opponentTeamName ?? "No upcoming game"}
@@ -739,9 +1607,9 @@ function WorkspaceDashboard({
               detail={
                 home.nextOpponent?.record
                   ? `Record ${formatRecord(home.nextOpponent.record)}`
-                  : "No scouting record available."
+                  : "No opponent snapshot available."
               }
-              label="Opponent readiness"
+              label="Next opponent"
               value={home.nextOpponent?.teamName ?? "No opponent"}
             />
             <StatCard
@@ -757,7 +1625,7 @@ function WorkspaceDashboard({
 
           <div className={twoColumnGridClassName}>
             <Panel as="article" padding="sm" variant="solid">
-              <SectionHeading title="Top players" titleAs="h4" />
+              <SectionHeading title="Core rotation" titleAs="h4" />
               <ul className={listClassName}>
                 {home.team.topPlayers.length ? (
                   home.team.topPlayers.map((player) => (
@@ -771,7 +1639,7 @@ function WorkspaceDashboard({
                   ))
                 ) : (
                   <li className="text-sm text-ink-muted">
-                    No player ranking is available yet.
+                    No rotation snapshot is available yet.
                   </li>
                 )}
               </ul>
@@ -804,13 +1672,13 @@ function WorkspaceDashboard({
                           Boxscore
                         </Button>
                       ) : (
-                        <span className={mutedMetaClassName}>No cached boxscore</span>
+                        <span className={mutedMetaClassName}>Box score not ready</span>
                       )}
                     </li>
                   ))
                 ) : (
                   <li className="text-sm text-ink-muted">
-                    No completed games are cached yet.
+                    No completed games are ready yet.
                   </li>
                 )}
               </ul>
@@ -823,8 +1691,8 @@ function WorkspaceDashboard({
         <>
           <Panel>
             <SectionHeading
-              eyebrow="Team Hub"
-              title="Roster and lineup context"
+              eyebrow="Roster"
+              title="Availability and lineup context"
             />
             <TableShell>
               <thead>
@@ -856,7 +1724,7 @@ function WorkspaceDashboard({
                 ) : (
                   <tr>
                     <TableCell className="text-ink-muted" colSpan={8}>
-                      No roster data is cached yet.
+                      No roster data is ready yet.
                     </TableCell>
                   </tr>
                 )}
@@ -865,8 +1733,8 @@ function WorkspaceDashboard({
           </Panel>
           <Panel>
             <SectionHeading
-              eyebrow="Lineup Tools"
-              title="Starter planning and saved scenarios"
+              eyebrow="Lineup Planning"
+              title="Starter planning and saved setups"
             />
             <LineupPlanner />
           </Panel>
@@ -878,12 +1746,12 @@ function WorkspaceDashboard({
           <SectionHeading
             actions={
               <>
-                <Field className="w-full md:min-w-80" label="Scout team">
+                <Field className="w-full md:min-w-80" label="View team">
                   <Select
                     onChange={(event) => setSelectedScoutTeamId(event.target.value)}
                     value={selectedScoutTeamId}
                   >
-                    <option value="">Select a league opponent</option>
+                    <option value="">Select a league team</option>
                     {scout.availableOpponents.map((opponent) => (
                       <option
                         key={opponent.teamId ?? opponent.teamName ?? "unknown"}
@@ -900,47 +1768,47 @@ function WorkspaceDashboard({
                   onClick={() => void handleScoutLoad()}
                   variant="secondary"
                 >
-                  Load scout
+                  Open team view
                 </Button>
               </>
             }
-            eyebrow="Scout"
-            title={scout.summary?.teamName ?? "Upcoming opponent intelligence"}
+            eyebrow="Opponents"
+            title={scout.summary?.teamName ?? "Opponent and team view"}
           />
           {scoutError ? <Alert>{scoutError}</Alert> : null}
           {scout.summary ? (
             <>
               <div className="grid gap-4 sm:grid-cols-3">
                 <StatCard
-                  detail={scout.summary.teamName ?? "Scouted opponent"}
+                  detail={scout.summary.teamName ?? "Selected team"}
                   label="Record"
                   value={formatRecord(scout.summary.record)}
                 />
                 <StatCard
                   detail={
                     scout.recentMatchups.length
-                      ? "Head-to-head history available"
-                      : "No recent matchups"
+                      ? "Recent head-to-head history available"
+                      : "No recent head-to-head games"
                   }
                   label="Recent games"
                   value={String(scout.summary.recentGames.length)}
                 />
                 <StatCard
-                  detail="Prediction Lab updates when scout target changes."
-                  label="Tracked matchup"
+                  detail="Planning tools stay locked to your current club."
+                  label="Selected team ID"
                   value={scout.summary.matchupPerspective.opponentTeamId ?? "Unavailable"}
                 />
               </div>
 
               <div className={twoColumnGridClassName}>
                 <Panel as="article" padding="sm" variant="solid">
-                  <SectionHeading title="Tendencies" titleAs="h4" />
+                  <SectionHeading title="Team tendencies" titleAs="h4" />
                   <div className="flex flex-wrap gap-2">
                     {renderTrendChips("Off", scout.summary.tendencies.offense)}
                     {renderTrendChips("Def", scout.summary.tendencies.defense)}
                   </div>
                   <div className="h-1" />
-                  <SectionHeading title="Top threats" titleAs="h4" />
+                  <SectionHeading title="Key players" titleAs="h4" />
                   <ul className={listClassName}>
                     {scout.summary.topPlayers.map((player) => (
                       <li
@@ -955,7 +1823,7 @@ function WorkspaceDashboard({
                 </Panel>
 
                 <Panel as="article" padding="sm" variant="solid">
-                  <SectionHeading title="Recent games" titleAs="h4" />
+                  <SectionHeading title="Recent games and effort clues" titleAs="h4" />
                   <ul className={listClassName}>
                     {scout.summary.recentGames.length ? (
                       scout.summary.recentGames.map((match) => (
@@ -970,6 +1838,9 @@ function WorkspaceDashboard({
                             <span className={statusCopyClassName}>
                               {formatMatchResult(match)}
                             </span>
+                            <span className={mutedMetaClassName}>
+                              {formatEffortDelta(match.effortDelta)}
+                            </span>
                           </div>
                           {match.matchId && match.hasBoxscore ? (
                             <Button
@@ -981,13 +1852,13 @@ function WorkspaceDashboard({
                               Boxscore
                             </Button>
                           ) : (
-                            <span className={mutedMetaClassName}>No cached boxscore</span>
+                            <span className={mutedMetaClassName}>Box score not ready</span>
                           )}
                         </li>
                       ))
                     ) : (
                       <li className="text-sm text-ink-muted">
-                        No recent opponent games are available yet.
+                        No recent games are available yet.
                       </li>
                     )}
                   </ul>
@@ -995,7 +1866,49 @@ function WorkspaceDashboard({
               </div>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Recent matchups" titleAs="h4" />
+                <SectionHeading
+                  description="Public team view only. Hidden skills stay hidden, but salary, shape, DMI, and injuries still help frame the matchup."
+                  title="Public roster"
+                  titleAs="h4"
+                />
+                <TableShell>
+                  <thead>
+                    <tr>
+                      <TableHeadCell>Player</TableHeadCell>
+                      <TableHeadCell>Role</TableHeadCell>
+                      <TableHeadCell>Age</TableHeadCell>
+                      <TableHeadCell>Salary</TableHeadCell>
+                      <TableHeadCell>Shape</TableHeadCell>
+                      <TableHeadCell>DMI</TableHeadCell>
+                      <TableHeadCell>Injury</TableHeadCell>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scout.summary.roster.length ? (
+                      scout.summary.roster.map((player) => (
+                        <tr key={player.playerId ?? player.fullName}>
+                          <TableCell>{player.fullName}</TableCell>
+                          <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
+                          <TableCell>{player.age ?? "N/A"}</TableCell>
+                          <TableCell>{formatCurrency(player.salary)}</TableCell>
+                          <TableCell>{player.gameShape ?? "N/A"}</TableCell>
+                          <TableCell>{player.dmi ?? "N/A"}</TableCell>
+                          <TableCell>{formatInjury(player.injuryWeeks)}</TableCell>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <TableCell className="text-ink-muted" colSpan={7}>
+                          Public roster data is not ready yet.
+                        </TableCell>
+                      </tr>
+                    )}
+                  </tbody>
+                </TableShell>
+              </Panel>
+
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading title="Recent matchups with your club" titleAs="h4" />
                 <ul className={listClassName}>
                   {scout.recentMatchups.length ? (
                     scout.recentMatchups.map((match) => (
@@ -1021,13 +1934,13 @@ function WorkspaceDashboard({
                             Boxscore
                           </Button>
                         ) : (
-                          <span className={mutedMetaClassName}>No cached boxscore</span>
+                          <span className={mutedMetaClassName}>Box score not ready</span>
                         )}
                       </li>
                     ))
                   ) : (
                     <li className="text-sm text-ink-muted">
-                      No recent head-to-head history is cached yet.
+                      No recent head-to-head history is ready yet.
                     </li>
                   )}
                 </ul>
@@ -1035,7 +1948,7 @@ function WorkspaceDashboard({
             </>
           ) : (
             <p className={statusCopyClassName}>
-              {scout.message ?? "No opponent workspace is available yet."}
+              {scout.message ?? "No opponent view is available yet."}
             </p>
           )}
         </Panel>
@@ -1044,8 +1957,8 @@ function WorkspaceDashboard({
       {activeSection === "scout" && (boxscoreDetails || boxscoreError) ? (
         <Panel>
           <SectionHeading
-            eyebrow="Boxscore Drilldown"
-            title={boxscoreDetails?.opponentTeamName ?? "Cached boxscore detail"}
+            eyebrow="Box Score"
+            title={boxscoreDetails?.opponentTeamName ?? "Saved box score detail"}
           />
           {boxscoreError ? <Alert>{boxscoreError}</Alert> : null}
           {boxscoreDetails ? (
@@ -1131,10 +2044,10 @@ function WorkspaceDashboard({
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Raw game context" titleAs="h4" />
+                <SectionHeading title="Saved game context" titleAs="h4" />
                 <p className={statusCopyClassName}>
-                  Match {boxscoreDetails.matchId}. Boxscore JSON is cached server-side and
-                  used to resolve connected predictions.
+                  Match {boxscoreDetails.matchId}. This saved snapshot keeps the
+                  strategy and effort context available for later prep.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {renderBoxscoreContext(boxscoreDetails.boxscore)}
@@ -1152,7 +2065,7 @@ function WorkspaceDashboard({
       {activeSection === "league" ? (
         <Panel>
           <SectionHeading
-            eyebrow="League Intel"
+            eyebrow="League"
             title={workspace.leagueIntel.league?.name ?? "League standings"}
           />
           <div className={twoColumnGridClassName}>
@@ -1189,7 +2102,7 @@ function WorkspaceDashboard({
               ))
             ) : (
               <Panel as="article" padding="sm" variant="solid">
-                <p className={statusCopyClassName}>No standings snapshot is cached yet.</p>
+                <p className={statusCopyClassName}>No standings snapshot is ready yet.</p>
               </Panel>
             )}
           </div>
@@ -1199,8 +2112,8 @@ function WorkspaceDashboard({
       {activeSection === "players" ? (
         <Panel>
           <SectionHeading
-            eyebrow="Player Lab"
-            title="Comparison, salary, and flag fit"
+            eyebrow="Players"
+            title="Trend lines, salary movement, and roster calls"
           />
           {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
           {salaryProjectionError ? <Alert>{salaryProjectionError}</Alert> : null}
@@ -1251,7 +2164,7 @@ function WorkspaceDashboard({
               ) : (
                 <tr>
                   <TableCell className="text-ink-muted" colSpan={7}>
-                    Player lab data is not available yet.
+                    Player data is not available yet.
                   </TableCell>
                 </tr>
               )}
@@ -1261,7 +2174,7 @@ function WorkspaceDashboard({
           <div className={twoColumnGridClassName}>
             <Panel as="article" padding="sm" variant="solid">
               <SectionHeading
-                description="Weekly snapshots from the cached workspace history."
+                description="Weekly snapshots from your saved club history."
                 title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
                 titleAs="h4"
               />
@@ -1320,13 +2233,45 @@ function WorkspaceDashboard({
         </Panel>
       ) : null}
 
-      {activeSection === "ops" ? <OperationsPanel /> : null}
+      {activeSection === "ops" ? (
+        <>
+          <Panel>
+            <SectionHeading
+              description="Choose the look you want for your companion app. The selection is saved on this device."
+              eyebrow="Appearance"
+              title="Theme and account preferences"
+            />
+            <div className="max-w-sm">
+              <ThemeSelect />
+            </div>
+          </Panel>
+          <OperationsPanel />
+        </>
+      ) : null}
     </>
   );
 }
 
 function readPayload<T>(response: WorkspaceResponse | JsonLookupResponse): T {
-  return (response.payload ?? {}) as T;
+  return decodeGraphqlJsonPayload<T>(response.payload);
+}
+
+export const __testing = {
+  readPayload,
+};
+
+function formatEffortDelta(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "Effort clue unavailable";
+  }
+
+  if (value === 0) {
+    return "Effort looked even";
+  }
+
+  return value > 0
+    ? `Effort edge: +${value}`
+    : `Effort edge: ${value}`;
 }
 
 function renderTrendChips(prefix: string, values: Record<string, number>) {
@@ -1425,6 +2370,24 @@ function formatAmplifyErrors(
     .map((error) => error.message?.trim())
     .filter((message): message is string => Boolean(message))
     .join(" ");
+}
+
+function formatAuthError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    error.message.trim()
+  ) {
+    return error.message.trim();
+  }
+
+  return "Authentication failed without a detailed error message.";
 }
 
 function humanizeStatus(status: BbConnectionRecord["status"]) {

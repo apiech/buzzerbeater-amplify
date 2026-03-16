@@ -78,6 +78,7 @@ export type MatchSummary = {
   teamScore: number | null;
   opponentScore: number | null;
   outcome: string | null;
+  effortDelta?: number | null;
   hasBoxscore?: boolean | null;
 };
 
@@ -153,6 +154,7 @@ export type ScoutWorkspacePayload = {
       opponentTeamId: string | null;
     };
     tendencies: TendenciesSummary;
+    roster: PlayerSummary[];
     topPlayers: PlayerSummary[];
     recentGames: MatchSummary[];
   } | null;

@@ -98,12 +98,12 @@ export function OperationsPanel() {
       <SectionHeading
         actions={
           <Button loading={isLoading} onClick={() => void loadOperations()} variant="secondary">
-            Refresh ops
+            Refresh activity
           </Button>
         }
-        description="Track manual workspace refreshes and prediction jobs without leaving the product."
-        eyebrow="Operations"
-        title="Sync and prediction visibility"
+        description="Review recent club refreshes and matchup preview activity without leaving the app."
+        eyebrow="Account"
+        title="Recent activity"
       />
 
       {opsError ? <Alert>{opsError}</Alert> : null}
@@ -115,29 +115,29 @@ export function OperationsPanel() {
               ? `${failedSyncCount} recent failure(s)`
               : "Recent syncs are healthy."
           }
-          label="Active syncs"
+          label="Active refreshes"
           value={activeSyncCount}
         />
         <StatCard
           detail={
             predictionJobs[0]?.modelVersion
-              ? `Latest model ${predictionJobs[0].modelVersion}`
-              : "No model version resolved yet."
+              ? `Latest preview engine ${predictionJobs[0].modelVersion}`
+              : "No preview engine has been recorded yet."
           }
-          label="Prediction queue"
+          label="Preview queue"
           value={activePredictionCount}
         />
       </div>
 
       <div className={twoColumnGridClassName}>
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Recent sync runs" titleAs="h4" />
+          <SectionHeading title="Recent refreshes" titleAs="h4" />
           {syncRuns.length ? (
             <ul className={listClassName}>
               {syncRuns.map((run) => (
                 <li className={listItemClassName} key={run.id}>
                   <strong className="text-sm text-ink">
-                    {run.kind ?? "Workspace sync"}
+                    {run.kind ?? "Club refresh"}
                   </strong>
                   <span className={statusCopyClassName}>
                     {humanizeStatus(run.status)} • {formatTimestamp(run.startedAt ?? null)}
@@ -147,12 +147,12 @@ export function OperationsPanel() {
               ))}
             </ul>
           ) : (
-            <p className={statusCopyClassName}>No sync runs have been recorded yet.</p>
+            <p className={statusCopyClassName}>No refresh activity has been recorded yet.</p>
           )}
         </Panel>
 
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Recent prediction jobs" titleAs="h4" />
+          <SectionHeading title="Recent previews" titleAs="h4" />
           {predictionJobs.length ? (
             <ul className={listClassName}>
               {predictionJobs.map((job) => (
@@ -170,7 +170,7 @@ export function OperationsPanel() {
             </ul>
           ) : (
             <p className={statusCopyClassName}>
-              No prediction jobs have been recorded yet.
+              No previews have been recorded yet.
             </p>
           )}
         </Panel>

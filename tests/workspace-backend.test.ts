@@ -141,6 +141,50 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
   );
 });
 
+test("buildConnectionRecord preserves explicit null updates when clearing stale state", () => {
+  const record = workspaceTesting.buildConnectionRecord(
+    "user-1",
+    {
+      userId: "user-1",
+      bbLoginName: "coach",
+      status: "CONNECTED",
+      accessKeyLast4: "****1234",
+      teamId: "team-1",
+      teamName: "Legacy Team",
+      lastSyncError: "Old sync failure",
+      workspaceCacheJson: {
+        home: { stale: true },
+      },
+    } as any,
+    {
+      accessKeyLast4: null,
+      lastSyncError: null,
+      teamName: null,
+      workspaceCacheJson: null,
+    },
+  );
+
+  assert.deepStrictEqual(record, {
+    userId: "user-1",
+    bbLoginName: "coach",
+    status: "CONNECTED",
+    accessKeyLast4: null,
+    teamId: "team-1",
+    teamName: null,
+    shortName: null,
+    leagueId: null,
+    leagueName: null,
+    countryId: null,
+    countryName: null,
+    connectedAt: null,
+    lastValidatedAt: null,
+    lastSyncAt: null,
+    lastSyncError: null,
+    profileJson: null,
+    workspaceCacheJson: null,
+  });
+});
+
 test("lookupSharedPlayerCardByToken unwraps only the sanitized share payload", async () => {
   const result = await lookupSharedPlayerCardByToken(
     {

@@ -25,20 +25,14 @@ test("layout imports globals.css and not the legacy app.css stylesheet", () => {
 
   assert.match(layoutSource, /import "\.\/globals\.css";/);
   assert.doesNotMatch(layoutSource, /import "\.\/app\.css";/);
+  assert.doesNotMatch(layoutSource, /@aws-amplify\/ui-react\/styles\.css/);
 });
 
-test("app surface no longer imports non-auth Amplify UI primitives", () => {
+test("app surface no longer imports Amplify UI", () => {
   const appSources = readTsxFiles(appDir).map((file) => readFileSync(file, "utf8"));
 
   for (const source of appSources) {
-    const matches = source.match(/import\s+\{([^}]+)\}\s+from "@aws-amplify\/ui-react";/g);
-    if (!matches?.length) {
-      continue;
-    }
-
-    for (const match of matches) {
-      assert.doesNotMatch(match, /\b(Button|Heading|Text|TextField|View)\b/);
-    }
+    assert.doesNotMatch(source, /@aws-amplify\/ui-react/);
   }
 });
 

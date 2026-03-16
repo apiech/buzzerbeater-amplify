@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { client } from "@/app/amplify-client";
+import { encodeGraphqlJsonInput } from "@/app/graphql-json";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { cn } from "@/app/ui/primitives/cn";
@@ -231,7 +232,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
     });
 
     const result = await client.mutations.submitPredictionJob({
-      request: request as unknown as Record<string, unknown>,
+      request: encodeGraphqlJsonInput(request),
     });
 
     if (result.errors?.length || !result.data) {
@@ -276,8 +277,8 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                 onClick={() => setMode("CONNECTED")}
                 role="tab"
                 type="button"
-              >
-                Connected
+            >
+                Box scores
               </button>
               <button
                 className={cn(
@@ -289,7 +290,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                 onClick={() => setMode("MANUAL")}
                 role="tab"
                 type="button"
-              >
+            >
                 Manual
               </button>
             </div>
@@ -299,20 +300,18 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
               onClick={() => void handleSubmit()}
             >
               {mode === "CONNECTED"
-                ? "Queue connected prediction"
-                : "Queue manual prediction"}
+                ? "Run box-score preview"
+                : "Run manual preview"}
             </Button>
           </>
         }
-        eyebrow="Prediction Lab"
-        title="Async matchup predictions via SageMaker"
+        eyebrow="Game Prep"
+        title="Matchup preview"
       />
 
       <p className={statusCopyClassName}>
-        The web app submits a prediction job, the backend resolves the final
-        matchup payload, and the worker invokes a SageMaker Serverless endpoint.
-        Connected mode uses cached source box scores plus the manual form as a
-        fallback.
+        Build a preview from saved box scores or fill in the matchup yourself.
+        The manual form also doubles as a fallback when saved examples are thin.
       </p>
 
       {predictionError ? <Alert>{predictionError}</Alert> : null}
@@ -320,13 +319,13 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
       <div className={twoColumnGridClassName}>
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading
-            description="Choose one recent game for your team and one for the opponent. The worker will reuse the cached ratings from those box scores."
-            title="Connected sources"
+            description="Choose one recent game for your club and one for the opponent. The preview reuses the ratings saved from those box scores."
+            title="Saved game sources"
             titleAs="h4"
           />
 
           <div className={formGridClassName}>
-            <Field label="Home source match">
+            <Field label="Your source game">
               <Select
                 onChange={(event) =>
                   setConnectedSelection((current) => ({
@@ -336,7 +335,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                 }
                 value={connectedSelection.homeSourceMatchId}
               >
-                <option value="">Select a recent home match</option>
+                <option value="">Select a recent club game</option>
                 {homeMatchOptions.map((match) => (
                   <option key={match.matchId} value={match.matchId ?? ""}>
                     {formatMatchOption(
@@ -350,7 +349,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
               </Select>
             </Field>
 
-            <Field label="Away source match">
+            <Field label="Opponent source game">
               <Select
                 onChange={(event) =>
                   setConnectedSelection((current) => ({
@@ -360,7 +359,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                 }
                 value={connectedSelection.awaySourceMatchId}
               >
-                <option value="">Select a recent opponent match</option>
+                <option value="">Select a recent opponent game</option>
                 {awayMatchOptions.map((match) => (
                   <option key={match.matchId} value={match.matchId ?? ""}>
                     {formatMatchOption(
@@ -377,26 +376,26 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
 
           <div className="grid gap-4 md:grid-cols-2">
             <StatCard
-              detail="Uses your workspace cache."
-              label="Home team"
+              detail="Uses your saved club data."
+              label="Your team"
               value={workspace.home.team.teamName ?? "Unavailable"}
             />
             <StatCard
               detail={
                 awayMatchOptions.length
                   ? `${awayMatchOptions.length} recent opponent games cached`
-                  : "Refresh the workspace to populate opponent samples."
+                  : "Refresh club data to populate opponent samples."
               }
               label="Opponent"
-              value={workspace.scout.summary?.teamName ?? "No cached opponent"}
+              value={workspace.scout.summary?.teamName ?? "No saved opponent"}
             />
           </div>
         </Panel>
 
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading
-            description="Ratings are required for manual predictions and serve as the fallback payload when connected source matches are unavailable."
-            title={mode === "MANUAL" ? "Manual matchup payload" : "Manual fallback payload"}
+            description="Ratings are required for manual previews and act as a fallback when saved games are unavailable."
+            title={mode === "MANUAL" ? "Manual matchup input" : "Manual fallback input"}
             titleAs="h4"
           />
 
@@ -565,7 +564,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
         </Panel>
 
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Game context and queue status" titleAs="h4" />
+          <SectionHeading title="Game context and preview status" titleAs="h4" />
           <div className={formGridClassName}>
             <Field label="Neutral site">
               <Select
@@ -620,15 +619,15 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
               ) : null}
             </div>
           ) : (
-            <p className={statusCopyClassName}>No prediction jobs submitted yet.</p>
+            <p className={statusCopyClassName}>No previews have been run yet.</p>
           )}
         </Panel>
       </div>
 
       <Panel as="article" padding="sm" variant="solid">
-        <SectionHeading title="Recent prediction jobs" titleAs="h4" />
+        <SectionHeading title="Recent previews" titleAs="h4" />
         {isLoadingJobs ? (
-          <p className={statusCopyClassName}>Loading prediction job history.</p>
+          <p className={statusCopyClassName}>Loading recent preview history.</p>
         ) : jobs.length ? (
           <ul className={listClassName}>
             {jobs.map((job) => (
@@ -644,7 +643,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             ))}
           </ul>
         ) : (
-          <p className={statusCopyClassName}>No prediction jobs are stored yet.</p>
+          <p className={statusCopyClassName}>No preview history is stored yet.</p>
         )}
       </Panel>
     </Panel>
@@ -749,8 +748,8 @@ function describePredictionJob(job: PredictionJobRecord): string {
   }
 
   return job.mode === "CONNECTED"
-    ? "Connected prediction queued"
-    : "Manual prediction queued";
+    ? "Box-score preview queued"
+    : "Manual preview queued";
 }
 
 function toPredictionResult(value: unknown): PredictionResult | null {

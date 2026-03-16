@@ -8,6 +8,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "analyze:bundle": "ANALYZE=true next build --webpack",
+    "analyze:artifacts": "node --import tsx ./scripts/analyze-react-bloat.ts",
+    "analyze:all": "npm run analyze:bundle && npm run analyze:artifacts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "start": "next start",
@@ -19,7 +22,6 @@
     "cdk:match-data-plane:deploy": "cdk deploy --app 'tsx infra/match-data-plane/bin/match-data-plane.ts'"
   },
   "dependencies": {
-    "@aws-amplify/ui-react": "^6.15.2",
     "@aws-sdk/client-dynamodb": "^3.1009.0",
     "@aws-sdk/client-s3": "^3.1009.0",
     "@aws-sdk/client-sagemaker-runtime": "^3.1009.0",
@@ -37,6 +39,7 @@
   "devDependencies": {
     "@aws-amplify/backend": "1.21.1",
     "@aws-amplify/backend-cli": "1.8.2",
+    "@next/bundle-analyzer": "^16.1.6",
     "@opentelemetry/api": "1.9.0",
     "@opentelemetry/context-async-hooks": "2.5.0",
     "@opentelemetry/core": "2.5.0",

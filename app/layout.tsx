@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Space_Grotesk } from "next/font/google";
-import "@aws-amplify/ui-react/styles.css";
 import "./globals.css";
+
+import { getThemeInitScript } from "@/app/theme";
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -9,9 +10,9 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "BB Amplify",
+  title: "BuzzerBeater Companion",
   description:
-    "Modern BuzzerBeater team, opponent, league, and player intelligence on Amplify Gen 2.",
+    "A BuzzerBeater companion for team prep, opponent reads, league context, and roster decisions.",
 };
 
 export default function RootLayout({
@@ -21,6 +22,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: getThemeInitScript() }} />
+      </head>
       <body className={`${spaceGrotesk.variable} font-sans`}>{children}</body>
     </html>
   );
