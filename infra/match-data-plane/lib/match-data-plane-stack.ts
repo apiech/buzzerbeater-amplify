@@ -25,6 +25,42 @@ type MatchDataPlaneStackProps = StackProps & {
   encryptionSecret: string;
 };
 
+const MATCH_DATA_PLANE_IMAGE_EXCLUDES = [
+  "bb-amplify",
+  "bb-amplify/**",
+  ".git",
+  ".git/**",
+  "bb-machine-learning/.git",
+  "bb-machine-learning/.git/**",
+  "bb-machine-learning/venv",
+  "bb-machine-learning/venv/**",
+  "bb-machine-learning/.venv",
+  "bb-machine-learning/.venv/**",
+  "bb-machine-learning/.venv-*",
+  "bb-machine-learning/.venv-*/**",
+  "bb-machine-learning/.venv-codex",
+  "bb-machine-learning/.venv-codex/**",
+  "bb-machine-learning/.venv-codex312",
+  "bb-machine-learning/.venv-codex312/**",
+  "bb-machine-learning/**/__pycache__",
+  "bb-machine-learning/**/__pycache__/**",
+  "bb-machine-learning/**/*.ipynb",
+  "bb-machine-learning/**/.ipynb_checkpoints",
+  "bb-machine-learning/**/.ipynb_checkpoints/**",
+  "bb-machine-learning/output",
+  "bb-machine-learning/output/**",
+  "bb-machine-learning/dist",
+  "bb-machine-learning/dist/**",
+  "bb-machine-learning/build",
+  "bb-machine-learning/build/**",
+  "bb-machine-learning/raw",
+  "bb-machine-learning/raw/**",
+  "bb-machine-learning/*boxscores",
+  "bb-machine-learning/*boxscores/**",
+  "bb-machine-learning/tests",
+  "bb-machine-learning/tests/**",
+];
+
 export class MatchDataPlaneStack extends Stack {
   constructor(scope: Construct, id: string, props: MatchDataPlaneStackProps) {
     super(scope, id, props);
@@ -189,7 +225,7 @@ export class MatchDataPlaneStack extends Stack {
           {
             file: "bb-machine-learning/apps/match_data_plane/Dockerfile.lambda",
             cmd: ["apps.match_data_plane.lambda_handlers.ingest_handler"],
-            exclude: ["bb-amplify", "bb-amplify/**", ".git", ".git/**"],
+            exclude: MATCH_DATA_PLANE_IMAGE_EXCLUDES,
           },
         ),
         timeout: Duration.minutes(5),
@@ -206,7 +242,7 @@ export class MatchDataPlaneStack extends Stack {
           {
             file: "bb-machine-learning/apps/match_data_plane/Dockerfile.lambda",
             cmd: ["apps.match_data_plane.lambda_handlers.materialize_handler"],
-            exclude: ["bb-amplify", "bb-amplify/**", ".git", ".git/**"],
+            exclude: MATCH_DATA_PLANE_IMAGE_EXCLUDES,
           },
         ),
         timeout: Duration.minutes(5),

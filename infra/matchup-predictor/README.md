@@ -6,7 +6,7 @@ expects for matchup predictions.
 It owns:
 
 - the serving image asset built from `bb-machine-learning/apps/matchup_predictor/serverless`
-- the packaged `model.tar.gz` asset built from the committed default model bundle
+- the packaged `model.tar.gz` asset built from the default XGBoost bundle inputs in `bb-machine-learning/apps/matchup_predictor/april2025`
 - the SageMaker execution role, model, endpoint config, and stable endpoint
 
 Stable endpoint names:
@@ -14,13 +14,25 @@ Stable endpoint names:
 - `bb-matchup-predictor-dev`
 - `bb-matchup-predictor-prod`
 
-## Deploy
+## Supported Release Flow
 
-1. Ensure the target account is `427377913956` in `us-east-1` and CDK bootstrap is present.
-2. From `bb-amplify`, run:
+Use the repo-root wrapper instead of raw CDK commands:
 
-`npm run cdk:matchup-predictor:deploy:dev`
+```bash
+./scripts/matchup-predictor-release dev --version <version> --data-dir <local-data-dir>
+./scripts/matchup-predictor-release prod --version <version>
+```
 
-3. After the endpoint reaches `InService`, the Amplify prediction worker can invoke it without any application code changes.
+That wrapper:
 
-Use the matching `prod` script when you are ready to provision the production endpoint.
+- retrains locally for `dev`
+- deploys the explicit local tarball through this CDK app
+- waits for SageMaker
+- smoke tests the endpoint
+- records the release manifest used for later `prod` promotion
+
+Runbook: [`docs/runbooks/matchup-predictor-release.md`](/Users/karey/projects/bb/docs/runbooks/matchup-predictor-release.md)
+
+## Raw CDK Debugging
+
+The `npm run cdk:matchup-predictor:*` scripts in [`package.json`](/Users/karey/projects/bb/bb-amplify/package.json) remain available for synth checks and infrastructure debugging. They are not the documented operator workflow.

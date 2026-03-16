@@ -62,9 +62,10 @@ Prediction infrastructure requirements:
 
 - A SageMaker endpoint named `bb-matchup-predictor-dev` or `bb-matchup-predictor-prod`
   - The backend selects the suffix from `AWS_BRANCH` in [`amplify/backend.ts`](/Users/karey/projects/bb/bb-amplify/amplify/backend.ts).
-  - Provision it with the dedicated CDK app in [`infra/matchup-predictor/`](/Users/karey/projects/bb/bb-amplify/infra/matchup-predictor).
-  - Dev deploy command: `npm run cdk:matchup-predictor:deploy:dev`
-  - Prod deploy command: `npm run cdk:matchup-predictor:deploy:prod`
+  - All non-prod branches and sandbox-like environments use `bb-matchup-predictor-dev`.
+  - Prod branches use `bb-matchup-predictor-prod`.
+  - Provision or update it with [`scripts/matchup-predictor-release`](/Users/karey/projects/bb/scripts/matchup-predictor-release).
+  - Runbook: [`docs/runbooks/matchup-predictor-release.md`](/Users/karey/projects/bb/docs/runbooks/matchup-predictor-release.md)
 - The prediction submit Lambda needs SQS send access.
 - The prediction worker Lambda needs SQS consume access and `sagemaker:InvokeEndpoint`.
 
@@ -117,7 +118,8 @@ Use `npm run billing:override -- --help` for the full CLI options.
 
 ## Deploy Notes
 
-- Deploy the matchup predictor stack before testing `/workspace/predictions`; otherwise prediction jobs fail with `Endpoint bb-matchup-predictor-<stage> not found`.
+- Deploy the predictor with `./scripts/matchup-predictor-release dev --version <version> --data-dir <local-data-dir>` before testing `/workspace/predictions`; otherwise prediction jobs fail with `Endpoint bb-matchup-predictor-<stage> not found`.
+- Promote with `./scripts/matchup-predictor-release prod --version <version>` only after the same version passes in `dev`.
 - The workspace sync path stores encrypted BB credentials server-side and refreshes cached data only on initial connect plus explicit manual refresh.
 - The ops section surfaces recent `SyncRun` and `PredictionJob` records so failures are visible inside the product.
 - The BB XML client now retries transient upstream failures with bounded exponential backoff.
