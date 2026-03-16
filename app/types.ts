@@ -1,9 +1,17 @@
 import type { Schema } from "@/amplify/data/resource";
+import type { PlanId } from "@/lib/billing/plans";
 
 export type JsonRecord = Record<string, unknown>;
 
+export type BillingAccountRecord = Schema["BillingAccount"]["type"];
+export type BillingSummary = NonNullable<Schema["getBillingSummary"]["returnType"]>;
+export type BillingSessionResult = NonNullable<
+  Schema["createBillingCheckoutSession"]["returnType"]
+>;
 export type BbConnectionRecord = Schema["BbConnection"]["type"];
 export type ConnectionStatus = BbConnectionRecord["status"];
+export type GameDayRecapRecord = Schema["GameDayRecap"]["type"];
+export type GameDayRecapStatus = GameDayRecapRecord["status"];
 export type PredictionJobRecord = Schema["PredictionJob"]["type"];
 export type PredictionJobStatus = PredictionJobRecord["status"];
 export type SyncRunRecord = Schema["SyncRun"]["type"];
@@ -22,6 +30,9 @@ export type ConnectBbAccountResult = NonNullable<
 export type DisconnectBbAccountResult = NonNullable<
   Schema["disconnectBbAccount"]["returnType"]
 >;
+export type SubmitGameDayRecapResult = NonNullable<
+  Schema["submitGameDayRecap"]["returnType"]
+>;
 export type SubmitPredictionJobResult = NonNullable<
   Schema["submitPredictionJob"]["returnType"]
 >;
@@ -32,6 +43,12 @@ export type LineupPlan = NonNullable<Schema["getLineupPlan"]["returnType"]>;
 export type LineupScenario = NonNullable<
   Schema["saveLineupScenario"]["returnType"]
 >;
+export type LineupHelperWorkspaceRecord = NonNullable<
+  Schema["getLineupHelperWorkspace"]["returnType"]
+>;
+export type LineupHelperEvaluationRecord = NonNullable<
+  Schema["evaluateLineupHelper"]["returnType"]
+>;
 export type SalaryProjection = NonNullable<
   Schema["getSalaryProjection"]["returnType"]
 >;
@@ -40,6 +57,7 @@ export type WorkspaceResponse = NonNullable<Schema["getHomeWorkspace"]["returnTy
 export type JsonLookupResponse = NonNullable<
   Schema["getPlayerTrend"]["returnType"]
 >;
+export type AppPlanId = PlanId;
 
 export type TeamRecordSummary = {
   wins: number | null;
@@ -68,6 +86,72 @@ export type PlayerSummary = {
 export type TendenciesSummary = {
   offense: Record<string, number>;
   defense: Record<string, number>;
+};
+
+export type PositionCode = "PG" | "SG" | "SF" | "PF" | "C";
+
+export type LineupHelperContext = {
+  offense: string;
+  defense: string;
+  enthusiasm: number;
+  homeCourt: string;
+};
+
+export type LineupHelperAssignment = {
+  playerId: string;
+  position: PositionCode;
+  minutes: number;
+};
+
+export type LineupHelperRankingEntry = {
+  playerId: string;
+  name: string;
+  output: number;
+};
+
+export type LineupHelperRosterPlayer = {
+  playerId: string;
+  fullName: string;
+  bestPosition: string | null;
+  salary: number | null;
+  age: number | null;
+  gameShape: string | null;
+  snapshotWeekKey: string | null;
+  snapshotCapturedAt: string | null;
+  available: boolean;
+  snapshotWarning: string | null;
+  skills: Record<string, number>;
+};
+
+export type LineupHelperEvaluation = {
+  context: LineupHelperContext;
+  normalizedLineup: LineupHelperAssignment[];
+  rawRatings: Record<string, number>;
+  roundedRatings: Record<string, number>;
+  ratingLabels: Record<string, string>;
+  outputBandLabels: Record<string, string>;
+  warnings: string[];
+  rankings: Record<PositionCode, LineupHelperRankingEntry[]>;
+  playerPositionOutputs: Record<string, Record<PositionCode, number>>;
+  perPositionContributions: Record<string, Record<PositionCode, number>>;
+  totalOutput: number;
+};
+
+export type DecodedLineupHelperWorkspace = {
+  generatedAt: string;
+  syncedAt: string | null;
+  roster: LineupHelperRosterPlayer[];
+  defaultContext: LineupHelperContext;
+  defaultAssignments: LineupHelperAssignment[];
+  evaluation: LineupHelperEvaluation;
+  snapshotWarnings: Array<{
+    playerId: string;
+    fullName: string;
+    warning: string;
+  }>;
+  availableOffenses: string[];
+  availableDefenses: string[];
+  availableLocations: string[];
 };
 
 export type MatchSummary = {
@@ -192,6 +276,31 @@ export type MatchBoxscorePayload = {
   teamEfficiency: JsonRecord | null;
   opponentEfficiency: JsonRecord | null;
   boxscore: JsonRecord | null;
+};
+
+export type GameDayRecapCoveragePayload = {
+  availableGames: number;
+  missingGames: Array<{
+    awayTeamName: string;
+    homeTeamName: string;
+    matchId: string;
+    reason: string;
+  }>;
+  partial: boolean;
+  requestedGames: number;
+};
+
+export type GameDayRecapResultPayload = {
+  games: Array<{
+    evidenceTags: string[];
+    headline: string;
+    matchId: string;
+    writeup: string;
+  }>;
+  summary: {
+    headline: string;
+    lede: string;
+  };
 };
 
 export type SharedPlayerCardLookupPayload = {

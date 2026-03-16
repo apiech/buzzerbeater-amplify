@@ -12,6 +12,13 @@ test("normalizeWorkspaceSection accepts known product routes", () => {
   }
 });
 
+test("workspace sections expose the dedicated lineups route", () => {
+  assert.equal(
+    workspaceSections.some((section) => section.id === "lineups"),
+    true,
+  );
+});
+
 test("normalizeWorkspaceSection falls back to home", () => {
   assert.equal(normalizeWorkspaceSection(undefined), "home");
   assert.equal(normalizeWorkspaceSection("unknown"), "home");

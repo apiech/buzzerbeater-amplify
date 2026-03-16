@@ -8,17 +8,23 @@ import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
-import type { PredictionJobRecord, SyncRunRecord } from "@/app/types";
+import type {
+  GameDayRecapRecord,
+  PredictionJobRecord,
+  SyncRunRecord,
+} from "@/app/types";
 
+const terminalRecapStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const terminalPredictionStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const terminalSyncStatuses = new Set(["SUCCEEDED", "FAILED", "IDLE"]);
 const listClassName = "grid list-none gap-3 p-0";
 const listItemClassName =
   "grid gap-1 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
-const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
+const threeColumnGridClassName = "grid gap-4 xl:grid-cols-3";
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 
 export function OperationsPanel() {
+  const [gameDayRecaps, setGameDayRecaps] = useState<GameDayRecapRecord[]>([]);
   const [syncRuns, setSyncRuns] = useState<SyncRunRecord[]>([]);
   const [predictionJobs, setPredictionJobs] = useState<PredictionJobRecord[]>([]);
   const [opsError, setOpsError] = useState<string | null>(null);
@@ -31,6 +37,9 @@ export function OperationsPanel() {
   useEffect(() => {
     const hasActiveWork =
       syncRuns.some((run) => run.status && !terminalSyncStatuses.has(run.status)) ||
+      gameDayRecaps.some(
+        (recap) => recap.status && !terminalRecapStatuses.has(recap.status),
+      ) ||
       predictionJobs.some(
         (job) => job.status && !terminalPredictionStatuses.has(job.status),
       );
@@ -44,24 +53,31 @@ export function OperationsPanel() {
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [predictionJobs, syncRuns]);
+  }, [gameDayRecaps, predictionJobs, syncRuns]);
 
   async function loadOperations() {
     setIsLoading(true);
     setOpsError(null);
 
-    const [syncResponse, predictionResponse] = await Promise.all([
+    const [syncResponse, predictionResponse, recapResponse] = await Promise.all([
       client.models.SyncRun.list({ limit: 8 }),
       client.models.PredictionJob.list({ limit: 8 }),
+      client.models.GameDayRecap.list({ limit: 8 }),
     ]);
 
-    if (syncResponse.errors?.length || predictionResponse.errors?.length) {
+    if (
+      syncResponse.errors?.length ||
+      predictionResponse.errors?.length ||
+      recapResponse.errors?.length
+    ) {
       setOpsError(
         formatAmplifyErrors([
           ...(syncResponse.errors ?? []),
           ...(predictionResponse.errors ?? []),
+          ...(recapResponse.errors ?? []),
         ]),
       );
+      setGameDayRecaps([]);
       setSyncRuns([]);
       setPredictionJobs([]);
       setIsLoading(false);
@@ -72,6 +88,13 @@ export function OperationsPanel() {
       [...syncResponse.data].sort((left, right) =>
         String(right.startedAt ?? right.createdAt ?? "").localeCompare(
           String(left.startedAt ?? left.createdAt ?? ""),
+        ),
+      ),
+    );
+    setGameDayRecaps(
+      [...recapResponse.data].sort((left, right) =>
+        String(right.updatedAt ?? right.requestedAt ?? "").localeCompare(
+          String(left.updatedAt ?? left.requestedAt ?? ""),
         ),
       ),
     );
@@ -92,6 +115,9 @@ export function OperationsPanel() {
   const activePredictionCount = predictionJobs.filter(
     (job) => job.status && !terminalPredictionStatuses.has(job.status),
   ).length;
+  const activeRecapCount = gameDayRecaps.filter(
+    (recap) => recap.status && !terminalRecapStatuses.has(recap.status),
+  ).length;
 
   return (
     <Panel>
@@ -108,7 +134,7 @@ export function OperationsPanel() {
 
       {opsError ? <Alert>{opsError}</Alert> : null}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
         <StatCard
           detail={
             failedSyncCount
@@ -127,9 +153,18 @@ export function OperationsPanel() {
           label="Preview queue"
           value={activePredictionCount}
         />
+        <StatCard
+          detail={
+            gameDayRecaps[0]?.modelId
+              ? `Latest recap model ${gameDayRecaps[0].modelId}`
+              : "No recap model has been recorded yet."
+          }
+          label="Active recaps"
+          value={activeRecapCount}
+        />
       </div>
 
-      <div className={twoColumnGridClassName}>
+      <div className={threeColumnGridClassName}>
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading title="Recent refreshes" titleAs="h4" />
           {syncRuns.length ? (
@@ -171,6 +206,30 @@ export function OperationsPanel() {
           ) : (
             <p className={statusCopyClassName}>
               No previews have been recorded yet.
+            </p>
+          )}
+        </Panel>
+
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading title="Recent recaps" titleAs="h4" />
+          {gameDayRecaps.length ? (
+            <ul className={listClassName}>
+              {gameDayRecaps.map((recap) => (
+                <li className={listItemClassName} key={recap.targetKey}>
+                  <strong className="text-sm text-ink">
+                    {recap.leagueName ?? recap.leagueId}
+                  </strong>
+                  <span className={statusCopyClassName}>
+                    {humanizeStatus(recap.status)} • {recap.gameDate}
+                    {recap.modelId ? ` • ${recap.modelId}` : ""}
+                    {recap.error ? ` • ${recap.error}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={statusCopyClassName}>
+              No recaps have been recorded yet.
             </p>
           )}
         </Panel>

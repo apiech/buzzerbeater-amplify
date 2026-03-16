@@ -10,6 +10,26 @@ declare module "$amplify/env/generate-shared-player-card" {
   export const env: Record<string, string | undefined>;
 }
 
+declare module "$amplify/env/get-billing-summary" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/create-billing-checkout-session" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/create-billing-portal-session" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/billing-webhook" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/billing-admin-override" {
+  export const env: Record<string, string | undefined>;
+}
+
 declare module "$amplify/env/get-match-boxscore-details" {
   export const env: Record<string, string | undefined>;
 }
@@ -42,11 +62,39 @@ declare module "$amplify/env/get-player-lab" {
   export const env: Record<string, string | undefined>;
 }
 
+declare module "$amplify/env/get-lineup-helper-workspace" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/evaluate-lineup-helper" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/get-lineup-plan" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/save-lineup-scenario" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/get-salary-projection" {
+  export const env: Record<string, string | undefined>;
+}
+
 declare module "$amplify/env/prediction-submit" {
   export const env: Record<string, string | undefined>;
 }
 
 declare module "$amplify/env/prediction-worker" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/game-day-recap-submit" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/game-day-recap-worker" {
   export const env: Record<string, string | undefined>;
 }
 
@@ -67,6 +115,10 @@ declare module "$amplify/env/refresh-bb-workspaces" {
 }
 
 declare module "$amplify/env/refresh-workspace" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/prune-operational-data" {
   export const env: Record<string, string | undefined>;
 }
 

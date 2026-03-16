@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   normalizePredictionRequest,
   resolveConnectedInput,
+  submitPredictionJob,
 } from "../amplify/data/_backend/prediction";
 
 const manualFallback = {
@@ -184,4 +185,74 @@ test("resolveConnectedInput still fails without any usable source data", async (
       ),
     /unavailable in cache/i,
   );
+});
+
+test("submitPredictionJob rejects free-plan users before queueing work", async () => {
+  await assert.rejects(
+    () =>
+      submitPredictionJob(
+        {
+          env: {},
+          identity: { sub: "user-1" },
+          queueUrl: "https://queue.example.com",
+          request: {
+            mode: "MANUAL",
+            manualInput: manualFallback,
+          },
+        },
+        {
+          createPredictionJob: async () => {
+            throw new Error("createPredictionJob should not be called");
+          },
+          requireFeatureAccess: async () => {
+            throw new Error("Premium is required to use the prediction engine.");
+          },
+          sendQueueMessage: async () => {
+            throw new Error("sendQueueMessage should not be called");
+          },
+          updatePredictionJob: async () => {},
+        },
+      ),
+    /premium is required/i,
+  );
+});
+
+test("submitPredictionJob queues work for premium users", async () => {
+  let createdRecord: Record<string, unknown> | null = null;
+  let queuedMessage: Record<string, string> | null = null;
+
+  const result = await submitPredictionJob(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+      queueUrl: "https://queue.example.com",
+      request: {
+        mode: "MANUAL",
+        manualInput: manualFallback,
+      },
+    },
+    {
+      createPredictionJob: async (_env, input) => {
+        createdRecord = input as unknown as Record<string, unknown>;
+        return {
+          ...(input as Record<string, unknown>),
+          createdAt: "2026-03-15T00:00:00.000Z",
+          updatedAt: "2026-03-15T00:00:00.000Z",
+        } as any;
+      },
+      requireFeatureAccess: async () => "premium",
+      sendQueueMessage: async (_queueUrl, message) => {
+        queuedMessage = message;
+      },
+      updatePredictionJob: async () => {},
+    },
+  );
+
+  assert.match(String(result.jobId), /^[0-9a-f-]{36}$/i);
+  assert.equal(createdRecord?.userId, "user-1");
+  assert.equal(createdRecord?.status, "QUEUED");
+  assert.deepStrictEqual(queuedMessage, {
+    jobId: result.jobId,
+    userId: "user-1",
+  });
 });

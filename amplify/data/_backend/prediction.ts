@@ -12,6 +12,7 @@ import {
   getPredictionJob,
   updatePredictionJob,
 } from "./repository";
+import { requireFeatureAccess } from "./billing";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -54,8 +55,15 @@ type PredictionSubmissionRequest =
   | ManualPredictionRequest
   | ConnectedPredictionRequest;
 
-type PredictionDependencies = {
+type ResolveConnectedInputDependencies = {
   getMatchBoxscore: typeof getMatchBoxscore;
+};
+
+type SubmitPredictionDependencies = {
+  createPredictionJob: typeof createPredictionJob;
+  requireFeatureAccess: typeof requireFeatureAccess;
+  sendQueueMessage: (queueUrl: string, message: { jobId: string; userId: string }) => Promise<void>;
+  updatePredictionJob: typeof updatePredictionJob;
 };
 
 const RATING_FIELDS = [
@@ -80,8 +88,19 @@ const DIRECT_CONNECTED_FIELDS = [
   "effortDelta",
 ] as const;
 
-const defaultDependencies: PredictionDependencies = {
-  getMatchBoxscore,
+const defaultSubmitDependencies: SubmitPredictionDependencies = {
+  createPredictionJob,
+  requireFeatureAccess,
+  sendQueueMessage: async (queueUrl, message) => {
+    const sqs = new SQSClient({});
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: JSON.stringify(message),
+      }),
+    );
+  },
+  updatePredictionJob,
 };
 
 export async function submitPredictionJob(args: {
@@ -89,16 +108,22 @@ export async function submitPredictionJob(args: {
   identity: unknown;
   request: unknown;
   queueUrl: string;
-}): Promise<{ jobId: string }> {
+}, dependencies: SubmitPredictionDependencies = defaultSubmitDependencies): Promise<{ jobId: string }> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
 
+  await dependencies.requireFeatureAccess({
+    env: args.env,
+    featureKey: "predictions",
+    userId,
+  });
+
   const normalizedRequest = normalizePredictionRequest(args.request);
   const jobId = randomUUID();
 
-  await createPredictionJob(args.env, {
+  await dependencies.createPredictionJob(args.env, {
     id: jobId,
     userId,
     status: "QUEUED",
@@ -110,16 +135,10 @@ export async function submitPredictionJob(args: {
     modelVersion: null,
   });
 
-  const sqs = new SQSClient({});
   try {
-    await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: args.queueUrl,
-        MessageBody: JSON.stringify({ jobId, userId }),
-      }),
-    );
+    await dependencies.sendQueueMessage(args.queueUrl, { jobId, userId });
   } catch (error) {
-    await updatePredictionJob(args.env, {
+    await dependencies.updatePredictionJob(args.env, {
       id: jobId,
       status: "FAILED",
       error: error instanceof Error ? error.message : String(error),
@@ -210,7 +229,7 @@ export async function resolveConnectedInput(
   env: GraphqlEnv,
   userId: string,
   connectedInput: ConnectedPredictionInput,
-  dependencies: PredictionDependencies = defaultDependencies,
+  dependencies: ResolveConnectedInputDependencies = { getMatchBoxscore },
 ): Promise<JsonRecord> {
   const resolved: JsonRecord = {
     ...(connectedInput.manualFallback ?? {}),

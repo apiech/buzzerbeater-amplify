@@ -12,6 +12,12 @@ export const workspaceSections = [
     group: "Club",
   },
   {
+    id: "lineups",
+    label: "Lineups",
+    description: "CoachParrot lineup helper with minute grids, tactics, and rating outputs.",
+    group: "Club",
+  },
+  {
     id: "league",
     label: "League",
     description: "Standings, conference races, and context around your club.",
@@ -27,6 +33,12 @@ export const workspaceSections = [
     id: "predictions",
     label: "Game Prep",
     description: "Preview likely outcomes and compare matchup inputs.",
+    group: "Competition",
+  },
+  {
+    id: "recaps",
+    label: "Recaps",
+    description: "Turn full league slates into reporter-style game stories.",
     group: "Competition",
   },
   {

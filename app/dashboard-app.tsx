@@ -23,11 +23,16 @@ import {
   type AuthNotice,
   type AuthUiState,
 } from "@/app/auth-flow";
+import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
+import { fetchBillingSummary } from "@/app/billing-client";
 import { decodeGraphqlJsonPayload } from "@/app/graphql-json";
+import { LineupHelper } from "@/app/lineup-helper";
 import { OperationsPanel } from "@/app/operations-panel";
 import { PredictionPanel } from "@/app/prediction-panel";
+import { RecapPanel } from "@/app/recap-panel";
 import { LineupPlanner } from "@/app/team-tools";
 import type {
+  BillingSummary,
   BbConnectionRecord,
   ConnectBbAccountInput,
   ConnectBbAccountResult,
@@ -62,6 +67,7 @@ import {
 import { PlayerTrendChart } from "@/app/ui/workspace/player-trend-chart";
 import { ThemeSelect } from "@/app/ui/theme/theme-select";
 import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
+import { hasFeature } from "@/lib/billing/plans";
 import {
   type WorkspaceSection,
 } from "@/app/workspace-sections";
@@ -951,7 +957,7 @@ function LocalAuthShell({
         <>
           <div className="grid gap-3">
             <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
-              BuzzerBeater Companion
+              BuzzerBeater Assistant Coach
             </p>
             <h2 className="text-2xl font-semibold tracking-[-0.04em] text-ink">
               Sign in, then connect your BuzzerBeater account.
@@ -985,7 +991,7 @@ export function DashboardApp({
       >
         <div className="grid gap-4">
           <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
-            BuzzerBeater Companion
+            BuzzerBeater Assistant Coach
           </p>
           <h1 className="max-w-none text-[clamp(2.4rem,4vw,4.4rem)] font-semibold leading-none tracking-[-0.06em] text-ink lg:max-w-[10ch]">
             One home for your club, your opponents, and your next decision.
@@ -1044,8 +1050,11 @@ function AuthenticatedWorkspace({
   user,
 }: AuthenticatedProps & { activeSection: WorkspaceSection }) {
   const [authError, setAuthError] = useState<string | null>(null);
+  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [connection, setConnection] = useState<BbConnectionRecord | null>(null);
   const [workspace, setWorkspace] = useState<DashboardWorkspace | null>(null);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [isLoadingBilling, setIsLoadingBilling] = useState(true);
   const [isLoadingConnection, setIsLoadingConnection] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
@@ -1071,6 +1080,23 @@ function AuthenticatedWorkspace({
     setConnection(record);
     setIsLoadingConnection(false);
     return record;
+  }
+
+  async function loadBilling(): Promise<BillingSummary | null> {
+    setIsLoadingBilling(true);
+    setBillingError(null);
+
+    try {
+      const summary = await fetchBillingSummary();
+      setBillingSummary(summary);
+      setIsLoadingBilling(false);
+      return summary;
+    } catch (error) {
+      setBillingSummary(null);
+      setBillingError(formatClientError(error));
+      setIsLoadingBilling(false);
+      return null;
+    }
   }
 
   async function loadWorkspace(force = false): Promise<void> {
@@ -1131,7 +1157,7 @@ function AuthenticatedWorkspace({
     let cancelled = false;
 
     async function initialize() {
-      const record = await loadConnection();
+      const [record] = await Promise.all([loadConnection(), loadBilling()]);
       if (cancelled) {
         return;
       }
@@ -1156,6 +1182,7 @@ function AuthenticatedWorkspace({
   async function handleRefresh(): Promise<void> {
     await loadWorkspace(true);
     await loadConnection();
+    await loadBilling();
   }
 
   async function handleDisconnect(): Promise<void> {
@@ -1317,6 +1344,9 @@ function AuthenticatedWorkspace({
             ) : workspace ? (
               <WorkspaceDashboard
                 activeSection={activeSection}
+                billingError={billingError}
+                billingSummary={billingSummary}
+                isLoadingBilling={isLoadingBilling}
                 workspace={workspace}
               />
             ) : (
@@ -1452,9 +1482,15 @@ function ConnectionOnboarding({
 
 function WorkspaceDashboard({
   activeSection,
+  billingError,
+  billingSummary,
+  isLoadingBilling,
   workspace,
 }: {
   activeSection: WorkspaceSection;
+  billingError: string | null;
+  billingSummary: BillingSummary | null;
+  isLoadingBilling: boolean;
   workspace: DashboardWorkspace;
 }) {
   const home = workspace.home;
@@ -1494,6 +1530,13 @@ function WorkspaceDashboard({
     ...workspace,
     scout,
   };
+  const billingPlanId = billingSummary?.planId === "premium" ? "premium" : "free";
+  const canUsePredictions = billingSummary
+    ? hasFeature(billingPlanId, "predictions")
+    : false;
+  const canUseLeagueWriteups = billingSummary
+    ? hasFeature(billingPlanId, "leagueWriteups")
+    : false;
 
   async function handleScoutLoad() {
     if (!selectedScoutTeamId) {
@@ -1739,6 +1782,16 @@ function WorkspaceDashboard({
             <LineupPlanner />
           </Panel>
         </>
+      ) : null}
+
+      {activeSection === "lineups" ? (
+        <Panel>
+          <SectionHeading
+            eyebrow="CoachParrot"
+            title="Lineup construction and rating outputs"
+          />
+          <LineupHelper />
+        </Panel>
       ) : null}
 
       {activeSection === "scout" ? (
@@ -2059,7 +2112,31 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "predictions" ? (
-        <PredictionPanel workspace={displayWorkspace} />
+        canUsePredictions ? (
+          <PredictionPanel workspace={displayWorkspace} />
+        ) : (
+          <PremiumFeatureGatePanel
+            billingSummary={billingSummary}
+            error={billingError}
+            featureName="Prediction engine"
+            isLoading={isLoadingBilling}
+            message="Run matchup forecasts and compare connected or manual inputs with the premium prediction engine."
+          />
+        )
+      ) : null}
+
+      {activeSection === "recaps" ? (
+        canUseLeagueWriteups ? (
+          <RecapPanel workspace={displayWorkspace} />
+        ) : (
+          <PremiumFeatureGatePanel
+            billingSummary={billingSummary}
+            error={billingError}
+            featureName="League writeups"
+            isLoading={isLoadingBilling}
+            message="Generate game day recaps and league writeups with a premium subscription."
+          />
+        )
       ) : null}
 
       {activeSection === "league" ? (
@@ -2235,6 +2312,11 @@ function WorkspaceDashboard({
 
       {activeSection === "ops" ? (
         <>
+          <BillingPanel
+            error={billingError}
+            isLoading={isLoadingBilling}
+            summary={billingSummary}
+          />
           <Panel>
             <SectionHeading
               description="Choose the look you want for your companion app. The selection is saved on this device."
@@ -2370,6 +2452,10 @@ function formatAmplifyErrors(
     .map((error) => error.message?.trim())
     .filter((message): message is string => Boolean(message))
     .join(" ");
+}
+
+function formatClientError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function formatAuthError(error: unknown): string {

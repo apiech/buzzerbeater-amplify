@@ -10,7 +10,7 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "BuzzerBeater Companion",
+  title: "BuzzerBeater Assistant Coach",
   description:
     "A BuzzerBeater companion for team prep, opponent reads, league context, and roster decisions.",
 };

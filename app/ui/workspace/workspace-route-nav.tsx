@@ -32,7 +32,7 @@ export function WorkspaceRouteNav({
         <div className="grid gap-3">
           <div className="grid gap-1">
             <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
-              BuzzerBeater Companion
+              BuzzerBeater Assistant Coach
             </p>
             <h1 className="m-0 text-2xl font-semibold tracking-[-0.05em] text-ink">
               Current team first
@@ -118,7 +118,7 @@ export function WorkspaceRouteNav({
       <div className="flex items-center justify-between gap-3 lg:hidden">
         <div className="grid gap-1">
           <p className="m-0 text-[0.72rem] font-bold uppercase tracking-[0.16em] text-accent">
-            BuzzerBeater Companion
+            BuzzerBeater Assistant Coach
           </p>
           <strong className="text-base text-ink">
             {currentTeamName ?? "Team menu"}

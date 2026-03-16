@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState } from "react";
+import Link from "next/link";
 
 import { client } from "@/app/amplify-client";
 import { encodeGraphqlJsonInput } from "@/app/graphql-json";
@@ -131,13 +132,21 @@ export function LineupPlanner() {
     <div className="grid gap-4">
       <SectionHeading
         actions={
-          <Button
-            loading={isLoadingPlan}
-            onClick={() => void loadPlan()}
-            variant="secondary"
-          >
-            Refresh plan
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              loading={isLoadingPlan}
+              onClick={() => void loadPlan()}
+              variant="secondary"
+            >
+              Refresh plan
+            </Button>
+            <Link
+              className="inline-flex min-h-11 items-center justify-center rounded-full border border-border-soft bg-white/70 px-4 py-2.5 text-sm font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90"
+              href="/workspace/lineups"
+            >
+              Open CoachParrot helper
+            </Link>
+          </div>
         }
         description="Recommendation engine for starters, minutes, and saved lineup scenarios."
         title="Lineup Planner"

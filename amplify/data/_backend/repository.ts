@@ -27,6 +27,14 @@ export type PredictionJobStatus =
   | "SUCCEEDED"
   | "FAILED";
 
+export type GameDayRecapStatus =
+  | "QUEUED"
+  | "RESOLVING_SLATE"
+  | "BUILDING_CONTEXT"
+  | "INVOKING_MODEL"
+  | "SUCCEEDED"
+  | "FAILED";
+
 export type PredictionRequestMode = "MANUAL" | "CONNECTED";
 
 export type BbConnectionRecord = {
@@ -47,6 +55,23 @@ export type BbConnectionRecord = {
   lastSyncError?: string | null;
   profileJson?: unknown;
   workspaceCacheJson?: unknown;
+};
+
+export type BillingAccountRecord = {
+  userId: string;
+  email?: string | null;
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+  stripePriceId?: string | null;
+  stripeSubscriptionStatus?: string | null;
+  subscriptionPlanId?: string | null;
+  currentPeriodEndAt?: string | null;
+  cancelAtPeriodEnd?: boolean | null;
+  grantedPlanId?: string | null;
+  overrideExpiresAt?: string | null;
+  overrideReason?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type BbCredentialRecord = {
@@ -82,6 +107,27 @@ export type PredictionJobRecord = {
   createdAt?: string;
   updatedAt?: string;
   expiresAt?: string | null;
+};
+
+export type GameDayRecapRecord = {
+  userId: string;
+  targetKey: string;
+  leagueId: string;
+  leagueName?: string | null;
+  gameDate: string;
+  season?: number | null;
+  status: GameDayRecapStatus;
+  requestedAt: string;
+  completedAt?: string | null;
+  requestJson: unknown;
+  coverageJson?: unknown;
+  resultJson?: unknown;
+  error?: string | null;
+  modelProvider?: string | null;
+  modelId?: string | null;
+  promptVersion?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type SharedPlayerCardRecord = {
@@ -145,6 +191,27 @@ export async function getBbConnection(
   );
 
   return decodeAwsJsonFields("BbConnection", record);
+}
+
+export async function getBillingAccount(
+  env: RepositoryEnv,
+  userId: string,
+): Promise<BillingAccountRecord | null> {
+  const record = await getModelRecord<BillingAccountRecord>(
+    env,
+    "BillingAccount",
+    { userId },
+    "load billing account",
+  );
+
+  return decodeAwsJsonFields("BillingAccount", record);
+}
+
+export async function upsertBillingAccount(
+  env: RepositoryEnv,
+  record: BillingAccountRecord,
+): Promise<void> {
+  await upsertModelRecord(env, "BillingAccount", ["userId"], record);
 }
 
 export async function listBbConnections(
@@ -330,6 +397,59 @@ export async function deletePredictionJob(
 ): Promise<void> {
   const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
   await assertSuccessful(model.delete({ id }), "delete prediction job");
+}
+
+export async function getGameDayRecap(
+  env: RepositoryEnv,
+  userId: string,
+  targetKey: string,
+): Promise<GameDayRecapRecord | null> {
+  const record = await getModelRecord<GameDayRecapRecord>(
+    env,
+    "GameDayRecap",
+    { userId, targetKey },
+    "load game day recap",
+  );
+
+  return decodeAwsJsonFields("GameDayRecap", record);
+}
+
+export async function upsertGameDayRecap(
+  env: RepositoryEnv,
+  record: GameDayRecapRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "GameDayRecap",
+    ["userId", "targetKey"],
+    record,
+  );
+}
+
+export async function updateGameDayRecap(
+  env: RepositoryEnv,
+  input: Partial<GameDayRecapRecord> &
+    Pick<GameDayRecapRecord, "userId" | "targetKey">,
+): Promise<void> {
+  const model = await getModel<GameDayRecapRecord>(env, "GameDayRecap");
+  await assertSuccessful(
+    model.update(prepareModelInput("GameDayRecap", input)),
+    "update game day recap",
+  );
+}
+
+export async function listGameDayRecaps(
+  env: RepositoryEnv,
+  limit = 1000,
+): Promise<GameDayRecapRecord[]> {
+  const records = await listModelRecords<GameDayRecapRecord>(
+    env,
+    "GameDayRecap",
+    { limit },
+    "list game day recaps",
+  );
+
+  return decodeAwsJsonList("GameDayRecap", records);
 }
 
 export async function getMatchBoxscore(

@@ -9,12 +9,20 @@ import {
 import { getAccessibleMatch } from "../get-accessible-match/resource";
 import { getAccessiblePlayByPlay } from "../get-accessible-play-by-play/resource";
 import { getMatchBoxscoreDetails } from "../get-match-boxscore-details/resource";
+import { billingAdminOverride } from "../billing-admin-override/resource";
+import { billingWebhook } from "../billing-webhook/resource";
+import { gameDayRecapSubmit } from "../game-day-recap-submit/resource";
+import { gameDayRecapWorker } from "../game-day-recap-worker/resource";
 import { listAccessibleMatches } from "../list-accessible-matches/resource";
 import { predictionSubmit } from "../prediction-submit/resource";
 import { predictionWorker } from "../prediction-worker/resource";
 
 const secureFunctionEnvironment = {
   BB_CONNECTION_ENCRYPTION_SECRET: secret("BB_CONNECTION_ENCRYPTION_SECRET"),
+};
+
+const stripeSecretFunctionEnvironment = {
+  STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
 };
 
 export const connectBbAccount = defineFunction({
@@ -89,6 +97,24 @@ export const getPlayerLab = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const getLineupHelperWorkspace = defineFunction({
+  resourceGroupName: "data",
+  name: "get-lineup-helper-workspace",
+  entry: "./get-lineup-helper-workspace/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: secureFunctionEnvironment,
+});
+
+export const evaluateLineupHelper = defineFunction({
+  resourceGroupName: "data",
+  name: "evaluate-lineup-helper",
+  entry: "./evaluate-lineup-helper/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: secureFunctionEnvironment,
+});
+
 export const getPlayerTrend = defineFunction({
   resourceGroupName: "data",
   name: "get-player-trend",
@@ -96,6 +122,32 @@ export const getPlayerTrend = defineFunction({
   timeoutSeconds: 30,
   memoryMB: 512,
   environment: secureFunctionEnvironment,
+});
+
+export const getBillingSummary = defineFunction({
+  resourceGroupName: "data",
+  name: "get-billing-summary",
+  entry: "./get-billing-summary/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
+export const createBillingCheckoutSession = defineFunction({
+  resourceGroupName: "data",
+  name: "create-billing-checkout-session",
+  entry: "./create-billing-checkout-session/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: stripeSecretFunctionEnvironment,
+});
+
+export const createBillingPortalSession = defineFunction({
+  resourceGroupName: "data",
+  name: "create-billing-portal-session",
+  entry: "./create-billing-portal-session/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: stripeSecretFunctionEnvironment,
 });
 
 const getLineupPlan = defineFunction({
@@ -188,7 +240,12 @@ const dataFunctions = [
   getScoutWorkspace,
   getLeagueIntel,
   getPlayerLab,
+  getLineupHelperWorkspace,
+  evaluateLineupHelper,
   getPlayerTrend,
+  getBillingSummary,
+  createBillingCheckoutSession,
+  createBillingPortalSession,
   getLineupPlan,
   saveLineupScenario,
   getSalaryProjection,
@@ -202,8 +259,12 @@ const dataFunctions = [
   refreshBbWorkspaces,
   refreshBbWorkspaceWorker,
   pruneOperationalData,
+  gameDayRecapSubmit,
+  gameDayRecapWorker,
   predictionSubmit,
   predictionWorker,
+  billingWebhook,
+  billingAdminOverride,
 ];
 
 const schema = a
@@ -226,9 +287,31 @@ const schema = a
       "FAILED",
     ]),
 
+    GameDayRecapStatus: a.enum([
+      "QUEUED",
+      "RESOLVING_SLATE",
+      "BUILDING_CONTEXT",
+      "INVOKING_MODEL",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
+
     PredictionRequestMode: a.enum(["MANUAL", "CONNECTED"]),
 
     MatchIngestStatus: a.enum(["PENDING", "PARTIAL", "SUCCEEDED", "FAILED"]),
+
+    BillingSummary: a.customType({
+      planId: a.string().required(),
+      accessSource: a.string().required(),
+      subscriptionStatus: a.string(),
+      currentPeriodEndAt: a.datetime(),
+      cancelAtPeriodEnd: a.boolean().required(),
+      hasBillingCustomer: a.boolean().required(),
+    }),
+
+    BillingSessionResult: a.customType({
+      url: a.string().required(),
+    }),
 
     WorkspaceResponse: a.customType({
       status: a.string().required(),
@@ -267,6 +350,10 @@ const schema = a
       jobId: a.string().required(),
     }),
 
+    GameDayRecapSubmitResult: a.customType({
+      targetKey: a.string().required(),
+    }),
+
     JsonLookupResponse: a.customType({
       status: a.string().required(),
       payload: a.json(),
@@ -293,6 +380,33 @@ const schema = a
       note: a.string(),
     }),
 
+    LineupHelperWorkspace: a.customType({
+      generatedAt: a.datetime().required(),
+      syncedAt: a.datetime(),
+      roster: a.json().required(),
+      defaultContext: a.json().required(),
+      defaultAssignments: a.json().required(),
+      evaluation: a.json().required(),
+      snapshotWarnings: a.json().required(),
+      availableOffenses: a.json().required(),
+      availableDefenses: a.json().required(),
+      availableLocations: a.json().required(),
+    }),
+
+    LineupHelperEvaluation: a.customType({
+      context: a.json().required(),
+      normalizedLineup: a.json().required(),
+      rawRatings: a.json().required(),
+      roundedRatings: a.json().required(),
+      ratingLabels: a.json().required(),
+      outputBandLabels: a.json().required(),
+      warnings: a.json().required(),
+      rankings: a.json().required(),
+      playerPositionOutputs: a.json().required(),
+      perPositionContributions: a.json().required(),
+      totalOutput: a.float().required(),
+    }),
+
     SalaryProjection: a.customType({
       playerId: a.string().required(),
       fullName: a.string().required(),
@@ -305,6 +419,24 @@ const schema = a
       isFlagTarget: a.boolean().required(),
       flagReason: a.string(),
     }),
+
+    BillingAccount: a
+      .model({
+        userId: a.string().required(),
+        email: a.string(),
+        stripeCustomerId: a.string(),
+        stripeSubscriptionId: a.string(),
+        stripePriceId: a.string(),
+        stripeSubscriptionStatus: a.string(),
+        subscriptionPlanId: a.string(),
+        currentPeriodEndAt: a.datetime(),
+        cancelAtPeriodEnd: a.boolean(),
+        grantedPlanId: a.string(),
+        overrideExpiresAt: a.datetime(),
+        overrideReason: a.string(),
+      })
+      .identifier(["userId"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     BbConnection: a
       .model({
@@ -514,6 +646,28 @@ const schema = a
       })
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
+    GameDayRecap: a
+      .model({
+        userId: a.string().required(),
+        targetKey: a.string().required(),
+        leagueId: a.string().required(),
+        leagueName: a.string(),
+        gameDate: a.date().required(),
+        season: a.integer(),
+        status: a.ref("GameDayRecapStatus").required(),
+        requestedAt: a.datetime().required(),
+        completedAt: a.datetime(),
+        requestJson: a.json().required(),
+        coverageJson: a.json(),
+        resultJson: a.json(),
+        error: a.string(),
+        modelProvider: a.string(),
+        modelId: a.string(),
+        promptVersion: a.string(),
+      })
+      .identifier(["userId", "targetKey"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
     connectBbAccount: a
       .mutation()
       .arguments({
@@ -569,6 +723,23 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getPlayerLab)),
 
+    getLineupHelperWorkspace: a
+      .query()
+      .returns(a.ref("LineupHelperWorkspace"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getLineupHelperWorkspace)),
+
+    evaluateLineupHelper: a
+      .query()
+      .arguments({
+        roster: a.json().required(),
+        assignments: a.json().required(),
+        context: a.json().required(),
+      })
+      .returns(a.ref("LineupHelperEvaluation"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(evaluateLineupHelper)),
+
     getPlayerTrend: a
       .query()
       .arguments({
@@ -577,6 +748,24 @@ const schema = a
       .returns(a.ref("JsonLookupResponse"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getPlayerTrend)),
+
+    getBillingSummary: a
+      .query()
+      .returns(a.ref("BillingSummary"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getBillingSummary)),
+
+    createBillingCheckoutSession: a
+      .mutation()
+      .returns(a.ref("BillingSessionResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(createBillingCheckoutSession)),
+
+    createBillingPortalSession: a
+      .mutation()
+      .returns(a.ref("BillingSessionResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(createBillingPortalSession)),
 
     getLineupPlan: a
       .query()
@@ -680,6 +869,16 @@ const schema = a
       .returns(a.ref("PredictionJobSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(predictionSubmit)),
+
+    submitGameDayRecap: a
+      .mutation()
+      .arguments({
+        leagueId: a.string().required(),
+        gameDate: a.date().required(),
+      })
+      .returns(a.ref("GameDayRecapSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(gameDayRecapSubmit)),
   })
   .authorization((allow) =>
     dataFunctions.map((resource) => allow.resource(resource).to(["query", "mutate"])),

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { __testing as lineupHelperTesting } from "../amplify/data/_backend/lineup-helper";
 import {
   __testing as workspaceTesting,
   buildScoutWorkspace,
@@ -141,6 +142,61 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
   );
 });
 
+test("lineup helper workspace payload includes defaults, evaluation, and snapshot warnings", () => {
+  const payload = lineupHelperTesting.buildLineupHelperWorkspacePayload({
+    generatedAt: "2026-03-15T00:00:00.000Z",
+    syncedAt: "2026-03-15T00:00:00.000Z",
+    defaultContext: {
+      offense: "Base Offense",
+      defense: "Man to man",
+      enthusiasm: 5,
+      homeCourt: "Away or Neutral",
+    },
+    roster: [
+      createHelperPlayer("p1", "Lead Guard", "PG", { js: 12, jr: 11, od: 10, ha: 13, dr: 12, pa: 14, is: 5, id: 4, rb: 4, sb: 2, st: 8, ft: 7, ex: 6, gs: 11 }),
+      createHelperPlayer("p2", "Shooter", "SG", { js: 13, jr: 12, od: 10, ha: 10, dr: 10, pa: 9, is: 6, id: 5, rb: 5, sb: 3, st: 8, ft: 8, ex: 6, gs: 11 }),
+      createHelperPlayer("p3", "Wing", "SF", { js: 11, jr: 9, od: 10, ha: 9, dr: 10, pa: 8, is: 8, id: 8, rb: 8, sb: 5, st: 8, ft: 7, ex: 6, gs: 11 }),
+      createHelperPlayer("p4", "Big", "PF", { js: 8, jr: 5, od: 7, ha: 6, dr: 7, pa: 6, is: 11, id: 10, rb: 11, sb: 8, st: 8, ft: 6, ex: 6, gs: 11 }),
+      createHelperPlayer("p5", "Anchor", "C", { js: 6, jr: 2, od: 5, ha: 4, dr: 5, pa: 5, is: 12, id: 12, rb: 13, sb: 10, st: 8, ft: 5, ex: 6, gs: 11 }),
+      {
+        ...createHelperPlayer("p6", "Missing Snapshot", "SG", {}),
+        available: false,
+        snapshotWarning: "No canonical skill snapshot is available for this player.",
+      },
+    ] as any,
+  });
+
+  assert.equal(Array.isArray(payload.defaultAssignments), true);
+  assert.equal(Array.isArray(payload.snapshotWarnings), true);
+  assert.equal((payload.snapshotWarnings as Array<unknown>).length, 1);
+  assert.equal(typeof payload.evaluation, "object");
+});
+
+test("lineup helper evaluation payload preserves warnings for invalid minutes", () => {
+  const payload = lineupHelperTesting.buildLineupHelperEvaluationPayload({
+    context: {
+      offense: "Base Offense",
+      defense: "Man to man",
+      enthusiasm: 5,
+      homeCourt: "Away or Neutral",
+    },
+    roster: [
+      createHelperPlayer("p1", "Lead Guard", "PG", { js: 12, jr: 11, od: 10, ha: 13, dr: 12, pa: 14, is: 5, id: 4, rb: 4, sb: 2, st: 8, ft: 7, ex: 6, gs: 11 }),
+      createHelperPlayer("p2", "Shooter", "SG", { js: 13, jr: 12, od: 10, ha: 10, dr: 10, pa: 9, is: 6, id: 5, rb: 5, sb: 3, st: 8, ft: 8, ex: 6, gs: 11 }),
+      createHelperPlayer("p3", "Wing", "SF", { js: 11, jr: 9, od: 10, ha: 9, dr: 10, pa: 8, is: 8, id: 8, rb: 8, sb: 5, st: 8, ft: 7, ex: 6, gs: 11 }),
+      createHelperPlayer("p4", "Big", "PF", { js: 8, jr: 5, od: 7, ha: 6, dr: 7, pa: 6, is: 11, id: 10, rb: 11, sb: 8, st: 8, ft: 6, ex: 6, gs: 11 }),
+      createHelperPlayer("p5", "Anchor", "C", { js: 6, jr: 2, od: 5, ha: 4, dr: 5, pa: 5, is: 12, id: 12, rb: 13, sb: 10, st: 8, ft: 5, ex: 6, gs: 11 }),
+    ] as any,
+    assignments: [
+      { playerId: "p1", position: "PG", minutes: 60 },
+      { playerId: "p2", position: "SG", minutes: 48 },
+    ] as any,
+  });
+
+  assert.equal(Array.isArray(payload.warnings), true);
+  assert.equal((payload.warnings as string[]).length > 0, true);
+});
+
 test("buildConnectionRecord preserves explicit null updates when clearing stale state", () => {
   const record = workspaceTesting.buildConnectionRecord(
     "user-1",
@@ -278,6 +334,27 @@ test("lookupSharedPlayerCardByToken returns null for revoked shares", async () =
 
   assert.equal(result, null);
 });
+
+function createHelperPlayer(
+  playerId: string,
+  fullName: string,
+  bestPosition: string,
+  skills: Record<string, number>,
+) {
+  return {
+    playerId,
+    fullName,
+    bestPosition,
+    salary: 50000,
+    age: 26,
+    gameShape: "strong",
+    snapshotWeekKey: "2026-W11",
+    snapshotCapturedAt: "2026-03-15T00:00:00.000Z",
+    available: true,
+    snapshotWarning: null,
+    skills,
+  };
+}
 
 test("lookupSharedPlayerCardByToken returns null for expired shares", async () => {
   const result = await lookupSharedPlayerCardByToken(
