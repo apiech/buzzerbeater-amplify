@@ -54,11 +54,11 @@ export function decryptValue(
 }
 
 export function getEncryptionSecret(
-  env: Record<string, string | undefined>,
+  env: {
+    BB_CONNECTION_ENCRYPTION_SECRET?: string;
+  },
 ): string {
-  const configured =
-    env.BB_CONNECTION_ENCRYPTION_SECRET ??
-    process.env.BB_CONNECTION_ENCRYPTION_SECRET;
+  const configured = env.BB_CONNECTION_ENCRYPTION_SECRET;
 
   if (configured) {
     return configured;

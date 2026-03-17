@@ -105,9 +105,10 @@ test("client theme updates and data access go through internal app routes", () =
   assert.doesNotMatch(themeSelectSource, /localStorage/);
   assert.match(themeRouteSource, /requireServerCurrentUser/);
   assert.match(themeRouteSource, /upsertServerThemePreference/);
-  assert.match(clientSource, /\/api\/app\/models\//);
+  assert.match(clientSource, /\/api\/app\/reads\//);
   assert.match(clientSource, /\/api\/app\/queries\//);
   assert.match(clientSource, /\/api\/app\/mutations\//);
+  assert.doesNotMatch(clientSource, /\/api\/app\/models\//);
   assert.doesNotMatch(clientSource, /generateClient</);
   assert.doesNotMatch(clientSource, /Amplify\.configure/);
 });

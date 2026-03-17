@@ -178,16 +178,16 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
 
   async function loadJobs() {
     setIsLoadingJobs(true);
-    const { data, errors } = await client.models.PredictionJob.list({ limit: 12 });
+    const { data, errors } = await client.reads.getPredictionHistory({ limit: 12 });
 
-    if (errors?.length) {
+    if (errors?.length || !data) {
       setPredictionError(formatAmplifyErrors(errors));
       setJobs([]);
       setIsLoadingJobs(false);
       return;
     }
 
-    const sorted = [...data].sort((left, right) =>
+    const sorted = [...data.items].sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),
     );
     setJobs(sorted);

@@ -51,8 +51,10 @@ test("buildLineupPlanPayload ranks a five-man starter group and minute targets",
 
   assert.equal(Array.isArray(plan.recommendedStarters), true);
   assert.equal((plan.recommendedStarters as Array<unknown>).length, 5);
+  const firstStarter = (plan.recommendedStarters as Array<{ bestPosition: string }>)[0];
+  assert.ok(firstStarter);
   assert.equal(
-    (plan.recommendedStarters as Array<{ bestPosition: string }>)[0].bestPosition,
+    firstStarter.bestPosition,
     "PG",
   );
   assert.ok(

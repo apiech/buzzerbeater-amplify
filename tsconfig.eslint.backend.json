@@ -5,7 +5,6 @@
   },
   "include": [
     "amplify/**/*.ts",
-    "amplify/env.d.ts",
     "lib/**/*.ts"
   ],
   "exclude": [

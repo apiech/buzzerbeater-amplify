@@ -12,8 +12,5 @@ export const handler: Handler = async (event) => {
     teamId: event.arguments.teamId ?? null,
   });
 
-  return {
-    syncedAt: workspace.connection.lastSyncAt ?? null,
-    ...workspace.scout,
-  };
+  return workspace.scout;
 };

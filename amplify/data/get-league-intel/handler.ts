@@ -11,8 +11,5 @@ export const handler: Handler = async (event) => {
     identity: event.identity,
   });
 
-  return {
-    syncedAt: workspace.connection.lastSyncAt ?? null,
-    ...workspace.leagueIntel,
-  };
+  return workspace.leagueIntel;
 };

@@ -110,11 +110,13 @@ test("backfillActiveTrackedTeamCredentialProjection hydrates active tracked team
     trackedTeamsUpdated: 1,
   });
   assert.equal(upserts.length, 1);
-  assert.equal(upserts[0]?.bbLoginName, "coach");
-  assert.equal(upserts[0]?.credentialCipherText, "cipher");
-  assert.equal(upserts[0]?.credentialIv, "iv");
-  assert.equal(upserts[0]?.credentialAuthTag, "auth");
-  assert.equal(upserts[0]?.credentialAlgorithm, "aes-256-gcm");
+  const firstUpsert = upserts[0];
+  assert.ok(firstUpsert);
+  assert.equal(firstUpsert.bbLoginName, "coach");
+  assert.equal(firstUpsert.credentialCipherText, "cipher");
+  assert.equal(firstUpsert.credentialIv, "iv");
+  assert.equal(firstUpsert.credentialAuthTag, "auth");
+  assert.equal(firstUpsert.credentialAlgorithm, "aes-256-gcm");
 });
 
 test("deactivateActiveTrackedTeamsForUser clears projected credentials while leaving rows in place", async (t) => {
@@ -161,9 +163,11 @@ test("deactivateActiveTrackedTeamsForUser clears projected credentials while lea
   );
 
   assert.equal(putItems.length, 1);
-  assert.equal(putItems[0]?.active, false);
-  assert.equal(putItems[0]?.credentialCipherText, null);
-  assert.equal(putItems[0]?.credentialIv, null);
-  assert.equal(putItems[0]?.credentialAuthTag, null);
-  assert.equal(putItems[0]?.credentialAlgorithm, null);
+  const firstPutItem = putItems[0];
+  assert.ok(firstPutItem);
+  assert.equal(firstPutItem.active, false);
+  assert.equal(firstPutItem.credentialCipherText, null);
+  assert.equal(firstPutItem.credentialIv, null);
+  assert.equal(firstPutItem.credentialAuthTag, null);
+  assert.equal(firstPutItem.credentialAlgorithm, null);
 });

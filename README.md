@@ -35,9 +35,13 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    ```bash
    APP_BASE_URL=http://localhost:3000
    STRIPE_PREMIUM_PRICE_ID=price_sandbox_placeholder
+   GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
    ```
 
+   Use [`env-template`](/Users/karey/projects/bb/bb-amplify/env-template) as the source of truth for required, optional, and conditional build-time variables.
    The repo-local `npm run ampx -- ...` and `npm run sandbox` wrappers load `.env` automatically before running `ampx`, so local sandbox deploys pick up synth-time values like `APP_BASE_URL` without extra shell setup.
+   If you set `MATCH_DATA_PLANE_SOURCE=external`, run `npm run sync:match-data-plane` before sandbox or frontend builds so `.env.match-data-plane` is refreshed from the deployed `MatchDataPlane` stack.
+   The repo-local Next.js launcher derives `AMPLIFY_APP_ORIGIN` from `APP_BASE_URL`, so `npm run dev`, `npm run build`, and `npm run start` do not need a second origin variable.
 
 4. Start the backend sandbox and Next.js app:
 
@@ -62,23 +66,119 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 
 This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/karey/projects/bb/bb-amplify/amplify).
 
-Required secret:
+<!-- ENV-CONTRACT:START -->
+### Required Plain Env
+
+- `APP_BASE_URL`
+  - Canonical public origin used for Cognito callback/logout URLs, Stripe return URLs, and the derived Next.js auth origin.
+  - Required for local sandbox deploys and Amplify Hosting backend/frontend builds.
+  - Recommended local value: `http://localhost:3000`.
+- `STRIPE_PREMIUM_PRICE_ID`
+  - Stripe recurring `price_...` id for the premium subscription checkout flow.
+  - Required for local sandbox deploys and Amplify Hosting backend builds.
+  - Recommended local value: `price_sandbox_placeholder`.
+- `GAME_DAY_RECAP_MODEL_ID`
+  - Default Bedrock model id for recap generation.
+  - Required for local sandbox deploys and Amplify Hosting backend builds.
+  - Recommended local value: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
+
+### Match Data Plane Mode
+
+- `MATCH_DATA_PLANE_SOURCE`
+  - Controls whether bb-amplify provisions app-local match-store resources or imports the separate MatchDataPlane stack.
+  - Default: `local`.
+  - Allowed values: `local`, `external`.
+- `MATCH_DATA_PLANE_STACK_NAME`
+  - CloudFormation stack name read by `npm run sync:match-data-plane` when external mode is enabled.
+  - Default: `MatchDataPlane`.
+  - Required when: `MATCH_DATA_PLANE_SOURCE=external`.
+
+- Generated external-data-plane env file
+  - `npm run sync:match-data-plane` reads CloudFormation outputs from the external MatchDataPlane stack and writes `.env.match-data-plane`.
+  - The repo-local `npm run ampx -- ...` and Next.js launcher load `.env.match-data-plane` after `.env` when `MATCH_DATA_PLANE_SOURCE=external`.
+  - Generated variables:
+    - `MATCH_STORE_BUCKET_NAME`: Generated from the external MatchDataPlane stack output `MatchStoreBucketName`.
+    - `MATCH_CATALOG_TABLE_NAME`: Generated from the external MatchDataPlane stack output `MatchCatalogTableName`.
+    - `TEAM_MATCH_PROJECTION_TABLE_NAME`: Generated from the external MatchDataPlane stack output `TeamMatchProjectionTableName`.
+    - `ACTIVE_TRACKED_TEAMS_TABLE_NAME`: Generated from the external MatchDataPlane stack output `ActiveTrackedTeamsTableName`.
+    - `PLAYER_SKILL_SNAPSHOT_TABLE_NAME`: Generated from the external MatchDataPlane stack output `PlayerSkillSnapshotTableName`.
+    - `TEAM_MOMENTS_TABLE_NAME`: Generated from the external MatchDataPlane stack output `TeamMomentsTableName`.
+    - `TEAM_HIGHLIGHTS_STATUS_TABLE_NAME`: Generated from the external MatchDataPlane stack output `TeamHighlightsStatusTableName`.
+    - `TEAM_HIGHLIGHTS_SCAN_QUEUE_URL`: Generated from the external MatchDataPlane stack output `TeamHighlightsScanQueueUrl`.
+
+### Optional Plain Env
+
+- `GAME_DAY_RECAP_MODEL_ID_PREMIUM`
+  - Premium recap override model. Premium recap jobs fall back to `GAME_DAY_RECAP_MODEL_ID` when this is unset.
+  - Default or recommended value: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
+- `BILLING_DEFAULT_PLAN`
+  - Branch-wide default plan override used before per-user billing state is resolved.
+  - Default or recommended value: Unset by default; non-prod branches fall back to premium, prod-like branches leave it unset.
+- `ENABLE_COST_VISIBILITY`
+  - Enables account-global AWS Budgets and billing alarms.
+  - Default or recommended value: `false`.
+- `COST_ALERT_EMAILS`
+  - Comma-separated email recipients for cost guardrail notifications.
+  - Default or recommended value: `unset`.
+- `COST_ALERT_SMS_NUMBERS`
+  - Comma-separated SMS recipients for cost guardrail notifications.
+  - Default or recommended value: `unset`.
+- `WORKSPACE_REFRESH_STALE_AFTER_HOURS`
+  - Staleness threshold used by workspace refresh scheduling.
+  - Default or recommended value: `24`.
+- `WORKSPACE_REFRESH_MAX_USERS_PER_RUN`
+  - Maximum number of users enqueued per scheduled workspace refresh run.
+  - Default or recommended value: `50`.
+- `WORKSPACE_REFRESH_DEDUPE_BY_TEAM`
+  - Optional refresh dedupe mode for shared-team refresh queues.
+  - Default or recommended value: `false`.
+- `SYNC_RUN_RETENTION_DAYS`
+  - Retention window for operational sync-run records.
+  - Default or recommended value: `14`.
+- `PREDICTION_JOB_RETENTION_DAYS`
+  - Retention window for prediction-job records.
+  - Default or recommended value: `30`.
+
+### Required Secrets
 
 - `BB_CONNECTION_ENCRYPTION_SECRET`
-  - Used by the account-connection Lambdas to encrypt and decrypt stored BB access keys.
-  - Required in every environment, including local sandbox development.
-  - For local sandbox use `npm run ampx -- sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET`.
+  - Encrypts and decrypts stored BuzzerBeater access keys across bb-amplify and the external match-data-plane.
+  - Current raw shared secret stays manual in this pass. Follow-up: move to a centrally provisioned secret reference before attempting rotation.
+- `STRIPE_SECRET_KEY`
+  - Authenticates server-side Stripe API requests.
+- `STRIPE_WEBHOOK_SECRET`
+  - Verifies Stripe webhook signatures before billing state is updated.
+- `BILLING_ADMIN_TOKEN`
+  - Protects the manual billing override Function URL used for complimentary plan grants and removals.
+  - Current static bearer token stays manual in this pass. Follow-up: replace it with first-party admin auth.
 
-Stripe billing configuration:
+### Internal Or Platform-Provided Env
 
-- Secrets managed in Amplify:
-  - `STRIPE_SECRET_KEY`
-  - `STRIPE_WEBHOOK_SECRET`
-  - `BILLING_ADMIN_TOKEN`
-- Deploy-time environment variables:
-  - `APP_BASE_URL`
-  - `STRIPE_PREMIUM_PRICE_ID`
-  - `BILLING_DEFAULT_PLAN` (optional)
+- `AMPLIFY_APP_ORIGIN`
+  - Derived by the repo-local Next.js launcher from `APP_BASE_URL`. Do not set this manually.
+- `AWS_BRANCH`
+  - Provided by Amplify Hosting and used for branch-aware defaults such as billing plan behavior and predictor stage selection.
+- `AWS_APP_ID`
+  - Provided by Amplify Hosting for `npx ampx pipeline-deploy`.
+- `AWS_REGION`
+  - Region discovered from AWS credentials or provided by the environment for CloudFormation lookups and runtime wiring.
+- `AWS_DEFAULT_REGION`
+  - Fallback region for local tooling when `AWS_REGION` is unset.
+- `AMPLIFY_DATA_DEFAULT_NAME`
+  - Amplify-generated runtime data client identifier. Do not set this manually.
+
+### Local Script-Only Env
+
+- `BILLING_ADMIN_OVERRIDE_URL`
+  - Local helper script target URL for `npm run billing:override`.
+- `BB_LOGIN`
+  - Optional username fallback for `npm run debug:game-day-recap`.
+- `BB_ACCESS_KEY`
+  - Optional access-key fallback for `npm run debug:game-day-recap`.
+- `ANALYZE`
+  - Enables the optional Next.js bundle analysis build.
+
+<!-- ENV-CONTRACT:END -->
 
 Cost visibility guardrails:
 
@@ -86,7 +186,8 @@ Cost visibility guardrails:
 - They stay disabled unless `ENABLE_COST_VISIBILITY=true` is set for the one environment that should own them.
 - Use that flag in exactly one environment, ideally production, to avoid name collisions with local sandboxes and non-prod branches.
 
-The billing integration reads `APP_BASE_URL` and `STRIPE_PREMIUM_PRICE_ID` during backend synthesis in [`amplify/_backend/billing-integration.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/billing-integration.ts), so they need to exist in the shell or CI job that runs the Amplify deploy.
+The billing integration reads `APP_BASE_URL` and `STRIPE_PREMIUM_PRICE_ID` during backend synthesis in [`amplify/_backend/billing-integration.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/billing-integration.ts), and the recap job wiring reads `GAME_DAY_RECAP_MODEL_ID` during backend synthesis in [`amplify/_backend/game-day-recap-jobs.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/game-day-recap-jobs.ts), so those values need to exist in the shell or CI job that runs the Amplify deploy.
+Amplify Hosting branch builds also need `APP_BASE_URL` because the frontend build runs [`scripts/next-with-env.mjs`](/Users/karey/projects/bb/bb-amplify/scripts/next-with-env.mjs), which derives `AMPLIFY_APP_ORIGIN` from it.
 
 Premium access defaults:
 

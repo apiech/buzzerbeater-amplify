@@ -9,17 +9,33 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 
 import {
+  listActiveTrackedTeamsForUser,
+} from "./active-tracked-teams";
+import {
   getBbConnection,
   getMatchBoxscore,
-  listTrackedTeams,
 } from "./repository";
+import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
+type MatchStoreRuntimeEnv = {
+  MATCH_STORE_BUCKET_NAME?: string;
+  MATCH_CATALOG_TABLE_NAME?: string;
+  TEAM_MATCH_PROJECTION_TABLE_NAME?: string;
+};
 
 type Identity = {
   sub?: string;
   claims?: Record<string, unknown>;
 };
+
+type MatchBoxscoreDetailsResult = NonNullable<
+  Schema["getMatchBoxscoreDetails"] extends { returnType: infer TReturn }
+    ? TReturn
+    : never
+>;
+type MatchMetricEntry = MatchBoxscoreDetailsResult["teamRatings"][number];
+type MatchContextResult = NonNullable<MatchBoxscoreDetailsResult["context"]>;
 
 export type MatchIngestStatus = "PENDING" | "PARTIAL" | "SUCCEEDED" | "FAILED";
 
@@ -73,7 +89,7 @@ type MatchStoreEnv = {
 };
 
 type MatchStoreDependencies = {
-  listTrackedTeams: typeof listTrackedTeams;
+  listActiveTrackedTeamsForUser: typeof listActiveTrackedTeamsForUser;
   getBbConnection: typeof getBbConnection;
   getLegacyMatchBoxscore: typeof getMatchBoxscore;
   createBbClient: () => {
@@ -125,7 +141,7 @@ const ddbDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 });
 
 const defaultDependencies: MatchStoreDependencies = {
-  listTrackedTeams,
+  listActiveTrackedTeamsForUser,
   getBbConnection,
   getLegacyMatchBoxscore: getMatchBoxscore,
   createBbClient: () => {
@@ -166,6 +182,7 @@ export const __testing = {
   buildCanonicalMatchPayload,
   decodeCursor,
   encodeCursor,
+  resolveMatchStoreEnv,
 };
 
 export async function listAccessibleMatches(
@@ -221,7 +238,11 @@ export async function listAccessibleMatches(
   }
 
   const page = items.slice(0, 25);
-  const nextCursor = page.length === 25 ? encodeCursor(getProjectionSortKey(page[24])) : null;
+  const lastPageItem = page[page.length - 1];
+  const nextCursor =
+    page.length === 25 && lastPageItem
+      ? encodeCursor(getProjectionSortKey(lastPageItem))
+      : null;
 
   return {
     items: page.map((item) => ({
@@ -296,7 +317,7 @@ export async function getMatchBoxscoreDetails(
     matchId: string;
   },
   dependencies: MatchStoreDependencies = defaultDependencies,
-): Promise<Record<string, unknown>> {
+): Promise<MatchBoxscoreDetailsResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -555,7 +576,7 @@ function buildCanonicalMatchPayload(
 function buildMatchStoreBoxscorePayload(
   matchPackage: Record<string, unknown>,
   accessibleTeamIds: Set<string>,
-): Record<string, unknown> {
+): MatchBoxscoreDetailsResult {
   const boxscore = asRecord(matchPackage.boxscore) ?? {};
   const homeTeam = asRecord(boxscore.homeTeam) ?? {};
   const awayTeam = asRecord(boxscore.awayTeam) ?? {};
@@ -586,7 +607,7 @@ function buildMatchStoreBoxscorePayload(
 
 function toMetricEntries(
   values: Record<string, unknown> | null,
-): Array<Record<string, unknown>> {
+): MatchMetricEntry[] {
   if (!values) {
     return [];
   }
@@ -606,7 +627,7 @@ function toMetricEntries(
 
 function buildMatchContext(
   boxscore: Record<string, unknown> | null,
-): Record<string, unknown> | null {
+): MatchContextResult | null {
   if (!boxscore) {
     return null;
   }
@@ -626,7 +647,7 @@ async function resolveAccessibleTeamIds(
   userId: string,
   dependencies: MatchStoreDependencies,
 ): Promise<Set<string>> {
-  const trackedTeams = await dependencies.listTrackedTeams(env, userId, 100);
+  const trackedTeams = await dependencies.listActiveTrackedTeamsForUser(env, userId);
   const connection = await dependencies.getBbConnection(env, userId);
   const teamIds = new Set<string>();
   for (const team of trackedTeams) {
@@ -696,14 +717,10 @@ async function getJsonObject(
   return JSON.parse(decoded) as Record<string, unknown>;
 }
 
-function resolveMatchStoreEnv(env: GraphqlEnv): MatchStoreEnv {
-  const bucketName =
-    env.MATCH_STORE_BUCKET_NAME ?? process.env.MATCH_STORE_BUCKET_NAME;
-  const catalogTableName =
-    env.MATCH_CATALOG_TABLE_NAME ?? process.env.MATCH_CATALOG_TABLE_NAME;
-  const projectionTableName =
-    env.TEAM_MATCH_PROJECTION_TABLE_NAME ??
-    process.env.TEAM_MATCH_PROJECTION_TABLE_NAME;
+function resolveMatchStoreEnv(env: MatchStoreRuntimeEnv): MatchStoreEnv {
+  const bucketName = env.MATCH_STORE_BUCKET_NAME;
+  const catalogTableName = env.MATCH_CATALOG_TABLE_NAME;
+  const projectionTableName = env.TEAM_MATCH_PROJECTION_TABLE_NAME;
 
   if (!bucketName || !catalogTableName || !projectionTableName) {
     throw new Error("Match store infrastructure environment variables are not configured.");

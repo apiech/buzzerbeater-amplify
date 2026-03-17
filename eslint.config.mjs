@@ -10,6 +10,11 @@ const repoRoot = dirname(fileURLToPath(import.meta.url));
 const frontendFiles = ["app/**/*.{js,jsx,mjs,ts,tsx,mts,cts}"];
 const frontendTypeFiles = ["app/**/*.ts", "app/**/*.tsx"];
 const backendTypeFiles = ["amplify/**/*.ts"];
+const runtimeFiles = [
+  "app/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
+  "lib/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
+  "amplify/data/**/*.ts",
+];
 const sharedTypeFiles = [
   "lib/**/*.ts",
   "infra/**/*.ts",
@@ -28,7 +33,6 @@ const ignores = [
   "build/**",
   "amplify_outputs.json",
   "next-env.d.ts",
-  "amplify/env.d.ts",
 ];
 
 const typeImportRule = [
@@ -89,6 +93,20 @@ export default [
     rules: {
       "no-unused-vars": "off",
       "@typescript-eslint/no-unused-vars": unusedVarsRule,
+    },
+  },
+  {
+    files: runtimeFiles,
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message:
+            "Runtime code must not read process.env. Use Amplify-generated env or launcher-derived values instead.",
+        },
+      ],
     },
   },
   {

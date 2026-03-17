@@ -10,11 +10,12 @@ type SqsRecord = {
 type SqsEvent = {
   Records: SqsRecord[];
 };
+type RuntimeEnv = Record<string, string | undefined>;
 
 export const handler = async (
   event: SqsEvent,
 ): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> => {
-  const endpointName = env.PREDICTION_ENDPOINT_NAME;
+  const endpointName = (env as RuntimeEnv)["PREDICTION_ENDPOINT_NAME"];
   if (!endpointName) {
     throw new Error("Prediction endpoint name environment variable was not found.");
   }

@@ -6,8 +6,6 @@ import { getCurrentUser } from "aws-amplify/auth/server";
 import type { Schema } from "@/amplify/data/resource";
 import outputs from "@/amplify_outputs.json";
 
-process.env.AMPLIFY_APP_ORIGIN ??= process.env.APP_BASE_URL;
-
 export const { createAuthRouteHandlers, runWithAmplifyServerContext } =
   createServerRunner({
     config: outputs,

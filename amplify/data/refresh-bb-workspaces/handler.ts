@@ -8,20 +8,23 @@ import {
   listStaleConnectedUsers,
 } from "../_backend/workspace";
 
+type RuntimeEnv = Record<string, string | undefined>;
+
 export const handler = async (): Promise<{
   enqueuedUsers: number;
   staleCandidates: number;
 }> => {
+  const runtimeEnv = env as RuntimeEnv;
   const staleAfterHours = parsePositiveInteger(
-    env.WORKSPACE_REFRESH_STALE_AFTER_HOURS,
+    runtimeEnv["WORKSPACE_REFRESH_STALE_AFTER_HOURS"],
     24,
   );
   const maxUsers = parsePositiveInteger(
-    env.WORKSPACE_REFRESH_MAX_USERS_PER_RUN,
+    runtimeEnv["WORKSPACE_REFRESH_MAX_USERS_PER_RUN"],
     50,
   );
-  const dedupeByTeam = env.WORKSPACE_REFRESH_DEDUPE_BY_TEAM === "true";
-  const queueUrl = env.REFRESH_WORKSPACE_JOB_QUEUE_URL;
+  const dedupeByTeam = runtimeEnv["WORKSPACE_REFRESH_DEDUPE_BY_TEAM"] === "true";
+  const queueUrl = runtimeEnv["REFRESH_WORKSPACE_JOB_QUEUE_URL"];
   if (!queueUrl) {
     throw new Error("REFRESH_WORKSPACE_JOB_QUEUE_URL is not configured.");
   }

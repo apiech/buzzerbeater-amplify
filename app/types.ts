@@ -23,6 +23,41 @@ export type SingleGameSummaryRecord = Schema["SingleGameSummary"]["type"];
 export type SharedPlayerCardRecord = Schema["SharedPlayerCard"]["type"];
 export type UserPreferenceRecord = Schema["UserPreference"]["type"];
 
+export type OperationsActivity = {
+  gameDayRecaps: GameDayRecapRecord[];
+  leagueGameDayRecaps: LeagueGameDayRecapRecord[];
+  predictionJobs: PredictionJobRecord[];
+  singleGameSummaries: SingleGameSummaryRecord[];
+  syncRuns: SyncRunRecord[];
+};
+
+export type PaginatedResult<TItem> = {
+  items: TItem[];
+  nextToken: string | null;
+};
+
+export type RecapHistoryKind = "LEAGUE_DATE" | "LEAGUE_GAME_DAY" | "SINGLE_GAME";
+
+export type RecapHistoryRecord = {
+  completedAt: string | null;
+  coverageJson: unknown;
+  error: string | null;
+  gameDate: string | null;
+  gameDayNumber: number | null;
+  kind: RecapHistoryKind;
+  leagueId: string | null;
+  leagueName: string | null;
+  matchId: string | null;
+  requestJson: unknown;
+  requestedAt: string;
+  resultJson: unknown;
+  selectionKey: string;
+  season: number | null;
+  status: string | null;
+  targetKey: string;
+  updatedAt: string;
+};
+
 export type ConnectBbAccountInput = {
   bbLoginName: string;
   accessKey: string;
@@ -121,6 +156,23 @@ export type LineupHelperRankingEntry = {
   output: number;
 };
 
+export type LineupHelperSkillRatings = {
+  js: number;
+  jr: number;
+  od: number;
+  ha: number;
+  dr: number;
+  pa: number;
+  is: number;
+  id: number;
+  rb: number;
+  sb: number;
+  st: number;
+  ft: number;
+  ex: number;
+  gs: number;
+};
+
 export type LineupHelperRosterPlayer = {
   playerId: string;
   fullName: string;
@@ -132,7 +184,7 @@ export type LineupHelperRosterPlayer = {
   snapshotCapturedAt: string | null;
   available: boolean;
   snapshotWarning: string | null;
-  skills: Record<string, number>;
+  skills: LineupHelperSkillRatings;
 };
 
 export type LineupHelperEvaluation = {

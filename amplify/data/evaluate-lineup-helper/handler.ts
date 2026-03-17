@@ -8,6 +8,5 @@ export const handler: Handler = async (event) => {
     roster: event.arguments.roster,
     assignments: event.arguments.assignments,
     context: event.arguments.context,
-  }) as Promise<NonNullable<Schema["evaluateLineupHelper"]["returnType"]>>;
+  });
 };
-

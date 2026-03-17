@@ -101,6 +101,7 @@ test("buildScoutWorkspace includes arbitrary scout targets, league options, and 
     currentBoxScores,
     opponentWorkspace,
     "OPP",
+    "2026-03-15T00:00:00.000Z",
   ) as {
     teamId: string;
     availableOpponents: Array<{ teamId: string }>;
@@ -117,10 +118,14 @@ test("buildScoutWorkspace includes arbitrary scout targets, league options, and 
     scout.availableOpponents.map((team) => team.teamId),
     ["ALT", "OPP"],
   );
-  assert.equal(scout.recentMatchups[0]?.matchId, "m1");
-  assert.equal(scout.recentMatchups[0]?.hasBoxscore, true);
+  const firstRecentMatchup = scout.recentMatchups[0];
+  const firstRecentGame = scout.summary.recentGames[0];
+  assert.ok(firstRecentMatchup);
+  assert.ok(firstRecentGame);
+  assert.equal(firstRecentMatchup.matchId, "m1");
+  assert.equal(firstRecentMatchup.hasBoxscore, true);
   assert.equal(scout.summary.record.wins, 10);
-  assert.equal(scout.summary.recentGames[0]?.hasBoxscore, true);
+  assert.equal(firstRecentGame.hasBoxscore, true);
 });
 
 test("workspace sync stays cache-first unless a force refresh is requested", () => {
@@ -402,7 +407,7 @@ test("lineup helper evaluation payload preserves warnings for invalid minutes", 
   });
 
   assert.equal(Array.isArray(payload.warnings), true);
-  assert.equal((payload.warnings as string[]).length > 0, true);
+  assert.equal(payload.warnings.length > 0, true);
 });
 
 test("buildConnectionRecord preserves explicit null updates when clearing stale state", () => {
@@ -438,11 +443,13 @@ test("buildConnectionRecord preserves explicit null updates when clearing stale 
     shortName: null,
     leagueId: null,
     leagueName: null,
+    leagueTimeZone: null,
     countryId: null,
     countryName: null,
     connectedAt: null,
     lastValidatedAt: null,
     lastSyncAt: null,
+    refreshSortAt: null,
     lastSyncError: null,
     profileJson: null,
     workspaceCacheJson: null,

@@ -33,12 +33,11 @@ export function assignmentMatrixFromLineup(
 ): LineupMinuteMatrix {
   const matrix = emptyMinuteMatrix(players);
   for (const assignment of assignments) {
-    if (!(assignment.playerId in matrix)) {
+    const row = matrix[assignment.playerId];
+    if (!row) {
       continue;
     }
-    matrix[assignment.playerId][assignment.position] = coerceMinuteValue(
-      assignment.minutes,
-    );
+    row[assignment.position] = coerceMinuteValue(assignment.minutes);
   }
   return matrix;
 }
@@ -163,7 +162,7 @@ export function coerceEnthusiasm(value: unknown): number {
   return Math.min(12, Math.max(1, Math.round(numeric)));
 }
 
-function createEmptyMinuteRow(): Record<PositionCode, number> {
+export function createEmptyMinuteRow(): Record<PositionCode, number> {
   return Object.fromEntries(
     LINEUP_POSITIONS.map((position) => [position, 0]),
   ) as Record<PositionCode, number>;

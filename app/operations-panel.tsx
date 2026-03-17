@@ -73,36 +73,10 @@ export function OperationsPanel() {
     setIsLoading(true);
     setOpsError(null);
 
-    const [
-      syncResponse,
-      predictionResponse,
-      recapResponse,
-      gameDayResponse,
-      singleGameResponse,
-    ] = await Promise.all([
-      client.models.SyncRun.list({ limit: 8 }),
-      client.models.PredictionJob.list({ limit: 8 }),
-      client.models.GameDayRecap.list({ limit: 8 }),
-      client.models.LeagueGameDayRecap.list({ limit: 8 }),
-      client.models.SingleGameSummary.list({ limit: 8 }),
-    ]);
+    const response = await client.reads.getOperationsActivity({ limit: 8 });
 
-    if (
-      syncResponse.errors?.length ||
-      predictionResponse.errors?.length ||
-      recapResponse.errors?.length ||
-      gameDayResponse.errors?.length ||
-      singleGameResponse.errors?.length
-    ) {
-      setOpsError(
-        formatAmplifyErrors([
-          ...(syncResponse.errors ?? []),
-          ...(predictionResponse.errors ?? []),
-          ...(recapResponse.errors ?? []),
-          ...(gameDayResponse.errors ?? []),
-          ...(singleGameResponse.errors ?? []),
-        ]),
-      );
+    if (response.errors?.length || !response.data) {
+      setOpsError(formatAmplifyErrors(response.errors));
       setGameDayRecaps([]);
       setLeagueGameDayRecaps([]);
       setSingleGameSummaries([]);
@@ -113,21 +87,27 @@ export function OperationsPanel() {
     }
 
     setSyncRuns(
-      [...syncResponse.data].sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
+      [...response.data.syncRuns].sort((left, right) =>
+        right.startedAt.localeCompare(left.startedAt),
+      ),
     );
     setGameDayRecaps(
-      [...recapResponse.data].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      [...response.data.gameDayRecaps].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
     );
     setLeagueGameDayRecaps(
-      [...gameDayResponse.data].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      [...response.data.leagueGameDayRecaps].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
     );
     setSingleGameSummaries(
-      [...singleGameResponse.data].sort((left, right) =>
+      [...response.data.singleGameSummaries].sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
       ),
     );
     setPredictionJobs(
-      [...predictionResponse.data].sort((left, right) =>
+      [...response.data.predictionJobs].sort((left, right) =>
         right.updatedAt.localeCompare(left.updatedAt),
       ),
     );

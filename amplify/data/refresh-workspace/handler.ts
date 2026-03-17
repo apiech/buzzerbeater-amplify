@@ -12,8 +12,5 @@ export const handler: Handler = async (event) => {
     force: true,
   });
 
-  return {
-    syncedAt: workspace.connection.lastSyncAt ?? null,
-    ...workspace.home,
-  };
+  return workspace.home;
 };

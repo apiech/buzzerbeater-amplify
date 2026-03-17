@@ -52,6 +52,11 @@ type ExternalMatchStoreConfig = {
   teamHighlightsScanQueueUrl: string;
 };
 
+export const __testing = {
+  resolveExternalMatchStoreConfig,
+  resolveMatchDataPlaneSource,
+};
+
 export function configureMatchStoreIntegration(
   backend: MatchStoreBackend,
 ): void {
@@ -314,18 +319,22 @@ function grantMatchStoreReadAccess(
   );
 }
 
-function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
-  const bucketName = process.env.MATCH_STORE_BUCKET_NAME;
-  const catalogTableName = process.env.MATCH_CATALOG_TABLE_NAME;
-  const projectionTableName = process.env.TEAM_MATCH_PROJECTION_TABLE_NAME;
-  const activeTrackedTeamsTableName =
-    process.env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
-  const playerSkillSnapshotTableName =
-    process.env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
-  const teamMomentsTableName = process.env.TEAM_MOMENTS_TABLE_NAME;
-  const teamHighlightsStatusTableName =
-    process.env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME;
-  const teamHighlightsScanQueueUrl = process.env.TEAM_HIGHLIGHTS_SCAN_QUEUE_URL;
+function resolveExternalMatchStoreConfig(
+  env: Record<string, string | undefined> = process.env,
+): ExternalMatchStoreConfig | null {
+  const source = resolveMatchDataPlaneSource(env);
+  if (source === "local") {
+    return null;
+  }
+
+  const bucketName = env.MATCH_STORE_BUCKET_NAME;
+  const catalogTableName = env.MATCH_CATALOG_TABLE_NAME;
+  const projectionTableName = env.TEAM_MATCH_PROJECTION_TABLE_NAME;
+  const activeTrackedTeamsTableName = env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
+  const playerSkillSnapshotTableName = env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
+  const teamMomentsTableName = env.TEAM_MOMENTS_TABLE_NAME;
+  const teamHighlightsStatusTableName = env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME;
+  const teamHighlightsScanQueueUrl = env.TEAM_HIGHLIGHTS_SCAN_QUEUE_URL;
 
   const values = [
     bucketName,
@@ -338,13 +347,9 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
     teamHighlightsScanQueueUrl,
   ];
 
-  if (values.every((value) => !value)) {
-    return null;
-  }
-
   if (values.some((value) => !value)) {
     throw new Error(
-      "When configuring the external match data plane, MATCH_STORE_BUCKET_NAME, MATCH_CATALOG_TABLE_NAME, TEAM_MATCH_PROJECTION_TABLE_NAME, ACTIVE_TRACKED_TEAMS_TABLE_NAME, PLAYER_SKILL_SNAPSHOT_TABLE_NAME, TEAM_MOMENTS_TABLE_NAME, TEAM_HIGHLIGHTS_STATUS_TABLE_NAME, and TEAM_HIGHLIGHTS_SCAN_QUEUE_URL must all be set.",
+      "MATCH_DATA_PLANE_SOURCE=external requires MATCH_STORE_BUCKET_NAME, MATCH_CATALOG_TABLE_NAME, TEAM_MATCH_PROJECTION_TABLE_NAME, ACTIVE_TRACKED_TEAMS_TABLE_NAME, PLAYER_SKILL_SNAPSHOT_TABLE_NAME, TEAM_MOMENTS_TABLE_NAME, TEAM_HIGHLIGHTS_STATUS_TABLE_NAME, and TEAM_HIGHLIGHTS_SCAN_QUEUE_URL. Run `npm run sync:match-data-plane` to regenerate `.env.match-data-plane` before deploying.",
     );
   }
 
@@ -358,6 +363,24 @@ function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
     teamHighlightsStatusTableName: teamHighlightsStatusTableName!,
     teamHighlightsScanQueueUrl: teamHighlightsScanQueueUrl!,
   };
+}
+
+function resolveMatchDataPlaneSource(
+  env: Record<string, string | undefined>,
+): "local" | "external" {
+  const configuredSource =
+    env.MATCH_DATA_PLANE_SOURCE?.trim().toLowerCase() ?? "";
+  if (!configuredSource) {
+    return "local";
+  }
+
+  if (configuredSource === "local" || configuredSource === "external") {
+    return configuredSource;
+  }
+
+  throw new Error(
+    "MATCH_DATA_PLANE_SOURCE must be set to either 'local' or 'external'.",
+  );
 }
 
 function grantSqsSendAccessFromQueueUrl(

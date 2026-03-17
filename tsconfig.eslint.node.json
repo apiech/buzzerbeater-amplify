@@ -11,7 +11,6 @@
     "app/**/*.ts",
     "app/**/*.tsx",
     "amplify/**/*.ts",
-    "amplify/env.d.ts",
     "lib/**/*.ts",
     "infra/**/*.ts",
     "scripts/**/*.ts",

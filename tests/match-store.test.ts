@@ -10,8 +10,7 @@ import {
 
 function createDependencies(overrides: Partial<any> = {}): any {
   return {
-    listBbConnections: async () => [],
-    listTrackedTeams: async () => [],
+    listActiveTrackedTeamsForUser: async () => [],
     getBbConnection: async () => null,
     getLegacyMatchBoxscore: async () => null,
     resolveBbAccessKey: async () => "secret",
@@ -88,7 +87,7 @@ test("listAccessibleMatches deduplicates matches across accessible teams", async
       identity: { sub: "user-1" },
     },
     createDependencies({
-      listTrackedTeams: async () => [
+      listActiveTrackedTeamsForUser: async () => [
         { teamId: "T1" },
         { teamId: "T2" },
       ],
@@ -135,8 +134,12 @@ test("listAccessibleMatches deduplicates matches across accessible teams", async
   const typedPayload = payload as { items: Array<{ matchId: string }> };
   assert.equal(Array.isArray(typedPayload.items), true);
   assert.equal(typedPayload.items.length, 2);
-  assert.equal(typedPayload.items[0].matchId, "m1");
-  assert.equal(typedPayload.items[1].matchId, "m2");
+  const firstItem = typedPayload.items[0];
+  const secondItem = typedPayload.items[1];
+  assert.ok(firstItem);
+  assert.ok(secondItem);
+  assert.equal(firstItem.matchId, "m1");
+  assert.equal(secondItem.matchId, "m2");
 });
 
 test("getMatchBoxscoreDetails prefers canonical match-store payloads", async () => {
@@ -161,7 +164,7 @@ test("getMatchBoxscoreDetails prefers canonical match-store payloads", async () 
       matchId: "m1",
     },
     createDependencies({
-      listTrackedTeams: async () => [{ teamId: "T1" }],
+      listActiveTrackedTeamsForUser: async () => [{ teamId: "T1" }],
       getBbConnection: async () => ({ teamId: "T1" }),
       getCatalog: async () => catalog,
       getJsonObject: async () => ({
@@ -228,5 +231,5 @@ test("catalog and projection builders expose the expected canonical fields", () 
   const projections = matchStoreTesting.buildProjectionRecords({ summary: {} }, catalog);
   assert.equal(catalog.homeTeamId, "T1");
   assert.equal(projections.length, 2);
-  assert.equal(projections[0].matchId, "m1");
+  assert.equal(projections[0]?.matchId, "m1");
 });

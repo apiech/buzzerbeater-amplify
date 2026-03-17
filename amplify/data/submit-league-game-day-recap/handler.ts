@@ -4,9 +4,10 @@ import type { Schema } from "../resource";
 import { submitLeagueGameDayRecap } from "../_backend/game-day-recap";
 
 type Handler = Schema["submitLeagueGameDayRecap"]["functionHandler"];
+type RuntimeEnv = Record<string, string | undefined>;
 
 export const handler: Handler = async (event) => {
-  const queueUrl = env.GAME_DAY_RECAP_QUEUE_URL;
+  const queueUrl = (env as RuntimeEnv)["GAME_DAY_RECAP_QUEUE_URL"];
   if (!queueUrl) {
     throw new Error("Game day recap queue URL environment variable was not found.");
   }

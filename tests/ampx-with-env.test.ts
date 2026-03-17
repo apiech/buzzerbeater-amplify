@@ -29,9 +29,16 @@ type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
 
 test("shouldWatchSandboxOutputs only enables sandbox deploy/watch runs", () => {
   assert.equal(shouldWatchSandboxOutputs(["sandbox"]), true);
-  assert.equal(shouldWatchSandboxOutputs(["sandbox", "--identifier", "dev"]), true);
+  assert.equal(
+    shouldWatchSandboxOutputs(["sandbox", "--identifier", "dev"]),
+    true,
+  );
+  assert.equal(shouldWatchSandboxOutputs(["sandbox", "--once"]), false);
   assert.equal(shouldWatchSandboxOutputs(["sandbox", "--help"]), false);
-  assert.equal(shouldWatchSandboxOutputs(["sandbox", "secret", "set", "KEY"]), false);
+  assert.equal(
+    shouldWatchSandboxOutputs(["sandbox", "secret", "set", "KEY"]),
+    false,
+  );
   assert.equal(shouldWatchSandboxOutputs(["generate", "outputs"]), false);
 });
 
@@ -62,34 +69,37 @@ test("applySandboxDefaults enables function log streaming for sandbox runs", () 
     "bb-api-fixtures",
     "--stream-function-logs",
   ]);
-  assert.deepStrictEqual(applySandboxDefaults(["sandbox", "--identifier", "dev"]), [
-    "sandbox",
-    "--identifier",
-    "dev",
-    "--dir-to-watch",
-    ".",
-    "--exclude",
-    "amplify_outputs.json",
-    "--exclude",
-    ".amplify",
-    "--exclude",
-    ".next",
-    "--exclude",
-    "node_modules",
-    "--exclude",
-    "cdk.out",
-    "--exclude",
-    "app",
-    "--exclude",
-    "public",
-    "--exclude",
-    "tests",
-    "--exclude",
-    "docs",
-    "--exclude",
-    "bb-api-fixtures",
-    "--stream-function-logs",
-  ]);
+  assert.deepStrictEqual(
+    applySandboxDefaults(["sandbox", "--identifier", "dev"]),
+    [
+      "sandbox",
+      "--identifier",
+      "dev",
+      "--dir-to-watch",
+      ".",
+      "--exclude",
+      "amplify_outputs.json",
+      "--exclude",
+      ".amplify",
+      "--exclude",
+      ".next",
+      "--exclude",
+      "node_modules",
+      "--exclude",
+      "cdk.out",
+      "--exclude",
+      "app",
+      "--exclude",
+      "public",
+      "--exclude",
+      "tests",
+      "--exclude",
+      "docs",
+      "--exclude",
+      "bb-api-fixtures",
+      "--stream-function-logs",
+    ],
+  );
 });
 
 test("applySandboxDefaults preserves explicit stream log choices and subcommands", () => {
@@ -151,17 +161,25 @@ test("applySandboxDefaults preserves explicit stream log choices and subcommands
       "bb-api-fixtures",
     ],
   );
-  assert.deepStrictEqual(applySandboxDefaults(["sandbox", "secret", "set", "KEY"]), [
+  assert.deepStrictEqual(
+    applySandboxDefaults(["sandbox", "secret", "set", "KEY"]),
+    ["sandbox", "secret", "set", "KEY"],
+  );
+  assert.deepStrictEqual(applySandboxDefaults(["sandbox", "--once"]), [
     "sandbox",
-    "secret",
-    "set",
-    "KEY",
+    "--once",
   ]);
 });
 
 test("applySandboxDefaults preserves explicit watch choices", () => {
   assert.deepStrictEqual(
-    applySandboxDefaults(["sandbox", "--dir-to-watch", "lib", "--exclude", ".amplify"]),
+    applySandboxDefaults([
+      "sandbox",
+      "--dir-to-watch",
+      "lib",
+      "--exclude",
+      ".amplify",
+    ]),
     [
       "sandbox",
       "--dir-to-watch",
@@ -237,13 +255,10 @@ test("resolveAwsRegion prefers amplify outputs and falls back to env", () => {
   );
 
   assert.equal(
-    resolveAwsRegion(
-      {},
-      {
-        NODE_ENV: "test",
-        AWS_DEFAULT_REGION: "us-west-2",
-      } as NodeJS.ProcessEnv,
-    ),
+    resolveAwsRegion({}, {
+      NODE_ENV: "test",
+      AWS_DEFAULT_REGION: "us-west-2",
+    } as NodeJS.ProcessEnv),
     "us-west-2",
   );
 });
@@ -298,7 +313,9 @@ test("resolveBillingWebhookUrl walks synthesized artifacts and stack outputs", a
         };
       }
 
-      if (filePath === "/tmp/bb-amplify/.amplify/artifacts/cdk.out/manifest.json") {
+      if (
+        filePath === "/tmp/bb-amplify/.amplify/artifacts/cdk.out/manifest.json"
+      ) {
         return {
           artifacts: {
             SandboxStack: {
@@ -311,7 +328,10 @@ test("resolveBillingWebhookUrl walks synthesized artifacts and stack outputs", a
         };
       }
 
-      if (filePath === "/tmp/bb-amplify/.amplify/artifacts/cdk.out/SandboxStack.template.json") {
+      if (
+        filePath ===
+        "/tmp/bb-amplify/.amplify/artifacts/cdk.out/SandboxStack.template.json"
+      ) {
         return {
           Resources: {
             BillingIntegrationNestedStack: {
@@ -352,7 +372,8 @@ test("resolveBillingWebhookUrl walks synthesized artifacts and stack outputs", a
 
 test("createWebhookUrlReporter suppresses duplicate webhook URLs", async () => {
   const logged: string[] = [];
-  const timers: Array<{ callback: ScheduledCallback; handle: TimerHandle }> = [];
+  const timers: Array<{ callback: ScheduledCallback; handle: TimerHandle }> =
+    [];
   let currentUrl = "https://example.com/first";
   let nextTimerId = 0;
 
@@ -366,7 +387,7 @@ test("createWebhookUrlReporter suppresses duplicate webhook URLs", async () => {
     log: (message) => logged.push(message),
     lookupWebhookUrl: async () => currentUrl,
     setTimeout: ((callback: ScheduledCallback, _delay?: number) => {
-      const handle = { id: nextTimerId += 1 } as unknown as TimerHandle;
+      const handle = { id: (nextTimerId += 1) } as unknown as TimerHandle;
       timers.push({ callback, handle });
       return handle;
     }) as typeof globalThis.setTimeout,

@@ -9,5 +9,5 @@ export const handler: Handler = async (event) => {
   return getLineupPlan({
     env,
     identity: event.identity,
-  }) as Promise<NonNullable<Schema["getLineupPlan"]["returnType"]>>;
+  });
 };

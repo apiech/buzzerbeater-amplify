@@ -11,8 +11,5 @@ export const handler: Handler = async (event) => {
     identity: event.identity,
   });
 
-  return {
-    syncedAt: workspace.connection.lastSyncAt ?? null,
-    ...workspace.playerLab,
-  };
+  return workspace.playerLab;
 };

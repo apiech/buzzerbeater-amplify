@@ -5,7 +5,9 @@ import {
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 
-type GraphqlEnv = Record<string, string | undefined>;
+type PlayerSkillSnapshotEnv = {
+  PLAYER_SKILL_SNAPSHOT_TABLE_NAME?: string;
+};
 
 export type CanonicalPlayerSkillSnapshotRecord = {
   playerId: string;
@@ -28,8 +30,12 @@ const documentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
 });
 
+export const __testing = {
+  resolvePlayerSkillSnapshotTableName,
+};
+
 export async function upsertCanonicalPlayerSkillSnapshot(
-  env: GraphqlEnv,
+  env: PlayerSkillSnapshotEnv,
   record: CanonicalPlayerSkillSnapshotRecord,
 ): Promise<void> {
   await documentClient.send(
@@ -41,7 +47,7 @@ export async function upsertCanonicalPlayerSkillSnapshot(
 }
 
 export async function listCanonicalPlayerSkillSnapshots(
-  env: GraphqlEnv,
+  env: PlayerSkillSnapshotEnv,
   playerId: string,
   limit = 12,
 ): Promise<CanonicalPlayerSkillSnapshotRecord[]> {
@@ -63,10 +69,8 @@ export async function listCanonicalPlayerSkillSnapshots(
   return (response.Items ?? []) as CanonicalPlayerSkillSnapshotRecord[];
 }
 
-function resolvePlayerSkillSnapshotTableName(env: GraphqlEnv): string {
-  const tableName =
-    env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME ??
-    process.env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
+function resolvePlayerSkillSnapshotTableName(env: PlayerSkillSnapshotEnv): string {
+  const tableName = env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
   if (!tableName) {
     throw new Error("PLAYER_SKILL_SNAPSHOT_TABLE_NAME is not configured.");
   }

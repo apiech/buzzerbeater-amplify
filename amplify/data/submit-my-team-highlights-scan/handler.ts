@@ -4,9 +4,10 @@ import type { Schema } from "../resource";
 import { submitMyTeamHighlightsScan } from "../_backend/team-highlights";
 
 type Handler = Schema["submitMyTeamHighlightsScan"]["functionHandler"];
+type RuntimeEnv = Record<string, string | undefined>;
 
 export const handler: Handler = async (event) => {
-  const queueUrl = env.TEAM_HIGHLIGHTS_SCAN_QUEUE_URL;
+  const queueUrl = (env as RuntimeEnv)["TEAM_HIGHLIGHTS_SCAN_QUEUE_URL"];
   if (!queueUrl) {
     throw new Error(
       "TEAM_HIGHLIGHTS_SCAN_QUEUE_URL environment variable was not found.",

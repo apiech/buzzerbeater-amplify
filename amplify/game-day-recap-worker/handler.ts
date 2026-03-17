@@ -13,6 +13,7 @@ type SqsRecord = {
 type SqsEvent = {
   Records: SqsRecord[];
 };
+type RuntimeEnv = Record<string, string | undefined>;
 
 export const handler = async (
   event: SqsEvent,
@@ -22,7 +23,8 @@ export const handler = async (
     recordCount: event.Records.length,
   });
   const batchItemFailures: Array<{ itemIdentifier: string }> = [];
-  const fallbackModelId = env.GAME_DAY_RECAP_MODEL_ID;
+  const runtimeEnv = env as RuntimeEnv;
+  const fallbackModelId = runtimeEnv["GAME_DAY_RECAP_MODEL_ID"];
   // Retry failed recap jobs individually instead of replaying the full SQS batch.
   for (const record of event.Records) {
     const parsedMessage = safeParseQueueMessage(record.body);
@@ -39,7 +41,7 @@ export const handler = async (
         env,
         messageBody: record.body,
         modelId: fallbackModelId,
-        region: env.AWS_REGION,
+        region: runtimeEnv.AWS_REGION,
       });
       console.info("[game-day-recap-worker] record.succeeded", {
         kind: parsedMessage?.kind ?? null,

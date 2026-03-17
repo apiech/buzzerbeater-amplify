@@ -18,9 +18,18 @@ test("read-only dashboard surfaces avoid credential fingerprints and raw model m
   const recapSource = readAppFile(["app", "recap-panel.tsx"]);
 
   assert.doesNotMatch(dashboardSource, /accessKeyLast4/);
-  assert.doesNotMatch(operationsSource, /Latest preview engine|Latest recap model|modelVersion|modelId/);
-  assert.doesNotMatch(predictionSource, /recent opponent games cached|modelVersion/);
-  assert.doesNotMatch(recapSource, /Model \{selectedRecap\.modelId\}|description=\{`Match \$\{game\.matchId\}`\}/);
+  assert.doesNotMatch(
+    operationsSource,
+    /Latest preview engine|Latest recap model|modelVersion|modelId/,
+  );
+  assert.doesNotMatch(
+    predictionSource,
+    /recent opponent games cached|modelVersion/,
+  );
+  assert.doesNotMatch(
+    recapSource,
+    /Model \{selectedRecap\.modelId\}|description=\{`Match \$\{game\.matchId\}`\}/,
+  );
 });
 
 test("user-facing copy no longer exposes pipeline or internal helper jargon", () => {
@@ -29,8 +38,36 @@ test("user-facing copy no longer exposes pipeline or internal helper jargon", ()
   const teamToolsSource = readAppFile(["app", "team-tools.tsx"]);
   const sectionsSource = readAppFile(["app", "workspace-sections.ts"]);
 
-  assert.doesNotMatch(highlightsSource, /canonical play-by-play|payloads|materialized|ingest jobs|materialize jobs|backfill/);
-  assert.doesNotMatch(lineupSource, /CoachParrot|Refresh cache|canonical skill snapshots|Engine status/);
+  assert.doesNotMatch(
+    highlightsSource,
+    /canonical play-by-play|payloads|materialized|ingest jobs|materialize jobs|backfill/,
+  );
+  assert.doesNotMatch(
+    lineupSource,
+    /CoachParrot|Refresh cache|canonical skill snapshots|Engine status/,
+  );
   assert.doesNotMatch(teamToolsSource, /Open CoachParrot helper/);
   assert.doesNotMatch(sectionsSource, /CoachParrot lineup helper/);
+});
+
+test("auth copy advertises and enforces the relaxed password minimum", () => {
+  const dashboardSource = readAppFile(["app", "dashboard-app.tsx"]);
+
+  assert.match(
+    dashboardSource,
+    /const passwordLengthHint = "Use at least 6 characters\."/,
+  );
+  assert.match(dashboardSource, /hint=\{passwordLengthHint\} label="Password"/);
+  assert.match(
+    dashboardSource,
+    /hint=\{passwordLengthHint\} label="New password"/,
+  );
+  assert.match(
+    dashboardSource,
+    /message:\s*"Use at least 6 characters before creating the account\."/,
+  );
+  assert.match(
+    dashboardSource,
+    /message:\s*"Use at least 6 characters before updating the account password\."/,
+  );
 });

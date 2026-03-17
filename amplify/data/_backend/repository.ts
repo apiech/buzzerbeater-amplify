@@ -50,6 +50,7 @@ export type BbConnectionRecord = {
   connectedAt?: string | null;
   lastValidatedAt?: string | null;
   lastSyncAt?: string | null;
+  refreshSortAt?: string | null;
   lastSyncError?: string | null;
   profileJson?: unknown;
   workspaceCacheJson?: unknown;
@@ -96,6 +97,7 @@ export type SyncRunRecord = {
   completedAt?: string | null;
   error?: string | null;
   detailsJson?: unknown;
+  expiryKey?: string | null;
   expiresAt?: string | null;
 };
 
@@ -104,6 +106,7 @@ export type PredictionJobRecord = {
   userId: string;
   status: PredictionJobStatus;
   mode: PredictionRequestMode;
+  requestedAt?: string | null;
   request: unknown;
   resolvedInputSnapshot?: unknown;
   result?: unknown;
@@ -111,6 +114,7 @@ export type PredictionJobRecord = {
   modelVersion?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  expiryKey?: string | null;
   expiresAt?: string | null;
 };
 
@@ -213,10 +217,24 @@ type ModelApi<TRecord> = {
   create: (input: Record<string, unknown>) => Promise<ClientResult<TRecord>>;
   delete: (input: Record<string, unknown>) => Promise<ClientResult<TRecord>>;
   get: (input: Record<string, unknown>) => Promise<ClientResult<TRecord>>;
-  list: (
-    input?: Record<string, unknown>,
-  ) => Promise<ClientResult<ReadonlyArray<TRecord>>>;
   update: (input: Record<string, unknown>) => Promise<ClientResult<TRecord>>;
+};
+
+type IndexQueryOptions = {
+  filter?: Record<string, unknown>;
+  limit?: number;
+  nextToken?: string | null;
+  sortDirection?: "ASC" | "DESC";
+};
+
+type IndexQueryMethod<TRecord> = (
+  input: Record<string, unknown>,
+  options?: IndexQueryOptions,
+) => Promise<ClientResult<ReadonlyArray<TRecord>>>;
+
+export type PagedRecords<TRecord> = {
+  nextToken: string | null;
+  records: TRecord[];
 };
 
 const runtime = {
@@ -283,18 +301,60 @@ export async function upsertUserPreference(
   await upsertModelRecord(env, "UserPreference", ["userId"], record);
 }
 
-export async function listBbConnections(
+export async function listConnectedBbConnections(
   env: RepositoryEnv,
-  limit = 1000,
-): Promise<BbConnectionRecord[]> {
-  const records = await listModelRecords<BbConnectionRecord>(
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<BbConnectionRecord>> {
+  const page = await queryModelIndexPage<BbConnectionRecord>(
     env,
     "BbConnection",
-    { limit },
-    "list BB connections",
+    "listBbConnectionsByStatusAndRefreshSortAt",
+    { status: "CONNECTED" },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list connected BB connections",
   );
 
-  return decodeAwsJsonList("BbConnection", records);
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("BbConnection", page.records),
+  };
+}
+
+export async function listStaleConnectedBbConnections(
+  env: RepositoryEnv,
+  staleBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<BbConnectionRecord>> {
+  const page = await queryModelIndexPage<BbConnectionRecord>(
+    env,
+    "BbConnection",
+    "listBbConnectionsByStatusAndRefreshSortAt",
+    {
+      status: "CONNECTED",
+      refreshSortAt: { lt: staleBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list stale connected BB connections",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("BbConnection", page.records),
+  };
 }
 
 export async function upsertBbConnection(
@@ -347,6 +407,7 @@ export async function createSyncRun(
   const model = await getModel<SyncRunRecord>(env, "SyncRun");
   const recordInput = prepareModelInput("SyncRun", {
     ...input,
+    expiryKey: input.expiryKey ?? "EXPIRABLE",
     expiresAt: input.expiresAt ?? addDays(input.startedAt, 14),
   });
   const record = assertPresent(
@@ -368,18 +429,34 @@ export async function updateSyncRun(
   );
 }
 
-export async function listSyncRuns(
+export async function listExpiredSyncRuns(
   env: RepositoryEnv,
-  limit = 1000,
-): Promise<SyncRunRecord[]> {
-  const records = await listModelRecords<SyncRunRecord>(
+  expiresBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<SyncRunRecord>> {
+  const page = await queryModelIndexPage<SyncRunRecord>(
     env,
     "SyncRun",
-    { limit },
-    "list sync runs",
+    "listSyncRunsByExpiryKeyAndExpiresAt",
+    {
+      expiryKey: "EXPIRABLE",
+      expiresAt: { lt: expiresBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list expired sync runs",
   );
 
-  return decodeAwsJsonList("SyncRun", records);
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("SyncRun", page.records),
+  };
 }
 
 export async function deleteSyncRun(
@@ -401,6 +478,8 @@ export async function createPredictionJob(
       model.create(
         prepareModelInput("PredictionJob", {
           ...input,
+          requestedAt: input.requestedAt ?? now,
+          expiryKey: input.expiryKey ?? "EXPIRABLE",
           expiresAt: input.expiresAt ?? addDays(now, 30),
         }),
       ),
@@ -437,18 +516,34 @@ export async function updatePredictionJob(
   );
 }
 
-export async function listPredictionJobs(
+export async function listExpiredPredictionJobs(
   env: RepositoryEnv,
-  limit = 1000,
-): Promise<PredictionJobRecord[]> {
-  const records = await listModelRecords<PredictionJobRecord>(
+  expiresBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<PredictionJobRecord>> {
+  const page = await queryModelIndexPage<PredictionJobRecord>(
     env,
     "PredictionJob",
-    { limit },
-    "list prediction jobs",
+    "listPredictionJobsByExpiryKeyAndExpiresAt",
+    {
+      expiryKey: "EXPIRABLE",
+      expiresAt: { lt: expiresBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list expired prediction jobs",
   );
 
-  return decodeAwsJsonList("PredictionJob", records);
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("PredictionJob", page.records),
+  };
 }
 
 export async function deletePredictionJob(
@@ -493,20 +588,6 @@ export async function updateGameDayRecap(
   );
 }
 
-export async function listGameDayRecaps(
-  env: RepositoryEnv,
-  limit = 1000,
-): Promise<GameDayRecapRecord[]> {
-  const records = await listModelRecords<GameDayRecapRecord>(
-    env,
-    "GameDayRecap",
-    { limit },
-    "list game day recaps",
-  );
-
-  return decodeAwsJsonList("GameDayRecap", records);
-}
-
 export async function getLeagueGameDayRecap(
   env: RepositoryEnv,
   userId: string,
@@ -547,20 +628,6 @@ export async function updateLeagueGameDayRecap(
     model.update(prepareModelInput("LeagueGameDayRecap", input)),
     "update league game day recap",
   );
-}
-
-export async function listLeagueGameDayRecaps(
-  env: RepositoryEnv,
-  limit = 1000,
-): Promise<LeagueGameDayRecapRecord[]> {
-  const records = await listModelRecords<LeagueGameDayRecapRecord>(
-    env,
-    "LeagueGameDayRecap",
-    { limit },
-    "list league game day recaps",
-  );
-
-  return decodeAwsJsonList("LeagueGameDayRecap", records);
 }
 
 export async function getSingleGameSummary(
@@ -605,20 +672,6 @@ export async function updateSingleGameSummary(
   );
 }
 
-export async function listSingleGameSummaries(
-  env: RepositoryEnv,
-  limit = 1000,
-): Promise<SingleGameSummaryRecord[]> {
-  const records = await listModelRecords<SingleGameSummaryRecord>(
-    env,
-    "SingleGameSummary",
-    { limit },
-    "list single game summaries",
-  );
-
-  return decodeAwsJsonList("SingleGameSummary", records);
-}
-
 export async function getMatchBoxscore(
   env: RepositoryEnv,
   userId: string,
@@ -639,26 +692,6 @@ export async function upsertTrackedTeam(
   input: Record<string, unknown>,
 ): Promise<void> {
   await upsertModelRecord(env, "TrackedTeam", ["userId", "teamId"], input);
-}
-
-export async function listTrackedTeams(
-  env: RepositoryEnv,
-  userId: string,
-  limit = 50,
-): Promise<Record<string, unknown>[]> {
-  const records = await listModelRecords<Record<string, unknown>>(
-    env,
-    "TrackedTeam",
-    {
-      filter: {
-        userId: { eq: userId },
-      },
-      limit,
-    },
-    "list tracked teams",
-  );
-
-  return decodeAwsJsonList("TrackedTeam", records);
 }
 
 export async function upsertTrackedPlayer(
@@ -705,18 +738,6 @@ export async function upsertLeagueStanding(
     env,
     "LeagueStanding",
     ["userId", "season", "teamId"],
-    input,
-  );
-}
-
-export async function upsertWeeklyPlayerSnapshot(
-  env: RepositoryEnv,
-  input: Record<string, unknown>,
-): Promise<void> {
-  await upsertModelRecord(
-    env,
-    "WeeklyPlayerSnapshot",
-    ["userId", "playerId", "weekKey"],
     input,
   );
 }
@@ -780,28 +801,6 @@ export async function getSharedPlayerCardRecord(
   return decodeAwsJsonFields("SharedPlayerCard", record);
 }
 
-export async function listWeeklyPlayerSnapshots(
-  env: RepositoryEnv,
-  userId: string,
-  playerId: string,
-  limit = 12,
-): Promise<Record<string, unknown>[]> {
-  const records = await listModelRecords<Record<string, unknown>>(
-    env,
-    "WeeklyPlayerSnapshot",
-    {
-      filter: {
-        userId: { eq: userId },
-        playerId: { eq: playerId },
-      },
-      limit,
-    },
-    "list weekly player snapshots",
-  );
-
-  return decodeAwsJsonList("WeeklyPlayerSnapshot", records);
-}
-
 async function upsertModelRecord(
   env: RepositoryEnv,
   modelName: AwsJsonModelName,
@@ -841,37 +840,29 @@ async function getModelRecord<TRecord>(
   return assertSuccessful(model.get(omitUndefinedValues(input)), context);
 }
 
-async function listModelRecords<TRecord>(
+async function queryModelIndexPage<TRecord>(
   env: RepositoryEnv,
   modelName: string,
+  queryField: string,
   input: Record<string, unknown>,
+  options: IndexQueryOptions,
   context: string,
-): Promise<TRecord[]> {
-  const model = await getModel<TRecord>(env, modelName);
-  const records: TRecord[] = [];
-  let nextToken: string | null | undefined;
+): Promise<PagedRecords<TRecord>> {
+  const query = await getModelIndexQuery<TRecord>(env, modelName, queryField);
+  const result = await query(omitUndefinedValues(input), omitUndefinedValues(options));
 
-  do {
-    const result = await model.list(
-      omitUndefinedValues({
-        ...input,
-        nextToken,
-      }),
-    );
+  if (!result.errors?.length) {
+    return {
+      nextToken: result.nextToken ?? null,
+      records: [...(result.data ?? [])],
+    };
+  }
 
-    if (result.errors?.length) {
-      throw new Error(
-        `${context} failed: ${result.errors
-          .map((error) => error.message ?? "Unknown Amplify data client error")
-          .join("; ")}`,
-      );
-    }
-
-    records.push(...(result.data ?? []));
-    nextToken = result.nextToken;
-  } while (nextToken);
-
-  return records;
+  throw new Error(
+    `${context} failed: ${result.errors
+      .map((error) => error.message ?? "Unknown Amplify data client error")
+      .join("; ")}`,
+  );
 }
 
 async function getModel<TRecord>(
@@ -888,6 +879,25 @@ async function getModel<TRecord>(
   }
 
   return model;
+}
+
+async function getModelIndexQuery<TRecord>(
+  env: RepositoryEnv,
+  modelName: string,
+  queryField: string,
+): Promise<IndexQueryMethod<TRecord>> {
+  const model = await getModel<TRecord>(env, modelName);
+  const query = (model as unknown as Record<string, IndexQueryMethod<TRecord> | undefined>)[
+    queryField
+  ];
+
+  if (!query) {
+    throw new Error(
+      `Amplify data client index query ${modelName}.${queryField} is not available.`,
+    );
+  }
+
+  return query;
 }
 
 async function assertSuccessful<TData>(

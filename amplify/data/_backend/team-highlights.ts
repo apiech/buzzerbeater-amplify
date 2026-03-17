@@ -7,20 +7,39 @@ import {
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 
+import type { Schema } from "../resource";
+import { TeamHighlightsPerspective } from "../schema-enums";
 import { requireFeatureAccess } from "./billing";
-import { getBbConnection, listTrackedTeams } from "./repository";
+import {
+  listActiveTrackedTeamsForUser,
+  type ActiveTrackedTeamRecord,
+} from "./active-tracked-teams";
+import { getBbConnection } from "./repository";
 
 type GraphqlEnv = Record<string, string | undefined>;
+type TeamMomentsEnv = {
+  TEAM_MOMENTS_TABLE_NAME?: string;
+};
+type TeamHighlightsStatusEnv = {
+  TEAM_HIGHLIGHTS_STATUS_TABLE_NAME?: string;
+};
 
 type Identity = {
   sub?: string;
   claims?: Record<string, unknown>;
 };
 
+type ResolverResult<TKey extends keyof Schema> = NonNullable<
+  Schema[TKey] extends { returnType: infer TReturn } ? TReturn : never
+>;
+
+type TeamHighlightsResult = ResolverResult<"getMyTeamHighlights">;
+type TeamHighlightsSummary = TeamHighlightsResult["summary"];
+
 type SubmitDependencies = {
   getBbConnection: typeof getBbConnection;
   getTeamHighlightsStatus: typeof getTeamHighlightsStatus;
-  listTrackedTeams: typeof listTrackedTeams;
+  listActiveTrackedTeamsForUser: typeof listActiveTrackedTeamsForUser;
   now: () => Date;
   putTeamHighlightsStatus: typeof putTeamHighlightsStatus;
   requireFeatureAccess: typeof requireFeatureAccess;
@@ -33,7 +52,7 @@ type SubmitDependencies = {
 type GetDependencies = {
   getBbConnection: typeof getBbConnection;
   getTeamHighlightsStatus: typeof getTeamHighlightsStatus;
-  listTrackedTeams: typeof listTrackedTeams;
+  listActiveTrackedTeamsForUser: typeof listActiveTrackedTeamsForUser;
   queryTeamMoments: typeof queryTeamMoments;
 };
 
@@ -41,8 +60,6 @@ type PrimaryTeam = {
   teamId: string;
   teamName: string | null;
 };
-
-type TeamHighlightsPerspective = "AGAINST" | "BOTH" | "FOR";
 
 type TeamHighlightsScanMessage = {
   requestedAt: string;
@@ -122,7 +139,7 @@ const ddbDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 const defaultSubmitDependencies: SubmitDependencies = {
   getBbConnection,
   getTeamHighlightsStatus,
-  listTrackedTeams,
+  listActiveTrackedTeamsForUser,
   now: () => new Date(),
   putTeamHighlightsStatus,
   requireFeatureAccess,
@@ -140,7 +157,7 @@ const defaultSubmitDependencies: SubmitDependencies = {
 const defaultGetDependencies: GetDependencies = {
   getBbConnection,
   getTeamHighlightsStatus,
-  listTrackedTeams,
+  listActiveTrackedTeamsForUser,
   queryTeamMoments,
 };
 
@@ -149,6 +166,8 @@ export const __testing = {
   encodeCursor,
   filterTeamMoments,
   normalizePerspective,
+  resolveTeamHighlightsStatusTableName,
+  resolveTeamMomentsTableName,
   resolvePrimaryTeam,
   summarizeTeamMoments,
 };
@@ -182,7 +201,7 @@ export async function submitMyTeamHighlightsScan(
     args.env,
     userId,
     dependencies.getBbConnection,
-    dependencies.listTrackedTeams,
+    dependencies.listActiveTrackedTeamsForUser,
   );
   const existingStatus = await dependencies.getTeamHighlightsStatus(
     args.env,
@@ -247,7 +266,7 @@ export async function getMyTeamHighlights(
     perspective?: string | null;
   },
   dependencies: GetDependencies = defaultGetDependencies,
-): Promise<Record<string, unknown>> {
+): Promise<TeamHighlightsResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -257,7 +276,7 @@ export async function getMyTeamHighlights(
     args.env,
     userId,
     dependencies.getBbConnection,
-    dependencies.listTrackedTeams,
+    dependencies.listActiveTrackedTeamsForUser,
   );
   const [scanStatus, allMoments] = await Promise.all([
     dependencies.getTeamHighlightsStatus(args.env, userId, team.teamId),
@@ -278,9 +297,10 @@ export async function getMyTeamHighlights(
     pageStartIndex > 0
       ? filteredMoments.slice(pageStartIndex, pageStartIndex + PAGE_SIZE)
       : filteredMoments.slice(0, PAGE_SIZE);
+  const lastPageItem = pageItems[pageItems.length - 1];
   const nextCursor =
-    pageItems.length === PAGE_SIZE
-      ? encodeCursor(pageItems[pageItems.length - 1].momentSortKey)
+    pageItems.length === PAGE_SIZE && lastPageItem
+      ? encodeCursor(lastPageItem.momentSortKey)
       : null;
 
   return {
@@ -362,22 +382,28 @@ async function resolvePrimaryTeam(
   env: GraphqlEnv,
   userId: string,
   getBbConnectionDependency: typeof getBbConnection,
-  listTrackedTeamsDependency: typeof listTrackedTeams,
+  listActiveTrackedTeamsForUserDependency: typeof listActiveTrackedTeamsForUser,
 ): Promise<PrimaryTeam> {
   const [connection, trackedTeams] = await Promise.all([
     getBbConnectionDependency(env, userId),
-    listTrackedTeamsDependency(env, userId, 100),
+    listActiveTrackedTeamsForUserDependency(env, userId),
   ]);
 
   const primaryTrackedTeam =
     trackedTeams.find(
-      (team) =>
-        asBoolean(team.isPrimary) && Boolean(asOptionalString(team.teamId)),
+      (team: ActiveTrackedTeamRecord) =>
+        team.active !== false &&
+        asBoolean(team.isPrimary) &&
+        Boolean(asOptionalString(team.teamId)),
     ) ??
     trackedTeams.find(
-      (team) => asOptionalString(team.teamId) === connection?.teamId,
+      (team: ActiveTrackedTeamRecord) =>
+        team.active !== false && asOptionalString(team.teamId) === connection?.teamId,
     ) ??
-    trackedTeams.find((team) => Boolean(asOptionalString(team.teamId))) ??
+    trackedTeams.find(
+      (team: ActiveTrackedTeamRecord) =>
+        team.active !== false && Boolean(asOptionalString(team.teamId)),
+    ) ??
     null;
 
   const teamId =
@@ -389,7 +415,6 @@ async function resolvePrimaryTeam(
   return {
     teamId,
     teamName:
-      asOptionalString(primaryTrackedTeam?.name) ??
       asOptionalString(primaryTrackedTeam?.teamName) ??
       connection?.teamName ??
       null,
@@ -483,7 +508,7 @@ function filterTeamMoments(
 function summarizeTeamMoments(
   allMoments: readonly TeamMomentItem[],
   filteredMoments: readonly TeamMomentItem[],
-): Record<string, number> {
+): TeamHighlightsSummary {
   const forMoments = allMoments.filter(
     (moment) => normalizePerspective(moment.perspective) === "FOR",
   ).length;
@@ -505,10 +530,13 @@ function summarizeTeamMoments(
 
 function normalizePerspective(value: unknown): TeamHighlightsPerspective {
   const normalized = asOptionalString(value)?.trim().toUpperCase();
-  if (normalized === "FOR" || normalized === "AGAINST") {
-    return normalized;
+  if (normalized === "FOR") {
+    return TeamHighlightsPerspective.FOR;
   }
-  return "BOTH";
+  if (normalized === "AGAINST") {
+    return TeamHighlightsPerspective.AGAINST;
+  }
+  return TeamHighlightsPerspective.BOTH;
 }
 
 function encodeCursor(value: string): string {
@@ -527,19 +555,18 @@ function decodeCursor(cursor: string | null): string | null {
   }
 }
 
-function resolveTeamMomentsTableName(env: GraphqlEnv): string {
-  const tableName =
-    env.TEAM_MOMENTS_TABLE_NAME ?? process.env.TEAM_MOMENTS_TABLE_NAME;
+function resolveTeamMomentsTableName(env: TeamMomentsEnv): string {
+  const tableName = env.TEAM_MOMENTS_TABLE_NAME;
   if (!tableName) {
     throw new Error("TEAM_MOMENTS_TABLE_NAME is not configured.");
   }
   return tableName;
 }
 
-function resolveTeamHighlightsStatusTableName(env: GraphqlEnv): string {
-  const tableName =
-    env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME ??
-    process.env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME;
+function resolveTeamHighlightsStatusTableName(
+  env: TeamHighlightsStatusEnv,
+): string {
+  const tableName = env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME;
   if (!tableName) {
     throw new Error("TEAM_HIGHLIGHTS_STATUS_TABLE_NAME is not configured.");
   }

@@ -1,6 +1,14 @@
 "use client";
 
 import type { Schema } from "@/amplify/data/resource";
+import type {
+  BbConnectionRecord,
+  OperationsActivity,
+  PaginatedResult,
+  PredictionJobRecord,
+  RecapHistoryRecord,
+  SavedLineupScenarioRecord,
+} from "@/app/types";
 
 type AmplifyLikeError = {
   message?: string;
@@ -11,21 +19,14 @@ type AmplifyLikeResult<TData> = {
   errors?: AmplifyLikeError[] | null;
   nextToken?: string | null;
 };
-type AmplifyLikeListResult<TData> = {
-  data: TData[];
-  errors?: AmplifyLikeError[] | null;
-  nextToken?: string | null;
-};
 
 type JsonObject = Record<string, unknown>;
-type ModelListName =
-  | "BbConnection"
-  | "GameDayRecap"
-  | "LeagueGameDayRecap"
-  | "PredictionJob"
-  | "SavedLineupScenario"
-  | "SingleGameSummary"
-  | "SyncRun";
+type ReadOperationName =
+  | "getCurrentBbConnection"
+  | "getOperationsActivity"
+  | "getPredictionHistory"
+  | "getRecapHistory"
+  | "getSavedLineupScenarios";
 type QueryOperationName =
   | "evaluateLineupHelper"
   | "getBillingSummary"
@@ -53,9 +54,16 @@ type MutationOperationName =
   | "submitMyTeamHighlightsScan"
   | "submitPredictionJob"
   | "submitSingleGameSummary";
-type ModelListRecord<TName extends ModelListName> = Schema[TName]["type"];
 type OperationResult<TName extends QueryOperationName | MutationOperationName> =
   NonNullable<Schema[TName]["returnType"]>;
+type ReadResult<TName extends ReadOperationName> =
+  TName extends "getCurrentBbConnection" ? BbConnectionRecord | null
+  : TName extends "getOperationsActivity" ? OperationsActivity
+  : TName extends "getPredictionHistory" ? PaginatedResult<PredictionJobRecord>
+  : TName extends "getRecapHistory" ? PaginatedResult<RecapHistoryRecord>
+  : TName extends "getSavedLineupScenarios"
+    ? PaginatedResult<SavedLineupScenarioRecord>
+    : never;
 
 async function requestOperation<TData>(
   input: RequestInfo | URL,
@@ -117,27 +125,16 @@ function readErrorMessage(payload: unknown): string | null {
   return null;
 }
 
-function requestModelList<TName extends ModelListName>(
-  modelName: TName,
-  input: { limit?: number; nextToken?: string | null } = {},
+function requestRead<TName extends ReadOperationName>(
+  name: TName,
+  input?: JsonObject,
 ) {
-  const params = new URLSearchParams();
-  if (typeof input.limit === "number") {
-    params.set("limit", String(input.limit));
-  }
-  if (input.nextToken) {
-    params.set("nextToken", input.nextToken);
-  }
-
-  const suffix = params.size ? `?${params.toString()}` : "";
-  return requestOperation<ModelListRecord<TName>[]>(
-    `/api/app/models/${encodeURIComponent(modelName)}${suffix}`,
-  ).then(
-    (result): AmplifyLikeListResult<ModelListRecord<TName>> => ({
-      data: result.data ?? [],
-      errors: result.errors,
-      nextToken: result.nextToken,
-    }),
+  return requestOperation<ReadResult<TName>>(
+    `/api/app/reads/${encodeURIComponent(name)}`,
+    {
+      body: input ? JSON.stringify(input) : undefined,
+      method: "POST",
+    },
   );
 }
 
@@ -168,35 +165,22 @@ function requestMutation<TName extends MutationOperationName>(
 }
 
 export const client = {
-  models: {
-    BbConnection: {
-      list: (input?: { limit?: number; nextToken?: string | null }) =>
-        requestModelList("BbConnection", input),
-    },
-    GameDayRecap: {
-      list: (input?: { limit?: number; nextToken?: string | null }) =>
-        requestModelList("GameDayRecap", input),
-    },
-    LeagueGameDayRecap: {
-      list: (input?: { limit?: number; nextToken?: string | null }) =>
-        requestModelList("LeagueGameDayRecap", input),
-    },
-    PredictionJob: {
-      list: (input?: { limit?: number; nextToken?: string | null }) =>
-        requestModelList("PredictionJob", input),
-    },
-    SavedLineupScenario: {
-      list: (input?: { limit?: number; nextToken?: string | null }) =>
-        requestModelList("SavedLineupScenario", input),
-    },
-    SingleGameSummary: {
-      list: (input?: { limit?: number; nextToken?: string | null }) =>
-        requestModelList("SingleGameSummary", input),
-    },
-    SyncRun: {
-      list: (input?: { limit?: number; nextToken?: string | null }) =>
-        requestModelList("SyncRun", input),
-    },
+  reads: {
+    getCurrentBbConnection: () => requestRead("getCurrentBbConnection"),
+    getOperationsActivity: (input?: { limit?: number }) =>
+      requestRead("getOperationsActivity", input),
+    getPredictionHistory: (input?: {
+      limit?: number;
+      nextToken?: string | null;
+    }) => requestRead("getPredictionHistory", input),
+    getRecapHistory: (input?: {
+      limit?: number;
+      nextToken?: string | null;
+    }) => requestRead("getRecapHistory", input),
+    getSavedLineupScenarios: (input?: {
+      limit?: number;
+      nextToken?: string | null;
+    }) => requestRead("getSavedLineupScenarios", input),
   },
   mutations: {
     connectBbAccount: (input: JsonObject) =>

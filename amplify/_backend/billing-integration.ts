@@ -5,6 +5,8 @@ import {
   type IFunction,
 } from "aws-cdk-lib/aws-lambda";
 
+import { resolvePublicAppOrigin } from "../../lib/env/public-app-origin.js";
+
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
   resources: {
@@ -27,14 +29,25 @@ type BillingBackend = {
 };
 
 export function configureBillingIntegration(backend: BillingBackend): void {
-  const appBaseUrl = resolveRequiredEnv("APP_BASE_URL");
+  const appBaseUrl = resolvePublicAppOrigin(process.env, {
+    errorMessage: "APP_BASE_URL must be configured for Stripe billing.",
+  });
   const defaultPlanId = resolveBillingDefaultPlan();
   const premiumPriceId = resolveRequiredEnv("STRIPE_PREMIUM_PRICE_ID");
 
   if (defaultPlanId) {
-    backend.getBillingSummary.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
-    backend.predictionSubmit.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
-    backend.gameDayRecapSubmit.addEnvironment("BILLING_DEFAULT_PLAN", defaultPlanId);
+    backend.getBillingSummary.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      defaultPlanId,
+    );
+    backend.predictionSubmit.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      defaultPlanId,
+    );
+    backend.gameDayRecapSubmit.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      defaultPlanId,
+    );
     backend.submitLeagueGameDayRecap.addEnvironment(
       "BILLING_DEFAULT_PLAN",
       defaultPlanId,
@@ -49,7 +62,10 @@ export function configureBillingIntegration(backend: BillingBackend): void {
     );
   }
 
-  backend.createBillingCheckoutSession.addEnvironment("APP_BASE_URL", appBaseUrl);
+  backend.createBillingCheckoutSession.addEnvironment(
+    "APP_BASE_URL",
+    appBaseUrl,
+  );
   backend.createBillingCheckoutSession.addEnvironment(
     "STRIPE_PREMIUM_PRICE_ID",
     premiumPriceId,
@@ -57,9 +73,10 @@ export function configureBillingIntegration(backend: BillingBackend): void {
   backend.createBillingPortalSession.addEnvironment("APP_BASE_URL", appBaseUrl);
 
   const stack = backend.createStack("billing-integration");
-  const webhookLambda = backend.billingWebhook.resources.lambda as LambdaFunction;
-  const adminOverrideLambda =
-    backend.billingAdminOverride.resources.lambda as LambdaFunction;
+  const webhookLambda = backend.billingWebhook.resources
+    .lambda as LambdaFunction;
+  const adminOverrideLambda = backend.billingAdminOverride.resources
+    .lambda as LambdaFunction;
 
   const webhookUrl = webhookLambda.addFunctionUrl({
     authType: FunctionUrlAuthType.NONE,
@@ -92,7 +109,11 @@ function resolveBillingDefaultPlan(): string | null {
   }
 
   const branchName = (process.env.AWS_BRANCH ?? "dev").toLowerCase();
-  if (branchName === "main" || branchName === "master" || branchName === "prod") {
+  if (
+    branchName === "main" ||
+    branchName === "master" ||
+    branchName === "prod"
+  ) {
     return null;
   }
 

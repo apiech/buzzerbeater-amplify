@@ -10,5 +10,5 @@ export const handler: Handler = async (event) => {
     env,
     identity: event.identity,
     playerId: event.arguments.playerId,
-  }) as Promise<NonNullable<Schema["getSalaryProjection"]["returnType"]>>;
+  });
 };

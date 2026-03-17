@@ -6,7 +6,10 @@ import {
   createSyncRun,
   getBbConnection,
   getUserPreference,
-  listBbConnections,
+  listConnectedBbConnections,
+  listExpiredPredictionJobs,
+  listExpiredSyncRuns,
+  listStaleConnectedBbConnections,
   updateSyncRun,
   upsertUserPreference,
   upsertTrackedPlayer,
@@ -54,6 +57,7 @@ test("createSyncRun serializes AWSJSON payloads before model.create", async (t) 
     status: "SYNCING",
     startedAt: "2026-03-15T00:00:00.000Z",
     detailsJson: '{"teamId":"123"}',
+    expiryKey: "EXPIRABLE",
     expiresAt: "2026-03-29T00:00:00.000Z",
   });
   assert.deepStrictEqual(record.detailsJson, { teamId: "123" });
@@ -192,8 +196,11 @@ test("getBbConnection returns JSON fields as plain objects", async (t) => {
   });
 });
 
-test("listBbConnections follows nextToken pagination", async (t) => {
-  const listInputs: Array<Record<string, unknown>> = [];
+test("listConnectedBbConnections queries the status index", async (t) => {
+  const queryCalls: Array<{
+    input: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
 
   t.mock.method(
     repositoryTesting.runtime,
@@ -202,33 +209,79 @@ test("listBbConnections follows nextToken pagination", async (t) => {
       ({
         models: {
           BbConnection: {
-            list: async (input: Record<string, unknown>) => {
-              listInputs.push(input);
-              if (!input.nextToken) {
-                return {
-                  data: [
-                    {
-                      userId: "u1",
-                      bbLoginName: "coach-1",
-                      status: "CONNECTED",
-                      workspaceCacheJson: {
-                        home: { team: { teamId: "1" } },
-                      },
+            listBbConnectionsByStatusAndRefreshSortAt: async (
+              input: Record<string, unknown>,
+              options?: Record<string, unknown>,
+            ) => {
+              queryCalls.push({ input, options });
+              return {
+                data: [
+                  {
+                    userId: "u1",
+                    bbLoginName: "coach-1",
+                    status: "CONNECTED",
+                    workspaceCacheJson: {
+                      home: { team: { teamId: "1" } },
                     },
-                  ],
-                  nextToken: "page-2",
-                };
-              }
+                  },
+                ],
+                nextToken: "page-2",
+              };
+            },
+          },
+        },
+      }) as any,
+  );
 
+  const page = await listConnectedBbConnections({} as any, {
+    limit: 1,
+    nextToken: "page-1",
+  });
+
+  assert.deepStrictEqual(queryCalls, [
+    {
+      input: { status: "CONNECTED" },
+      options: {
+        limit: 1,
+        nextToken: "page-1",
+        sortDirection: "ASC",
+      },
+    },
+  ]);
+  assert.deepStrictEqual(
+    page.records.map((record) => record.userId),
+    ["u1"],
+  );
+  assert.equal(page.nextToken, "page-2");
+  assert.deepStrictEqual(page.records[0]?.workspaceCacheJson, {
+    home: { team: { teamId: "1" } },
+  });
+});
+
+test("listStaleConnectedBbConnections applies the stale cutoff on the index", async (t) => {
+  let queryInput: Record<string, unknown> | null = null;
+  let queryOptions: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          BbConnection: {
+            listBbConnectionsByStatusAndRefreshSortAt: async (
+              input: Record<string, unknown>,
+              options?: Record<string, unknown>,
+            ) => {
+              queryInput = input;
+              queryOptions = options ?? null;
               return {
                 data: [
                   {
                     userId: "u2",
                     bbLoginName: "coach-2",
                     status: "CONNECTED",
-                    workspaceCacheJson: {
-                      home: { team: { teamId: "2" } },
-                    },
+                    refreshSortAt: "2026-03-15T08:00:00.000Z",
                   },
                 ],
                 nextToken: null,
@@ -239,19 +292,120 @@ test("listBbConnections follows nextToken pagination", async (t) => {
       }) as any,
   );
 
-  const records = await listBbConnections({} as any, 1);
-
-  assert.deepStrictEqual(listInputs, [
-    { limit: 1 },
-    { limit: 1, nextToken: "page-2" },
-  ]);
-  assert.deepStrictEqual(
-    records.map((record) => record.userId),
-    ["u1", "u2"],
+  const page = await listStaleConnectedBbConnections(
+    {} as any,
+    "2026-03-15T12:00:00.000Z",
+    { limit: 25 },
   );
-  assert.deepStrictEqual(records[1]?.workspaceCacheJson, {
-    home: { team: { teamId: "2" } },
+
+  assert.deepStrictEqual(queryInput, {
+    status: "CONNECTED",
+    refreshSortAt: { lt: "2026-03-15T12:00:00.000Z" },
   });
+  assert.deepStrictEqual(queryOptions, {
+    limit: 25,
+    sortDirection: "ASC",
+  });
+  assert.deepStrictEqual(page.records, [
+    {
+      userId: "u2",
+      bbLoginName: "coach-2",
+      status: "CONNECTED",
+      refreshSortAt: "2026-03-15T08:00:00.000Z",
+    },
+  ]);
+});
+
+test("expired operational record helpers query expiry indexes", async (t) => {
+  const syncRunCalls: Array<{
+    input: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
+  const predictionJobCalls: Array<{
+    input: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          PredictionJob: {
+            listPredictionJobsByExpiryKeyAndExpiresAt: async (
+              input: Record<string, unknown>,
+              options?: Record<string, unknown>,
+            ) => {
+              predictionJobCalls.push({ input, options });
+              return {
+                data: [{ id: "job-1", userId: "u1", status: "FAILED", mode: "MANUAL" }],
+                nextToken: null,
+              };
+            },
+          },
+          SyncRun: {
+            listSyncRunsByExpiryKeyAndExpiresAt: async (
+              input: Record<string, unknown>,
+              options?: Record<string, unknown>,
+            ) => {
+              syncRunCalls.push({ input, options });
+              return {
+                data: [
+                  {
+                    id: "sync-1",
+                    userId: "u1",
+                    kind: "workspace-refresh",
+                    status: "FAILED",
+                    startedAt: "2026-03-01T00:00:00.000Z",
+                  },
+                ],
+                nextToken: "next-sync-page",
+              };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  const syncRunPage = await listExpiredSyncRuns(
+    {} as any,
+    "2026-03-15T12:00:00.000Z",
+    { limit: 100 },
+  );
+  const predictionJobPage = await listExpiredPredictionJobs(
+    {} as any,
+    "2026-03-15T12:00:00.000Z",
+    { nextToken: "jobs-page-1" },
+  );
+
+  assert.deepStrictEqual(syncRunCalls, [
+    {
+      input: {
+        expiryKey: "EXPIRABLE",
+        expiresAt: { lt: "2026-03-15T12:00:00.000Z" },
+      },
+      options: {
+        limit: 100,
+        sortDirection: "ASC",
+      },
+    },
+  ]);
+  assert.deepStrictEqual(predictionJobCalls, [
+    {
+      input: {
+        expiryKey: "EXPIRABLE",
+        expiresAt: { lt: "2026-03-15T12:00:00.000Z" },
+      },
+      options: {
+        nextToken: "jobs-page-1",
+        sortDirection: "ASC",
+      },
+    },
+  ]);
+  assert.equal(syncRunPage.nextToken, "next-sync-page");
+  assert.equal(syncRunPage.records[0]?.id, "sync-1");
+  assert.equal(predictionJobPage.records[0]?.id, "job-1");
 });
 
 test("getUserPreference loads the stored account theme", async (t) => {

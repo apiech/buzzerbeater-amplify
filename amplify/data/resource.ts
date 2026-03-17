@@ -995,11 +995,17 @@ const schema = a
         connectedAt: a.datetime(),
         lastValidatedAt: a.datetime(),
         lastSyncAt: a.datetime(),
+        refreshSortAt: a.datetime(),
         lastSyncError: a.string(),
         profileJson: a.json(),
         workspaceCacheJson: a.json(),
       })
       .identifier(["userId"])
+      .secondaryIndexes((index) => [
+        index("status")
+          .sortKeys(["refreshSortAt"])
+          .queryField("listBbConnectionsByStatusAndRefreshSortAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     BbCredential: a
@@ -1117,22 +1123,6 @@ const schema = a
       .identifier(["userId", "season", "teamId"])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
-    WeeklyPlayerSnapshot: a
-      .model({
-        userId: a.string().required(),
-        playerId: a.string().required(),
-        weekKey: a.string().required(),
-        teamId: a.string().required(),
-        gameShape: a.string(),
-        dmi: a.integer(),
-        injuryWeeks: a.integer(),
-        salary: a.integer(),
-        snapshotJson: a.json(),
-        fetchedAt: a.datetime(),
-      })
-      .identifier(["userId", "playerId", "weekKey"])
-      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
-
     SyncRun: a
       .model({
         userId: a.string().required(),
@@ -1142,8 +1132,17 @@ const schema = a
         completedAt: a.datetime(),
         error: a.string(),
         detailsJson: a.json(),
+        expiryKey: a.string(),
         expiresAt: a.datetime(),
       })
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["startedAt"])
+          .queryField("listSyncRunsByUserAndStartedAt"),
+        index("expiryKey")
+          .sortKeys(["expiresAt"])
+          .queryField("listSyncRunsByExpiryKeyAndExpiresAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     SharedPlayerCard: a
@@ -1171,6 +1170,11 @@ const schema = a
         savedAt: a.datetime().required(),
       })
       .identifier(["scenarioId"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["savedAt"])
+          .queryField("listSavedLineupScenariosByUserAndSavedAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     PredictionJob: a
@@ -1178,13 +1182,23 @@ const schema = a
         userId: a.string().required(),
         status: a.ref("PredictionJobStatus").required(),
         mode: a.ref("PredictionRequestMode").required(),
+        requestedAt: a.datetime(),
         request: a.json().required(),
         resolvedInputSnapshot: a.json(),
         result: a.json(),
         error: a.string(),
         modelVersion: a.string(),
+        expiryKey: a.string(),
         expiresAt: a.datetime(),
       })
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listPredictionJobsByUserAndRequestedAt"),
+        index("expiryKey")
+          .sortKeys(["expiresAt"])
+          .queryField("listPredictionJobsByExpiryKeyAndExpiresAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     GameDayRecap: a
@@ -1207,6 +1221,11 @@ const schema = a
         promptVersion: a.string(),
       })
       .identifier(["userId", "targetKey"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listGameDayRecapsByUserAndRequestedAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     LeagueGameDayRecap: a
@@ -1229,6 +1248,11 @@ const schema = a
         promptVersion: a.string(),
       })
       .identifier(["userId", "targetKey"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listLeagueGameDayRecapsByUserAndRequestedAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     SingleGameSummary: a
@@ -1252,6 +1276,11 @@ const schema = a
         promptVersion: a.string(),
       })
       .identifier(["userId", "targetKey"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listSingleGameSummariesByUserAndRequestedAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     connectBbAccount: a

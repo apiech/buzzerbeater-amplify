@@ -11,9 +11,13 @@ import {
   DescribeStacksCommand,
 } from "@aws-sdk/client-cloudformation";
 
+import {
+  loadProjectEnvFiles,
+  normalizeOptionalString,
+} from "./project-env.mjs";
+
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDir, "..");
-const envFile = join(projectRoot, ".env");
 const amplifyOutputsFile = join(projectRoot, "amplify_outputs.json");
 const billingNestedStackPath =
   "billing-integration.NestedStack/billing-integration.NestedStackResource";
@@ -42,6 +46,10 @@ export function shouldWatchSandboxOutputs(argv) {
     return false;
   }
 
+  if (argv.includes("--once")) {
+    return false;
+  }
+
   if (argv.includes("--help") || argv.includes("-h")) {
     return false;
   }
@@ -64,7 +72,10 @@ export function applySandboxDefaults(argv) {
         ...argv,
         sandboxWatchDirFlag,
         sandboxDefaultWatchDir,
-        ...sandboxDefaultExcludePaths.flatMap((path) => [sandboxExcludeFlag, path]),
+        ...sandboxDefaultExcludePaths.flatMap((path) => [
+          sandboxExcludeFlag,
+          path,
+        ]),
       ];
 
   if (hasExplicitStreamLogsSetting(sandboxArgv)) {
@@ -82,7 +93,9 @@ export function resolveRootStackNameFromManifest(manifest) {
     }
   }
 
-  throw new Error("Unable to find the synthesized root sandbox stack in manifest.json.");
+  throw new Error(
+    "Unable to find the synthesized root sandbox stack in manifest.json.",
+  );
 }
 
 export function resolveRootTemplateFileFromManifest(manifest, rootStackName) {
@@ -104,12 +117,17 @@ export function resolveBillingNestedStackLogicalId(rootTemplate) {
     }
 
     const cdkPath = resource?.Metadata?.["aws:cdk:path"];
-    if (typeof cdkPath === "string" && cdkPath.includes(billingNestedStackPath)) {
+    if (
+      typeof cdkPath === "string" &&
+      cdkPath.includes(billingNestedStackPath)
+    ) {
       return logicalId;
     }
   }
 
-  throw new Error("Unable to find the billing-integration nested stack resource.");
+  throw new Error(
+    "Unable to find the billing-integration nested stack resource.",
+  );
 }
 
 export function resolveAwsRegion(amplifyOutputs, env = process.env) {
@@ -119,7 +137,9 @@ export function resolveAwsRegion(amplifyOutputs, env = process.env) {
     normalizeOptionalString(env.AWS_REGION) ??
     normalizeOptionalString(env.AWS_DEFAULT_REGION);
   if (!region) {
-    throw new Error("Unable to determine the AWS region for sandbox stack lookups.");
+    throw new Error(
+      "Unable to determine the AWS region for sandbox stack lookups.",
+    );
   }
 
   return region;
@@ -139,7 +159,9 @@ export function extractBillingWebhookUrl(outputs) {
       output.OutputValue.trim(),
   );
   if (!match) {
-    throw new Error("BillingWebhookUrl was not present in the billing stack outputs.");
+    throw new Error(
+      "BillingWebhookUrl was not present in the billing stack outputs.",
+    );
   }
 
   return match.OutputValue.trim();
@@ -232,10 +254,17 @@ export async function resolveBillingWebhookUrl(
     join(projectRootPath, basename(amplifyOutputsFile)),
   );
   const region = resolveAwsRegion(amplifyOutputs, runtime.env);
-  const manifest = await runtime.readJson(join(projectRootPath, ".amplify", "artifacts", "cdk.out", "manifest.json"));
+  const manifest = await runtime.readJson(
+    join(projectRootPath, ".amplify", "artifacts", "cdk.out", "manifest.json"),
+  );
   const rootStackName = resolveRootStackNameFromManifest(manifest);
-  const rootTemplateFile = resolveRootTemplateFileFromManifest(manifest, rootStackName);
-  const rootTemplate = await runtime.readJson(join(projectRootPath, ".amplify", "artifacts", "cdk.out", rootTemplateFile));
+  const rootTemplateFile = resolveRootTemplateFileFromManifest(
+    manifest,
+    rootStackName,
+  );
+  const rootTemplate = await runtime.readJson(
+    join(projectRootPath, ".amplify", "artifacts", "cdk.out", rootTemplateFile),
+  );
   const billingLogicalId = resolveBillingNestedStackLogicalId(rootTemplate);
   const nestedStackId = await runtime.describeNestedStackId({
     logicalResourceId: billingLogicalId,
@@ -296,12 +325,7 @@ export async function main(argv = process.argv.slice(2)) {
   });
 }
 
-async function finalizeSandboxProcess({
-  code,
-  reporter,
-  signal,
-  watcher,
-}) {
+async function finalizeSandboxProcess({ code, reporter, signal, watcher }) {
   watcher?.close();
   reporter?.close();
 
@@ -318,42 +342,7 @@ async function finalizeSandboxProcess({
 }
 
 function loadLocalEnv() {
-  if (existsSync(envFile)) {
-    process.loadEnvFile(envFile);
-  }
-}
-
-function createDefaultLookupRuntime() {
-  return {
-    describeNestedStackId: async ({ logicalResourceId, region, rootStackName }) => {
-      const client = new CloudFormationClient({ region });
-      const response = await client.send(
-        new DescribeStackResourceCommand({
-          LogicalResourceId: logicalResourceId,
-          StackName: rootStackName,
-        }),
-      );
-      const nestedStackId = normalizeOptionalString(
-        response.StackResourceDetail?.PhysicalResourceId,
-      );
-      if (!nestedStackId) {
-        throw new Error("Unable to resolve the physical billing nested stack id.");
-      }
-
-      return nestedStackId;
-    },
-    describeStackOutputs: async ({ region, stackName }) => {
-      const client = new CloudFormationClient({ region });
-      const response = await client.send(
-        new DescribeStacksCommand({
-          StackName: stackName,
-        }),
-      );
-      return response.Stacks?.[0]?.Outputs ?? [];
-    },
-    env: process.env,
-    readJson: async (filePath) => JSON.parse(await readFile(filePath, "utf8")),
-  };
+  loadProjectEnvFiles(projectRoot);
 }
 
 function defaultWatchDirectory(pathToWatch, listener) {
@@ -370,11 +359,6 @@ function normalizeWatchedFilename(fileName) {
   }
 
   return null;
-}
-
-function normalizeOptionalString(value) {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  return trimmed ? trimmed : null;
 }
 
 function hasExplicitStreamLogsSetting(argv) {
@@ -404,7 +388,48 @@ function asRecord(value, label) {
   return value;
 }
 
-const entrypointHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
+function createDefaultLookupRuntime() {
+  return {
+    describeNestedStackId: async ({
+      logicalResourceId,
+      region,
+      rootStackName,
+    }) => {
+      const client = new CloudFormationClient({ region });
+      const response = await client.send(
+        new DescribeStackResourceCommand({
+          LogicalResourceId: logicalResourceId,
+          StackName: rootStackName,
+        }),
+      );
+      const nestedStackId = normalizeOptionalString(
+        response.StackResourceDetail?.PhysicalResourceId,
+      );
+      if (!nestedStackId) {
+        throw new Error(
+          "Unable to resolve the physical billing nested stack id.",
+        );
+      }
+
+      return nestedStackId;
+    },
+    describeStackOutputs: async ({ region, stackName }) => {
+      const client = new CloudFormationClient({ region });
+      const response = await client.send(
+        new DescribeStacksCommand({
+          StackName: stackName,
+        }),
+      );
+      return response.Stacks?.[0]?.Outputs ?? [];
+    },
+    env: process.env,
+    readJson: async (filePath) => JSON.parse(await readFile(filePath, "utf8")),
+  };
+}
+
+const entrypointHref = process.argv[1]
+  ? pathToFileURL(process.argv[1]).href
+  : null;
 if (entrypointHref === import.meta.url) {
   void main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));

@@ -10,9 +10,6 @@ type OperationResult<TData> = {
   nextToken?: string | null;
 };
 
-type ModelListOperation = (
-  input?: Record<string, unknown>,
-) => Promise<OperationResult<unknown[]>>;
 type QueryOperation = (
   input?: Record<string, unknown>,
 ) => Promise<OperationResult<unknown>>;
@@ -20,22 +17,8 @@ type MutationOperation = (
   input?: Record<string, unknown>,
 ) => Promise<OperationResult<unknown>>;
 
-type ModelName = keyof typeof modelListOperations;
 type QueryName = keyof typeof queryOperations;
 type MutationName = keyof typeof mutationOperations;
-
-const modelListOperations = {
-  BbConnection: (input) => serverDataClient.models.BbConnection.list(input),
-  GameDayRecap: (input) => serverDataClient.models.GameDayRecap.list(input),
-  LeagueGameDayRecap: (input) =>
-    serverDataClient.models.LeagueGameDayRecap.list(input),
-  PredictionJob: (input) => serverDataClient.models.PredictionJob.list(input),
-  SavedLineupScenario: (input) =>
-    serverDataClient.models.SavedLineupScenario.list(input),
-  SingleGameSummary: (input) =>
-    serverDataClient.models.SingleGameSummary.list(input),
-  SyncRun: (input) => serverDataClient.models.SyncRun.list(input),
-} satisfies Record<string, ModelListOperation>;
 
 const queryOperations = {
   evaluateLineupHelper: (input) =>
@@ -137,23 +120,12 @@ const mutationOperations = {
     ),
 } satisfies Record<string, MutationOperation>;
 
-export function isModelName(value: string): value is ModelName {
-  return value in modelListOperations;
-}
-
 export function isQueryName(value: string): value is QueryName {
   return value in queryOperations;
 }
 
 export function isMutationName(value: string): value is MutationName {
   return value in mutationOperations;
-}
-
-export async function listModelRecords(
-  name: ModelName,
-  input?: Record<string, unknown>,
-): Promise<OperationResult<unknown[]>> {
-  return modelListOperations[name](input);
 }
 
 export async function runQueryOperation(

@@ -13,7 +13,6 @@ const AWS_JSON_FIELDS = {
     "boxscoreJson",
   ],
   LeagueStanding: ["standingJson"],
-  WeeklyPlayerSnapshot: ["snapshotJson"],
   SyncRun: ["detailsJson"],
   SharedPlayerCard: ["payloadJson"],
   SavedLineupScenario: ["startersJson", "minuteTargetsJson"],

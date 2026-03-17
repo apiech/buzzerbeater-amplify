@@ -80,15 +80,17 @@ export function LineupPlanner() {
   }
 
   async function loadSavedScenarios() {
-    const response = await client.models.SavedLineupScenario.list({ limit: 8 });
-    if (response.errors?.length) {
+    const response = await client.reads.getSavedLineupScenarios({ limit: 8 });
+    if (response.errors?.length || !response.data) {
       setPlannerError(formatAmplifyErrors(response.errors));
       setSavedScenarios([]);
       return;
     }
 
     setSavedScenarios(
-      [...response.data].sort((left, right) => right.savedAt.localeCompare(left.savedAt)),
+      [...response.data.items].sort((left, right) =>
+        right.savedAt.localeCompare(left.savedAt),
+      ),
     );
   }
 

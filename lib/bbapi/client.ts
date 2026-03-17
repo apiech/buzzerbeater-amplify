@@ -263,7 +263,7 @@ export class BBXmlApiClient {
       return;
     }
     const cookiePairs = rawCookies
-      .map((cookie) => cookie.split(";", 1)[0].trim())
+      .map((cookie) => (cookie.split(";", 1)[0] ?? "").trim())
       .filter((cookie): cookie is string => Boolean(cookie));
     if (!cookiePairs.length) {
       return;

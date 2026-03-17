@@ -9,7 +9,7 @@ import {
   assignmentsFromMatrix,
   coerceEnthusiasm,
   coerceMinuteValue,
-  emptyMinuteMatrix,
+  createEmptyMinuteRow,
   normalizeHelperContext,
   type LineupMinuteMatrix,
   validateLineupMatrix,
@@ -22,6 +22,7 @@ import type {
   LineupHelperEvaluationRecord,
   LineupHelperRankingEntry,
   LineupHelperRosterPlayer,
+  LineupHelperSkillRatings,
   LineupHelperWorkspaceRecord,
   PositionCode,
 } from "@/app/types";
@@ -184,12 +185,12 @@ export function LineupHelper() {
     position: PositionCode,
     value: string,
   ) {
+    const nextMinutes = coerceMinuteValue(value);
     setMinuteMatrix((current) => ({
       ...current,
       [playerId]: {
-        ...(current[playerId] ??
-          Object.fromEntries(LINEUP_POSITIONS.map((slot) => [slot, 0]))),
-        [position]: coerceMinuteValue(value),
+        ...(current[playerId] ?? createEmptyMinuteRow()),
+        [position]: nextMinutes,
       },
     }));
   }
@@ -396,9 +397,7 @@ export function LineupHelper() {
                   </thead>
                   <tbody>
                     {roster.map((player) => {
-                      const rowMinutes =
-                        minuteMatrix[player.playerId] ??
-                        emptyMinuteMatrix([player])[player.playerId];
+                      const rowMinutes = minuteMatrix[player.playerId] ?? createEmptyMinuteRow();
                       const totalMinutes = LINEUP_POSITIONS.reduce(
                         (sum, position) => sum + rowMinutes[position],
                         0,
@@ -757,7 +756,7 @@ function decodePositionOutput(
 
 function toSkillRecord(
   skills: LineupHelperWorkspaceRecord["roster"][number]["skills"],
-): Record<string, number> {
+): LineupHelperSkillRatings {
   return {
     js: skills.js,
     jr: skills.jr,

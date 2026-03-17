@@ -13,5 +13,5 @@ export const handler: Handler = async (event) => {
     starters: event.arguments.starters,
     minuteTargets: event.arguments.minuteTargets,
     note: event.arguments.note,
-  }) as Promise<NonNullable<Schema["saveLineupScenario"]["returnType"]>>;
+  });
 };

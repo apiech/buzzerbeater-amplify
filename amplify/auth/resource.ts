@@ -1,8 +1,12 @@
 import { defineAuth } from "@aws-amplify/backend";
+import {
+  LOCALHOST_APP_ORIGIN,
+  resolvePublicAppOrigin,
+} from "../../lib/env/public-app-origin.js";
 
-const appBaseUrl = (
-  process.env.APP_BASE_URL ?? "http://localhost:3000"
-).replace(/\/+$/, "");
+const appBaseUrl = resolvePublicAppOrigin(process.env, {
+  fallback: LOCALHOST_APP_ORIGIN,
+});
 
 /**
  * Define and configure your auth resource

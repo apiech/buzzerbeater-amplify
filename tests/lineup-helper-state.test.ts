@@ -32,8 +32,12 @@ test("lineup helper matrix conversion preserves explicit assignments", () => {
 
 test("lineup helper validation flags incomplete position totals and player overload", () => {
   const matrix = emptyMinuteMatrix(players);
-  matrix.p1.PG = 50;
-  matrix.p2.SG = 20;
+  const pointGuardRow = matrix.p1;
+  const shootingGuardRow = matrix.p2;
+  assert.ok(pointGuardRow);
+  assert.ok(shootingGuardRow);
+  pointGuardRow.PG = 50;
+  shootingGuardRow.SG = 20;
 
   const validation = validateLineupMatrix(players, matrix);
   assert.equal(validation.errors.includes("PG must total 48 minutes."), true);
@@ -46,11 +50,21 @@ test("lineup helper validation flags incomplete position totals and player overl
 
 test("lineup helper validation accepts a complete five-player allocation", () => {
   const matrix = emptyMinuteMatrix(players);
-  matrix.p1.PG = 48;
-  matrix.p2.SG = 48;
-  matrix.p3.SF = 48;
-  matrix.p4.PF = 48;
-  matrix.p5.C = 48;
+  const pointGuardRow = matrix.p1;
+  const shootingGuardRow = matrix.p2;
+  const smallForwardRow = matrix.p3;
+  const powerForwardRow = matrix.p4;
+  const centerRow = matrix.p5;
+  assert.ok(pointGuardRow);
+  assert.ok(shootingGuardRow);
+  assert.ok(smallForwardRow);
+  assert.ok(powerForwardRow);
+  assert.ok(centerRow);
+  pointGuardRow.PG = 48;
+  shootingGuardRow.SG = 48;
+  smallForwardRow.SF = 48;
+  powerForwardRow.PF = 48;
+  centerRow.C = 48;
 
   const validation = validateLineupMatrix(players, matrix);
   assert.deepEqual(validation.errors, []);

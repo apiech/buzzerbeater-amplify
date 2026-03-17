@@ -103,6 +103,8 @@ const listCopyClassName = "grid gap-1";
 const mutedMetaClassName = "text-xs font-semibold text-ink-muted";
 const ratingGridClassName =
   "grid min-w-[30rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-2";
+const minimumPasswordLength = 6;
+const passwordLengthHint = "Use at least 6 characters.";
 
 export default function DashboardHomePage() {
   return <DashboardApp activeSection="home" viewerEmail={null} />;
@@ -306,6 +308,19 @@ export function LegacyLocalAuthShell({
       failAuthRequest(
         {
           message: "Passwords must match before creating the account.",
+          tone: "danger",
+        },
+        {
+          email,
+          screen: "signUp",
+        },
+      );
+      return;
+    }
+    if (signUpForm.password.length < minimumPasswordLength) {
+      failAuthRequest(
+        {
+          message: "Use at least 6 characters before creating the account.",
           tone: "danger",
         },
         {
@@ -562,6 +577,21 @@ export function LegacyLocalAuthShell({
       );
       return;
     }
+    if (confirmResetForm.newPassword.length < minimumPasswordLength) {
+      failAuthRequest(
+        {
+          message:
+            "Use at least 6 characters before updating the account password.",
+          tone: "danger",
+        },
+        {
+          email: username,
+          pendingUsername: username,
+          screen: "confirmReset",
+        },
+      );
+      return;
+    }
 
     beginAuthRequest();
 
@@ -706,7 +736,7 @@ export function LegacyLocalAuthShell({
                   value={signUpForm.email}
                 />
               </Field>
-              <Field label="Password">
+              <Field hint={passwordLengthHint} label="Password">
                 <Input
                   autoComplete="new-password"
                   onChange={(event) =>
@@ -877,7 +907,7 @@ export function LegacyLocalAuthShell({
                   value={confirmResetForm.confirmationCode}
                 />
               </Field>
-              <Field label="New password">
+              <Field hint={passwordLengthHint} label="New password">
                 <Input
                   autoComplete="new-password"
                   onChange={(event) =>
@@ -1023,9 +1053,7 @@ function AuthenticatedWorkspace({
     setIsLoadingConnection(true);
     setConnectionError(null);
 
-    const { data, errors } = await client.models.BbConnection.list({
-      limit: 1,
-    });
+    const { data, errors } = await client.reads.getCurrentBbConnection();
 
     if (errors?.length) {
       setConnection(null);
@@ -1034,7 +1062,7 @@ function AuthenticatedWorkspace({
       return null;
     }
 
-    const record = data[0] ?? null;
+    const record = data ?? null;
     setConnection(record);
     setIsLoadingConnection(false);
     return record;
@@ -1284,13 +1312,14 @@ function AuthenticatedWorkspace({
                 />
                 <StatCard
                   detail={
-                    connection.lastSyncError ??
-                    "Club data is up to date."
+                    connection.lastSyncError ?? "Club data is up to date."
                   }
                   label="Latest refresh"
                   value={
                     (workspace?.syncedAt ?? connection.lastSyncAt)
-                      ? formatTimestamp(workspace?.syncedAt ?? connection.lastSyncAt)
+                      ? formatTimestamp(
+                          workspace?.syncedAt ?? connection.lastSyncAt,
+                        )
                       : "Waiting to refresh"
                   }
                 />
@@ -2427,10 +2456,7 @@ function renderBoxscoreMetricRows(
   const leftMap = new Map(left.map((entry) => [entry.key, entry]));
   const rightMap = new Map(right.map((entry) => [entry.key, entry]));
   const keys = Array.from(
-    new Set([
-      ...Array.from(leftMap.keys()),
-      ...Array.from(rightMap.keys()),
-    ]),
+    new Set([...Array.from(leftMap.keys()), ...Array.from(rightMap.keys())]),
   ).sort((leftKey, rightKey) => leftKey.localeCompare(rightKey));
 
   if (!keys.length) {

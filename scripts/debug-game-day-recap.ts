@@ -176,6 +176,9 @@ function parseArgs(argv: string[]): CliOptions {
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
+    if (!token) {
+      break;
+    }
     if (token === "--include-prompt") {
       includePrompt = true;
       continue;

@@ -30,8 +30,8 @@ test("billing integration wires the environment default into premium-gated lambd
     "utf8",
   );
 
-  assert.match(source, /getBillingSummary\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /predictionSubmit\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /gameDayRecapSubmit\.addEnvironment\("BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /getBillingSummary\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /predictionSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /gameDayRecapSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
   assert.match(source, /submitMyTeamHighlightsScan\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
 });

@@ -7,7 +7,9 @@ import {
 
 import type { BbCredentialRecord } from "./repository";
 
-type GraphqlEnv = Record<string, string | undefined>;
+type ActiveTrackedTeamsEnv = {
+  ACTIVE_TRACKED_TEAMS_TABLE_NAME?: string;
+};
 
 export type ActiveTrackedTeamCredentialProjection = {
   credentialCipherText?: string | null;
@@ -41,10 +43,11 @@ const runtime = {
 
 export const __testing = {
   runtime,
+  resolveActiveTrackedTeamsTableName,
 };
 
 export async function upsertActiveTrackedTeam(
-  env: GraphqlEnv,
+  env: ActiveTrackedTeamsEnv,
   record: ActiveTrackedTeamRecord,
 ): Promise<void> {
   await runtime.documentClient.send(
@@ -56,7 +59,7 @@ export async function upsertActiveTrackedTeam(
 }
 
 export async function listActiveTrackedTeamsForUser(
-  env: GraphqlEnv,
+  env: ActiveTrackedTeamsEnv,
   userId: string,
 ): Promise<ActiveTrackedTeamRecord[]> {
   const items: ActiveTrackedTeamRecord[] = [];
@@ -85,7 +88,7 @@ export async function listActiveTrackedTeamsForUser(
 }
 
 export async function deactivateActiveTrackedTeamsForUser(
-  env: GraphqlEnv,
+  env: ActiveTrackedTeamsEnv,
   userId: string,
 ): Promise<void> {
   const now = new Date().toISOString();
@@ -127,10 +130,8 @@ export function buildActiveTrackedTeamCredentialProjection(
   };
 }
 
-function resolveActiveTrackedTeamsTableName(env: GraphqlEnv): string {
-  const tableName =
-    env.ACTIVE_TRACKED_TEAMS_TABLE_NAME ??
-    process.env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
+function resolveActiveTrackedTeamsTableName(env: ActiveTrackedTeamsEnv): string {
+  const tableName = env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
   if (!tableName) {
     throw new Error("ACTIVE_TRACKED_TEAMS_TABLE_NAME is not configured.");
   }

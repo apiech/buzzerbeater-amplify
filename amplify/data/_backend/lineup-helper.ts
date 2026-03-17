@@ -12,6 +12,8 @@ import {
   type Position,
   type RawPlayerSkills,
 } from "../../../lib/coach-parrot";
+import type { Schema } from "../resource";
+import { PositionCode } from "../schema-enums";
 import { listCanonicalPlayerSkillSnapshots } from "./canonical-player-snapshots";
 import { getBbConnection, getMatchBoxscore } from "./repository";
 
@@ -21,6 +23,16 @@ type Identity = {
   sub?: string;
   claims?: Record<string, unknown>;
 };
+
+type ResolverResult<TKey extends keyof Schema> = NonNullable<
+  Schema[TKey] extends { returnType: infer TReturn } ? TReturn : never
+>;
+
+type LineupHelperWorkspaceResult = ResolverResult<"getLineupHelperWorkspace">;
+type LineupHelperEvaluationResult = ResolverResult<"evaluateLineupHelper">;
+type HelperRosterSkills = LineupHelperWorkspaceResult["roster"][number]["skills"];
+type LineupHelperPositionOutput =
+  LineupHelperEvaluationResult["playerPositionOutputs"][number]["output"];
 
 type CachedWorkspaceBundle = {
   connection: Record<string, unknown>;
@@ -42,7 +54,24 @@ type HelperRosterPlayer = {
   snapshotCapturedAt: string | null;
   available: boolean;
   snapshotWarning: string | null;
-  skills: Record<string, number>;
+  skills: HelperRosterSkills;
+};
+
+const EMPTY_HELPER_SKILLS: HelperRosterSkills = {
+  js: 0,
+  jr: 0,
+  od: 0,
+  ha: 0,
+  dr: 0,
+  pa: 0,
+  is: 0,
+  id: 0,
+  rb: 0,
+  sb: 0,
+  st: 0,
+  ft: 0,
+  ex: 0,
+  gs: 0,
 };
 
 export const __testing = {
@@ -53,7 +82,7 @@ export const __testing = {
 export async function getLineupHelperWorkspace(args: {
   env: GraphqlEnv;
   identity: unknown;
-}): Promise<Record<string, unknown>> {
+}): Promise<LineupHelperWorkspaceResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -94,7 +123,7 @@ export async function evaluateLineupHelper(args: {
   roster: unknown;
   assignments: unknown;
   context: unknown;
-}): Promise<Record<string, unknown>> {
+}): Promise<LineupHelperEvaluationResult> {
   const rosterPlayers = parseHelperRoster(args.roster);
   const assignments = parseAssignments(args.assignments);
   const context = normalizeContext(toContextRecord(args.context));
@@ -111,7 +140,7 @@ export function buildLineupHelperWorkspacePayload(input: {
   syncedAt: string | null;
   roster: HelperRosterPlayer[];
   defaultContext: CoachParrotContext;
-}): Record<string, unknown> {
+}): LineupHelperWorkspaceResult {
   const availableRoster = input.roster.filter((player) => player.available);
   const evaluation = availableRoster.length
     ? evaluateRoster({
@@ -127,10 +156,18 @@ export function buildLineupHelperWorkspacePayload(input: {
     syncedAt: input.syncedAt,
     roster: input.roster,
     defaultContext: input.defaultContext,
-    defaultAssignments: evaluation?.chosenLineup ?? [],
+    defaultAssignments: evaluation
+      ? serializeAssignments(evaluation.chosenLineup)
+      : [],
     evaluation: evaluation ? serializeEvaluation(evaluation) : null,
     snapshotWarnings: input.roster
-      .filter((player) => player.snapshotWarning)
+      .filter(
+        (
+          player,
+        ): player is HelperRosterPlayer & {
+          snapshotWarning: string;
+        } => Boolean(player.snapshotWarning),
+      )
       .map((player) => ({
         playerId: player.playerId,
         fullName: player.fullName,
@@ -146,7 +183,7 @@ export function buildLineupHelperEvaluationPayload(input: {
   roster: HelperRosterPlayer[];
   assignments: LineupAssignment[];
   context: CoachParrotContext;
-}): Record<string, unknown> {
+}): LineupHelperEvaluationResult {
   const availableRoster = input.roster.filter((player) => player.available);
   const evaluation = evaluateLineup({
     roster: {
@@ -184,7 +221,7 @@ async function buildHelperRosterPlayer(
       available: false,
       snapshotWarning:
         "No canonical skill snapshot is available for this player.",
-      skills: {},
+      skills: EMPTY_HELPER_SKILLS,
     };
   }
 
@@ -272,10 +309,10 @@ async function resolveDefaultContext(
 
 function serializeEvaluation(
   evaluation: CoachParrotEvaluation,
-): Record<string, unknown> {
+): LineupHelperEvaluationResult {
   return {
     context: evaluation.context,
-    normalizedLineup: evaluation.chosenLineup,
+    normalizedLineup: serializeAssignments(evaluation.chosenLineup),
     rawRatings: evaluation.rawRatings,
     roundedRatings: evaluation.roundedRatings,
     ratingLabels: evaluation.ratingLabels,
@@ -324,7 +361,7 @@ function serializeEvaluation(
 
 function toPositionOutput(
   value: Record<Position, number>,
-): Record<string, number> {
+): LineupHelperPositionOutput {
   return {
     pg: value.PG,
     sg: value.SG,
@@ -332,6 +369,16 @@ function toPositionOutput(
     pf: value.PF,
     c: value.C,
   };
+}
+
+function serializeAssignments(
+  assignments: readonly LineupAssignment[],
+): LineupHelperWorkspaceResult["defaultAssignments"] {
+  return assignments.map((assignment) => ({
+    playerId: assignment.playerId,
+    position: toPositionCode(assignment.position),
+    minutes: assignment.minutes,
+  }));
 }
 
 function toRawPlayerSkills(player: HelperRosterPlayer): RawPlayerSkills {
@@ -374,7 +421,7 @@ function parseHelperRoster(value: unknown): HelperRosterPlayer[] {
     snapshotCapturedAt: asString(player.snapshotCapturedAt),
     available: Boolean(player.available),
     snapshotWarning: asString(player.snapshotWarning),
-    skills: toNumberRecord(player.skills),
+    skills: toHelperRosterSkills(player.skills),
   }));
 }
 
@@ -479,17 +526,25 @@ function toRecordArray(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
-function toNumberRecord(value: unknown): Record<string, number> {
+function toHelperRosterSkills(value: unknown): HelperRosterSkills {
   const source = toRecord(value);
-  if (!source) {
-    return {};
-  }
 
-  return Object.fromEntries(
-    Object.entries(source)
-      .map(([key, rawValue]) => [key, asNumber(rawValue)])
-      .filter((entry): entry is [string, number] => entry[1] !== null),
-  );
+  return {
+    js: asNumber(source?.js) ?? 0,
+    jr: asNumber(source?.jr) ?? 0,
+    od: asNumber(source?.od) ?? 0,
+    ha: asNumber(source?.ha) ?? 0,
+    dr: asNumber(source?.dr) ?? 0,
+    pa: asNumber(source?.pa) ?? 0,
+    is: asNumber(source?.is) ?? 0,
+    id: asNumber(source?.id) ?? 0,
+    rb: asNumber(source?.rb) ?? 0,
+    sb: asNumber(source?.sb) ?? 0,
+    st: asNumber(source?.st) ?? 0,
+    ft: asNumber(source?.ft) ?? 0,
+    ex: asNumber(source?.ex) ?? 0,
+    gs: asNumber(source?.gs) ?? 0,
+  };
 }
 
 function asPosition(value: unknown): Position | null {
@@ -497,4 +552,19 @@ function asPosition(value: unknown): Position | null {
   return text && ["PG", "SG", "SF", "PF", "C"].includes(text)
     ? (text as Position)
     : null;
+}
+
+function toPositionCode(position: Position): PositionCode {
+  switch (position) {
+    case "PG":
+      return PositionCode.PG;
+    case "SG":
+      return PositionCode.SG;
+    case "SF":
+      return PositionCode.SF;
+    case "PF":
+      return PositionCode.PF;
+    case "C":
+      return PositionCode.C;
+  }
 }

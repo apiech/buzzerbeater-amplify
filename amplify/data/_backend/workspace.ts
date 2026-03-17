@@ -35,7 +35,8 @@ import {
   getBbCredential,
   getMatchBoxscore,
   getSharedPlayerCardRecord,
-  listBbConnections,
+  listConnectedBbConnections,
+  listStaleConnectedBbConnections,
   upsertBbConnection,
   upsertBbCredential,
   updateSharedPlayerCard,
@@ -48,6 +49,7 @@ import {
   inferLeagueTimeZone,
   normalizeLeagueTimeZone,
 } from "../../../lib/league-timezones";
+import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -56,25 +58,49 @@ type Identity = {
   claims?: Record<string, unknown>;
 };
 
-type WorkspaceBundle = {
-  connection: BbConnectionRecord;
-  home: Record<string, unknown>;
-  teamHub: Record<string, unknown>;
-  scout: Record<string, unknown>;
-  leagueIntel: Record<string, unknown>;
-  playerLab: Record<string, unknown>;
+type ResolverResult<TKey extends keyof Schema> = NonNullable<
+  Schema[TKey] extends { returnType: infer TReturn } ? TReturn : never
+>;
+
+type HomeWorkspaceResult = ResolverResult<"getHomeWorkspace">;
+type TeamHubWorkspaceResult = ResolverResult<"getTeamHub">;
+type ScoutWorkspaceResult = ResolverResult<"getScoutWorkspace">;
+type LeagueIntelWorkspaceResult = ResolverResult<"getLeagueIntel">;
+type PlayerLabWorkspaceResult = ResolverResult<"getPlayerLab">;
+type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
+type MatchBoxscoreDetailsResult = ResolverResult<"getMatchBoxscoreDetails">;
+type SharedPlayerCardResult = ResolverResult<"generateSharedPlayerCard">;
+type LineupPlanResult = ResolverResult<"getLineupPlan">;
+type LineupScenarioResult = ResolverResult<"saveLineupScenario">;
+type SalaryProjectionResult = ResolverResult<"getSalaryProjection">;
+
+type PlayerSummaryRecord = TeamHubWorkspaceResult["roster"][number];
+type TeamInfoSummary = NonNullable<TeamHubWorkspaceResult["team"]>;
+type HomeNextMatchResult = NonNullable<HomeWorkspaceResult["nextMatch"]>;
+type MatchSummaryRecord = HomeWorkspaceResult["recentMatches"][number];
+type TendenciesSummary = NonNullable<
+  NonNullable<HomeWorkspaceResult["nextOpponent"]>["tendencies"]
+>;
+type TrendCountEntry = TendenciesSummary["offense"][number];
+type OpponentSummaryRecord = ScoutWorkspaceResult["availableOpponents"][number];
+type SharedPlayerCardPayload = NonNullable<SharedPlayerCardResult["payload"]>;
+type MatchMetricEntry = MatchBoxscoreDetailsResult["teamRatings"][number];
+type MatchContextResult = NonNullable<MatchBoxscoreDetailsResult["context"]>;
+type LineupPlanStarter = LineupPlanResult["recommendedStarters"][number];
+type LineupPlanBenchPlayer = LineupPlanResult["benchOrder"][number];
+type MinuteTargetEntry = LineupPlanResult["minuteTargets"][number];
+type LineupScenarioStarter = LineupScenarioResult["starters"][number];
+type SalaryProjectionSource = PlayerSummaryRecord & {
+  profileJson?: unknown;
 };
 
-type MatchSummaryRecord = Record<string, unknown>;
-
-type SharedPlayerCardResponse = {
-  shareToken: string;
-  shareUrl: string | null;
-  title: string | null;
-  note: string | null;
-  expiresAt: string | null;
-  revokedAt: string | null;
-  payload: Record<string, unknown> | null;
+type WorkspaceBundle = {
+  connection: BbConnectionRecord;
+  home: HomeWorkspaceResult;
+  teamHub: TeamHubWorkspaceResult;
+  scout: ScoutWorkspaceResult;
+  leagueIntel: LeagueIntelWorkspaceResult;
+  playerLab: PlayerLabWorkspaceResult;
 };
 
 export type ActiveTrackedTeamCredentialBackfillResult = {
@@ -94,7 +120,7 @@ type WorkspaceDependencies = {
     env: GraphqlEnv,
     userId: string,
     playerId: string,
-  ) => Promise<Record<string, unknown> | null>;
+  ) => Promise<SalaryProjectionSource | null>;
   listWeeklyPlayerSnapshots: (
     env: GraphqlEnv,
     userId: string,
@@ -274,8 +300,19 @@ export async function getOrRefreshWorkspace(args: {
 }
 
 export async function listConnectedUsers(env: GraphqlEnv): Promise<BbConnectionRecord[]> {
-  const connections = await listBbConnections(env);
-  return connections.filter((connection) => connection.status === "CONNECTED");
+  const connections: BbConnectionRecord[] = [];
+  let nextToken: string | null = null;
+
+  do {
+    const page = await listConnectedBbConnections(env, {
+      limit: 100,
+      nextToken,
+    });
+    connections.push(...page.records);
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  return connections;
 }
 
 export async function listStaleConnectedUsers(args: {
@@ -284,16 +321,48 @@ export async function listStaleConnectedUsers(args: {
   maxUsers?: number;
   dedupeByTeam?: boolean;
 }): Promise<BbConnectionRecord[]> {
-  const connections = await listConnectedUsers(args.env);
-  const staleConnections = connections
-    .filter((connection) => isConnectionStale(connection, args.staleAfterHours))
-    .sort((left, right) => connectionFreshnessSortKey(left) - connectionFreshnessSortKey(right));
+  const maxUsers = Math.max(1, args.maxUsers ?? Number.MAX_SAFE_INTEGER);
+  const staleBefore = new Date(
+    Date.now() - args.staleAfterHours * 60 * 60 * 1000,
+  ).toISOString();
+  const selected = new Map<string, BbConnectionRecord>();
+  const staleConnections: BbConnectionRecord[] = [];
+  let nextToken: string | null = null;
 
-  const selected = args.dedupeByTeam
-    ? dedupeConnectionsByTeam(staleConnections)
+  do {
+    const page = await listStaleConnectedBbConnections(args.env, staleBefore, {
+      limit: Math.max(25, maxUsers),
+      nextToken,
+    });
+
+    for (const connection of page.records) {
+      if (args.dedupeByTeam) {
+        const key = connection.teamId ?? `user:${connection.userId}`;
+        if (!selected.has(key)) {
+          selected.set(key, connection);
+        }
+      } else {
+        staleConnections.push(connection);
+      }
+    }
+
+    if (
+      (args.dedupeByTeam ? selected.size : staleConnections.length) >= maxUsers
+    ) {
+      break;
+    }
+
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  const orderedConnections = args.dedupeByTeam
+    ? Array.from(selected.values())
     : staleConnections;
-  const maxUsers = Math.max(1, args.maxUsers ?? staleConnections.length);
-  return selected.slice(0, maxUsers);
+  orderedConnections.sort(
+    (left, right) => connectionFreshnessSortKey(left) - connectionFreshnessSortKey(right),
+  );
+
+  return orderedConnections.slice(0, maxUsers);
 }
 
 export async function backfillActiveTrackedTeamCredentialProjection(
@@ -353,7 +422,7 @@ export async function generatePlayerCard(args: {
   playerId: string;
   title?: string | null;
   note?: string | null;
-}): Promise<SharedPlayerCardResponse> {
+}): Promise<SharedPlayerCardResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -396,7 +465,7 @@ export async function revokePlayerCard(args: {
   env: GraphqlEnv;
   identity: unknown;
   shareToken: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<SharedPlayerCardResponse> {
+}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<SharedPlayerCardResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -432,7 +501,7 @@ export async function getScoutWorkspaceForTeam(args: {
   env: GraphqlEnv;
   identity: unknown;
   teamId?: string | null;
-}): Promise<{ connection: BbConnectionRecord; scout: Record<string, unknown> }> {
+}): Promise<{ connection: BbConnectionRecord; scout: ScoutWorkspaceResult }> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -444,12 +513,17 @@ export async function getScoutWorkspaceForTeam(args: {
   });
 
   const requestedTeamId = args.teamId?.trim() ?? "";
-  if (!requestedTeamId || requestedTeamId === (baseWorkspace.scout.teamId as string | null)) {
+  if (!requestedTeamId || requestedTeamId === (baseWorkspace.scout.teamId ?? null)) {
     return {
       connection: baseWorkspace.connection,
       scout: {
-        ...baseWorkspace.scout,
-        requestedTeamId: requestedTeamId || (baseWorkspace.scout.teamId as string | null) || null,
+        syncedAt: baseWorkspace.scout.syncedAt ?? null,
+        teamId: baseWorkspace.scout.teamId ?? null,
+        availableOpponents: baseWorkspace.scout.availableOpponents,
+        recentMatchups: baseWorkspace.scout.recentMatchups,
+        summary: baseWorkspace.scout.summary ?? null,
+        requestedTeamId: requestedTeamId || baseWorkspace.scout.teamId || null,
+        message: baseWorkspace.scout.message ?? null,
       },
     };
   }
@@ -496,6 +570,7 @@ export async function getScoutWorkspaceForTeam(args: {
       currentBoxScores,
       opponentWorkspace,
       requestedTeamId,
+      fetchedAt,
     ),
   };
 }
@@ -504,7 +579,7 @@ export async function lookupSharedPlayerCardByToken(args: {
   env: GraphqlEnv;
   identity: unknown;
   shareToken: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<Record<string, unknown> | null> {
+}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<SharedPlayerCardResult | null> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -539,7 +614,7 @@ export async function getPlayerTrend(args: {
   env: GraphqlEnv;
   identity: unknown;
   playerId: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<Record<string, unknown>> {
+}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<PlayerTrendResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -567,8 +642,11 @@ export async function getPlayerTrend(args: {
         String(right.capturedAt ?? right.fetchedAt ?? right.weekKey ?? ""),
       ),
     )
-    .map((snapshot) => ({
-      weekKey: asString(snapshot.weekKey),
+    .map((snapshot, index) => ({
+      weekKey:
+        asString(snapshot.weekKey) ??
+        asString(snapshot.capturedAt ?? snapshot.fetchedAt) ??
+        `snapshot-${index + 1}`,
       fetchedAt: asString(snapshot.capturedAt ?? snapshot.fetchedAt),
       salary: asNumber(snapshot.salary),
       dmi: asNumber(snapshot.dmi),
@@ -586,7 +664,7 @@ export async function getMatchBoxscoreDetails(args: {
   env: GraphqlEnv;
   identity: unknown;
   matchId: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<Record<string, unknown>> {
+}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<MatchBoxscoreDetailsResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -621,7 +699,7 @@ export async function getMatchBoxscoreDetails(args: {
 export async function getLineupPlan(args: {
   env: GraphqlEnv;
   identity: unknown;
-}): Promise<Record<string, unknown>> {
+}): Promise<LineupPlanResult> {
   const workspace = await getOrRefreshWorkspace({
     env: args.env,
     identity: args.identity,
@@ -637,7 +715,7 @@ export async function saveLineupScenario(args: {
   starters: unknown;
   minuteTargets: unknown;
   note?: string | null;
-}): Promise<Record<string, unknown>> {
+}): Promise<LineupScenarioResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -650,7 +728,7 @@ export async function saveLineupScenario(args: {
 
   const scenarioId = randomUUID();
   const savedAt = new Date().toISOString();
-  const starters = toRecordArray(args.starters);
+  const starters = toLineupScenarioStarters(args.starters);
   const minuteTargets = toMinuteTargetEntries(args.minuteTargets);
 
   if (!starters.length) {
@@ -685,7 +763,7 @@ export async function getSalaryProjection(args: {
   env: GraphqlEnv;
   identity: unknown;
   playerId: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<Record<string, unknown>> {
+}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<SalaryProjectionResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -715,8 +793,8 @@ export async function getSalaryProjection(args: {
 
 export function buildLineupPlanPayload(
   workspace: WorkspaceBundle,
-): Record<string, unknown> {
-  const roster = toRecordArray(toRecord(workspace.teamHub)?.roster);
+): LineupPlanResult {
+  const roster = workspace.teamHub.roster;
   if (!roster.length) {
     throw new Error("No cached roster is available for lineup planning.");
   }
@@ -755,7 +833,7 @@ export function buildLineupPlanPayload(
 
   const positions = ["PG", "SG", "SF", "PF", "C"] as const;
   const usedPlayerIds = new Set<string>();
-  const recommendedStarters = positions.flatMap((position, index) => {
+  const recommendedStarters: LineupPlanStarter[] = positions.flatMap((position, index) => {
     const exact = rankedPlayers.find(
       (player) =>
         player.playerId &&
@@ -785,10 +863,10 @@ export function buildLineupPlanPayload(
     ];
   });
 
-  const benchOrder = rankedPlayers
+  const benchOrder: LineupPlanBenchPlayer[] = rankedPlayers
     .filter((player) => player.playerId && !usedPlayerIds.has(player.playerId))
     .map((player, index) => ({
-      playerId: player.playerId,
+      playerId: player.playerId as string,
       fullName: player.fullName,
       bestPosition: player.bestPosition,
       projectedStarterCount: player.projectedStarterCount,
@@ -799,20 +877,16 @@ export function buildLineupPlanPayload(
 
   const minuteTargets = recommendedStarters.map((player, index) => ({
     playerId: player.playerId,
-    minutes: suggestMinutes(player.gameShape, index),
+    minutes: suggestMinutes(player.gameShape ?? null, index),
   }));
 
-  const home = toRecord(workspace.home);
-  const homeTeam = toRecord(home?.team);
-  const homeInjuries = toRecordArray(homeTeam?.injuries);
-  const scout = toRecord(workspace.scout);
-  const scoutSummary = toRecord(scout?.summary);
-  const tendencies = toRecord(scoutSummary?.tendencies);
+  const homeInjuries = workspace.home.team.injuries;
+  const scoutSummary = workspace.scout.summary;
   const offenseTendencies = summarizeLeaningTendencies(
-    toRecord(tendencies?.offense),
+    scoutSummary?.tendencies.offense ?? null,
   );
   const defenseTendencies = summarizeLeaningTendencies(
-    toRecord(tendencies?.defense),
+    scoutSummary?.tendencies.defense ?? null,
   );
 
   const rotationNotes = [
@@ -860,7 +934,7 @@ export function buildLineupPlanPayload(
     matchupRationale,
     injuryAlerts: homeInjuries.map((injury) => ({
       playerId: asString(injury.playerId),
-      fullName: asString(injury.fullName),
+      fullName: asString(injury.fullName) ?? "Unknown player",
       injuryWeeks: asNumber(injury.injuryWeeks),
     })),
     confidence,
@@ -868,10 +942,10 @@ export function buildLineupPlanPayload(
 }
 
 export function buildSalaryProjectionPayload(args: {
-  player: Record<string, unknown>;
+  player: SalaryProjectionSource;
   snapshots: Record<string, unknown>[];
   teamCountryName: string | null;
-}): Record<string, unknown> {
+}): SalaryProjectionResult {
   const player = args.player;
   const profile = toRecord(player.profileJson);
   const profileNationality = toRecord(profile?.nationality);
@@ -887,9 +961,10 @@ export function buildSalaryProjectionPayload(args: {
     salarySeries[salarySeries.length - 1] ??
     asNumber(player.salary) ??
     asNumber(profile?.salary);
-  const deltas = salarySeries
-    .slice(1)
-    .map((salary, index) => salary - salarySeries[index]);
+  const deltas = salarySeries.slice(1).map((salary, index) => {
+    const previousSalary = salarySeries[index];
+    return salary - (previousSalary ?? salary);
+  });
   const recentDeltas = deltas.slice(-3);
   const weeklyDelta = recentDeltas.length
     ? Math.round(
@@ -1015,15 +1090,24 @@ async function syncWorkspace(args: {
       opponentWorkspace,
       connectionForViews,
     );
-    const teamHub = buildTeamHub(currentWorkspace, currentBoxScores);
+    const teamHub = buildTeamHub(
+      currentWorkspace,
+      currentBoxScores,
+      connectionForViews.lastSyncAt ?? null,
+    );
     const scout = buildScoutWorkspace(
       currentWorkspace,
       currentBoxScores,
       opponentWorkspace,
       nextOpponentTeamId,
+      connectionForViews.lastSyncAt ?? null,
     );
     const leagueIntel = buildLeagueIntel(currentWorkspace.standings);
-    const playerLab = buildPlayerLab(currentWorkspace, currentBoxScores);
+    const playerLab = buildPlayerLab(
+      currentWorkspace,
+      currentBoxScores,
+      connectionForViews.lastSyncAt ?? null,
+    );
 
     const updatedConnection = buildConnectionRecord(args.userId, connectionForViews, {
       workspaceCacheJson: {
@@ -1264,9 +1348,10 @@ function buildHomeWorkspace(
   currentBoxScores: BBApiBoxScore[],
   opponentWorkspace: OpponentWorkspace | null,
   connection: BbConnectionRecord,
-): Record<string, unknown> {
+): HomeWorkspaceResult {
   const cachedMatchIds = new Set(currentBoxScores.map((boxScore) => boxScore.matchId));
   return {
+    syncedAt: connection.lastSyncAt ?? null,
     connection,
     team: {
       teamId: workspace.teamInfo.teamId,
@@ -1283,14 +1368,7 @@ function buildHomeWorkspace(
       topPlayers: buildTopPlayers(workspace.roster.players, workspace.teamStats),
     },
     nextMatch: nextMatch
-      ? {
-          matchId: nextMatch.id,
-          startTime: nextMatch.startTime,
-          type: nextMatch.type,
-          opponentTeamId: deriveOpponentTeamId(nextMatch, workspace.teamInfo.teamId),
-          opponentTeamName: deriveOpponentTeamName(nextMatch, workspace.teamInfo.teamId),
-          isHome: isTeamHome(nextMatch, workspace.teamInfo.teamId),
-        }
+      ? buildHomeNextMatch(nextMatch, workspace.teamInfo.teamId)
       : null,
     nextOpponent: opponentWorkspace
       ? {
@@ -1310,16 +1388,13 @@ function buildHomeWorkspace(
           ),
         }
       : null,
-    recentMatches: recentMatches.map((match) => ({
-      matchId: match.id,
-      startTime: match.startTime,
-      type: match.type,
-      opponentTeamName: deriveOpponentTeamName(match, workspace.teamInfo.teamId),
-      teamScore: deriveTeamScore(match, workspace.teamInfo.teamId),
-      opponentScore: deriveOpponentScore(match, workspace.teamInfo.teamId),
-      outcome: deriveOutcome(match, workspace.teamInfo.teamId),
-      hasBoxscore: Boolean(match.id && cachedMatchIds.has(match.id)),
-    })),
+    recentMatches: recentMatches.map((match) =>
+      buildMatchSummary(
+        match,
+        workspace.teamInfo.teamId,
+        Boolean(match.id && cachedMatchIds.has(match.id)),
+      ),
+    ),
     league: buildLeagueIntel(workspace.standings),
   };
 }
@@ -1327,9 +1402,11 @@ function buildHomeWorkspace(
 function buildTeamHub(
   workspace: BBApiCurrentWorkspace,
   currentBoxScores: BBApiBoxScore[],
-): Record<string, unknown> {
+  syncedAt: string | null,
+): TeamHubWorkspaceResult {
   const starterCounts = countStarters(currentBoxScores, workspace.teamInfo.teamId);
   return {
+    syncedAt,
     team: projectTeamInfo(workspace.teamInfo),
     roster: workspace.roster.players.map((player) => ({
       playerId: player.id,
@@ -1352,7 +1429,8 @@ export function buildScoutWorkspace(
   currentBoxScores: BBApiBoxScore[],
   opponentWorkspace: OpponentWorkspace | null,
   requestedTeamId: string | null,
-): Record<string, unknown> {
+  syncedAt: string | null,
+): ScoutWorkspaceResult {
   const availableOpponents = buildAvailableOpponents(
     currentWorkspace.standings,
     currentWorkspace.teamInfo.teamId,
@@ -1361,6 +1439,7 @@ export function buildScoutWorkspace(
 
   if (!opponentWorkspace) {
     return {
+      syncedAt,
       teamId: null,
       availableOpponents,
       recentMatchups: [],
@@ -1392,13 +1471,26 @@ export function buildScoutWorkspace(
   );
 
   return {
+    syncedAt,
     teamId: opponentWorkspace.teamInfo.teamId,
     availableOpponents,
     recentMatchups,
     requestedTeamId: requestedTeamId ?? opponentWorkspace.teamInfo.teamId,
     summary: {
       teamName: opponentWorkspace.teamInfo.teamName,
-      nextMatch: opponentWorkspace.nextMatch,
+      nextMatch: opponentWorkspace.nextMatch
+        ? buildMatchSummary(
+            opponentWorkspace.nextMatch,
+            opponentWorkspace.teamInfo.teamId,
+            Boolean(
+              opponentWorkspace.nextMatch.id
+                && cachedOpponentMatchIds.has(opponentWorkspace.nextMatch.id),
+            ),
+            opponentWorkspace.nextMatch.id
+              ? (effortByMatchId.get(opponentWorkspace.nextMatch.id) ?? null)
+              : null,
+          )
+        : null,
       record: lookupRecord(currentWorkspace.standings, opponentWorkspace.teamInfo.teamId),
       matchupPerspective: {
         ourTeamId: currentWorkspace.teamInfo.teamId,
@@ -1418,22 +1510,19 @@ export function buildScoutWorkspace(
         ppg: extractPpg(opponentWorkspace.teamStats, player),
       })),
       topPlayers: buildTopPlayers(opponentWorkspace.roster.players, opponentWorkspace.teamStats),
-      recentGames: opponentWorkspace.recentMatches.map((match) => ({
-        matchId: match.id,
-        startTime: match.startTime,
-        type: match.type,
-        opponentTeamName: deriveOpponentTeamName(match, opponentWorkspace.teamInfo.teamId),
-        teamScore: deriveTeamScore(match, opponentWorkspace.teamInfo.teamId),
-        opponentScore: deriveOpponentScore(match, opponentWorkspace.teamInfo.teamId),
-        outcome: deriveOutcome(match, opponentWorkspace.teamInfo.teamId),
-        effortDelta: match.id ? (effortByMatchId.get(match.id) ?? null) : null,
-        hasBoxscore: Boolean(match.id && cachedOpponentMatchIds.has(match.id)),
-      })),
+      recentGames: opponentWorkspace.recentMatches.map((match) =>
+        buildMatchSummary(
+          match,
+          opponentWorkspace.teamInfo.teamId,
+          Boolean(match.id && cachedOpponentMatchIds.has(match.id)),
+          match.id ? (effortByMatchId.get(match.id) ?? null) : null,
+        ),
+      ),
     },
   };
 }
 
-function buildLeagueIntel(standings: BBApiStandings | null): Record<string, unknown> {
+function buildLeagueIntel(standings: BBApiStandings | null): LeagueIntelWorkspaceResult {
   if (!standings) {
     return {
       league: null,
@@ -1461,7 +1550,7 @@ function buildAvailableOpponents(
   standings: BBApiStandings | null,
   currentTeamId: string | null,
   selectedTeam: BBApiTeamInfo | null | undefined,
-): Array<Record<string, unknown>> {
+): OpponentSummaryRecord[] {
   const teams = standings?.conferences
     .flatMap((conference) => conference.teams)
     .filter((team) => team.id !== currentTeamId)
@@ -1502,24 +1591,56 @@ function buildRecentMatchups(
     .filter((match) => deriveTeamScore(match, currentTeamId) !== null)
     .sort(byStartTimeDescending)
     .slice(0, 5)
-    .map((match) => ({
-      matchId: match.id,
-      startTime: match.startTime,
-      type: match.type,
-      opponentTeamName: deriveOpponentTeamName(match, currentTeamId),
-      teamScore: deriveTeamScore(match, currentTeamId),
-      opponentScore: deriveOpponentScore(match, currentTeamId),
-      outcome: deriveOutcome(match, currentTeamId),
-      hasBoxscore: Boolean(match.id && cachedMatchIds.has(match.id)),
-    }));
+    .map((match) =>
+      buildMatchSummary(
+        match,
+        currentTeamId,
+        Boolean(match.id && cachedMatchIds.has(match.id)),
+      ),
+    );
+}
+
+function buildHomeNextMatch(
+  match: BBApiScheduleMatch,
+  teamId: string | null,
+): HomeNextMatchResult {
+  return {
+    matchId: match.id,
+    startTime: match.startTime,
+    type: match.type,
+    opponentTeamId: deriveOpponentTeamId(match, teamId),
+    opponentTeamName: deriveOpponentTeamName(match, teamId),
+    isHome: isTeamHome(match, teamId),
+  };
+}
+
+function buildMatchSummary(
+  match: BBApiScheduleMatch,
+  teamId: string | null,
+  hasBoxscore: boolean,
+  effortDelta: number | null = null,
+): MatchSummaryRecord {
+  return {
+    matchId: match.id,
+    startTime: match.startTime,
+    type: match.type,
+    opponentTeamName: deriveOpponentTeamName(match, teamId),
+    teamScore: deriveTeamScore(match, teamId),
+    opponentScore: deriveOpponentScore(match, teamId),
+    outcome: deriveOutcome(match, teamId),
+    effortDelta,
+    hasBoxscore,
+  };
 }
 
 function buildPlayerLab(
   workspace: BBApiCurrentWorkspace,
   currentBoxScores: BBApiBoxScore[],
-): Record<string, unknown> {
+  syncedAt: string | null,
+): PlayerLabWorkspaceResult {
   const starterCounts = countStarters(currentBoxScores, workspace.teamInfo.teamId);
   return {
+    syncedAt,
     players: workspace.roster.players.map((player) => ({
       playerId: player.id,
       fullName: player.fullName,
@@ -1669,7 +1790,7 @@ function countStarters(
 function summarizeTendencies(
   boxScores: BBApiBoxScore[],
   teamId: string | null,
-): Record<string, unknown> {
+): TendenciesSummary {
   const offense = new Map<string, number>();
   const defense = new Map<string, number>();
 
@@ -1689,7 +1810,7 @@ function summarizeTendencies(
   };
 }
 
-function toTrendEntries(values: Map<string, number>): Array<Record<string, unknown>> {
+function toTrendEntries(values: Map<string, number>): TrendCountEntry[] {
   return Array.from(values.entries())
     .map(([key, count]) => ({
       key,
@@ -1700,7 +1821,7 @@ function toTrendEntries(values: Map<string, number>): Array<Record<string, unkno
 
 function toMetricEntries(
   values: Record<string, unknown> | null,
-): Array<Record<string, unknown>> {
+): MatchMetricEntry[] {
   if (!values) {
     return [];
   }
@@ -1720,7 +1841,7 @@ function toMetricEntries(
 
 function buildMatchContext(
   boxscore: Record<string, unknown> | null,
-): Record<string, unknown> | null {
+): MatchContextResult | null {
   if (!boxscore) {
     return null;
   }
@@ -1735,7 +1856,7 @@ function buildMatchContext(
   };
 }
 
-function projectTeamInfo(teamInfo: BBApiTeamInfo): Record<string, unknown> {
+function projectTeamInfo(teamInfo: BBApiTeamInfo): TeamInfoSummary {
   return {
     teamId: teamInfo.teamId,
     teamName: teamInfo.teamName,
@@ -1748,7 +1869,7 @@ function projectTeamInfo(teamInfo: BBApiTeamInfo): Record<string, unknown> {
   };
 }
 
-function projectPlayerSummary(player: Record<string, unknown>): Record<string, unknown> {
+function projectPlayerSummary(player: PlayerSummaryRecord): PlayerSummaryRecord {
   return {
     playerId: asString(player.playerId),
     fullName: asString(player.fullName) ?? "Unknown player",
@@ -1764,7 +1885,23 @@ function projectPlayerSummary(player: Record<string, unknown>): Record<string, u
   };
 }
 
-function toMinuteTargetEntries(value: unknown): Array<Record<string, unknown>> {
+function toLineupScenarioStarters(value: unknown): LineupScenarioStarter[] {
+  return toRecordArray(value)
+    .map((player) => ({
+      playerId: asString(player.playerId) ?? "",
+      fullName: asString(player.fullName) ?? "Unknown player",
+      bestPosition: asString(player.bestPosition),
+      projectedStarterCount: asNumber(player.projectedStarterCount),
+      salary: asNumber(player.salary),
+      gameShape: asString(player.gameShape),
+      score: asNumber(player.score),
+      slot: asNumber(player.slot),
+      benchSlot: asNumber(player.benchSlot),
+    }))
+    .filter((player) => Boolean(player.playerId));
+}
+
+function toMinuteTargetEntries(value: unknown): MinuteTargetEntry[] {
   const source = toRecord(value);
   if (source) {
     return Object.entries(source)
@@ -1792,7 +1929,7 @@ function toMinuteTargetEntries(value: unknown): Array<Record<string, unknown>> {
 function buildTopPlayers(
   rosterPlayers: BBApiRosterPlayer[],
   teamStats: BBApiTeamStats | null,
-): Array<Record<string, unknown>> {
+): PlayerSummaryRecord[] {
   return rosterPlayers
     .map((player) => ({
       playerId: player.id,
@@ -1903,8 +2040,8 @@ function buildSharedPlayerCardResponse(input: {
   note?: string | null;
   expiresAt?: string | null;
   revokedAt?: string | null;
-  payload?: Record<string, unknown> | null;
-}): SharedPlayerCardResponse {
+  payload?: SharedPlayerCardPayload | null;
+}): SharedPlayerCardResult {
   return {
     shareToken: input.shareToken,
     shareUrl: null,
@@ -1918,7 +2055,7 @@ function buildSharedPlayerCardResponse(input: {
 
 function buildSharedPlayerCardPayload(
   player: Record<string, unknown>,
-): Record<string, unknown> {
+): SharedPlayerCardPayload {
   return {
     player: {
       playerId: asString(player.playerId),
@@ -1935,7 +2072,7 @@ function buildSharedPlayerCardPayload(
 
 function sanitizeSharedPlayerCardPayload(
   payload: unknown,
-): Record<string, unknown> | null {
+): SharedPlayerCardPayload | null {
   const source = toRecord(payload);
   const player = toRecord(source?.player);
   if (!player) {
@@ -2058,7 +2195,7 @@ function buildConnectionRecord(
   existingConnection: BbConnectionRecord | null,
   updates: Partial<BbConnectionRecord>,
 ): BbConnectionRecord {
-  return {
+  const record: BbConnectionRecord = {
     userId,
     bbLoginName: resolveConnectionField(
       existingConnection,
@@ -2123,6 +2260,16 @@ function buildConnectionRecord(
       null,
     ),
   };
+
+  return {
+    ...record,
+    refreshSortAt:
+      record.lastSyncAt ??
+      record.connectedAt ??
+      record.lastValidatedAt ??
+      existingConnection?.refreshSortAt ??
+      null,
+  };
 }
 
 function resolveConnectionField<Key extends keyof BbConnectionRecord>(
@@ -2155,13 +2302,28 @@ function readCachedWorkspace(connection: BbConnectionRecord): WorkspaceBundle | 
     return null;
   }
 
+  const syncedAt = connection.lastSyncAt ?? null;
+
   return {
     connection,
-    home,
-    teamHub,
-    scout,
-    leagueIntel,
-    playerLab,
+    home: {
+      ...home,
+      connection,
+      syncedAt: asString(home.syncedAt) ?? syncedAt,
+    } as unknown as HomeWorkspaceResult,
+    teamHub: {
+      ...teamHub,
+      syncedAt: asString(teamHub.syncedAt) ?? syncedAt,
+    } as unknown as TeamHubWorkspaceResult,
+    scout: {
+      ...scout,
+      syncedAt: asString(scout.syncedAt) ?? syncedAt,
+    } as unknown as ScoutWorkspaceResult,
+    leagueIntel: leagueIntel as unknown as LeagueIntelWorkspaceResult,
+    playerLab: {
+      ...playerLab,
+      syncedAt: asString(playerLab.syncedAt) ?? syncedAt,
+    } as unknown as PlayerLabWorkspaceResult,
   };
 }
 
@@ -2169,18 +2331,16 @@ async function getCachedWorkspacePlayer(
   env: GraphqlEnv,
   userId: string,
   playerId: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<SalaryProjectionSource | null> {
   const connection = await getBbConnection(env, userId);
   const cachedWorkspace = connection ? readCachedWorkspace(connection) : null;
   if (!cachedWorkspace) {
     return null;
   }
 
-  const teamHub = toRecord(cachedWorkspace.teamHub);
-  const playerLab = toRecord(cachedWorkspace.playerLab);
   const candidates = [
-    ...toRecordArray(teamHub?.roster),
-    ...toRecordArray(playerLab?.players),
+    ...cachedWorkspace.teamHub.roster,
+    ...cachedWorkspace.playerLab.players,
   ];
 
   return (
@@ -2252,16 +2412,16 @@ function suggestMinutes(gameShape: string | null, slotIndex: number): number {
 }
 
 function summarizeLeaningTendencies(
-  tendencies: Record<string, unknown> | null,
+  tendencies: readonly TrendCountEntry[] | null,
 ): string | null {
   if (!tendencies) {
     return null;
   }
 
-  const ordered = Object.entries(tendencies)
-    .map(([name, value]) => ({
-      name,
-      count: asNumber(value) ?? 0,
+  const ordered = tendencies
+    .map((entry) => ({
+      name: entry.key ?? "",
+      count: entry.count ?? 0,
     }))
     .filter((entry) => entry.count > 0)
     .sort((left, right) => right.count - left.count)
@@ -2326,42 +2486,10 @@ function getWeekKey(date = new Date()): string {
   return `${year}-W${String(week).padStart(2, "0")}`;
 }
 
-function isConnectionStale(
-  connection: BbConnectionRecord,
-  staleAfterHours: number,
-): boolean {
-  const lastSyncAt = connection.lastSyncAt ?? connection.connectedAt ?? null;
-  if (!lastSyncAt) {
-    return true;
-  }
-
-  const parsed = new Date(lastSyncAt).getTime();
-  if (!Number.isFinite(parsed)) {
-    return true;
-  }
-
-  return Date.now() - parsed >= staleAfterHours * 60 * 60 * 1000;
-}
-
 function connectionFreshnessSortKey(connection: BbConnectionRecord): number {
   const value = connection.lastSyncAt ?? connection.connectedAt ?? "";
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function dedupeConnectionsByTeam(
-  connections: BbConnectionRecord[],
-): BbConnectionRecord[] {
-  const selected = new Map<string, BbConnectionRecord>();
-
-  for (const connection of connections) {
-    const key = connection.teamId ?? `user:${connection.userId}`;
-    if (!selected.has(key)) {
-      selected.set(key, connection);
-    }
-  }
-
-  return Array.from(selected.values());
 }
 
 function byStartTimeAscending(left: BBApiScheduleMatch, right: BBApiScheduleMatch): number {

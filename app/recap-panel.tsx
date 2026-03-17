@@ -16,11 +16,11 @@ import {
 import { formatWriteupStatus } from "@/app/ui/presentation";
 import type {
   DashboardWorkspace,
-  GameDayRecapCoveragePayload,
   GameDayRecapRecord,
+  GameDayRecapCoveragePayload,
   GameDayRecapResultPayload,
-  LeagueGameDayRecapRecord,
-  SingleGameSummaryRecord,
+  RecapHistoryKind,
+  RecapHistoryRecord,
 } from "@/app/types";
 import {
   inferLeagueTimeZone,
@@ -41,27 +41,7 @@ type RecapPanelProps = {
   workspace: DashboardWorkspace;
 };
 
-type RecapMode = "LEAGUE_DATE" | "LEAGUE_GAME_DAY" | "SINGLE_GAME";
-
-type RecapHistoryRecord = {
-  completedAt: string | null;
-  coverageJson: unknown;
-  error: string | null;
-  gameDate: string | null;
-  gameDayNumber: number | null;
-  kind: RecapMode;
-  leagueId: string | null;
-  leagueName: string | null;
-  matchId: string | null;
-  requestJson: unknown;
-  requestedAt: string;
-  resultJson: unknown;
-  selectionKey: string;
-  season: number | null;
-  status: string | null;
-  targetKey: string;
-  updatedAt: string;
-};
+type RecapMode = RecapHistoryKind;
 
 type MutationResultLike = {
   data?: { targetKey: string } | null;
@@ -142,36 +122,19 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
 
   async function loadRecaps(preferredKey: string | null = selectedRecapKey) {
     setIsLoadingRecaps(true);
+    setRecapError(null);
 
-    const [dateResponse, gameDayResponse, singleGameResponse] = await Promise.all([
-      client.models.GameDayRecap.list({ limit: 8 }),
-      client.models.LeagueGameDayRecap.list({ limit: 8 }),
-      client.models.SingleGameSummary.list({ limit: 8 }),
-    ]);
+    const response = await client.reads.getRecapHistory({ limit: 8 });
 
-    if (
-      dateResponse.errors?.length ||
-      gameDayResponse.errors?.length ||
-      singleGameResponse.errors?.length
-    ) {
-      setRecapError(
-        formatAmplifyErrors([
-          ...(dateResponse.errors ?? []),
-          ...(gameDayResponse.errors ?? []),
-          ...(singleGameResponse.errors ?? []),
-        ]),
-      );
+    if (response.errors?.length || !response.data) {
+      setRecapError(formatAmplifyErrors(response.errors));
       setRecaps([]);
       setSelectedRecapKey(null);
       setIsLoadingRecaps(false);
       return;
     }
 
-    const combined = sortRecapHistory([
-      ...dateResponse.data.map(adaptLeagueDateRecap),
-      ...gameDayResponse.data.map(adaptLeagueGameDayRecap),
-      ...singleGameResponse.data.map(adaptSingleGameSummary),
-    ]);
+    const combined = sortRecapHistory(response.data.items);
 
     setRecaps(combined);
     setSelectedRecapKey((current) => {
@@ -229,6 +192,9 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   const normalizedLeagueTimeZone = normalizeLeagueTimeZone(leagueTimeZone);
   const maxGameDate = resolveRecapInputMaxDate(leagueTimeZone);
   const activeMode = recapModes.find((entry) => entry.value === mode) ?? recapModes[0];
+  if (!activeMode) {
+    throw new Error("At least one recap mode must be configured.");
+  }
 
   return (
     <Panel>
@@ -614,74 +580,6 @@ async function submitRecapRequest(args: {
       });
     }
   }
-}
-
-function adaptLeagueDateRecap(record: GameDayRecapRecord): RecapHistoryRecord {
-  return {
-    completedAt: record.completedAt ?? null,
-    coverageJson: record.coverageJson,
-    error: record.error ?? null,
-    gameDate: record.gameDate,
-    gameDayNumber: null,
-    kind: "LEAGUE_DATE",
-    leagueId: record.leagueId,
-    leagueName: record.leagueName ?? null,
-    matchId: null,
-    requestJson: record.requestJson,
-    requestedAt: record.requestedAt,
-    resultJson: record.resultJson,
-    selectionKey: toRecapSelectionKey("LEAGUE_DATE", record.targetKey),
-    season: record.season ?? null,
-    status: record.status,
-    targetKey: record.targetKey,
-    updatedAt: record.updatedAt,
-  };
-}
-
-function adaptLeagueGameDayRecap(
-  record: LeagueGameDayRecapRecord,
-): RecapHistoryRecord {
-  return {
-    completedAt: record.completedAt ?? null,
-    coverageJson: record.coverageJson,
-    error: record.error ?? null,
-    gameDate: null,
-    gameDayNumber: record.gameDayNumber,
-    kind: "LEAGUE_GAME_DAY",
-    leagueId: record.leagueId,
-    leagueName: record.leagueName ?? null,
-    matchId: null,
-    requestJson: record.requestJson,
-    requestedAt: record.requestedAt,
-    resultJson: record.resultJson,
-    selectionKey: toRecapSelectionKey("LEAGUE_GAME_DAY", record.targetKey),
-    season: record.season ?? null,
-    status: record.status,
-    targetKey: record.targetKey,
-    updatedAt: record.updatedAt,
-  };
-}
-
-function adaptSingleGameSummary(record: SingleGameSummaryRecord): RecapHistoryRecord {
-  return {
-    completedAt: record.completedAt ?? null,
-    coverageJson: record.coverageJson,
-    error: record.error ?? null,
-    gameDate: record.gameDate ?? null,
-    gameDayNumber: null,
-    kind: "SINGLE_GAME",
-    leagueId: record.leagueId ?? null,
-    leagueName: record.leagueName ?? null,
-    matchId: record.matchId,
-    requestJson: record.requestJson,
-    requestedAt: record.requestedAt,
-    resultJson: record.resultJson,
-    selectionKey: toRecapSelectionKey("SINGLE_GAME", record.targetKey),
-    season: record.season ?? null,
-    status: record.status,
-    targetKey: record.targetKey,
-    updatedAt: record.updatedAt,
-  };
 }
 
 function toRecapSelectionKey(kind: RecapMode, targetKey: string): string {

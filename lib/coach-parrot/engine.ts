@@ -208,10 +208,16 @@ function energyMultiplier(args: {
     return 1;
   }
 
-  const offenseEnergy =
-    coachParrotArtifacts.tactic_energy[normalizeOffense(args.context.offense)][args.rating];
-  const defenseEnergy =
-    coachParrotArtifacts.tactic_energy[normalizeDefense(args.context.defense)][args.rating];
+  const offenseTacticEnergy =
+    coachParrotArtifacts.tactic_energy[
+      normalizeOffense(args.context.offense)
+    ] as Partial<Record<Rating, { base: number; exponent: number }>> | undefined;
+  const defenseTacticEnergy =
+    coachParrotArtifacts.tactic_energy[
+      normalizeDefense(args.context.defense)
+    ] as Partial<Record<Rating, { base: number; exponent: number }>> | undefined;
+  const offenseEnergy = offenseTacticEnergy?.[args.rating] ?? { base: 1, exponent: 1 };
+  const defenseEnergy = defenseTacticEnergy?.[args.rating] ?? { base: 1, exponent: 1 };
   const offensiveTerm =
     1 -
     args.assignedMinutes ** offenseEnergy.exponent /
@@ -290,11 +296,17 @@ export function rankRoster(args: {
     POSITION_SEQUENCE.map((position) => [
       position,
       [...args.roster.players]
-        .map((player) => ({
-          playerId: player.playerId,
-          name: player.name,
-          output: Number(playerOutputs[player.playerId][position].toFixed(12)),
-        }))
+        .map((player) => {
+          const positionOutputs = playerOutputs[player.playerId] ?? positionOutputTotals({
+            player,
+            context: args.context,
+          });
+          return {
+            playerId: player.playerId,
+            name: player.name,
+            output: Number(positionOutputs[position].toFixed(12)),
+          };
+        })
         .sort(
           (left, right) =>
             right.output - left.output ||
@@ -352,6 +364,10 @@ export function buildLineup(args: {
     }
     const starter =
       candidates.find((candidate) => !usedPlayerIds.has(candidate.playerId)) ?? candidates[0];
+    if (!starter) {
+      warnings.push(`no starter available for ${position}`);
+      continue;
+    }
     usedPlayerIds.add(starter.playerId);
 
     const backup =
@@ -557,8 +573,8 @@ export function evaluateLineup(args: {
   for (const rating of RATING_SEQUENCE) {
     const label = ratingLabel(rawRatings[rating]);
     roundedRatings[rating] = label.rounded;
-    ratingLabels[rating] = label.label;
-    outputBandLabels[rating] = label.band;
+    ratingLabels[rating] = label.label ?? "";
+    outputBandLabels[rating] = label.band ?? "";
   }
 
   return {

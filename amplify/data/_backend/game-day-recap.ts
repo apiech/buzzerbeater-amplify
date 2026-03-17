@@ -2373,7 +2373,11 @@ function computeBestQuarterMargin(
   let bestPeriod = 0;
   let bestMargin = Number.NEGATIVE_INFINITY;
   teamPartials.forEach((points, index) => {
-    const margin = points - opponentPartials[index];
+    const opponentPoints = opponentPartials[index];
+    if (opponentPoints == null) {
+      return;
+    }
+    const margin = points - opponentPoints;
     if (margin > bestMargin) {
       bestMargin = margin;
       bestPeriod = index + 1;
@@ -2868,7 +2872,7 @@ function resolveDateKey(value: string | null | undefined): string | null {
 
   const directMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
   if (directMatch) {
-    return directMatch[1];
+    return directMatch[1] ?? null;
   }
 
   const parsed = Date.parse(value);
