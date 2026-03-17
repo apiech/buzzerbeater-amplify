@@ -6,10 +6,7 @@ import {
   decodeAwsJsonList,
   type AwsJsonModelName,
 } from "./awsjson";
-import {
-  getDataClient,
-  type AmplifyDataFunctionEnv,
-} from "./data-client";
+import { getDataClient, type AmplifyDataFunctionEnv } from "./data-client";
 
 export type ConnectionStatus =
   | "UNSET"
@@ -49,6 +46,7 @@ export type BbConnectionRecord = {
   leagueName?: string | null;
   countryId?: string | null;
   countryName?: string | null;
+  leagueTimeZone?: string | null;
   connectedAt?: string | null;
   lastValidatedAt?: string | null;
   lastSyncAt?: string | null;
@@ -70,6 +68,13 @@ export type BillingAccountRecord = {
   grantedPlanId?: string | null;
   overrideExpiresAt?: string | null;
   overrideReason?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type UserPreferenceRecord = {
+  userId: string;
+  themeId: string;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -115,6 +120,49 @@ export type GameDayRecapRecord = {
   leagueId: string;
   leagueName?: string | null;
   gameDate: string;
+  season?: number | null;
+  status: GameDayRecapStatus;
+  requestedAt: string;
+  completedAt?: string | null;
+  requestJson: unknown;
+  coverageJson?: unknown;
+  resultJson?: unknown;
+  error?: string | null;
+  modelProvider?: string | null;
+  modelId?: string | null;
+  promptVersion?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type LeagueGameDayRecapRecord = {
+  userId: string;
+  targetKey: string;
+  leagueId: string;
+  leagueName?: string | null;
+  gameDayNumber: number;
+  season?: number | null;
+  status: GameDayRecapStatus;
+  requestedAt: string;
+  completedAt?: string | null;
+  requestJson: unknown;
+  coverageJson?: unknown;
+  resultJson?: unknown;
+  error?: string | null;
+  modelProvider?: string | null;
+  modelId?: string | null;
+  promptVersion?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type SingleGameSummaryRecord = {
+  userId: string;
+  targetKey: string;
+  matchId: string;
+  gameDate?: string | null;
+  leagueId?: string | null;
+  leagueName?: string | null;
   season?: number | null;
   status: GameDayRecapStatus;
   requestedAt: string;
@@ -214,6 +262,27 @@ export async function upsertBillingAccount(
   await upsertModelRecord(env, "BillingAccount", ["userId"], record);
 }
 
+export async function getUserPreference(
+  env: RepositoryEnv,
+  userId: string,
+): Promise<UserPreferenceRecord | null> {
+  const record = await getModelRecord<UserPreferenceRecord>(
+    env,
+    "UserPreference",
+    { userId },
+    "load user preference",
+  );
+
+  return decodeAwsJsonFields("UserPreference", record);
+}
+
+export async function upsertUserPreference(
+  env: RepositoryEnv,
+  record: UserPreferenceRecord,
+): Promise<void> {
+  await upsertModelRecord(env, "UserPreference", ["userId"], record);
+}
+
 export async function listBbConnections(
   env: RepositoryEnv,
   limit = 1000,
@@ -256,17 +325,11 @@ export async function upsertBbCredential(
   const input = omitUndefinedValues(record);
 
   if (exists) {
-    await assertSuccessful(
-      model.update(input),
-      "update BB credential",
-    );
+    await assertSuccessful(model.update(input), "update BB credential");
     return;
   }
 
-  await assertSuccessful(
-    model.create(input),
-    "create BB credential",
-  );
+  await assertSuccessful(model.create(input), "create BB credential");
 }
 
 export async function deleteBbCredential(
@@ -287,10 +350,7 @@ export async function createSyncRun(
     expiresAt: input.expiresAt ?? addDays(input.startedAt, 14),
   });
   const record = assertPresent(
-    await assertSuccessful(
-      model.create(recordInput),
-      "create sync run",
-    ),
+    await assertSuccessful(model.create(recordInput), "create sync run"),
     "create sync run",
   );
 
@@ -418,12 +478,7 @@ export async function upsertGameDayRecap(
   env: RepositoryEnv,
   record: GameDayRecapRecord,
 ): Promise<void> {
-  await upsertModelRecord(
-    env,
-    "GameDayRecap",
-    ["userId", "targetKey"],
-    record,
-  );
+  await upsertModelRecord(env, "GameDayRecap", ["userId", "targetKey"], record);
 }
 
 export async function updateGameDayRecap(
@@ -450,6 +505,118 @@ export async function listGameDayRecaps(
   );
 
   return decodeAwsJsonList("GameDayRecap", records);
+}
+
+export async function getLeagueGameDayRecap(
+  env: RepositoryEnv,
+  userId: string,
+  targetKey: string,
+): Promise<LeagueGameDayRecapRecord | null> {
+  const record = await getModelRecord<LeagueGameDayRecapRecord>(
+    env,
+    "LeagueGameDayRecap",
+    { userId, targetKey },
+    "load league game day recap",
+  );
+
+  return decodeAwsJsonFields("LeagueGameDayRecap", record);
+}
+
+export async function upsertLeagueGameDayRecap(
+  env: RepositoryEnv,
+  record: LeagueGameDayRecapRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "LeagueGameDayRecap",
+    ["userId", "targetKey"],
+    record,
+  );
+}
+
+export async function updateLeagueGameDayRecap(
+  env: RepositoryEnv,
+  input: Partial<LeagueGameDayRecapRecord> &
+    Pick<LeagueGameDayRecapRecord, "userId" | "targetKey">,
+): Promise<void> {
+  const model = await getModel<LeagueGameDayRecapRecord>(
+    env,
+    "LeagueGameDayRecap",
+  );
+  await assertSuccessful(
+    model.update(prepareModelInput("LeagueGameDayRecap", input)),
+    "update league game day recap",
+  );
+}
+
+export async function listLeagueGameDayRecaps(
+  env: RepositoryEnv,
+  limit = 1000,
+): Promise<LeagueGameDayRecapRecord[]> {
+  const records = await listModelRecords<LeagueGameDayRecapRecord>(
+    env,
+    "LeagueGameDayRecap",
+    { limit },
+    "list league game day recaps",
+  );
+
+  return decodeAwsJsonList("LeagueGameDayRecap", records);
+}
+
+export async function getSingleGameSummary(
+  env: RepositoryEnv,
+  userId: string,
+  targetKey: string,
+): Promise<SingleGameSummaryRecord | null> {
+  const record = await getModelRecord<SingleGameSummaryRecord>(
+    env,
+    "SingleGameSummary",
+    { userId, targetKey },
+    "load single game summary",
+  );
+
+  return decodeAwsJsonFields("SingleGameSummary", record);
+}
+
+export async function upsertSingleGameSummary(
+  env: RepositoryEnv,
+  record: SingleGameSummaryRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "SingleGameSummary",
+    ["userId", "targetKey"],
+    record,
+  );
+}
+
+export async function updateSingleGameSummary(
+  env: RepositoryEnv,
+  input: Partial<SingleGameSummaryRecord> &
+    Pick<SingleGameSummaryRecord, "userId" | "targetKey">,
+): Promise<void> {
+  const model = await getModel<SingleGameSummaryRecord>(
+    env,
+    "SingleGameSummary",
+  );
+  await assertSuccessful(
+    model.update(prepareModelInput("SingleGameSummary", input)),
+    "update single game summary",
+  );
+}
+
+export async function listSingleGameSummaries(
+  env: RepositoryEnv,
+  limit = 1000,
+): Promise<SingleGameSummaryRecord[]> {
+  const records = await listModelRecords<SingleGameSummaryRecord>(
+    env,
+    "SingleGameSummary",
+    { limit },
+    "list single game summaries",
+  );
+
+  return decodeAwsJsonList("SingleGameSummary", records);
 }
 
 export async function getMatchBoxscore(
@@ -558,7 +725,10 @@ export async function createSharedPlayerCard(
   env: RepositoryEnv,
   input: Record<string, unknown>,
 ): Promise<void> {
-  const model = await getModel<Record<string, unknown>>(env, "SharedPlayerCard");
+  const model = await getModel<Record<string, unknown>>(
+    env,
+    "SharedPlayerCard",
+  );
   await assertSuccessful(
     model.create(prepareModelInput("SharedPlayerCard", input)),
     "create shared player card",
@@ -647,17 +817,11 @@ async function upsertModelRecord(
   const payload = prepareModelInput(modelName, input);
 
   if (currentRecord) {
-    await assertSuccessful(
-      model.update(payload),
-      `update ${modelName} record`,
-    );
+    await assertSuccessful(model.update(payload), `update ${modelName} record`);
     return;
   }
 
-  await assertSuccessful(
-    model.create(payload),
-    `create ${modelName} record`,
-  );
+  await assertSuccessful(model.create(payload), `create ${modelName} record`);
 }
 
 function prepareModelInput<TRecord extends Record<string, unknown>>(
@@ -715,12 +879,9 @@ async function getModel<TRecord>(
   modelName: string,
 ): Promise<ModelApi<TRecord>> {
   const client = await runtime.getClient(env as AmplifyDataFunctionEnv);
-  const model = (client.models as unknown as Record<
-    string,
-    ModelApi<TRecord> | undefined
-  >)[
-    modelName
-  ];
+  const model = (
+    client.models as unknown as Record<string, ModelApi<TRecord> | undefined>
+  )[modelName];
 
   if (!model) {
     throw new Error(`Amplify data client model ${modelName} is not available.`);
@@ -777,7 +938,5 @@ function addDays(value: string, days: number): string {
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
   }
 
-  return new Date(
-    parsed.getTime() + days * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  return new Date(parsed.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 }

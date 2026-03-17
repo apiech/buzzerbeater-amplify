@@ -1,5 +1,6 @@
 BB_CONNECTION_ENCRYPTION_SECRET=sandboxsecret
 GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
+GAME_DAY_RECAP_MODEL_ID_PREMIUM=us.anthropic.claude-haiku-4-5-20251001-v1:0
 AWS_REGION=us-east-1
 COST_ALERT_SMS_NUMBERS=your-phone-number
 COST_ALERT_EMAILS=your@email.com

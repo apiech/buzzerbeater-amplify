@@ -62,7 +62,9 @@ export async function getLineupHelperWorkspace(args: {
   const connection = await getBbConnection(args.env, userId);
   const cachedWorkspace = readCachedWorkspace(connection);
   if (!connection || !cachedWorkspace) {
-    throw new Error("No cached workspace is available. Refresh your workspace first.");
+    throw new Error(
+      "No cached workspace is available. Refresh your workspace first.",
+    );
   }
 
   const roster = toRecordArray(toRecord(cachedWorkspace.teamHub)?.roster);
@@ -111,24 +113,22 @@ export function buildLineupHelperWorkspacePayload(input: {
   defaultContext: CoachParrotContext;
 }): Record<string, unknown> {
   const availableRoster = input.roster.filter((player) => player.available);
-  if (!availableRoster.length) {
-    throw new Error("No usable player snapshots are available for the lineup helper.");
-  }
-
-  const evaluation = evaluateRoster({
-    roster: {
-      players: availableRoster.map(toRawPlayerSkills),
-    },
-    context: input.defaultContext,
-  });
+  const evaluation = availableRoster.length
+    ? evaluateRoster({
+        roster: {
+          players: availableRoster.map(toRawPlayerSkills),
+        },
+        context: input.defaultContext,
+      })
+    : null;
 
   return {
     generatedAt: input.generatedAt,
     syncedAt: input.syncedAt,
     roster: input.roster,
     defaultContext: input.defaultContext,
-    defaultAssignments: evaluation.chosenLineup,
-    evaluation: serializeEvaluation(evaluation),
+    defaultAssignments: evaluation?.chosenLineup ?? [],
+    evaluation: evaluation ? serializeEvaluation(evaluation) : null,
     snapshotWarnings: input.roster
       .filter((player) => player.snapshotWarning)
       .map((player) => ({
@@ -166,7 +166,7 @@ async function buildHelperRosterPlayer(
   const playerId = asString(player.playerId);
   const fullName = asString(player.fullName) ?? "Unknown player";
   const snapshot = playerId
-    ? (await listCanonicalPlayerSkillSnapshots(env, playerId, 1))[0] ?? null
+    ? ((await listCanonicalPlayerSkillSnapshots(env, playerId, 1))[0] ?? null)
     : null;
   const profile = toRecord(toRecord(snapshot?.payload)?.profile);
   const skills = toRecord(profile?.skills);
@@ -182,7 +182,8 @@ async function buildHelperRosterPlayer(
       snapshotWeekKey: asString(snapshot?.weekKey),
       snapshotCapturedAt: asString(snapshot?.capturedAt),
       available: false,
-      snapshotWarning: "No canonical skill snapshot is available for this player.",
+      snapshotWarning:
+        "No canonical skill snapshot is available for this player.",
       skills: {},
     };
   }
@@ -201,7 +202,8 @@ async function buildHelperRosterPlayer(
   return {
     playerId,
     fullName,
-    bestPosition: asString(player.bestPosition) ?? asString(snapshot.bestPosition),
+    bestPosition:
+      asString(player.bestPosition) ?? asString(snapshot.bestPosition),
     salary: asNumber(player.salary) ?? asNumber(snapshot.salary),
     age: asNumber(player.age) ?? asNumber(profile?.age),
     gameShape: asString(player.gameShape) ?? asString(snapshot.gameShape),
@@ -248,7 +250,9 @@ async function resolveDefaultContext(
     const boxscorePayload = toRecord(boxscore.boxscoreJson);
     const homeTeam = toRecord(boxscorePayload?.homeTeam);
     const defaultLocation =
-      teamId && asString(homeTeam?.id) === teamId ? "Home Court" : "Away or Neutral";
+      teamId && asString(homeTeam?.id) === teamId
+        ? "Home Court"
+        : "Away or Neutral";
 
     return normalizeContext({
       offense: asString(boxscore.offStrategy) ?? "Base Offense",
@@ -266,7 +270,9 @@ async function resolveDefaultContext(
   });
 }
 
-function serializeEvaluation(evaluation: CoachParrotEvaluation): Record<string, unknown> {
+function serializeEvaluation(
+  evaluation: CoachParrotEvaluation,
+): Record<string, unknown> {
   return {
     context: evaluation.context,
     normalizedLineup: evaluation.chosenLineup,

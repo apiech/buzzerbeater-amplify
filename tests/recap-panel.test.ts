@@ -13,9 +13,11 @@ function createWorkspace(): DashboardWorkspace {
     home: {
       connection: {
         bbLoginName: "coach-alpha",
+        createdAt: "2026-03-15T20:00:00Z",
         leagueId: "100",
         leagueName: "Elite League",
         status: "CONNECTED",
+        updatedAt: "2026-03-15T22:00:00Z",
         userId: "user-1",
       },
       league: {
@@ -73,6 +75,7 @@ function createRecapRecord(args: {
   updatedAt?: string;
 }): GameDayRecapRecord {
   return {
+    createdAt: "2026-03-15T21:00:00Z",
     gameDate: "2026-03-15",
     leagueId: "100",
     leagueName: "Elite League",
@@ -80,7 +83,7 @@ function createRecapRecord(args: {
     requestedAt: args.requestedAt,
     status: args.status,
     targetKey: args.targetKey,
-    updatedAt: args.updatedAt,
+    updatedAt: args.updatedAt ?? args.requestedAt,
     userId: "user-1",
   };
 }

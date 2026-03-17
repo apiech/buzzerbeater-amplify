@@ -193,6 +193,30 @@ export const getSalaryProjection = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const submitLeagueGameDayRecap = defineFunction({
+  resourceGroupName: "data",
+  name: "submit-league-game-day-recap",
+  entry: "./submit-league-game-day-recap/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
+export const submitSingleGameSummary = defineFunction({
+  resourceGroupName: "data",
+  name: "submit-single-game-summary",
+  entry: "./submit-single-game-summary/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
+export const setBbLeagueTimeZone = defineFunction({
+  resourceGroupName: "data",
+  name: "set-bb-league-time-zone",
+  entry: "./set-bb-league-time-zone/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
 export const generateSharedPlayerCard = defineFunction({
   resourceGroupName: "data",
   name: "generate-shared-player-card",
@@ -267,6 +291,9 @@ const dataFunctions = [
   getLineupPlan,
   saveLineupScenario,
   getSalaryProjection,
+  submitLeagueGameDayRecap,
+  submitSingleGameSummary,
+  setBbLeagueTimeZone,
   listAccessibleMatches,
   getAccessibleMatch,
   getAccessiblePlayByPlay,
@@ -318,6 +345,8 @@ const schema = a
 
     MatchIngestStatus: a.enum(["PENDING", "PARTIAL", "SUCCEEDED", "FAILED"]),
 
+    ThemeId: a.enum(["clubhouse", "arena", "nightfall"]),
+
     BillingSummary: a.customType({
       planId: a.string().required(),
       accessSource: a.string().required(),
@@ -348,6 +377,7 @@ const schema = a
       leagueName: a.string(),
       countryId: a.string(),
       countryName: a.string(),
+      leagueTimeZone: a.string(),
       connectedAt: a.datetime(),
       lastValidatedAt: a.datetime(),
       lastSyncAt: a.datetime(),
@@ -412,7 +442,7 @@ const schema = a
       roster: a.json().required(),
       defaultContext: a.json().required(),
       defaultAssignments: a.json().required(),
-      evaluation: a.json().required(),
+      evaluation: a.json(),
       snapshotWarnings: a.json().required(),
       availableOffenses: a.json().required(),
       availableDefenses: a.json().required(),
@@ -464,6 +494,19 @@ const schema = a
       .identifier(["userId"])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
+    UserPreference: a
+      .model({
+        userId: a
+          .string()
+          .required()
+          .authorization((allow) => [
+            allow.ownerDefinedIn("userId").to(["read", "delete"]),
+          ]),
+        themeId: a.ref("ThemeId").required(),
+      })
+      .identifier(["userId"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId")]),
+
     BbConnection: a
       .model({
         userId: a.string().required(),
@@ -477,6 +520,7 @@ const schema = a
         leagueName: a.string(),
         countryId: a.string(),
         countryName: a.string(),
+        leagueTimeZone: a.string(),
         connectedAt: a.datetime(),
         lastValidatedAt: a.datetime(),
         lastSyncAt: a.datetime(),
@@ -679,6 +723,51 @@ const schema = a
         leagueId: a.string().required(),
         leagueName: a.string(),
         gameDate: a.date().required(),
+        season: a.integer(),
+        status: a.ref("GameDayRecapStatus").required(),
+        requestedAt: a.datetime().required(),
+        completedAt: a.datetime(),
+        requestJson: a.json().required(),
+        coverageJson: a.json(),
+        resultJson: a.json(),
+        error: a.string(),
+        modelProvider: a.string(),
+        modelId: a.string(),
+        promptVersion: a.string(),
+      })
+      .identifier(["userId", "targetKey"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    LeagueGameDayRecap: a
+      .model({
+        userId: a.string().required(),
+        targetKey: a.string().required(),
+        leagueId: a.string().required(),
+        leagueName: a.string(),
+        gameDayNumber: a.integer().required(),
+        season: a.integer(),
+        status: a.ref("GameDayRecapStatus").required(),
+        requestedAt: a.datetime().required(),
+        completedAt: a.datetime(),
+        requestJson: a.json().required(),
+        coverageJson: a.json(),
+        resultJson: a.json(),
+        error: a.string(),
+        modelProvider: a.string(),
+        modelId: a.string(),
+        promptVersion: a.string(),
+      })
+      .identifier(["userId", "targetKey"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    SingleGameSummary: a
+      .model({
+        userId: a.string().required(),
+        targetKey: a.string().required(),
+        matchId: a.string().required(),
+        gameDate: a.date(),
+        leagueId: a.string(),
+        leagueName: a.string(),
         season: a.integer(),
         status: a.ref("GameDayRecapStatus").required(),
         requestedAt: a.datetime().required(),
@@ -917,6 +1006,35 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(gameDayRecapSubmit)),
 
+    submitLeagueGameDayRecap: a
+      .mutation()
+      .arguments({
+        leagueId: a.string().required(),
+        gameDayNumber: a.integer().required(),
+        season: a.integer(),
+      })
+      .returns(a.ref("GameDayRecapSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(submitLeagueGameDayRecap)),
+
+    submitSingleGameSummary: a
+      .mutation()
+      .arguments({
+        matchId: a.string().required(),
+      })
+      .returns(a.ref("GameDayRecapSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(submitSingleGameSummary)),
+
+    setBbLeagueTimeZone: a
+      .mutation()
+      .arguments({
+        leagueTimeZone: a.string().required(),
+      })
+      .returns(a.ref("ConnectionResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(setBbLeagueTimeZone)),
+
     submitMyTeamHighlightsScan: a
       .mutation()
       .returns(a.ref("TeamHighlightsScanSubmitResult"))
@@ -924,7 +1042,9 @@ const schema = a
       .handler(a.handler.function(submitMyTeamHighlightsScan)),
   })
   .authorization((allow) =>
-    dataFunctions.map((resource) => allow.resource(resource).to(["query", "mutate"])),
+    dataFunctions.map((resource) =>
+      allow.resource(resource).to(["query", "mutate"]),
+    ),
   );
 
 export type Schema = ClientSchema<typeof schema>;

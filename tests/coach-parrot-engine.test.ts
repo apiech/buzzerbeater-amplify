@@ -57,7 +57,8 @@ test("CoachParrot explicit-lineup evaluation matches the extracted workbook samp
     context,
   });
 
-  for (const [rating, expected] of Object.entries(sample.ratings)) {
+  for (const rating of Object.keys(sample.ratings) as Array<keyof typeof sample.ratings>) {
+    const expected = sample.ratings[rating];
     assert.ok(Math.abs(evaluation.rawRatings[rating] - expected.raw) < 1e-10);
     assert.ok(
       Math.abs(evaluation.roundedRatings[rating] - expected.rounded) < 1e-10,

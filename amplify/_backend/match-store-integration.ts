@@ -1,5 +1,10 @@
 import type { Stack } from "aws-cdk-lib";
-import { AttributeType, BillingMode, Table, type ITable } from "aws-cdk-lib/aws-dynamodb";
+import {
+  AttributeType,
+  BillingMode,
+  Table,
+  type ITable,
+} from "aws-cdk-lib/aws-dynamodb";
 import { type IFunction } from "aws-cdk-lib/aws-lambda";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Bucket, type IBucket } from "aws-cdk-lib/aws-s3";
@@ -21,6 +26,7 @@ type MatchStoreBackend = {
   getAccessiblePlayByPlay: FunctionResource;
   getHomeWorkspace: FunctionResource;
   getLeagueIntel: FunctionResource;
+  getLineupHelperWorkspace: FunctionResource;
   getMatchBoxscoreDetails: FunctionResource;
   getMyTeamHighlights: FunctionResource;
   getPlayerTrend: FunctionResource;
@@ -46,7 +52,9 @@ type ExternalMatchStoreConfig = {
   teamHighlightsScanQueueUrl: string;
 };
 
-export function configureMatchStoreIntegration(backend: MatchStoreBackend): void {
+export function configureMatchStoreIntegration(
+  backend: MatchStoreBackend,
+): void {
   const stack = backend.createStack("match-store-integration");
   const externalConfig = resolveExternalMatchStoreConfig();
 
@@ -202,6 +210,7 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
     backend.refreshBbWorkspaceWorker,
   ];
   const playerSnapshotReadFunctions = [
+    backend.getLineupHelperWorkspace,
     backend.getPlayerTrend,
     backend.getSalaryProjection,
     backend.generateSharedPlayerCard,
@@ -218,7 +227,9 @@ export function configureMatchStoreIntegration(backend: MatchStoreBackend): void
   }
 
   grantMatchStoreReadAccess(matchStoreBucket, matchCatalogTable, backend);
-  teamMatchProjectionTable.grantReadData(backend.listAccessibleMatches.resources.lambda);
+  teamMatchProjectionTable.grantReadData(
+    backend.listAccessibleMatches.resources.lambda,
+  );
 
   for (const resource of workspaceSyncFunctions) {
     resource.addEnvironment(
@@ -291,18 +302,26 @@ function grantMatchStoreReadAccess(
   matchStoreBucket.grantRead(backend.getAccessiblePlayByPlay.resources.lambda);
   matchStoreBucket.grantRead(backend.getMatchBoxscoreDetails.resources.lambda);
 
-  matchCatalogTable.grantReadData(backend.listAccessibleMatches.resources.lambda);
+  matchCatalogTable.grantReadData(
+    backend.listAccessibleMatches.resources.lambda,
+  );
   matchCatalogTable.grantReadData(backend.getAccessibleMatch.resources.lambda);
-  matchCatalogTable.grantReadData(backend.getAccessiblePlayByPlay.resources.lambda);
-  matchCatalogTable.grantReadData(backend.getMatchBoxscoreDetails.resources.lambda);
+  matchCatalogTable.grantReadData(
+    backend.getAccessiblePlayByPlay.resources.lambda,
+  );
+  matchCatalogTable.grantReadData(
+    backend.getMatchBoxscoreDetails.resources.lambda,
+  );
 }
 
 function resolveExternalMatchStoreConfig(): ExternalMatchStoreConfig | null {
   const bucketName = process.env.MATCH_STORE_BUCKET_NAME;
   const catalogTableName = process.env.MATCH_CATALOG_TABLE_NAME;
   const projectionTableName = process.env.TEAM_MATCH_PROJECTION_TABLE_NAME;
-  const activeTrackedTeamsTableName = process.env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
-  const playerSkillSnapshotTableName = process.env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
+  const activeTrackedTeamsTableName =
+    process.env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
+  const playerSkillSnapshotTableName =
+    process.env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
   const teamMomentsTableName = process.env.TEAM_MOMENTS_TABLE_NAME;
   const teamHighlightsStatusTableName =
     process.env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME;

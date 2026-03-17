@@ -10,7 +10,9 @@ import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
 import type {
   GameDayRecapRecord,
+  LeagueGameDayRecapRecord,
   PredictionJobRecord,
+  SingleGameSummaryRecord,
   SyncRunRecord,
 } from "@/app/types";
 
@@ -25,6 +27,12 @@ const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 
 export function OperationsPanel() {
   const [gameDayRecaps, setGameDayRecaps] = useState<GameDayRecapRecord[]>([]);
+  const [leagueGameDayRecaps, setLeagueGameDayRecaps] = useState<
+    LeagueGameDayRecapRecord[]
+  >([]);
+  const [singleGameSummaries, setSingleGameSummaries] = useState<
+    SingleGameSummaryRecord[]
+  >([]);
   const [syncRuns, setSyncRuns] = useState<SyncRunRecord[]>([]);
   const [predictionJobs, setPredictionJobs] = useState<PredictionJobRecord[]>([]);
   const [opsError, setOpsError] = useState<string | null>(null);
@@ -37,7 +45,11 @@ export function OperationsPanel() {
   useEffect(() => {
     const hasActiveWork =
       syncRuns.some((run) => !terminalSyncStatuses.has(run.status)) ||
-      gameDayRecaps.some((recap) => !terminalRecapStatuses.has(recap.status)) ||
+      combinedRecaps(
+        gameDayRecaps,
+        leagueGameDayRecaps,
+        singleGameSummaries,
+      ).some((recap) => !terminalRecapStatuses.has(recap.status)) ||
       predictionJobs.some((job) => !terminalPredictionStatuses.has(job.status));
 
     if (!hasActiveWork) {
@@ -49,31 +61,45 @@ export function OperationsPanel() {
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [gameDayRecaps, predictionJobs, syncRuns]);
+  }, [gameDayRecaps, leagueGameDayRecaps, predictionJobs, singleGameSummaries, syncRuns]);
 
   async function loadOperations() {
     setIsLoading(true);
     setOpsError(null);
 
-    const [syncResponse, predictionResponse, recapResponse] = await Promise.all([
+    const [
+      syncResponse,
+      predictionResponse,
+      recapResponse,
+      gameDayResponse,
+      singleGameResponse,
+    ] = await Promise.all([
       client.models.SyncRun.list({ limit: 8 }),
       client.models.PredictionJob.list({ limit: 8 }),
       client.models.GameDayRecap.list({ limit: 8 }),
+      client.models.LeagueGameDayRecap.list({ limit: 8 }),
+      client.models.SingleGameSummary.list({ limit: 8 }),
     ]);
 
     if (
       syncResponse.errors?.length ||
       predictionResponse.errors?.length ||
-      recapResponse.errors?.length
+      recapResponse.errors?.length ||
+      gameDayResponse.errors?.length ||
+      singleGameResponse.errors?.length
     ) {
       setOpsError(
         formatAmplifyErrors([
           ...(syncResponse.errors ?? []),
           ...(predictionResponse.errors ?? []),
           ...(recapResponse.errors ?? []),
+          ...(gameDayResponse.errors ?? []),
+          ...(singleGameResponse.errors ?? []),
         ]),
       );
       setGameDayRecaps([]);
+      setLeagueGameDayRecaps([]);
+      setSingleGameSummaries([]);
       setSyncRuns([]);
       setPredictionJobs([]);
       setIsLoading(false);
@@ -85,6 +111,14 @@ export function OperationsPanel() {
     );
     setGameDayRecaps(
       [...recapResponse.data].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+    setLeagueGameDayRecaps(
+      [...gameDayResponse.data].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+    setSingleGameSummaries(
+      [...singleGameResponse.data].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
     );
     setPredictionJobs(
       [...predictionResponse.data].sort((left, right) =>
@@ -99,7 +133,12 @@ export function OperationsPanel() {
   const activePredictionCount = predictionJobs.filter(
     (job) => !terminalPredictionStatuses.has(job.status),
   ).length;
-  const activeRecapCount = gameDayRecaps.filter(
+  const recapActivity = combinedRecaps(
+    gameDayRecaps,
+    leagueGameDayRecaps,
+    singleGameSummaries,
+  );
+  const activeRecapCount = recapActivity.filter(
     (recap) => !terminalRecapStatuses.has(recap.status),
   ).length;
 
@@ -139,8 +178,8 @@ export function OperationsPanel() {
         />
         <StatCard
           detail={
-            gameDayRecaps[0]?.modelId
-              ? `Latest recap model ${gameDayRecaps[0].modelId}`
+            recapActivity[0]?.modelId
+              ? `Latest recap model ${recapActivity[0].modelId}`
               : "No recap model has been recorded yet."
           }
           label="Active recaps"
@@ -196,15 +235,15 @@ export function OperationsPanel() {
 
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading title="Recent recaps" titleAs="h4" />
-          {gameDayRecaps.length ? (
+          {recapActivity.length ? (
             <ul className={listClassName}>
-              {gameDayRecaps.map((recap) => (
-                <li className={listItemClassName} key={recap.targetKey}>
+              {recapActivity.map((recap) => (
+                <li className={listItemClassName} key={recap.key}>
                   <strong className="text-sm text-ink">
-                    {recap.leagueName ?? recap.leagueId}
+                    {recap.title}
                   </strong>
                   <span className={statusCopyClassName}>
-                    {humanizeStatus(recap.status)} • {recap.gameDate}
+                    {humanizeStatus(recap.status)} • {recap.detail}
                     {recap.modelId ? ` • ${recap.modelId}` : ""}
                     {recap.error ? ` • ${recap.error}` : ""}
                   </span>
@@ -261,4 +300,40 @@ function humanizeStatus(status: string | null | undefined): string {
     .split("_")
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(" ");
+}
+
+function combinedRecaps(
+  gameDayRecaps: readonly GameDayRecapRecord[],
+  leagueGameDayRecaps: readonly LeagueGameDayRecapRecord[],
+  singleGameSummaries: readonly SingleGameSummaryRecord[],
+) {
+  return [
+    ...gameDayRecaps.map((recap) => ({
+      detail: recap.gameDate,
+      error: recap.error ?? null,
+      key: `LEAGUE_DATE:${recap.targetKey}`,
+      modelId: recap.modelId ?? null,
+      status: recap.status,
+      title: recap.leagueName ?? recap.leagueId,
+      updatedAt: recap.updatedAt,
+    })),
+    ...leagueGameDayRecaps.map((recap) => ({
+      detail: `Game day ${recap.gameDayNumber}${recap.season ? ` • season ${recap.season}` : ""}`,
+      error: recap.error ?? null,
+      key: `LEAGUE_GAME_DAY:${recap.targetKey}`,
+      modelId: recap.modelId ?? null,
+      status: recap.status,
+      title: recap.leagueName ?? recap.leagueId,
+      updatedAt: recap.updatedAt,
+    })),
+    ...singleGameSummaries.map((recap) => ({
+      detail: `${recap.gameDate ?? "Date unknown"} • match ${recap.matchId}`,
+      error: recap.error ?? null,
+      key: `SINGLE_GAME:${recap.targetKey}`,
+      modelId: recap.modelId ?? null,
+      status: recap.status,
+      title: recap.leagueName ?? "Single game summary",
+      updatedAt: recap.updatedAt,
+    })),
+  ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }

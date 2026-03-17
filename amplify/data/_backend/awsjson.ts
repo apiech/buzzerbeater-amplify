@@ -1,5 +1,6 @@
 const AWS_JSON_FIELDS = {
   BillingAccount: [],
+  UserPreference: [],
   BbConnection: ["profileJson", "workspaceCacheJson"],
   TrackedTeam: ["summaryJson"],
   TrackedPlayer: ["profileJson"],
@@ -18,6 +19,8 @@ const AWS_JSON_FIELDS = {
   SavedLineupScenario: ["startersJson", "minuteTargetsJson"],
   PredictionJob: ["request", "resolvedInputSnapshot", "result"],
   GameDayRecap: ["requestJson", "coverageJson", "resultJson"],
+  LeagueGameDayRecap: ["requestJson", "coverageJson", "resultJson"],
+  SingleGameSummary: ["requestJson", "coverageJson", "resultJson"],
 } as const;
 
 export type AwsJsonModelName = keyof typeof AWS_JSON_FIELDS;

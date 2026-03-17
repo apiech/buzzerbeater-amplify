@@ -18,13 +18,21 @@ import type {
   GameDayRecapCoveragePayload,
   GameDayRecapRecord,
   GameDayRecapResultPayload,
+  LeagueGameDayRecapRecord,
+  SingleGameSummaryRecord,
 } from "@/app/types";
+import {
+  inferLeagueTimeZone,
+  normalizeLeagueTimeZone,
+  resolveCalendarDateKey,
+} from "@/lib/league-timezones";
 
 const terminalStatuses = new Set(["FAILED", "SUCCEEDED"]);
 const formGridClassName = "grid gap-4 md:grid-cols-2";
 const listClassName = "grid list-none gap-3 p-0";
 const listItemClassName =
   "grid gap-2 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
+const modeSwitcherClassName = "flex flex-wrap gap-2";
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 const twoColumnGridClassName = "grid gap-4 xl:grid-cols-[1.5fr_0.9fr]";
 
@@ -32,116 +40,218 @@ type RecapPanelProps = {
   workspace: DashboardWorkspace;
 };
 
+type RecapMode = "LEAGUE_DATE" | "LEAGUE_GAME_DAY" | "SINGLE_GAME";
+
+type RecapHistoryRecord = {
+  completedAt: string | null;
+  coverageJson: unknown;
+  error: string | null;
+  gameDate: string | null;
+  gameDayNumber: number | null;
+  kind: RecapMode;
+  leagueId: string | null;
+  leagueName: string | null;
+  matchId: string | null;
+  modelId: string | null;
+  requestJson: unknown;
+  requestedAt: string;
+  resultJson: unknown;
+  selectionKey: string;
+  season: number | null;
+  status: string | null;
+  targetKey: string;
+  updatedAt: string;
+};
+
+type MutationResultLike = {
+  data?: { targetKey: string } | null;
+  errors?: Array<{ message?: string }> | null;
+};
+
+const recapModes: Array<{
+  description: string;
+  label: string;
+  value: RecapMode;
+}> = [
+  {
+    description: "Pick a league and calendar date in the league's local time zone.",
+    label: "League date",
+    value: "LEAGUE_DATE",
+  },
+  {
+    description: "Use the regular-season game day number from 1 to 22.",
+    label: "League game day",
+    value: "LEAGUE_GAME_DAY",
+  },
+  {
+    description: "Summarize one finished game directly from its BuzzerBeater match id.",
+    label: "Single game",
+    value: "SINGLE_GAME",
+  },
+];
+
 export function RecapPanel({ workspace }: RecapPanelProps) {
-  const [leagueId, setLeagueId] = useState(workspace.home.connection.leagueId ?? "");
+  const defaultLeagueId = workspace.home.connection.leagueId ?? "";
+  const defaultLeagueTimeZone = resolveWorkspaceLeagueTimeZone(workspace);
+  const [mode, setMode] = useState<RecapMode>("LEAGUE_DATE");
+  const [leagueId, setLeagueId] = useState(defaultLeagueId);
+  const [leagueTimeZone, setLeagueTimeZone] = useState(defaultLeagueTimeZone ?? "");
   const [gameDate, setGameDate] = useState(resolveDefaultRecapDate(workspace));
-  const [recaps, setRecaps] = useState<GameDayRecapRecord[]>([]);
-  const [selectedTargetKey, setSelectedTargetKey] = useState<string | null>(null);
+  const [gameDayNumber, setGameDayNumber] = useState("1");
+  const [season, setSeason] = useState("");
+  const [matchId, setMatchId] = useState("");
+  const [recaps, setRecaps] = useState<RecapHistoryRecord[]>([]);
+  const [selectedRecapKey, setSelectedRecapKey] = useState<string | null>(null);
   const [recapError, setRecapError] = useState<string | null>(null);
   const [isLoadingRecaps, setIsLoadingRecaps] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const loadRecapsEffect = useEffectEvent((preferredTargetKey: string | null = selectedTargetKey) => {
-    void loadRecaps(preferredTargetKey);
-  });
+  const loadRecapsEffect = useEffectEvent(
+    (preferredKey: string | null = selectedRecapKey) => {
+      void loadRecaps(preferredKey);
+    },
+  );
 
   useEffect(() => {
-    if (!leagueId && workspace.home.connection.leagueId) {
-      setLeagueId(workspace.home.connection.leagueId);
+    if (!leagueId && defaultLeagueId) {
+      setLeagueId(defaultLeagueId);
     }
-  }, [leagueId, workspace.home.connection.leagueId]);
+  }, [defaultLeagueId, leagueId]);
+
+  useEffect(() => {
+    if (!leagueTimeZone && defaultLeagueTimeZone) {
+      setLeagueTimeZone(defaultLeagueTimeZone);
+    }
+  }, [defaultLeagueTimeZone, leagueTimeZone]);
 
   useEffect(() => {
     loadRecapsEffect();
   }, []);
 
   useEffect(() => {
-    if (!hasActiveGameDayRecap(recaps)) {
+    if (!hasActiveRecap(recaps)) {
       return;
     }
 
     const interval = window.setInterval(() => {
-      loadRecapsEffect(selectedTargetKey);
+      loadRecapsEffect(selectedRecapKey);
     }, 4000);
 
     return () => window.clearInterval(interval);
-  }, [recaps, selectedTargetKey]);
+  }, [recaps, selectedRecapKey]);
 
-  async function loadRecaps(preferredTargetKey: string | null = selectedTargetKey) {
+  async function loadRecaps(preferredKey: string | null = selectedRecapKey) {
     setIsLoadingRecaps(true);
 
-    const { data, errors } = await client.models.GameDayRecap.list({ limit: 12 });
-    if (errors?.length) {
-      setRecapError(formatAmplifyErrors(errors));
+    const [dateResponse, gameDayResponse, singleGameResponse] = await Promise.all([
+      client.models.GameDayRecap.list({ limit: 8 }),
+      client.models.LeagueGameDayRecap.list({ limit: 8 }),
+      client.models.SingleGameSummary.list({ limit: 8 }),
+    ]);
+
+    if (
+      dateResponse.errors?.length ||
+      gameDayResponse.errors?.length ||
+      singleGameResponse.errors?.length
+    ) {
+      setRecapError(
+        formatAmplifyErrors([
+          ...(dateResponse.errors ?? []),
+          ...(gameDayResponse.errors ?? []),
+          ...(singleGameResponse.errors ?? []),
+        ]),
+      );
       setRecaps([]);
-      setSelectedTargetKey(null);
+      setSelectedRecapKey(null);
       setIsLoadingRecaps(false);
       return;
     }
 
-    const sorted = sortGameDayRecaps(data);
-    setRecaps(sorted);
-    setSelectedTargetKey((current) => {
-      const targetKey = preferredTargetKey ?? current;
-      if (targetKey && sorted.some((recap) => recap.targetKey === targetKey)) {
+    const combined = sortRecapHistory([
+      ...dateResponse.data.map(adaptLeagueDateRecap),
+      ...gameDayResponse.data.map(adaptLeagueGameDayRecap),
+      ...singleGameResponse.data.map(adaptSingleGameSummary),
+    ]);
+
+    setRecaps(combined);
+    setSelectedRecapKey((current) => {
+      const targetKey = preferredKey ?? current;
+      if (targetKey && combined.some((recap) => recap.selectionKey === targetKey)) {
         return targetKey;
       }
-      return sorted[0]?.targetKey ?? null;
+
+      return combined[0]?.selectionKey ?? null;
     });
     setIsLoadingRecaps(false);
   }
 
   async function handleSubmit() {
-    const normalizedLeagueId = leagueId.trim();
-    if (!normalizedLeagueId || !gameDate) {
-      setRecapError("Pick a league and date before requesting a recap.");
-      return;
-    }
-
     setIsSubmitting(true);
     setRecapError(null);
 
-    const result = await client.mutations.submitGameDayRecap({
-      gameDate,
-      leagueId: normalizedLeagueId,
-    });
+    try {
+      const result = await submitRecapRequest({
+        gameDate,
+        gameDayNumber,
+        leagueId,
+        leagueTimeZone,
+        mode,
+        season,
+        workspace,
+        matchId,
+      });
+      if (result.errors?.length || !result.data) {
+        setRecapError(formatAmplifyErrors(result.errors));
+        setIsSubmitting(false);
+        return;
+      }
 
-    if (result.errors?.length || !result.data) {
-      setRecapError(formatAmplifyErrors(result.errors));
-      setIsSubmitting(false);
-      return;
+      const selectionKey = toRecapSelectionKey(mode, result.data.targetKey);
+      setSelectedRecapKey(selectionKey);
+      await loadRecaps(selectionKey);
+    } catch (error) {
+      setRecapError(error instanceof Error ? error.message : String(error));
     }
 
-    setSelectedTargetKey(result.data.targetKey);
-    await loadRecaps(result.data.targetKey);
     setIsSubmitting(false);
   }
 
   const selectedRecap =
-    recaps.find((recap) => recap.targetKey === selectedTargetKey) ?? recaps.at(0) ?? null;
+    recaps.find((recap) => recap.selectionKey === selectedRecapKey) ??
+    recaps.at(0) ??
+    null;
   const selectedResult = toGameDayRecapResult(selectedRecap?.resultJson);
   const selectedCoverage = toGameDayRecapCoverage(selectedRecap?.coverageJson);
-  const recapDetail =
-    selectedRecap && (selectedRecap.leagueName || selectedRecap.leagueId)
-      ? `${selectedRecap.leagueName ?? selectedRecap.leagueId} • ${selectedRecap.gameDate}`
-      : "No recap selected";
+  const recapDetail = selectedRecap
+    ? describeRecapRecord(selectedRecap)
+    : "No recap selected";
   const currentLeagueName = workspace.home.connection.leagueName ?? "Connected league";
+  const normalizedLeagueTimeZone = normalizeLeagueTimeZone(leagueTimeZone);
+  const maxGameDate = resolveRecapInputMaxDate(leagueTimeZone);
+  const activeMode = recapModes.find((entry) => entry.value === mode) ?? recapModes[0];
 
   return (
     <Panel>
       <SectionHeading
         actions={
           <Button
-            disabled={!leagueId.trim() || !gameDate}
+            disabled={Boolean(getSubmissionBlockReason({
+              gameDate,
+              gameDayNumber,
+              leagueId,
+              leagueTimeZone,
+              matchId,
+              mode,
+            }))}
             loading={isSubmitting}
             onClick={() => void handleSubmit()}
           >
-            Generate recap
+            {submitLabelForMode(mode)}
           </Button>
         }
-        description="Request a league-day recap, keep polling while it runs, and browse prior recaps without leaving the workspace."
+        description="Switch between league-by-date, regular-season game day, and direct match-id summaries without leaving the workspace."
         eyebrow="Recaps"
-        title="Game day recap"
+        title="Recap generator"
       />
 
       <p className={statusCopyClassName}>
@@ -154,27 +264,130 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
       <div className={twoColumnGridClassName}>
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading
-            description="League id defaults to your connected club when available, but you can point the job at any league."
+            description={activeMode.description}
             title="Request"
             titleAs="h4"
           />
-          <div className={formGridClassName}>
-            <Field label="League id">
-              <Input
-                onChange={(event) => setLeagueId(event.target.value)}
-                placeholder="League id"
-                value={leagueId}
-              />
-            </Field>
-            <Field label="Game date">
-              <Input
-                max={new Date().toISOString().slice(0, 10)}
-                onChange={(event) => setGameDate(event.target.value)}
-                type="date"
-                value={gameDate}
-              />
-            </Field>
+
+          <div className={modeSwitcherClassName}>
+            {recapModes.map((entry) => (
+              <Button
+                key={entry.value}
+                onClick={() => setMode(entry.value)}
+                size="sm"
+                variant={mode === entry.value ? "primary" : "secondary"}
+              >
+                {entry.label}
+              </Button>
+            ))}
           </div>
+
+          {mode === "LEAGUE_DATE" ? (
+            <>
+              <div className={formGridClassName}>
+                <Field label="League id">
+                  <Input
+                    onChange={(event) => setLeagueId(event.target.value)}
+                    placeholder="League id"
+                    value={leagueId}
+                  />
+                </Field>
+                <Field
+                  hint={`Max date uses ${normalizedLeagueTimeZone ?? "your browser default"} league-day mapping.`}
+                  label="Game date"
+                >
+                  <Input
+                    max={maxGameDate}
+                    onChange={(event) => setGameDate(event.target.value)}
+                    type="date"
+                    value={gameDate}
+                  />
+                </Field>
+              </div>
+
+              <Field
+                error={
+                  leagueTimeZone.trim() && !normalizedLeagueTimeZone
+                    ? "Enter a valid IANA time zone such as America/New_York."
+                    : null
+                }
+                hint="Date-based recaps use the league's local calendar day to match schedules."
+                label="League time zone"
+              >
+                <Input
+                  onChange={(event) => setLeagueTimeZone(event.target.value)}
+                  placeholder="America/New_York"
+                  value={leagueTimeZone}
+                />
+              </Field>
+            </>
+          ) : null}
+
+          {mode === "LEAGUE_GAME_DAY" ? (
+            <div className={formGridClassName}>
+              <Field label="League id">
+                <Input
+                  onChange={(event) => setLeagueId(event.target.value)}
+                  placeholder="League id"
+                  value={leagueId}
+                />
+              </Field>
+              <Field hint="Regular season only, from 1 to 22." label="Game day">
+                <Input
+                  max={22}
+                  min={1}
+                  onChange={(event) => setGameDayNumber(event.target.value)}
+                  type="number"
+                  value={gameDayNumber}
+                />
+              </Field>
+              <Field
+                hint="Leave blank to use the current/open season."
+                label="Season (optional)"
+              >
+                <Input
+                  min={1}
+                  onChange={(event) => setSeason(event.target.value)}
+                  placeholder="Current"
+                  type="number"
+                  value={season}
+                />
+              </Field>
+            </div>
+          ) : null}
+
+          {mode === "SINGLE_GAME" ? (
+            <Field hint="Example: 137828772" label="Match id">
+              <Input
+                inputMode="numeric"
+                onChange={(event) => setMatchId(event.target.value)}
+                placeholder="Match id"
+                value={matchId}
+              />
+            </Field>
+          ) : null}
+
+          {getSubmissionBlockReason({
+            gameDate,
+            gameDayNumber,
+            leagueId,
+            leagueTimeZone,
+            matchId,
+            mode,
+          }) ? (
+            <Alert>
+              {
+                getSubmissionBlockReason({
+                  gameDate,
+                  gameDayNumber,
+                  leagueId,
+                  leagueTimeZone,
+                  matchId,
+                  mode,
+                }) as string
+              }
+            </Alert>
+          ) : null}
 
           <div className="grid gap-4 md:grid-cols-2">
             <StatCard
@@ -203,7 +416,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
             actions={
               <Button
                 loading={isLoadingRecaps}
-                onClick={() => void loadRecaps(selectedTargetKey)}
+                onClick={() => void loadRecaps(selectedRecapKey)}
                 size="sm"
                 variant="secondary"
               >
@@ -217,9 +430,9 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
           {recaps.length ? (
             <ul className={listClassName}>
               {recaps.map((recap) => {
-                const selected = recap.targetKey === selectedRecap?.targetKey;
+                const selected = recap.selectionKey === selectedRecap?.selectionKey;
                 return (
-                  <li className={listItemClassName} key={recap.targetKey}>
+                  <li className={listItemClassName} key={recap.selectionKey}>
                     <button
                       className={[
                         "grid gap-1 rounded-2xl border px-4 py-3 text-left transition",
@@ -227,19 +440,19 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
                           ? "border-accent bg-accent/10"
                           : "border-black/8 bg-white hover:border-accent/35",
                       ].join(" ")}
-                      onClick={() => setSelectedTargetKey(recap.targetKey)}
+                      onClick={() => setSelectedRecapKey(recap.selectionKey)}
                       type="button"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <strong className="text-sm text-ink">
-                          {recap.leagueName ?? recap.leagueId}
+                          {recapTitle(recap)}
                         </strong>
                         <StatusBadge tone={statusToneFromValue(recap.status)}>
                           {humanizeStatus(recap.status)}
                         </StatusBadge>
                       </div>
                       <span className={statusCopyClassName}>
-                        {recap.gameDate} • {formatTimestamp(recap.updatedAt)}
+                        {describeRecapRecord(recap)} • {formatTimestamp(recap.updatedAt)}
                       </span>
                       {recap.error ? (
                         <span className="text-sm text-danger">{recap.error}</span>
@@ -270,6 +483,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
               <StatusBadge tone={statusToneFromValue(selectedRecap.status)}>
                 {humanizeStatus(selectedRecap.status)}
               </StatusBadge>
+              <StatusBadge tone="neutral">{modeLabelForRecord(selectedRecap)}</StatusBadge>
               {selectedRecap.modelId ? (
                 <span className={statusCopyClassName}>Model {selectedRecap.modelId}</span>
               ) : null}
@@ -300,12 +514,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
                 <p className={statusCopyClassName}>{selectedResult.summary.lede}</p>
                 <div className="grid gap-4">
                   {selectedResult.games.map((game) => (
-                    <Panel
-                      as="article"
-                      key={game.matchId}
-                      padding="sm"
-                      variant="glass"
-                    >
+                    <Panel as="article" key={game.matchId} padding="sm" variant="glass">
                       <SectionHeading
                         description={`Match ${game.matchId}`}
                         title={game.headline}
@@ -315,10 +524,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
                       {game.evidenceTags.length ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {game.evidenceTags.map((tag) => (
-                            <StatusBadge
-                              key={tag}
-                              tone="neutral"
-                            >
+                            <StatusBadge key={tag} tone="neutral">
                               {formatEvidenceTag(tag)}
                             </StatusBadge>
                           ))}
@@ -338,7 +544,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
           </div>
         ) : (
           <p className={statusCopyClassName}>
-            Select a prior recap or generate a new one to review the slate writeups.
+            Select a prior recap or generate a new one to review the writeups.
           </p>
         )}
       </Panel>
@@ -346,12 +552,262 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   );
 }
 
-export function resolveDefaultRecapDate(workspace: DashboardWorkspace): string {
-  const recentMatchDate = workspace.home.recentMatches
-    .map((match) => match.startTime)
-    .find((startTime): startTime is string => Boolean(resolveDateKey(startTime)));
+async function submitRecapRequest(args: {
+  gameDate: string;
+  gameDayNumber: string;
+  leagueId: string;
+  leagueTimeZone: string;
+  matchId: string;
+  mode: RecapMode;
+  season: string;
+  workspace: DashboardWorkspace;
+}): Promise<MutationResultLike> {
+  const normalizedLeagueId = args.leagueId.trim();
+  const normalizedTimeZone = normalizeLeagueTimeZone(args.leagueTimeZone);
 
-  return resolveDateKey(recentMatchDate) ?? new Date().toISOString().slice(0, 10);
+  switch (args.mode) {
+    case "LEAGUE_DATE": {
+      if (!normalizedLeagueId || !args.gameDate) {
+        throw new Error("Pick a league, date, and time zone before requesting a recap.");
+      }
+      if (!normalizedTimeZone) {
+        throw new Error("Enter a valid league time zone before requesting a date-based recap.");
+      }
+
+      const currentTimeZone = resolveWorkspaceLeagueTimeZone(args.workspace);
+      if (currentTimeZone !== normalizedTimeZone) {
+        const updateResult = await client.mutations.setBbLeagueTimeZone({
+          leagueTimeZone: normalizedTimeZone,
+        });
+        if (updateResult.errors?.length) {
+          return {
+            data: null,
+            errors: updateResult.errors,
+          };
+        }
+      }
+
+      return client.mutations.submitGameDayRecap({
+        gameDate: args.gameDate,
+        leagueId: normalizedLeagueId,
+      });
+    }
+    case "LEAGUE_GAME_DAY": {
+      const numericGameDay = Number(args.gameDayNumber);
+      const seasonValue = args.season.trim() ? Number(args.season) : undefined;
+      if (!normalizedLeagueId || !Number.isInteger(numericGameDay)) {
+        throw new Error("Enter a league and regular-season game day from 1 to 22.");
+      }
+      if (numericGameDay < 1 || numericGameDay > 22) {
+        throw new Error("League game day must be between 1 and 22.");
+      }
+      if (
+        args.season.trim() &&
+        (!Number.isInteger(seasonValue) || (seasonValue ?? 0) < 1)
+      ) {
+        throw new Error("Season must be a positive integer when provided.");
+      }
+
+      return client.mutations.submitLeagueGameDayRecap({
+        gameDayNumber: numericGameDay,
+        leagueId: normalizedLeagueId,
+        ...(seasonValue ? { season: seasonValue } : {}),
+      });
+    }
+    case "SINGLE_GAME": {
+      const normalizedMatchId = args.matchId.trim();
+      if (!/^\d+$/.test(normalizedMatchId)) {
+        throw new Error("Enter a numeric BuzzerBeater match id.");
+      }
+
+      return client.mutations.submitSingleGameSummary({
+        matchId: normalizedMatchId,
+      });
+    }
+  }
+}
+
+function adaptLeagueDateRecap(record: GameDayRecapRecord): RecapHistoryRecord {
+  return {
+    completedAt: record.completedAt ?? null,
+    coverageJson: record.coverageJson,
+    error: record.error ?? null,
+    gameDate: record.gameDate,
+    gameDayNumber: null,
+    kind: "LEAGUE_DATE",
+    leagueId: record.leagueId,
+    leagueName: record.leagueName ?? null,
+    matchId: null,
+    modelId: record.modelId ?? null,
+    requestJson: record.requestJson,
+    requestedAt: record.requestedAt,
+    resultJson: record.resultJson,
+    selectionKey: toRecapSelectionKey("LEAGUE_DATE", record.targetKey),
+    season: record.season ?? null,
+    status: record.status,
+    targetKey: record.targetKey,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function adaptLeagueGameDayRecap(
+  record: LeagueGameDayRecapRecord,
+): RecapHistoryRecord {
+  return {
+    completedAt: record.completedAt ?? null,
+    coverageJson: record.coverageJson,
+    error: record.error ?? null,
+    gameDate: null,
+    gameDayNumber: record.gameDayNumber,
+    kind: "LEAGUE_GAME_DAY",
+    leagueId: record.leagueId,
+    leagueName: record.leagueName ?? null,
+    matchId: null,
+    modelId: record.modelId ?? null,
+    requestJson: record.requestJson,
+    requestedAt: record.requestedAt,
+    resultJson: record.resultJson,
+    selectionKey: toRecapSelectionKey("LEAGUE_GAME_DAY", record.targetKey),
+    season: record.season ?? null,
+    status: record.status,
+    targetKey: record.targetKey,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function adaptSingleGameSummary(record: SingleGameSummaryRecord): RecapHistoryRecord {
+  return {
+    completedAt: record.completedAt ?? null,
+    coverageJson: record.coverageJson,
+    error: record.error ?? null,
+    gameDate: record.gameDate ?? null,
+    gameDayNumber: null,
+    kind: "SINGLE_GAME",
+    leagueId: record.leagueId ?? null,
+    leagueName: record.leagueName ?? null,
+    matchId: record.matchId,
+    modelId: record.modelId ?? null,
+    requestJson: record.requestJson,
+    requestedAt: record.requestedAt,
+    resultJson: record.resultJson,
+    selectionKey: toRecapSelectionKey("SINGLE_GAME", record.targetKey),
+    season: record.season ?? null,
+    status: record.status,
+    targetKey: record.targetKey,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function toRecapSelectionKey(kind: RecapMode, targetKey: string): string {
+  return `${kind}:${targetKey}`;
+}
+
+function sortRecapHistory(recaps: readonly RecapHistoryRecord[]): RecapHistoryRecord[] {
+  return [...recaps].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function hasActiveRecap(recaps: readonly RecapHistoryRecord[]): boolean {
+  return recaps.some(
+    (recap) => Boolean(recap.status) && !terminalStatuses.has(recap.status ?? ""),
+  );
+}
+
+function recapTitle(record: RecapHistoryRecord): string {
+  if (record.kind === "SINGLE_GAME") {
+    return `Match ${record.matchId ?? record.targetKey}`;
+  }
+
+  return record.leagueName ?? record.leagueId ?? "League recap";
+}
+
+function describeRecapRecord(record: RecapHistoryRecord): string {
+  switch (record.kind) {
+    case "LEAGUE_GAME_DAY":
+      return `${record.leagueName ?? record.leagueId} • game day ${record.gameDayNumber}${record.season ? ` • season ${record.season}` : ""}`;
+    case "SINGLE_GAME":
+      return `${record.leagueName ?? "Single game"} • match ${record.matchId}${record.gameDate ? ` • ${record.gameDate}` : ""}`;
+    case "LEAGUE_DATE":
+    default:
+      return `${record.leagueName ?? record.leagueId} • ${record.gameDate ?? "date unavailable"}`;
+  }
+}
+
+function modeLabelForRecord(record: RecapHistoryRecord): string {
+  return recapModes.find((entry) => entry.value === record.kind)?.label ?? record.kind;
+}
+
+function submitLabelForMode(mode: RecapMode): string {
+  switch (mode) {
+    case "LEAGUE_GAME_DAY":
+      return "Generate game-day recap";
+    case "SINGLE_GAME":
+      return "Generate game summary";
+    case "LEAGUE_DATE":
+    default:
+      return "Generate recap";
+  }
+}
+
+function getSubmissionBlockReason(args: {
+  gameDate: string;
+  gameDayNumber: string;
+  leagueId: string;
+  leagueTimeZone: string;
+  matchId: string;
+  mode: RecapMode;
+}): string | null {
+  switch (args.mode) {
+    case "LEAGUE_DATE":
+      if (!args.leagueId.trim() || !args.gameDate) {
+        return "League date recaps require both a league id and a game date.";
+      }
+      if (!normalizeLeagueTimeZone(args.leagueTimeZone)) {
+        return "Date-based recaps require a valid league time zone.";
+      }
+      return null;
+    case "LEAGUE_GAME_DAY": {
+      const numericGameDay = Number(args.gameDayNumber);
+      if (!args.leagueId.trim()) {
+        return "League game-day recaps require a league id.";
+      }
+      if (!Number.isInteger(numericGameDay) || numericGameDay < 1 || numericGameDay > 22) {
+        return "League game day must be a whole number from 1 to 22.";
+      }
+      return null;
+    }
+    case "SINGLE_GAME":
+      return /^\d+$/.test(args.matchId.trim())
+        ? null
+        : "Single-game summaries require a numeric match id.";
+  }
+}
+
+export function resolveWorkspaceLeagueTimeZone(
+  workspace: DashboardWorkspace,
+): string | null {
+  return (
+    normalizeLeagueTimeZone(workspace.home.connection.leagueTimeZone) ??
+    inferLeagueTimeZone({
+      countryId: workspace.home.connection.countryId ?? null,
+      countryName: workspace.home.connection.countryName ?? null,
+    })
+  );
+}
+
+export function resolveRecapInputMaxDate(timeZone: string | null | undefined): string {
+  return (
+    resolveCalendarDateKey(new Date().toISOString(), timeZone) ??
+    new Date().toISOString().slice(0, 10)
+  );
+}
+
+export function resolveDefaultRecapDate(workspace: DashboardWorkspace): string {
+  const timeZone = resolveWorkspaceLeagueTimeZone(workspace);
+  const recentMatchDate = workspace.home.recentMatches
+    .map((match) => resolveCalendarDateKey(match.startTime, timeZone))
+    .find((startTime): startTime is string => Boolean(startTime));
+
+  return recentMatchDate ?? resolveRecapInputMaxDate(timeZone);
 }
 
 export function sortGameDayRecaps(
@@ -456,22 +912,6 @@ function asString(value: unknown): string | null {
 
 function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function resolveDateKey(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const directMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (directMatch) {
-    return directMatch[1];
-  }
-
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed)
-    ? new Date(parsed).toISOString().slice(0, 10)
-    : null;
 }
 
 function formatAmplifyErrors(

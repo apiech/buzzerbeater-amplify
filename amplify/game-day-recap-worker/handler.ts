@@ -2,7 +2,7 @@ import { env } from "$amplify/env/game-day-recap-worker";
 
 import {
   parseGameDayRecapQueueMessage,
-  processGameDayRecap,
+  processQueuedRecapJob,
 } from "../data/_backend/game-day-recap";
 
 type SqsRecord = {
@@ -21,29 +21,28 @@ export const handler = async (
     messageIds: event.Records.map((record) => record.messageId),
     recordCount: event.Records.length,
   });
-  const modelId = env.GAME_DAY_RECAP_MODEL_ID;
-  if (!modelId) {
-    throw new Error("GAME_DAY_RECAP_MODEL_ID environment variable was not found.");
-  }
-
   const batchItemFailures: Array<{ itemIdentifier: string }> = [];
+  const fallbackModelId = env.GAME_DAY_RECAP_MODEL_ID;
   // Retry failed recap jobs individually instead of replaying the full SQS batch.
   for (const record of event.Records) {
     const parsedMessage = safeParseQueueMessage(record.body);
     console.info("[game-day-recap-worker] record.start", {
+      kind: parsedMessage?.kind ?? null,
       messageId: record.messageId,
+      modelId: parsedMessage?.modelId ?? fallbackModelId ?? null,
       requestedAt: parsedMessage?.requestedAt ?? null,
       targetKey: parsedMessage?.targetKey ?? null,
       userId: parsedMessage?.userId ?? null,
     });
     try {
-      await processGameDayRecap({
+      await processQueuedRecapJob({
         env,
         messageBody: record.body,
-        modelId,
+        modelId: fallbackModelId,
         region: env.AWS_REGION,
       });
       console.info("[game-day-recap-worker] record.succeeded", {
+        kind: parsedMessage?.kind ?? null,
         messageId: record.messageId,
         targetKey: parsedMessage?.targetKey ?? null,
       });

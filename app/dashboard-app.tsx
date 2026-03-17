@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   confirmResetPassword,
@@ -69,16 +70,9 @@ import { PlayerTrendChart } from "@/app/ui/workspace/player-trend-chart";
 import { ThemeSelect } from "@/app/ui/theme/theme-select";
 import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
 import { hasFeature } from "@/lib/billing/plans";
-import {
-  type WorkspaceSection,
-} from "@/app/workspace-sections";
+import { type WorkspaceSection } from "@/app/workspace-sections";
 
 type AuthenticatedUser = Awaited<ReturnType<typeof getCurrentUser>>;
-
-type AuthenticatedProps = {
-  signOut?: () => Promise<void>;
-  user?: AuthenticatedUser;
-};
 
 type ConnectionFormState = ConnectBbAccountInput;
 type SignInFormState = {
@@ -116,15 +110,17 @@ const ratingGridClassName =
   "grid min-w-[30rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-2";
 
 export default function DashboardHomePage() {
-  return <DashboardApp activeSection="home" />;
+  return <DashboardApp activeSection="home" viewerEmail={null} />;
 }
 
-function LocalAuthShell({
+export function LegacyLocalAuthShell({
   activeSection,
 }: {
   activeSection: WorkspaceSection;
 }) {
-  const [authState, setAuthState] = useState<AuthUiState>(() => createAuthUiState());
+  const [authState, setAuthState] = useState<AuthUiState>(() =>
+    createAuthUiState(),
+  );
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [signInForm, setSignInForm] = useState<SignInFormState>({
     email: "",
@@ -139,14 +135,16 @@ function LocalAuthShell({
     useState<ConfirmSignUpFormState>({
       confirmationCode: "",
     });
-  const [requestResetForm, setRequestResetForm] = useState<RequestResetFormState>({
-    email: "",
-  });
-  const [confirmResetForm, setConfirmResetForm] = useState<ConfirmResetFormState>({
-    confirmationCode: "",
-    confirmPassword: "",
-    newPassword: "",
-  });
+  const [requestResetForm, setRequestResetForm] =
+    useState<RequestResetFormState>({
+      email: "",
+    });
+  const [confirmResetForm, setConfirmResetForm] =
+    useState<ConfirmResetFormState>({
+      confirmationCode: "",
+      confirmPassword: "",
+      newPassword: "",
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -158,7 +156,8 @@ function LocalAuthShell({
           return;
         }
 
-        const email = currentUser.signInDetails?.loginId ?? currentUser.username;
+        const email =
+          currentUser.signInDetails?.loginId ?? currentUser.username;
         setUser(currentUser);
         setSignInForm({ email, password: "" });
         setRequestResetForm({ email });
@@ -204,7 +203,10 @@ function LocalAuthShell({
     }));
   }
 
-  function openSignIn(email = authState.email, notice: AuthNotice | null = null) {
+  function openSignIn(
+    email = authState.email,
+    notice: AuthNotice | null = null,
+  ) {
     setSignInForm({ email, password: "" });
     completeAuthRequest({
       email,
@@ -229,7 +231,9 @@ function LocalAuthShell({
     });
   }
 
-  function openRequestReset(email = signInForm.email.trim() || authState.email) {
+  function openRequestReset(
+    email = signInForm.email.trim() || authState.email,
+  ) {
     setRequestResetForm({ email });
     completeAuthRequest({
       email,
@@ -457,7 +461,8 @@ function LocalAuthShell({
         result.nextStep.resetPasswordStep,
         email,
       );
-      const destination = result.nextStep.codeDeliveryDetails.destination?.trim();
+      const destination =
+        result.nextStep.codeDeliveryDetails.destination?.trim();
 
       setConfirmResetForm({
         confirmationCode: "",
@@ -501,7 +506,8 @@ function LocalAuthShell({
 
     try {
       const result = await resetPassword({ username });
-      const destination = result.nextStep.codeDeliveryDetails.destination?.trim();
+      const destination =
+        result.nextStep.codeDeliveryDetails.destination?.trim();
       failAuthRequest(
         {
           message: destination
@@ -592,7 +598,7 @@ function LocalAuthShell({
     }
   }
 
-  async function handleSignOut() {
+  async function _handleSignOut() {
     await signOut();
     setUser(null);
     openSignIn(authState.email, {
@@ -606,10 +612,7 @@ function LocalAuthShell({
       case "loading":
         return (
           <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading
-              eyebrow="Sign in"
-              title="Checking your session."
-            />
+            <SectionHeading eyebrow="Sign in" title="Checking your session." />
             <p className={statusCopyClassName}>
               Loading your account session before the app opens.
             </p>
@@ -623,7 +626,10 @@ function LocalAuthShell({
               eyebrow="Sign In"
               title="Sign in to your account."
             />
-            <form className="grid gap-4" onSubmit={(event) => void handleSignInSubmit(event)}>
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => void handleSignInSubmit(event)}
+            >
               <Field label="Email">
                 <Input
                   autoComplete="email"
@@ -686,7 +692,10 @@ function LocalAuthShell({
               eyebrow="Sign Up"
               title="Create your account."
             />
-            <form className="grid gap-4" onSubmit={(event) => void handleSignUpSubmit(event)}>
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => void handleSignUpSubmit(event)}
+            >
               <Field label="Email">
                 <Input
                   autoComplete="email"
@@ -933,15 +942,11 @@ function LocalAuthShell({
         return user ? (
           <AuthenticatedWorkspace
             activeSection={activeSection}
-            signOut={handleSignOut}
-            user={user}
+            viewerEmail={user.signInDetails?.loginId ?? user.username}
           />
         ) : (
           <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading
-              eyebrow="Sign in"
-              title="Finishing your session."
-            />
+            <SectionHeading eyebrow="Sign in" title="Finishing your session." />
             <p className={statusCopyClassName}>
               Your session is active, but your club data is still loading.
             </p>
@@ -957,20 +962,22 @@ function LocalAuthShell({
       {authState.screen !== "signedIn" ? (
         <>
           <div className="grid gap-3">
-            <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
+            <p className="text-accent text-[0.76rem] font-bold tracking-[0.18em] uppercase">
               BuzzerBeater Assistant Coach
             </p>
-            <h2 className="text-2xl font-semibold tracking-[-0.04em] text-ink">
+            <h2 className="text-ink text-2xl font-semibold tracking-[-0.04em]">
               Sign in, then connect your BuzzerBeater account.
             </h2>
             <p className={statusCopyClassName}>
               Your app login stays separate from your BuzzerBeater access key.
-              Once connected, this companion keeps your club view, opponent reads,
-              and league context ready for quick game prep.
+              Once connected, this companion keeps your club view, opponent
+              reads, and league context ready for quick game prep.
             </p>
           </div>
           {authState.notice ? (
-            <Alert tone={authState.notice.tone}>{authState.notice.message}</Alert>
+            <Alert tone={authState.notice.tone}>
+              {authState.notice.message}
+            </Alert>
           ) : null}
         </>
       ) : null}
@@ -981,83 +988,36 @@ function LocalAuthShell({
 
 export function DashboardApp({
   activeSection,
+  viewerEmail,
 }: {
   activeSection: WorkspaceSection;
+  viewerEmail: string | null;
 }) {
   return (
-    <main className="grid min-h-screen gap-6 p-4 sm:p-6 lg:grid-cols-[1.05fr,0.95fr]">
-      <Panel
-        as="section"
-        className="justify-between gap-8 rounded-panel p-8 sm:rounded-[2rem]"
-      >
-        <div className="grid gap-4">
-          <p className="text-[0.76rem] font-bold uppercase tracking-[0.18em] text-accent">
-            BuzzerBeater Assistant Coach
-          </p>
-          <h1 className="max-w-none text-[clamp(2.4rem,4vw,4.4rem)] font-semibold leading-none tracking-[-0.06em] text-ink lg:max-w-[10ch]">
-            One home for your club, your opponents, and your next decision.
-          </h1>
-          <p className="max-w-[56ch] text-base leading-8 text-ink-muted">
-            Keep roster context, league movement, opponent tendencies, and game
-            prep in a single companion built around the way managers actually
-            review teams.
-          </p>
-        </div>
-
-        <div className="grid gap-4">
-          <article className="grid gap-2 rounded-[1.35rem] border border-black/5 bg-surface-strong p-5">
-            <h2 className="text-lg font-semibold tracking-[-0.02em] text-ink">
-              Team-first layout
-            </h2>
-            <p className={statusCopyClassName}>
-              Start from your current club, then move naturally into roster, opponents,
-              league context, and game prep.
-            </p>
-          </article>
-          <article className="grid gap-2 rounded-[1.35rem] border border-black/5 bg-surface-strong p-5">
-            <h2 className="text-lg font-semibold tracking-[-0.02em] text-ink">
-              Opponent reads that matter
-            </h2>
-            <p className={statusCopyClassName}>
-              Review public rosters, recent box scores, effort clues, and tendency
-              snapshots before a matchup.
-            </p>
-          </article>
-          <article className="grid gap-2 rounded-[1.35rem] border border-black/5 bg-surface-strong p-5">
-            <h2 className="text-lg font-semibold tracking-[-0.02em] text-ink">
-              Built for quick prep
-            </h2>
-            <p className={statusCopyClassName}>
-              Jump from league table to player movement to matchup previews without
-              losing the current team context.
-            </p>
-          </article>
-        </div>
-      </Panel>
-
-      <Panel
-        as="section"
-        className="rounded-panel p-6 sm:rounded-[2rem]"
-      >
-        <LocalAuthShell activeSection={activeSection} />
-      </Panel>
+    <main className="grid min-h-screen gap-6 p-4 sm:p-6">
+      <AuthenticatedWorkspace
+        activeSection={activeSection}
+        viewerEmail={viewerEmail}
+      />
     </main>
   );
 }
 
 function AuthenticatedWorkspace({
   activeSection,
-  signOut,
-  user,
-}: AuthenticatedProps & { activeSection: WorkspaceSection }) {
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
+  viewerEmail,
+}: {
+  activeSection: WorkspaceSection;
+  viewerEmail: string | null;
+}) {
+  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(
+    null,
+  );
   const [connection, setConnection] = useState<BbConnectionRecord | null>(null);
   const [workspace, setWorkspace] = useState<DashboardWorkspace | null>(null);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [isLoadingBilling, setIsLoadingBilling] = useState(true);
   const [isLoadingConnection, setIsLoadingConnection] = useState(true);
-  const [isSigningOut, setIsSigningOut] = useState(false);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -1068,7 +1028,9 @@ function AuthenticatedWorkspace({
     setIsLoadingConnection(true);
     setConnectionError(null);
 
-    const { data, errors } = await client.models.BbConnection.list({ limit: 1 });
+    const { data, errors } = await client.models.BbConnection.list({
+      limit: 1,
+    });
 
     if (errors?.length) {
       setConnection(null);
@@ -1115,13 +1077,17 @@ function AuthenticatedWorkspace({
       return;
     }
 
-    const [teamHubResponse, scoutResponse, leagueIntelResponse, playerLabResponse] =
-      await Promise.all([
-        client.queries.getTeamHub(),
-        client.queries.getScoutWorkspace({}),
-        client.queries.getLeagueIntel(),
-        client.queries.getPlayerLab(),
-      ]);
+    const [
+      teamHubResponse,
+      scoutResponse,
+      leagueIntelResponse,
+      playerLabResponse,
+    ] = await Promise.all([
+      client.queries.getTeamHub(),
+      client.queries.getScoutWorkspace({}),
+      client.queries.getLeagueIntel(),
+      client.queries.getPlayerLab(),
+    ]);
 
     const allErrors = [
       ...(teamHubResponse.errors ?? []),
@@ -1178,7 +1144,7 @@ function AuthenticatedWorkspace({
   }, []);
 
   const connected = connection?.status === "CONNECTED";
-  const loginEmail = user?.signInDetails?.loginId ?? user?.username ?? "Signed in";
+  const loginEmail = viewerEmail ?? "Signed in";
 
   async function handleRefresh(): Promise<void> {
     await loadWorkspace(true);
@@ -1202,56 +1168,39 @@ function AuthenticatedWorkspace({
     setIsDisconnecting(false);
   }
 
-  async function handleSignOut(): Promise<void> {
-    if (!signOut) {
-      return;
-    }
-
-    setIsSigningOut(true);
-    setAuthError(null);
-
-    try {
-      await signOut();
-    } catch (error) {
-      setAuthError(formatAuthError(error));
-      setIsSigningOut(false);
-    }
-  }
-
   return (
     <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start">
       <WorkspaceRouteNav
         accountActions={
           <>
             <div className="grid gap-1">
-              <p className="m-0 text-[0.72rem] font-bold uppercase tracking-[0.16em] text-ink-muted">
+              <p className="text-ink-muted m-0 text-[0.72rem] font-bold tracking-[0.16em] uppercase">
                 Signed in
               </p>
-              <strong className="text-sm text-ink">{loginEmail}</strong>
+              <strong className="text-ink text-sm">{loginEmail}</strong>
             </div>
-            <Button
-              loading={isSigningOut}
-              onClick={() => void handleSignOut()}
-              variant="secondary"
+            <Link
+              className="border-border-soft bg-surface-strong text-ink hover:border-accent/25 hover:text-accent inline-flex min-h-11 items-center justify-center rounded-full border px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px"
+              href="/api/auth/sign-out"
             >
               Sign out
-            </Button>
+            </Link>
           </>
         }
         activeSection={activeSection}
-        currentTeamName={workspace?.home.team.teamName ?? connection?.teamName ?? null}
+        currentTeamName={
+          workspace?.home.team.teamName ?? connection?.teamName ?? null
+        }
         currentTeamRecord={
           workspace
             ? `Record ${formatRecord(workspace.home.team.record)}`
-            : connection?.leagueName ?? "Connect a club to see team context."
+            : (connection?.leagueName ?? "Connect a club to see team context.")
         }
         nextOpponentName={workspace?.home.nextMatch?.opponentTeamName ?? null}
         secondaryActions={<ThemeSelect />}
       />
 
       <main className="grid gap-4">
-        {authError ? <Alert>{authError}</Alert> : null}
-
         {isLoadingConnection ? (
           <Panel>
             <SectionHeading title="Checking your club link" titleAs="h4" />
@@ -1267,7 +1216,9 @@ function AuthenticatedWorkspace({
         ) : !connected || showCredentialForm ? (
           <ConnectionOnboarding
             connection={connection}
-            onCancel={connected ? () => setShowCredentialForm(false) : undefined}
+            onCancel={
+              connected ? () => setShowCredentialForm(false) : undefined
+            }
             onConnected={async (status) => {
               await loadConnection();
               if (status === "CONNECTED") {
@@ -1287,7 +1238,10 @@ function AuthenticatedWorkspace({
                     <StatusBadge tone={statusToneFromValue(connection.status)}>
                       {humanizeStatus(connection.status)}
                     </StatusBadge>
-                    <Button loading={isLoadingWorkspace} onClick={() => void handleRefresh()}>
+                    <Button
+                      loading={isLoadingWorkspace}
+                      onClick={() => void handleRefresh()}
+                    >
                       Refresh club data
                     </Button>
                     <Button
@@ -1326,9 +1280,14 @@ function AuthenticatedWorkspace({
                   value={formatTimestamp(connection.lastValidatedAt)}
                 />
                 <StatCard
-                  detail={connection.lastSyncError ?? "Your latest sync completed cleanly."}
+                  detail={
+                    connection.lastSyncError ??
+                    "Your latest sync completed cleanly."
+                  }
                   label="Latest refresh"
-                  value={formatTimestamp(workspace?.syncedAt ?? connection.lastSyncAt)}
+                  value={formatTimestamp(
+                    workspace?.syncedAt ?? connection.lastSyncAt,
+                  )}
                 />
               </div>
 
@@ -1339,7 +1298,8 @@ function AuthenticatedWorkspace({
               <Panel>
                 <SectionHeading title="Building your club view" titleAs="h4" />
                 <p className={statusCopyClassName}>
-                  Pulling your team, next opponent, league table, and player snapshots.
+                  Pulling your team, next opponent, league table, and player
+                  snapshots.
                 </p>
               </Panel>
             ) : workspace ? (
@@ -1352,9 +1312,13 @@ function AuthenticatedWorkspace({
               />
             ) : (
               <Panel>
-                <SectionHeading title="Your club is ready to load" titleAs="h4" />
+                <SectionHeading
+                  title="Your club is ready to load"
+                  titleAs="h4"
+                />
                 <p className={statusCopyClassName}>
-                  Refresh your club link or reconnect your BuzzerBeater account to start filling in the companion view.
+                  Refresh your club link or reconnect your BuzzerBeater account
+                  to start filling in the companion view.
                 </p>
               </Panel>
             )}
@@ -1408,7 +1372,9 @@ function ConnectionOnboarding({
     }
 
     if (result.data.status !== "CONNECTED") {
-      setSubmitError(result.data.lastSyncError ?? "Unable to validate those credentials.");
+      setSubmitError(
+        result.data.lastSyncError ?? "Unable to validate those credentials.",
+      );
       setIsSubmitting(false);
       await onConnected(result.data.status);
       return;
@@ -1424,7 +1390,8 @@ function ConnectionOnboarding({
         description={
           <>
             Enter your BuzzerBeater login name and access key. The app checks
-            them right away, stores the key securely, and starts your first club refresh.
+            them right away, stores the key securely, and starts your first club
+            refresh.
           </>
         }
         eyebrow="Connect BuzzerBeater"
@@ -1435,7 +1402,10 @@ function ConnectionOnboarding({
         }
       />
 
-      <form className="grid gap-4" onSubmit={(event) => void handleSubmit(event)}>
+      <form
+        className="grid gap-4"
+        onSubmit={(event) => void handleSubmit(event)}
+      >
         <Field label="BuzzerBeater login name">
           <Input
             onChange={(event) =>
@@ -1501,29 +1471,31 @@ function WorkspaceDashboard({
   );
   const [scoutError, setScoutError] = useState<string | null>(null);
   const [isLoadingScout, setIsLoadingScout] = useState(false);
-  const [boxscoreDetails, setBoxscoreDetails] = useState<MatchBoxscorePayload | null>(
-    null,
-  );
+  const [boxscoreDetails, setBoxscoreDetails] =
+    useState<MatchBoxscorePayload | null>(null);
   const [boxscoreError, setBoxscoreError] = useState<string | null>(null);
   const [loadingMatchId, setLoadingMatchId] = useState<string | null>(null);
-  const [playerTrend, setPlayerTrend] = useState<PlayerTrendPayload | null>(null);
+  const [playerTrend, setPlayerTrend] = useState<PlayerTrendPayload | null>(
+    null,
+  );
   const [playerTrendError, setPlayerTrendError] = useState<string | null>(null);
-  const [loadingTrendPlayerId, setLoadingTrendPlayerId] = useState<string | null>(
-    null,
-  );
-  const [salaryProjection, setSalaryProjection] = useState<SalaryProjection | null>(
-    null,
-  );
-  const [salaryProjectionError, setSalaryProjectionError] = useState<string | null>(
-    null,
-  );
-  const [loadingSalaryPlayerId, setLoadingSalaryPlayerId] = useState<string | null>(
-    null,
-  );
+  const [loadingTrendPlayerId, setLoadingTrendPlayerId] = useState<
+    string | null
+  >(null);
+  const [salaryProjection, setSalaryProjection] =
+    useState<SalaryProjection | null>(null);
+  const [salaryProjectionError, setSalaryProjectionError] = useState<
+    string | null
+  >(null);
+  const [loadingSalaryPlayerId, setLoadingSalaryPlayerId] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     setScout(workspace.scout);
-    setSelectedScoutTeamId(workspace.scout.requestedTeamId ?? workspace.scout.teamId ?? "");
+    setSelectedScoutTeamId(
+      workspace.scout.requestedTeamId ?? workspace.scout.teamId ?? "",
+    );
     setScoutError(null);
   }, [workspace.scout]);
 
@@ -1531,7 +1503,8 @@ function WorkspaceDashboard({
     ...workspace,
     scout,
   };
-  const billingPlanId = billingSummary?.planId === "premium" ? "premium" : "free";
+  const billingPlanId =
+    billingSummary?.planId === "premium" ? "premium" : "free";
   const canUsePredictions = billingSummary
     ? hasFeature(billingPlanId, "predictions")
     : false;
@@ -1680,12 +1653,16 @@ function WorkspaceDashboard({
                       className={listItemClassName}
                       key={player.playerId ?? player.fullName}
                     >
-                      <strong className="text-sm text-ink">{player.fullName}</strong>
-                      <span className={statusCopyClassName}>{formatPlayerMeta(player)}</span>
+                      <strong className="text-ink text-sm">
+                        {player.fullName}
+                      </strong>
+                      <span className={statusCopyClassName}>
+                        {formatPlayerMeta(player)}
+                      </span>
                     </li>
                   ))
                 ) : (
-                  <li className="text-sm text-ink-muted">
+                  <li className="text-ink-muted text-sm">
                     No rotation snapshot is available yet.
                   </li>
                 )}
@@ -1699,10 +1676,13 @@ function WorkspaceDashboard({
                   home.recentMatches.map((match) => (
                     <li
                       className={listRowClassName}
-                      key={match.matchId ?? `${match.startTime}-${match.opponentTeamName}`}
+                      key={
+                        match.matchId ??
+                        `${match.startTime}-${match.opponentTeamName}`
+                      }
                     >
                       <div className={listCopyClassName}>
-                        <strong className="text-sm text-ink">
+                        <strong className="text-ink text-sm">
                           {match.opponentTeamName ?? "Unknown opponent"}
                         </strong>
                         <span className={statusCopyClassName}>
@@ -1712,19 +1692,23 @@ function WorkspaceDashboard({
                       {match.matchId && match.hasBoxscore ? (
                         <Button
                           loading={loadingMatchId === match.matchId}
-                          onClick={() => void handleLoadBoxscore(match.matchId ?? "")}
+                          onClick={() =>
+                            void handleLoadBoxscore(match.matchId ?? "")
+                          }
                           size="sm"
                           variant="secondary"
                         >
                           Boxscore
                         </Button>
                       ) : (
-                        <span className={mutedMetaClassName}>Box score not ready</span>
+                        <span className={mutedMetaClassName}>
+                          Box score not ready
+                        </span>
                       )}
                     </li>
                   ))
                 ) : (
-                  <li className="text-sm text-ink-muted">
+                  <li className="text-ink-muted text-sm">
                     No completed games are ready yet.
                   </li>
                 )}
@@ -1805,7 +1789,9 @@ function WorkspaceDashboard({
               <>
                 <Field className="w-full md:min-w-80" label="View team">
                   <Select
-                    onChange={(event) => setSelectedScoutTeamId(event.target.value)}
+                    onChange={(event) =>
+                      setSelectedScoutTeamId(event.target.value)
+                    }
                     value={selectedScoutTeamId}
                   >
                     <option value="">Select a league team</option>
@@ -1853,7 +1839,10 @@ function WorkspaceDashboard({
                 <StatCard
                   detail="Planning tools stay locked to your current club."
                   label="Selected team ID"
-                  value={scout.summary.matchupPerspective.opponentTeamId ?? "Unavailable"}
+                  value={
+                    scout.summary.matchupPerspective.opponentTeamId ??
+                    "Unavailable"
+                  }
                 />
               </div>
 
@@ -1872,24 +1861,34 @@ function WorkspaceDashboard({
                         className={listItemClassName}
                         key={player.playerId ?? player.fullName}
                       >
-                        <strong className="text-sm text-ink">{player.fullName}</strong>
-                        <span className={statusCopyClassName}>{formatPlayerMeta(player)}</span>
+                        <strong className="text-ink text-sm">
+                          {player.fullName}
+                        </strong>
+                        <span className={statusCopyClassName}>
+                          {formatPlayerMeta(player)}
+                        </span>
                       </li>
                     ))}
                   </ul>
                 </Panel>
 
                 <Panel as="article" padding="sm" variant="solid">
-                  <SectionHeading title="Recent games and effort clues" titleAs="h4" />
+                  <SectionHeading
+                    title="Recent games and effort clues"
+                    titleAs="h4"
+                  />
                   <ul className={listClassName}>
                     {scout.summary.recentGames.length ? (
                       scout.summary.recentGames.map((match) => (
                         <li
                           className={listRowClassName}
-                          key={match.matchId ?? `${match.startTime}-${match.opponentTeamName}`}
+                          key={
+                            match.matchId ??
+                            `${match.startTime}-${match.opponentTeamName}`
+                          }
                         >
                           <div className={listCopyClassName}>
-                            <strong className="text-sm text-ink">
+                            <strong className="text-ink text-sm">
                               {match.opponentTeamName ?? "Unknown opponent"}
                             </strong>
                             <span className={statusCopyClassName}>
@@ -1902,19 +1901,23 @@ function WorkspaceDashboard({
                           {match.matchId && match.hasBoxscore ? (
                             <Button
                               loading={loadingMatchId === match.matchId}
-                              onClick={() => void handleLoadBoxscore(match.matchId ?? "")}
+                              onClick={() =>
+                                void handleLoadBoxscore(match.matchId ?? "")
+                              }
                               size="sm"
                               variant="secondary"
                             >
                               Boxscore
                             </Button>
                           ) : (
-                            <span className={mutedMetaClassName}>Box score not ready</span>
+                            <span className={mutedMetaClassName}>
+                              Box score not ready
+                            </span>
                           )}
                         </li>
                       ))
                     ) : (
-                      <li className="text-sm text-ink-muted">
+                      <li className="text-ink-muted text-sm">
                         No recent games are available yet.
                       </li>
                     )}
@@ -1950,7 +1953,9 @@ function WorkspaceDashboard({
                           <TableCell>{formatCurrency(player.salary)}</TableCell>
                           <TableCell>{player.gameShape ?? "N/A"}</TableCell>
                           <TableCell>{player.dmi ?? "N/A"}</TableCell>
-                          <TableCell>{formatInjury(player.injuryWeeks)}</TableCell>
+                          <TableCell>
+                            {formatInjury(player.injuryWeeks)}
+                          </TableCell>
                         </tr>
                       ))
                     ) : (
@@ -1965,7 +1970,10 @@ function WorkspaceDashboard({
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Recent matchups with your club" titleAs="h4" />
+                <SectionHeading
+                  title="Recent matchups with your club"
+                  titleAs="h4"
+                />
                 <ul className={listClassName}>
                   {scout.recentMatchups.length ? (
                     scout.recentMatchups.map((match) => (
@@ -1974,7 +1982,7 @@ function WorkspaceDashboard({
                         key={`matchup-${match.matchId ?? match.startTime}`}
                       >
                         <div className={listCopyClassName}>
-                          <strong className="text-sm text-ink">
+                          <strong className="text-ink text-sm">
                             {match.opponentTeamName ?? "Unknown opponent"}
                           </strong>
                           <span className={statusCopyClassName}>
@@ -1984,19 +1992,23 @@ function WorkspaceDashboard({
                         {match.matchId && match.hasBoxscore ? (
                           <Button
                             loading={loadingMatchId === match.matchId}
-                            onClick={() => void handleLoadBoxscore(match.matchId ?? "")}
+                            onClick={() =>
+                              void handleLoadBoxscore(match.matchId ?? "")
+                            }
                             size="sm"
                             variant="secondary"
                           >
                             Boxscore
                           </Button>
                         ) : (
-                          <span className={mutedMetaClassName}>Box score not ready</span>
+                          <span className={mutedMetaClassName}>
+                            Box score not ready
+                          </span>
                         )}
                       </li>
                     ))
                   ) : (
-                    <li className="text-sm text-ink-muted">
+                    <li className="text-ink-muted text-sm">
                       No recent head-to-head history is ready yet.
                     </li>
                   )}
@@ -2015,7 +2027,9 @@ function WorkspaceDashboard({
         <Panel>
           <SectionHeading
             eyebrow="Box Score"
-            title={boxscoreDetails?.opponentTeamName ?? "Saved box score detail"}
+            title={
+              boxscoreDetails?.opponentTeamName ?? "Saved box score detail"
+            }
           />
           {boxscoreError ? <Alert>{boxscoreError}</Alert> : null}
           {boxscoreDetails ? (
@@ -2024,34 +2038,34 @@ function WorkspaceDashboard({
                 <SectionHeading title="Strategy snapshot" titleAs="h4" />
                 <dl className="grid gap-3 sm:grid-cols-2">
                   <div className="grid gap-1">
-                    <dt className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Your offense
                     </dt>
-                    <dd className="m-0 font-semibold text-ink">
+                    <dd className="text-ink m-0 font-semibold">
                       {boxscoreDetails.offStrategy ?? "N/A"}
                     </dd>
                   </div>
                   <div className="grid gap-1">
-                    <dt className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Your defense
                     </dt>
-                    <dd className="m-0 font-semibold text-ink">
+                    <dd className="text-ink m-0 font-semibold">
                       {boxscoreDetails.defStrategy ?? "N/A"}
                     </dd>
                   </div>
                   <div className="grid gap-1">
-                    <dt className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Opponent offense
                     </dt>
-                    <dd className="m-0 font-semibold text-ink">
+                    <dd className="text-ink m-0 font-semibold">
                       {boxscoreDetails.opponentOffStrategy ?? "N/A"}
                     </dd>
                   </div>
                   <div className="grid gap-1">
-                    <dt className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Opponent defense
                     </dt>
-                    <dd className="m-0 font-semibold text-ink">
+                    <dd className="text-ink m-0 font-semibold">
                       {boxscoreDetails.opponentDefStrategy ?? "N/A"}
                     </dd>
                   </div>
@@ -2062,13 +2076,13 @@ function WorkspaceDashboard({
                 <SectionHeading title="Ratings snapshot" titleAs="h4" />
                 <div className="overflow-x-auto">
                   <div className={ratingGridClassName}>
-                    <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Metric
                     </div>
-                    <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       You
                     </div>
-                    <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Opponent
                     </div>
                     {renderBoxscoreMetricRows(
@@ -2083,13 +2097,13 @@ function WorkspaceDashboard({
                 <SectionHeading title="Efficiency snapshot" titleAs="h4" />
                 <div className="overflow-x-auto">
                   <div className={ratingGridClassName}>
-                    <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Metric
                     </div>
-                    <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       You
                     </div>
-                    <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                       Opponent
                     </div>
                     {renderBoxscoreMetricRows(
@@ -2166,7 +2180,12 @@ function WorkspaceDashboard({
           <div className={twoColumnGridClassName}>
             {workspace.leagueIntel.standings.length ? (
               workspace.leagueIntel.standings.map((conference) => (
-                <Panel as="article" key={conference.index} padding="sm" variant="solid">
+                <Panel
+                  as="article"
+                  key={conference.index}
+                  padding="sm"
+                  variant="solid"
+                >
                   <SectionHeading
                     title={`Conference ${conference.index + 1}`}
                     titleAs="h4"
@@ -2188,7 +2207,9 @@ function WorkspaceDashboard({
                           <TableCell>
                             {team.wins ?? 0}-{team.losses ?? 0}
                           </TableCell>
-                          <TableCell>{formatSigned(team.pointMargin)}</TableCell>
+                          <TableCell>
+                            {formatSigned(team.pointMargin)}
+                          </TableCell>
                         </tr>
                       ))}
                     </tbody>
@@ -2197,7 +2218,9 @@ function WorkspaceDashboard({
               ))
             ) : (
               <Panel as="article" padding="sm" variant="solid">
-                <p className={statusCopyClassName}>No standings snapshot is ready yet.</p>
+                <p className={statusCopyClassName}>
+                  No standings snapshot is ready yet.
+                </p>
               </Panel>
             )}
           </div>
@@ -2211,7 +2234,9 @@ function WorkspaceDashboard({
             title="Trend lines, salary movement, and roster calls"
           />
           {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
-          {salaryProjectionError ? <Alert>{salaryProjectionError}</Alert> : null}
+          {salaryProjectionError ? (
+            <Alert>{salaryProjectionError}</Alert>
+          ) : null}
           <TableShell>
             <thead>
               <tr>
@@ -2288,7 +2313,8 @@ function WorkspaceDashboard({
                 )
               ) : (
                 <p className={statusCopyClassName}>
-                  Load a player trend to inspect weekly salary, DMI, and availability changes.
+                  Load a player trend to inspect weekly salary, DMI, and
+                  availability changes.
                 </p>
               )}
             </Panel>
@@ -2313,14 +2339,20 @@ function WorkspaceDashboard({
                     value={formatCurrency(salaryProjection.projectedSalary)}
                   />
                   <StatCard
-                    detail={salaryProjection.flagReason ?? "No flag guidance available."}
+                    detail={
+                      salaryProjection.flagReason ??
+                      "No flag guidance available."
+                    }
                     label="Flag fit"
-                    value={salaryProjection.isFlagTarget ? "Aligned" : "Not aligned"}
+                    value={
+                      salaryProjection.isFlagTarget ? "Aligned" : "Not aligned"
+                    }
                   />
                 </div>
               ) : (
                 <p className={statusCopyClassName}>
-                  Load a salary projection to estimate next-week movement and flag fit.
+                  Load a salary projection to estimate next-week movement and
+                  flag fit.
                 </p>
               )}
             </Panel>
@@ -2337,7 +2369,7 @@ function WorkspaceDashboard({
           />
           <Panel>
             <SectionHeading
-              description="Choose the look you want for your companion app. The selection is saved on this device."
+              description="Choose the look you want for your companion app. The selection is saved to your account."
               eyebrow="Appearance"
               title="Theme and account preferences"
             />
@@ -2369,16 +2401,14 @@ function formatEffortDelta(value: number | null | undefined) {
     return "Effort looked even";
   }
 
-  return value > 0
-    ? `Effort edge: +${value}`
-    : `Effort edge: ${value}`;
+  return value > 0 ? `Effort edge: +${value}` : `Effort edge: ${value}`;
 }
 
 function renderTrendChips(prefix: string, values: Record<string, number>) {
   const entries = Object.entries(values);
   if (!entries.length) {
     return (
-      <span className="inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold text-ink-muted">
+      <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
         {prefix}: no data
       </span>
     );
@@ -2386,7 +2416,7 @@ function renderTrendChips(prefix: string, values: Record<string, number>) {
 
   return entries.map(([label, count]) => (
     <span
-      className="inline-flex rounded-full bg-note-bg px-3 py-1.5 text-sm font-semibold text-note"
+      className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
       key={`${prefix}-${label}`}
     >
       {prefix}: {label} ({count})
@@ -2399,7 +2429,10 @@ function renderBoxscoreMetricRows(
   right: Record<string, unknown> | null,
 ) {
   const keys = Array.from(
-    new Set([...(left ? Object.keys(left) : []), ...(right ? Object.keys(right) : [])]),
+    new Set([
+      ...(left ? Object.keys(left) : []),
+      ...(right ? Object.keys(right) : []),
+    ]),
   )
     .filter((key) => !key.startsWith("__"))
     .sort((leftKey, rightKey) => leftKey.localeCompare(rightKey));
@@ -2407,7 +2440,7 @@ function renderBoxscoreMetricRows(
   if (!keys.length) {
     return (
       <div className="contents" key="empty-metrics">
-        <span className="font-semibold text-ink">No cached metrics</span>
+        <span className="text-ink font-semibold">No cached metrics</span>
         <span className="text-ink-muted">-</span>
         <span className="text-ink-muted">-</span>
       </div>
@@ -2416,9 +2449,11 @@ function renderBoxscoreMetricRows(
 
   return keys.slice(0, 8).map((key) => (
     <div className="contents" key={key}>
-      <span className="font-semibold text-ink">{humanizeKey(key)}</span>
-      <span className="text-sm text-ink">{formatMetricValue(left?.[key])}</span>
-      <span className="text-sm text-ink">{formatMetricValue(right?.[key])}</span>
+      <span className="text-ink font-semibold">{humanizeKey(key)}</span>
+      <span className="text-ink text-sm">{formatMetricValue(left?.[key])}</span>
+      <span className="text-ink text-sm">
+        {formatMetricValue(right?.[key])}
+      </span>
     </div>
   ));
 }
@@ -2426,7 +2461,7 @@ function renderBoxscoreMetricRows(
 function renderBoxscoreContext(boxscore: Record<string, unknown> | null) {
   if (!boxscore) {
     return (
-      <span className="inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold text-ink-muted">
+      <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
         No raw boxscore context
       </span>
     );
@@ -2437,13 +2472,17 @@ function renderBoxscoreContext(boxscore: Record<string, unknown> | null) {
   const tags = [
     homeTeam?.teamName ? `Home: ${String(homeTeam.teamName)}` : null,
     awayTeam?.teamName ? `Away: ${String(awayTeam.teamName)}` : null,
-    boxscore.effortDelta !== undefined ? `Effort Δ: ${String(boxscore.effortDelta)}` : null,
-    boxscore.neutral !== undefined ? `Neutral: ${String(boxscore.neutral)}` : null,
+    boxscore.effortDelta !== undefined
+      ? `Effort Δ: ${String(boxscore.effortDelta)}`
+      : null,
+    boxscore.neutral !== undefined
+      ? `Neutral: ${String(boxscore.neutral)}`
+      : null,
   ].filter((value): value is string => Boolean(value));
 
   if (!tags.length) {
     return (
-      <span className="inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold text-ink-muted">
+      <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
         No raw boxscore context
       </span>
     );
@@ -2451,7 +2490,7 @@ function renderBoxscoreContext(boxscore: Record<string, unknown> | null) {
 
   return tags.map((tag) => (
     <span
-      className="inline-flex rounded-full bg-note-bg px-3 py-1.5 text-sm font-semibold text-note"
+      className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
       key={tag}
     >
       {tag}
@@ -2518,7 +2557,9 @@ function formatTimestamp(value: string | null | undefined): string {
   }).format(date);
 }
 
-function formatRecord(record: { wins: number | null; losses: number | null } | null): string {
+function formatRecord(
+  record: { wins: number | null; losses: number | null } | null,
+): string {
   if (!record) {
     return "No record";
   }
@@ -2577,7 +2618,9 @@ function formatMatchResult(match: {
     return `${match.outcome ?? "PENDING"} • ${scoreline}`;
   }
 
-  return match.startTime ? formatTimestamp(match.startTime) : match.outcome ?? "PENDING";
+  return match.startTime
+    ? formatTimestamp(match.startTime)
+    : (match.outcome ?? "PENDING");
 }
 
 function formatMetricValue(value: unknown): string {

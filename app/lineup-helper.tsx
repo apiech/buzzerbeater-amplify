@@ -55,31 +55,46 @@ const ratingLabels: Array<{
 ];
 
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
-const twoColumnGridClassName = "grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,1fr)]";
+const twoColumnGridClassName =
+  "grid gap-4 2xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,1fr)]";
 const rankingsGridClassName = "grid gap-4 lg:grid-cols-2 xl:grid-cols-3";
 const EMPTY_ROSTER: LineupHelperRosterPlayer[] = [];
 
 export function LineupHelper() {
-  const [workspace, setWorkspace] = useState<DecodedLineupHelperWorkspace | null>(null);
-  const [evaluation, setEvaluation] = useState<LineupHelperEvaluation | null>(null);
+  const [workspace, setWorkspace] =
+    useState<DecodedLineupHelperWorkspace | null>(null);
+  const [evaluation, setEvaluation] = useState<LineupHelperEvaluation | null>(
+    null,
+  );
   const [minuteMatrix, setMinuteMatrix] = useState<LineupMinuteMatrix>({});
   const [context, setContext] = useState<LineupHelperContext>(() =>
     normalizeHelperContext({}),
   );
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [workspaceLoadVersion, setWorkspaceLoadVersion] = useState(0);
 
   const roster = workspace?.roster ?? EMPTY_ROSTER;
   const validation = validateLineupMatrix(roster, minuteMatrix);
+  const availableRosterCount = roster.filter(
+    (player) => player.available,
+  ).length;
+  const hasGeneratedLineup = Boolean(workspace?.defaultAssignments.length);
+  const canEvaluate =
+    Boolean(workspace) &&
+    availableRosterCount > 0 &&
+    validation.errors.length === 0;
+  const visibleEvaluation = canEvaluate ? evaluation : null;
 
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
       setIsLoadingWorkspace(true);
-      setLoadError(null);
+      setWorkspaceError(null);
+      setEvaluationError(null);
 
       const response = await client.queries.getLineupHelperWorkspace();
       if (cancelled) {
@@ -90,7 +105,7 @@ export function LineupHelper() {
         setWorkspace(null);
         setEvaluation(null);
         setMinuteMatrix({});
-        setLoadError(formatAmplifyErrors(response.errors));
+        setWorkspaceError(formatAmplifyErrors(response.errors));
         setIsLoadingWorkspace(false);
         return;
       }
@@ -105,6 +120,8 @@ export function LineupHelper() {
           nextWorkspace.defaultAssignments,
         ),
       );
+      setWorkspaceError(null);
+      setEvaluationError(null);
       setIsLoadingWorkspace(false);
     }
 
@@ -121,8 +138,16 @@ export function LineupHelper() {
 
     const nextRoster = workspace.roster;
     const nextValidation = validateLineupMatrix(nextRoster, minuteMatrix);
-    if (!nextRoster.length || nextValidation.errors.length) {
+    if (!nextRoster.length || !nextRoster.some((player) => player.available)) {
       setIsEvaluating(false);
+      setEvaluationError(null);
+      setEvaluation(null);
+      return;
+    }
+
+    if (nextValidation.errors.length) {
+      setIsEvaluating(false);
+      setEvaluationError(null);
       return;
     }
 
@@ -132,7 +157,9 @@ export function LineupHelper() {
         setIsEvaluating(true);
         const response = await client.queries.evaluateLineupHelper({
           roster: encodeGraphqlJsonInput(nextRoster),
-          assignments: encodeGraphqlJsonInput(assignmentsFromMatrix(minuteMatrix)),
+          assignments: encodeGraphqlJsonInput(
+            assignmentsFromMatrix(minuteMatrix),
+          ),
           context: encodeGraphqlJsonInput(context),
         });
 
@@ -141,12 +168,13 @@ export function LineupHelper() {
         }
 
         if (response.errors?.length || !response.data) {
-          setLoadError(formatAmplifyErrors(response.errors));
+          setEvaluationError(formatAmplifyErrors(response.errors));
           setIsEvaluating(false);
           return;
         }
 
         setEvaluation(decodeLineupHelperEvaluation(response.data));
+        setEvaluationError(null);
         setIsEvaluating(false);
       })();
     }, 260);
@@ -157,11 +185,16 @@ export function LineupHelper() {
     };
   }, [context, minuteMatrix, workspace]);
 
-  function updateMinute(playerId: string, position: PositionCode, value: string) {
+  function updateMinute(
+    playerId: string,
+    position: PositionCode,
+    value: string,
+  ) {
     setMinuteMatrix((current) => ({
       ...current,
       [playerId]: {
-        ...(current[playerId] ?? Object.fromEntries(LINEUP_POSITIONS.map((slot) => [slot, 0]))),
+        ...(current[playerId] ??
+          Object.fromEntries(LINEUP_POSITIONS.map((slot) => [slot, 0]))),
         [position]: coerceMinuteValue(value),
       },
     }));
@@ -172,9 +205,13 @@ export function LineupHelper() {
       return;
     }
     setMinuteMatrix(
-      assignmentMatrixFromLineup(workspace.roster, workspace.defaultAssignments),
+      assignmentMatrixFromLineup(
+        workspace.roster,
+        workspace.defaultAssignments,
+      ),
     );
     setEvaluation(workspace.evaluation);
+    setEvaluationError(null);
   }
 
   return (
@@ -190,11 +227,11 @@ export function LineupHelper() {
               Refresh cache
             </Button>
             <Button
-              disabled={!workspace}
+              disabled={!workspace || !hasGeneratedLineup}
               onClick={handleAutofill}
               variant="secondary"
             >
-              Autofill lineup
+              {hasGeneratedLineup ? "Autofill lineup" : "No generated lineup"}
             </Button>
           </div>
         }
@@ -203,287 +240,372 @@ export function LineupHelper() {
         titleAs="h4"
       />
 
-      {loadError ? <Alert>{loadError}</Alert> : null}
-      {validation.errors.length ? (
-        <Alert>
-          {validation.errors.join(" ")}
-        </Alert>
+      {isLoadingWorkspace && !workspace ? (
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading title="Loading lineup workspace" titleAs="h5" />
+          <p className={statusCopyClassName}>
+            Pulling your cached roster, available snapshots, and default
+            CoachParrot lineup.
+          </p>
+        </Panel>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatCard
-          detail={workspace?.syncedAt ? `Cache ${formatTimestamp(workspace.syncedAt)}` : "Cache unavailable"}
-          label="Roster rows"
-          value={roster.length}
-        />
-        <StatCard
-          detail={`${validation.teamTotal}/240 minutes`}
-          label="Team total"
-          value={validation.teamTotal}
-        />
-        <StatCard
-          detail="Unavailable players stay disabled"
-          label="Snapshot warnings"
-          value={workspace?.snapshotWarnings.length ?? 0}
-        />
-        <StatCard
-          detail={isEvaluating ? "Recomputing ratings" : "Latest evaluation"}
-          label="Engine status"
-          value={isEvaluating ? "Updating" : evaluation ? "Ready" : "Idle"}
-        />
-      </div>
+      {!isLoadingWorkspace && workspaceError && !workspace ? (
+        <Panel as="article" padding="sm" variant="danger">
+          <SectionHeading title="Lineup helper unavailable" titleAs="h5" />
+          <p className={statusCopyClassName}>{workspaceError}</p>
+        </Panel>
+      ) : null}
 
-      <div className={twoColumnGridClassName}>
-        <div className="grid gap-4">
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading title="Context" titleAs="h5" />
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Field label="Offense">
-                <Select
-                  onChange={(event) =>
-                    setContext((current) => ({
-                      ...current,
-                      offense: event.target.value,
-                    }))
-                  }
-                  value={context.offense}
-                >
-                  {(workspace?.availableOffenses ?? []).map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Defense">
-                <Select
-                  onChange={(event) =>
-                    setContext((current) => ({
-                      ...current,
-                      defense: event.target.value,
-                    }))
-                  }
-                  value={context.defense}
-                >
-                  {(workspace?.availableDefenses ?? []).map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Location">
-                <Select
-                  onChange={(event) =>
-                    setContext((current) => ({
-                      ...current,
-                      homeCourt: event.target.value,
-                    }))
-                  }
-                  value={context.homeCourt}
-                >
-                  {(workspace?.availableLocations ?? []).map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label="Enthusiasm">
-                <Select
-                  onChange={(event) =>
-                    setContext((current) => ({
-                      ...current,
-                      enthusiasm: coerceEnthusiasm(event.target.value),
-                    }))
-                  }
-                  value={String(context.enthusiasm)}
-                >
-                  {Array.from({ length: 12 }, (_, index) => 12 - index).map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-          </Panel>
+      {workspace ? (
+        <>
+          {availableRosterCount === 0 ? (
+            <Alert>
+              The roster loaded, but no canonical skill snapshots are available
+              yet. Ratings and autofill stay disabled until snapshots are
+              synced.
+            </Alert>
+          ) : null}
+          {validation.errors.length ? (
+            <Alert>{validation.errors.join(" ")}</Alert>
+          ) : null}
+          {evaluationError ? <Alert>{evaluationError}</Alert> : null}
 
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading title="Minute grid" titleAs="h5" />
-            <TableShell>
-              <thead>
-                <tr>
-                  <TableHeadCell>Player</TableHeadCell>
-                  <TableHeadCell>Role</TableHeadCell>
-                  <TableHeadCell>Snapshot</TableHeadCell>
-                  {LINEUP_POSITIONS.map((position) => (
-                    <TableHeadCell key={position}>{position}</TableHeadCell>
-                  ))}
-                  <TableHeadCell>Total</TableHeadCell>
-                </tr>
-              </thead>
-              <tbody>
-                {roster.map((player) => {
-                  const rowMinutes = minuteMatrix[player.playerId] ?? emptyMinuteMatrix([player])[player.playerId];
-                  const totalMinutes = LINEUP_POSITIONS.reduce(
-                    (sum, position) => sum + rowMinutes[position],
-                    0,
-                  );
-                  return (
-                    <tr key={player.playerId}>
-                      <TableCell>
-                        <div className="grid gap-1">
-                          <strong>{player.fullName}</strong>
-                          <span className={statusCopyClassName}>
-                            {player.bestPosition ?? "Flex"} • {formatCurrency(player.salary)} •{" "}
-                            {skillHeadline(player)}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="grid gap-2">
-                          <StatusBadge tone={player.available ? "success" : "danger"}>
-                            {player.available ? "Ready" : "Unavailable"}
-                          </StatusBadge>
-                          <span className="text-xs text-ink-muted">
-                            {player.gameShape ?? "No shape"} • Age {player.age ?? "N/A"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="grid gap-1">
-                          <span className="text-sm text-ink">
-                            {player.snapshotWeekKey ?? "No snapshot"}
-                          </span>
-                          <span className="text-xs text-ink-muted">
-                            {player.snapshotWarning ?? formatTimestamp(player.snapshotCapturedAt)}
-                          </span>
-                        </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              detail={
+                workspace.syncedAt
+                  ? `Cache ${formatTimestamp(workspace.syncedAt)}`
+                  : "Cache unavailable"
+              }
+              label="Roster rows"
+              value={roster.length}
+            />
+            <StatCard
+              detail={`${validation.teamTotal}/240 minutes`}
+              label="Team total"
+              value={validation.teamTotal}
+            />
+            <StatCard
+              detail="Unavailable players stay disabled"
+              label="Snapshot warnings"
+              value={workspace.snapshotWarnings.length}
+            />
+            <StatCard
+              detail={
+                isEvaluating ? "Recomputing ratings" : "Latest evaluation"
+              }
+              label="Engine status"
+              value={
+                isEvaluating
+                  ? "Updating"
+                  : visibleEvaluation
+                    ? "Ready"
+                    : "Unavailable"
+              }
+            />
+          </div>
+
+          <div className={twoColumnGridClassName}>
+            <div className="grid gap-4">
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading title="Context" titleAs="h5" />
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <Field label="Offense">
+                    <Select
+                      disabled={availableRosterCount === 0}
+                      onChange={(event) =>
+                        setContext((current) => ({
+                          ...current,
+                          offense: event.target.value,
+                        }))
+                      }
+                      value={context.offense}
+                    >
+                      {workspace.availableOffenses.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Defense">
+                    <Select
+                      disabled={availableRosterCount === 0}
+                      onChange={(event) =>
+                        setContext((current) => ({
+                          ...current,
+                          defense: event.target.value,
+                        }))
+                      }
+                      value={context.defense}
+                    >
+                      {workspace.availableDefenses.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Location">
+                    <Select
+                      disabled={availableRosterCount === 0}
+                      onChange={(event) =>
+                        setContext((current) => ({
+                          ...current,
+                          homeCourt: event.target.value,
+                        }))
+                      }
+                      value={context.homeCourt}
+                    >
+                      {workspace.availableLocations.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Enthusiasm">
+                    <Select
+                      disabled={availableRosterCount === 0}
+                      onChange={(event) =>
+                        setContext((current) => ({
+                          ...current,
+                          enthusiasm: coerceEnthusiasm(event.target.value),
+                        }))
+                      }
+                      value={String(context.enthusiasm)}
+                    >
+                      {Array.from({ length: 12 }, (_, index) => 12 - index).map(
+                        (value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ),
+                      )}
+                    </Select>
+                  </Field>
+                </div>
+              </Panel>
+
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading title="Minute grid" titleAs="h5" />
+                <TableShell>
+                  <thead>
+                    <tr>
+                      <TableHeadCell>Player</TableHeadCell>
+                      <TableHeadCell>Role</TableHeadCell>
+                      <TableHeadCell>Snapshot</TableHeadCell>
+                      {LINEUP_POSITIONS.map((position) => (
+                        <TableHeadCell key={position}>{position}</TableHeadCell>
+                      ))}
+                      <TableHeadCell>Total</TableHeadCell>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roster.map((player) => {
+                      const rowMinutes =
+                        minuteMatrix[player.playerId] ??
+                        emptyMinuteMatrix([player])[player.playerId];
+                      const totalMinutes = LINEUP_POSITIONS.reduce(
+                        (sum, position) => sum + rowMinutes[position],
+                        0,
+                      );
+                      return (
+                        <tr key={player.playerId}>
+                          <TableCell>
+                            <div className="grid gap-1">
+                              <strong>{player.fullName}</strong>
+                              <span className={statusCopyClassName}>
+                                {player.bestPosition ?? "Flex"} •{" "}
+                                {formatCurrency(player.salary)} •{" "}
+                                {skillHeadline(player)}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="grid gap-2">
+                              <StatusBadge
+                                tone={player.available ? "success" : "danger"}
+                              >
+                                {player.available ? "Ready" : "Unavailable"}
+                              </StatusBadge>
+                              <span className="text-ink-muted text-xs">
+                                {player.gameShape ?? "No shape"} • Age{" "}
+                                {player.age ?? "N/A"}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="grid gap-1">
+                              <span className="text-ink text-sm">
+                                {player.snapshotWeekKey ?? "No snapshot"}
+                              </span>
+                              <span className="text-ink-muted text-xs">
+                                {player.snapshotWarning ??
+                                  formatTimestamp(player.snapshotCapturedAt)}
+                              </span>
+                            </div>
+                          </TableCell>
+                          {LINEUP_POSITIONS.map((position) => (
+                            <TableCell key={`${player.playerId}-${position}`}>
+                              <Input
+                                disabled={!player.available}
+                                inputMode="numeric"
+                                max={48}
+                                min={0}
+                                onChange={(event) =>
+                                  updateMinute(
+                                    player.playerId,
+                                    position,
+                                    event.target.value,
+                                  )
+                                }
+                                step={1}
+                                type="number"
+                                value={rowMinutes[position]}
+                              />
+                            </TableCell>
+                          ))}
+                          <TableCell>
+                            <strong>{totalMinutes}</strong>
+                          </TableCell>
+                        </tr>
+                      );
+                    })}
+                    <tr>
+                      <TableCell className="text-ink font-semibold" colSpan={3}>
+                        Position totals
                       </TableCell>
                       {LINEUP_POSITIONS.map((position) => (
-                        <TableCell key={`${player.playerId}-${position}`}>
-                          <Input
-                            disabled={!player.available}
-                            inputMode="numeric"
-                            max={48}
-                            min={0}
-                            onChange={(event) =>
-                              updateMinute(player.playerId, position, event.target.value)
-                            }
-                            step={1}
-                            type="number"
-                            value={rowMinutes[position]}
-                          />
+                        <TableCell
+                          className="font-semibold"
+                          key={`totals-${position}`}
+                        >
+                          {validation.positionTotals[position]}
                         </TableCell>
                       ))}
-                      <TableCell>
-                        <strong>{totalMinutes}</strong>
+                      <TableCell className="font-semibold">
+                        {validation.teamTotal}
                       </TableCell>
                     </tr>
-                  );
-                })}
-                <tr>
-                  <TableCell className="font-semibold text-ink" colSpan={3}>
-                    Position totals
-                  </TableCell>
-                  {LINEUP_POSITIONS.map((position) => (
-                    <TableCell className="font-semibold" key={`totals-${position}`}>
-                      {validation.positionTotals[position]}
-                    </TableCell>
-                  ))}
-                  <TableCell className="font-semibold">{validation.teamTotal}</TableCell>
-                </tr>
-              </tbody>
-            </TableShell>
-          </Panel>
-        </div>
-
-        <div className="grid gap-4">
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading title="Ratings" titleAs="h5" />
-            <div className="grid gap-4 sm:grid-cols-2">
-              {evaluation
-                ? ratingLabels.map((rating) => (
-                    <StatCard
-                      key={rating.key}
-                      detail={`${evaluation.ratingLabels[rating.key]} • ${evaluation.outputBandLabels[rating.key]}`}
-                      label={rating.label}
-                      value={Number(evaluation.roundedRatings[rating.key]).toFixed(1)}
-                    />
-                  ))
-                : ratingLabels.map((rating) => (
-                    <StatCard
-                      key={rating.key}
-                      detail="Waiting for a valid lineup"
-                      label={rating.label}
-                      value="--"
-                    />
-                  ))}
+                  </tbody>
+                </TableShell>
+              </Panel>
             </div>
-            {evaluation?.warnings.length ? (
-              <div className="grid gap-2">
-                <SectionHeading title="Warnings" titleAs="h5" />
-                {evaluation.warnings.map((warning) => (
-                  <Alert key={warning}>{warning}</Alert>
-                ))}
-              </div>
-            ) : null}
-          </Panel>
 
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading title="Position outputs" titleAs="h5" />
-            <TableShell compact>
-              <thead>
-                <tr>
-                  <TableHeadCell>Player</TableHeadCell>
-                  {LINEUP_POSITIONS.map((position) => (
-                    <TableHeadCell key={`output-${position}`}>{position}</TableHeadCell>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {roster.map((player) => (
-                  <tr key={`outputs-${player.playerId}`}>
-                    <TableCell>{player.fullName}</TableCell>
-                    {LINEUP_POSITIONS.map((position) => (
-                      <TableCell key={`${player.playerId}-output-${position}`}>
-                        {formatDecimal(
-                          evaluation?.playerPositionOutputs[player.playerId]?.[position] ?? null,
-                        )}
-                      </TableCell>
+            <div className="grid gap-4">
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading title="Ratings" titleAs="h5" />
+                <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-1">
+                  {visibleEvaluation
+                    ? ratingLabels.map((rating) => (
+                        <StatCard
+                          key={rating.key}
+                          detail={`${visibleEvaluation.ratingLabels[rating.key]} • ${visibleEvaluation.outputBandLabels[rating.key]}`}
+                          label={rating.label}
+                          value={Number(
+                            visibleEvaluation.roundedRatings[rating.key],
+                          ).toFixed(1)}
+                        />
+                      ))
+                    : ratingLabels.map((rating) => (
+                        <StatCard
+                          key={rating.key}
+                          detail={
+                            availableRosterCount === 0
+                              ? "Snapshots are required before ratings can be generated"
+                              : "Waiting for a valid lineup"
+                          }
+                          label={rating.label}
+                          value="--"
+                        />
+                      ))}
+                </div>
+                {visibleEvaluation?.warnings.length ? (
+                  <div className="grid gap-2">
+                    <SectionHeading title="Warnings" titleAs="h5" />
+                    {visibleEvaluation.warnings.map((warning) => (
+                      <Alert key={warning}>{warning}</Alert>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </TableShell>
-          </Panel>
-        </div>
-      </div>
+                  </div>
+                ) : null}
+              </Panel>
 
-      <Panel as="article" padding="sm" variant="solid">
-        <SectionHeading title="Depth chart rankings" titleAs="h5" />
-        <div className={rankingsGridClassName}>
-          {LINEUP_POSITIONS.map((position) => (
-            <div className="grid gap-3 rounded-card border border-black/8 bg-white/65 p-4" key={`rank-${position}`}>
-              <div className="flex items-center justify-between gap-3">
-                <strong className="text-base text-ink">{position}</strong>
-                <StatusBadge tone="note">
-                  {evaluation ? evaluation.rankings[position].length : 0} options
-                </StatusBadge>
-              </div>
-              <ol className="grid list-decimal gap-2 pl-5">
-                {(evaluation?.rankings[position] ?? []).slice(0, 5).map((entry) => (
-                  <li className="text-sm text-ink" key={`${position}-${entry.playerId}`}>
-                    <span className="font-semibold">{entry.name}</span>{" "}
-                    <span className="text-ink-muted">({formatDecimal(entry.output)})</span>
-                  </li>
-                ))}
-              </ol>
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading title="Position outputs" titleAs="h5" />
+                <TableShell compact>
+                  <thead>
+                    <tr>
+                      <TableHeadCell>Player</TableHeadCell>
+                      {LINEUP_POSITIONS.map((position) => (
+                        <TableHeadCell key={`output-${position}`}>
+                          {position}
+                        </TableHeadCell>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roster.map((player) => (
+                      <tr key={`outputs-${player.playerId}`}>
+                        <TableCell>{player.fullName}</TableCell>
+                        {LINEUP_POSITIONS.map((position) => (
+                          <TableCell
+                            key={`${player.playerId}-output-${position}`}
+                          >
+                            {formatDecimal(
+                              visibleEvaluation?.playerPositionOutputs[
+                                player.playerId
+                              ]?.[position] ?? null,
+                            )}
+                          </TableCell>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </TableShell>
+              </Panel>
             </div>
-          ))}
-        </div>
-      </Panel>
+          </div>
+
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading title="Depth chart rankings" titleAs="h5" />
+            <div className={rankingsGridClassName}>
+              {LINEUP_POSITIONS.map((position) => (
+                <div
+                  className="rounded-card grid gap-3 border border-black/8 bg-white/65 p-4"
+                  key={`rank-${position}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <strong className="text-ink text-base">{position}</strong>
+                    <StatusBadge tone="note">
+                      {visibleEvaluation
+                        ? visibleEvaluation.rankings[position].length
+                        : 0}{" "}
+                      options
+                    </StatusBadge>
+                  </div>
+                  <ol className="grid list-decimal gap-2 pl-5">
+                    {(visibleEvaluation?.rankings[position] ?? [])
+                      .slice(0, 5)
+                      .map((entry) => (
+                        <li
+                          className="text-ink text-sm"
+                          key={`${position}-${entry.playerId}`}
+                        >
+                          <span className="font-semibold">{entry.name}</span>{" "}
+                          <span className="text-ink-muted">
+                            ({formatDecimal(entry.output)})
+                          </span>
+                        </li>
+                      ))}
+                  </ol>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -505,21 +627,30 @@ function decodeLineupHelperWorkspace(
     snapshotWarnings: decodeGraphqlJsonPayload<
       Array<{ playerId: string; fullName: string; warning: string }>
     >(record.snapshotWarnings),
-    availableOffenses: decodeGraphqlJsonPayload<string[]>(record.availableOffenses),
-    availableDefenses: decodeGraphqlJsonPayload<string[]>(record.availableDefenses),
-    availableLocations: decodeGraphqlJsonPayload<string[]>(record.availableLocations),
+    availableOffenses: decodeGraphqlJsonPayload<string[]>(
+      record.availableOffenses,
+    ),
+    availableDefenses: decodeGraphqlJsonPayload<string[]>(
+      record.availableDefenses,
+    ),
+    availableLocations: decodeGraphqlJsonPayload<string[]>(
+      record.availableLocations,
+    ),
   };
 }
 
 function decodeLineupHelperEvaluation(
   record: LineupHelperEvaluationRecord,
-): LineupHelperEvaluation {
+): LineupHelperEvaluation | null {
   return decodeLineupHelperEvaluationFromJson(record);
 }
 
 function decodeLineupHelperEvaluationFromJson(
   value: unknown,
-): LineupHelperEvaluation {
+): LineupHelperEvaluation | null {
+  if (value == null) {
+    return null;
+  }
   const record = value as LineupHelperEvaluationRecord;
   return {
     context: normalizeHelperContext(
@@ -528,18 +659,22 @@ function decodeLineupHelperEvaluationFromJson(
     normalizedLineup: decodeGraphqlJsonPayload<LineupHelperAssignment[]>(
       record.normalizedLineup,
     ),
-    rawRatings: decodeGraphqlJsonPayload<Record<string, number>>(record.rawRatings),
+    rawRatings: decodeGraphqlJsonPayload<Record<string, number>>(
+      record.rawRatings,
+    ),
     roundedRatings: decodeGraphqlJsonPayload<Record<string, number>>(
       record.roundedRatings,
     ),
-    ratingLabels: decodeGraphqlJsonPayload<Record<string, string>>(record.ratingLabels),
+    ratingLabels: decodeGraphqlJsonPayload<Record<string, string>>(
+      record.ratingLabels,
+    ),
     outputBandLabels: decodeGraphqlJsonPayload<Record<string, string>>(
       record.outputBandLabels,
     ),
     warnings: decodeGraphqlJsonPayload<string[]>(record.warnings),
-    rankings: decodeGraphqlJsonPayload<Record<PositionCode, LineupHelperRankingEntry[]>>(
-      record.rankings,
-    ),
+    rankings: decodeGraphqlJsonPayload<
+      Record<PositionCode, LineupHelperRankingEntry[]>
+    >(record.rankings),
     playerPositionOutputs: decodeGraphqlJsonPayload<
       Record<string, Record<PositionCode, number>>
     >(record.playerPositionOutputs),

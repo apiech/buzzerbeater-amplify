@@ -151,7 +151,7 @@ test("deactivateActiveTrackedTeamsForUser clears projected credentials while lea
         return {};
       }
 
-      throw new Error(`Unexpected command: ${command.constructor.name}`);
+      throw new Error("Unexpected command");
     },
   } as any;
 

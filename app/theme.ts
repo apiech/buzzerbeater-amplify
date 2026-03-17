@@ -7,7 +7,8 @@ export const themeOptions = [
   {
     id: "arena",
     label: "Arena",
-    description: "Clean court blues with brighter surfaces and sharper contrast.",
+    description:
+      "Clean court blues with brighter surfaces and sharper contrast.",
   },
   {
     id: "nightfall",
@@ -19,20 +20,9 @@ export const themeOptions = [
 export type ThemeId = (typeof themeOptions)[number]["id"];
 
 export const DEFAULT_THEME_ID: ThemeId = "clubhouse";
-export const THEME_STORAGE_KEY = "bb-amplify-theme";
 
-export function getThemeInitScript() {
-  return `
-    (function() {
-      var storageKey = ${JSON.stringify(THEME_STORAGE_KEY)};
-      var fallbackTheme = ${JSON.stringify(DEFAULT_THEME_ID)};
-      try {
-        var storedTheme = window.localStorage.getItem(storageKey);
-        var theme = storedTheme || fallbackTheme;
-        document.documentElement.setAttribute("data-theme", theme);
-      } catch (error) {
-        document.documentElement.setAttribute("data-theme", fallbackTheme);
-      }
-    })();
-  `;
+const themeIds = new Set<ThemeId>(themeOptions.map((option) => option.id));
+
+export function isThemeId(value: string | null | undefined): value is ThemeId {
+  return typeof value === "string" && themeIds.has(value as ThemeId);
 }

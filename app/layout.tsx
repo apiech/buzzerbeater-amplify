@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
-import { DEFAULT_THEME_ID, getThemeInitScript } from "@/app/theme";
+import { getServerCurrentUser } from "@/app/server/amplify-server";
+import { resolveServerThemeId } from "@/app/server/theme-preferences";
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -15,20 +16,17 @@ export const metadata: Metadata = {
     "A BuzzerBeater companion for team prep, opponent reads, league context, and roster decisions.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const currentUser = await getServerCurrentUser();
+  const themeId = await resolveServerThemeId(currentUser?.userId);
+
   return (
-    <html
-      lang="en"
-      data-theme={DEFAULT_THEME_ID}
-      suppressHydrationWarning
-    >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: getThemeInitScript() }} />
-      </head>
+    <html lang="en" data-theme={themeId}>
+      <head />
       <body className={`${spaceGrotesk.variable} font-sans`}>{children}</body>
     </html>
   );

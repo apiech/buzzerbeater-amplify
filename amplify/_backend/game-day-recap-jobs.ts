@@ -15,6 +15,8 @@ type GameDayRecapBackend = {
   createStack(name: string): Stack;
   gameDayRecapSubmit: FunctionResource;
   gameDayRecapWorker: FunctionResource;
+  submitLeagueGameDayRecap: FunctionResource;
+  submitSingleGameSummary: FunctionResource;
 };
 
 export function configureGameDayRecapJobs(
@@ -33,17 +35,61 @@ export function configureGameDayRecapJobs(
     },
   });
 
-  const modelId = resolveGameDayRecapModelId();
+  const recapModels = resolveGameDayRecapModels();
   backend.gameDayRecapSubmit.addEnvironment(
     "GAME_DAY_RECAP_QUEUE_URL",
     recapJobQueue.queueUrl,
   );
+  backend.gameDayRecapSubmit.addEnvironment(
+    "GAME_DAY_RECAP_MODEL_ID",
+    recapModels.defaultModelId,
+  );
+  if (recapModels.premiumModelId) {
+    backend.gameDayRecapSubmit.addEnvironment(
+      "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
+      recapModels.premiumModelId,
+    );
+  }
+  backend.submitLeagueGameDayRecap.addEnvironment(
+    "GAME_DAY_RECAP_QUEUE_URL",
+    recapJobQueue.queueUrl,
+  );
+  backend.submitLeagueGameDayRecap.addEnvironment(
+    "GAME_DAY_RECAP_MODEL_ID",
+    recapModels.defaultModelId,
+  );
+  if (recapModels.premiumModelId) {
+    backend.submitLeagueGameDayRecap.addEnvironment(
+      "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
+      recapModels.premiumModelId,
+    );
+  }
+  backend.submitSingleGameSummary.addEnvironment(
+    "GAME_DAY_RECAP_QUEUE_URL",
+    recapJobQueue.queueUrl,
+  );
+  backend.submitSingleGameSummary.addEnvironment(
+    "GAME_DAY_RECAP_MODEL_ID",
+    recapModels.defaultModelId,
+  );
+  if (recapModels.premiumModelId) {
+    backend.submitSingleGameSummary.addEnvironment(
+      "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
+      recapModels.premiumModelId,
+    );
+  }
   backend.gameDayRecapWorker.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
-    modelId,
+    recapModels.defaultModelId,
   );
 
   recapJobQueue.grantSendMessages(backend.gameDayRecapSubmit.resources.lambda);
+  recapJobQueue.grantSendMessages(
+    backend.submitLeagueGameDayRecap.resources.lambda,
+  );
+  recapJobQueue.grantSendMessages(
+    backend.submitSingleGameSummary.resources.lambda,
+  );
   recapJobQueue.grantConsumeMessages(backend.gameDayRecapWorker.resources.lambda);
   const workerLambda = backend.gameDayRecapWorker.resources.lambda as LambdaFunction;
   workerLambda.addEventSource(
@@ -58,14 +104,37 @@ export function configureGameDayRecapJobs(
       resources: ["*"],
     }),
   );
+  workerLambda.addToRolePolicy(
+    new PolicyStatement({
+      actions: [
+        "aws-marketplace:Subscribe",
+        "aws-marketplace:Unsubscribe",
+        "aws-marketplace:ViewSubscriptions",
+      ],
+      resources: ["*"],
+      conditions: {
+        StringEquals: {
+          "aws:CalledViaLast": "bedrock.amazonaws.com",
+        },
+      },
+    }),
+  );
 }
 
-function resolveGameDayRecapModelId(): string {
-  const modelId = process.env.GAME_DAY_RECAP_MODEL_ID?.trim();
-  if (!modelId) {
+function resolveGameDayRecapModels(): {
+  defaultModelId: string;
+  premiumModelId: string | null;
+} {
+  const defaultModelId = process.env.GAME_DAY_RECAP_MODEL_ID?.trim();
+  if (!defaultModelId) {
     throw new Error(
       "GAME_DAY_RECAP_MODEL_ID must be set for recap generation.",
     );
   }
-  return modelId;
+
+  const premiumModelId = process.env.GAME_DAY_RECAP_MODEL_ID_PREMIUM?.trim();
+  return {
+    defaultModelId,
+    premiumModelId: premiumModelId || null,
+  };
 }

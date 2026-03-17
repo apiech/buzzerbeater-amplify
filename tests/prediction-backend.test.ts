@@ -8,6 +8,11 @@ import {
 } from "../amplify/data/_backend/prediction";
 import { requireFeatureAccess } from "../amplify/data/_backend/billing";
 
+function expectPresent<T>(value: T | null | undefined, message: string): T {
+  assert.ok(value, message);
+  return value;
+}
+
 const manualFallback = {
   home_outsideScoring: 8,
   home_insideScoring: 8,
@@ -223,7 +228,7 @@ test("submitPredictionJob rejects free-plan users before queueing work", async (
 });
 
 test("submitPredictionJob queues work for premium users", async () => {
-  let createdRecord: Record<string, unknown> | null = null;
+  let createdRecord: { status: string; userId: string } | null = null;
   let queuedMessage: Record<string, string> | null = null;
 
   const result = await submitPredictionJob(
@@ -238,7 +243,7 @@ test("submitPredictionJob queues work for premium users", async () => {
     },
     {
       createPredictionJob: async (_env, input) => {
-        createdRecord = input as unknown as Record<string, unknown>;
+        createdRecord = input as { status: string; userId: string };
         return {
           ...(input as Record<string, unknown>),
           createdAt: "2026-03-15T00:00:00.000Z",
@@ -254,9 +259,12 @@ test("submitPredictionJob queues work for premium users", async () => {
   );
 
   assert.match(String(result.jobId), /^[0-9a-f-]{36}$/i);
-  assert.ok(createdRecord);
-  assert.equal(createdRecord.userId, "user-1");
-  assert.equal(createdRecord.status, "QUEUED");
+  const record = expectPresent<{ status: string; userId: string }>(
+    createdRecord,
+    "createPredictionJob did not receive an input record",
+  );
+  assert.equal(record.userId, "user-1");
+  assert.equal(record.status, "QUEUED");
   assert.deepStrictEqual(queuedMessage, {
     jobId: result.jobId,
     userId: "user-1",

@@ -44,6 +44,10 @@ import {
   upsertTrackedTeam,
 } from "./repository";
 import { resolveBbAccessKey } from "./credentials";
+import {
+  inferLeagueTimeZone,
+  normalizeLeagueTimeZone,
+} from "../../../lib/league-timezones";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -223,6 +227,33 @@ export async function disconnectAccount(args: {
   });
   await upsertBbConnection(args.env, updated);
   return updated;
+}
+
+export async function setLeagueTimeZone(args: {
+  env: GraphqlEnv;
+  identity: unknown;
+  leagueTimeZone: string;
+}): Promise<BbConnectionRecord> {
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+
+  const existingConnection = await getBbConnection(args.env, userId);
+  if (!existingConnection) {
+    throw new Error("Connect a BuzzerBeater account before setting a league time zone.");
+  }
+
+  const leagueTimeZone = normalizeLeagueTimeZone(args.leagueTimeZone);
+  if (!leagueTimeZone) {
+    throw new Error("League time zone must be a valid IANA time zone.");
+  }
+
+  const updatedConnection = buildConnectionRecord(userId, existingConnection, {
+    leagueTimeZone,
+  });
+  await upsertBbConnection(args.env, updatedConnection);
+  return updatedConnection;
 }
 
 export async function getOrRefreshWorkspace(args: {
@@ -967,6 +998,12 @@ async function syncWorkspace(args: {
       leagueName: currentWorkspace.teamInfo.league?.name ?? null,
       countryId: currentWorkspace.teamInfo.country?.id ?? null,
       countryName: currentWorkspace.teamInfo.country?.name ?? null,
+      leagueTimeZone:
+        connection.leagueTimeZone ??
+        inferLeagueTimeZone({
+          countryId: currentWorkspace.teamInfo.country?.id ?? null,
+          countryName: currentWorkspace.teamInfo.country?.name ?? null,
+        }),
       connectedAt: connection.connectedAt ?? now,
       lastValidatedAt: now,
       lastSyncAt: now,
@@ -1950,6 +1987,12 @@ function buildConnectionRecord(
       existingConnection,
       updates,
       "countryName",
+      null,
+    ),
+    leagueTimeZone: resolveConnectionField(
+      existingConnection,
+      updates,
+      "leagueTimeZone",
       null,
     ),
     connectedAt: resolveConnectionField(

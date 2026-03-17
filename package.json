@@ -14,6 +14,7 @@
     "analyze:bundle": "ANALYZE=true next build --webpack",
     "analyze:artifacts": "node --import tsx ./scripts/analyze-react-bloat.ts",
     "analyze:all": "npm run analyze:bundle && npm run analyze:artifacts",
+    "debug:game-day-recap": "node --import tsx ./scripts/debug-game-day-recap.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "start": "next start",
@@ -30,6 +31,7 @@
     "cdk:matchup-predictor:deploy:prod": "cdk deploy --app 'tsx infra/matchup-predictor/bin/matchup-predictor.ts' --context stage=prod"
   },
   "dependencies": {
+    "@aws-amplify/adapter-nextjs": "^1.7.2",
     "@aws-sdk/client-bedrock-runtime": "^3.1009.0",
     "@aws-sdk/client-cloudformation": "^3.1009.0",
     "@aws-sdk/client-dynamodb": "^3.1009.0",

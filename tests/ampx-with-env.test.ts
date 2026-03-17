@@ -13,6 +13,20 @@ import {
   shouldWatchSandboxOutputs,
 } from "../scripts/ampx-with-env.mjs";
 
+type NestedStackLookupInput = {
+  logicalResourceId: string;
+  region: string;
+  rootStackName: string;
+};
+
+type StackOutputsLookupInput = {
+  region: string;
+  stackName: string;
+};
+
+type ScheduledCallback = () => void;
+type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
+
 test("shouldWatchSandboxOutputs only enables sandbox deploy/watch runs", () => {
   assert.equal(shouldWatchSandboxOutputs(["sandbox"]), true);
   assert.equal(shouldWatchSandboxOutputs(["sandbox", "--identifier", "dev"]), true);
@@ -215,8 +229,9 @@ test("resolveAwsRegion prefers amplify outputs and falls back to env", () => {
         },
       },
       {
+        NODE_ENV: "test",
         AWS_REGION: "us-west-2",
-      },
+      } as NodeJS.ProcessEnv,
     ),
     "us-east-1",
   );
@@ -225,8 +240,9 @@ test("resolveAwsRegion prefers amplify outputs and falls back to env", () => {
     resolveAwsRegion(
       {},
       {
+        NODE_ENV: "test",
         AWS_DEFAULT_REGION: "us-west-2",
-      },
+      } as NodeJS.ProcessEnv,
     ),
     "us-west-2",
   );
@@ -249,9 +265,9 @@ test("extractBillingWebhookUrl returns the billing webhook output", () => {
 });
 
 test("resolveBillingWebhookUrl walks synthesized artifacts and stack outputs", async () => {
-  const readJsonCalls = [];
-  const describeNestedStackCalls = [];
-  const describeOutputsCalls = [];
+  const readJsonCalls: string[] = [];
+  const describeNestedStackCalls: NestedStackLookupInput[] = [];
+  const describeOutputsCalls: StackOutputsLookupInput[] = [];
   const projectRoot = "/tmp/bb-amplify";
 
   const webhookUrl = await resolveBillingWebhookUrl(projectRoot, {
@@ -268,7 +284,9 @@ test("resolveBillingWebhookUrl walks synthesized artifacts and stack outputs", a
         },
       ];
     },
-    env: {},
+    env: {
+      NODE_ENV: "test",
+    } as NodeJS.ProcessEnv,
     readJson: async (filePath) => {
       readJsonCalls.push(filePath);
 
@@ -333,35 +351,40 @@ test("resolveBillingWebhookUrl walks synthesized artifacts and stack outputs", a
 });
 
 test("createWebhookUrlReporter suppresses duplicate webhook URLs", async () => {
-  const logged = [];
-  const timers = [];
+  const logged: string[] = [];
+  const timers: Array<{ callback: ScheduledCallback; handle: TimerHandle }> = [];
   let currentUrl = "https://example.com/first";
+  let nextTimerId = 0;
 
   const reporter = createWebhookUrlReporter({
-    clearTimeout: (timerId) => {
-      const index = timers.findIndex((timer) => timer === timerId);
+    clearTimeout: ((timerId: TimerHandle) => {
+      const index = timers.findIndex((timer) => timer.handle === timerId);
       if (index >= 0) {
         timers.splice(index, 1);
       }
-    },
+    }) as typeof globalThis.clearTimeout,
     log: (message) => logged.push(message),
     lookupWebhookUrl: async () => currentUrl,
-    setTimeout: (callback, _delay) => {
-      timers.push(callback);
-      return callback;
-    },
+    setTimeout: ((callback: ScheduledCallback, _delay?: number) => {
+      const handle = { id: nextTimerId += 1 } as unknown as TimerHandle;
+      timers.push({ callback, handle });
+      return handle;
+    }) as typeof globalThis.setTimeout,
     warn: assert.fail,
   });
 
   reporter.schedule();
-  await timers.shift()?.();
+  timers.shift()?.callback();
+  await Promise.resolve();
 
   reporter.schedule();
-  await timers.shift()?.();
+  timers.shift()?.callback();
+  await Promise.resolve();
 
   currentUrl = "https://example.com/second";
   reporter.schedule();
-  await timers.shift()?.();
+  timers.shift()?.callback();
+  await Promise.resolve();
 
   assert.deepStrictEqual(logged, [
     "Stripe webhook URL: https://example.com/first",
@@ -370,7 +393,7 @@ test("createWebhookUrlReporter suppresses duplicate webhook URLs", async () => {
 });
 
 test("createWebhookUrlReporter warns without failing when lookup fails", async () => {
-  const warnings = [];
+  const warnings: string[] = [];
 
   const reporter = createWebhookUrlReporter({
     log: assert.fail,

@@ -4,7 +4,9 @@ import type { PlanId } from "@/lib/billing/plans";
 export type JsonRecord = Record<string, unknown>;
 
 export type BillingAccountRecord = Schema["BillingAccount"]["type"];
-export type BillingSummary = NonNullable<Schema["getBillingSummary"]["returnType"]>;
+export type BillingSummary = NonNullable<
+  Schema["getBillingSummary"]["returnType"]
+>;
 export type BillingSessionResult = NonNullable<
   Schema["createBillingCheckoutSession"]["returnType"]
 >;
@@ -12,11 +14,14 @@ export type BbConnectionRecord = Schema["BbConnection"]["type"];
 export type ConnectionStatus = BbConnectionRecord["status"];
 export type GameDayRecapRecord = Schema["GameDayRecap"]["type"];
 export type GameDayRecapStatus = GameDayRecapRecord["status"];
+export type LeagueGameDayRecapRecord = Schema["LeagueGameDayRecap"]["type"];
 export type PredictionJobRecord = Schema["PredictionJob"]["type"];
 export type PredictionJobStatus = PredictionJobRecord["status"];
 export type SyncRunRecord = Schema["SyncRun"]["type"];
 export type SavedLineupScenarioRecord = Schema["SavedLineupScenario"]["type"];
+export type SingleGameSummaryRecord = Schema["SingleGameSummary"]["type"];
 export type SharedPlayerCardRecord = Schema["SharedPlayerCard"]["type"];
+export type UserPreferenceRecord = Schema["UserPreference"]["type"];
 
 export type ConnectBbAccountInput = {
   bbLoginName: string;
@@ -32,6 +37,12 @@ export type DisconnectBbAccountResult = NonNullable<
 >;
 export type SubmitGameDayRecapResult = NonNullable<
   Schema["submitGameDayRecap"]["returnType"]
+>;
+export type SubmitLeagueGameDayRecapResult = NonNullable<
+  Schema["submitLeagueGameDayRecap"]["returnType"]
+>;
+export type SubmitSingleGameSummaryResult = NonNullable<
+  Schema["submitSingleGameSummary"]["returnType"]
 >;
 export type SubmitPredictionJobResult = NonNullable<
   Schema["submitPredictionJob"]["returnType"]
@@ -56,7 +67,9 @@ export type SalaryProjection = NonNullable<
   Schema["getSalaryProjection"]["returnType"]
 >;
 
-export type WorkspaceResponse = NonNullable<Schema["getHomeWorkspace"]["returnType"]>;
+export type WorkspaceResponse = NonNullable<
+  Schema["getHomeWorkspace"]["returnType"]
+>;
 export type JsonLookupResponse = NonNullable<
   Schema["getPlayerTrend"]["returnType"]
 >;
@@ -146,7 +159,7 @@ export type DecodedLineupHelperWorkspace = {
   roster: LineupHelperRosterPlayer[];
   defaultContext: LineupHelperContext;
   defaultAssignments: LineupHelperAssignment[];
-  evaluation: LineupHelperEvaluation;
+  evaluation: LineupHelperEvaluation | null;
   snapshotWarnings: Array<{
     playerId: string;
     fullName: string;

@@ -33,7 +33,10 @@ import {
   refreshBbWorkspaces,
   refreshBbWorkspaceWorker,
   refreshWorkspace,
+  setBbLeagueTimeZone,
+  submitLeagueGameDayRecap,
   submitMyTeamHighlightsScan,
+  submitSingleGameSummary,
 } from "./data/resource.js";
 import { getAccessibleMatch } from "./get-accessible-match/resource.js";
 import { getAccessiblePlayByPlay } from "./get-accessible-play-by-play/resource.js";
@@ -67,6 +70,7 @@ const backend = defineBackend({
   refreshBbWorkspaces,
   refreshBbWorkspaceWorker,
   pruneOperationalData,
+  setBbLeagueTimeZone,
   getAccessibleMatch,
   getAccessiblePlayByPlay,
   getMatchBoxscoreDetails,
@@ -75,7 +79,9 @@ const backend = defineBackend({
   gameDayRecapWorker,
   predictionSubmit,
   predictionWorker,
+  submitLeagueGameDayRecap,
   submitMyTeamHighlightsScan,
+  submitSingleGameSummary,
   billingWebhook,
   billingAdminOverride,
 });

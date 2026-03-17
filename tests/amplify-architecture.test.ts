@@ -18,7 +18,10 @@ test("lambda data access uses the Amplify runtime client", () => {
 });
 
 test("backend.ts does not manually wire GraphQL endpoint environment variables", () => {
-  const backendSource = readFileSync(join(repoRoot, "amplify", "backend.ts"), "utf8");
+  const backendSource = readFileSync(
+    join(repoRoot, "amplify", "backend.ts"),
+    "utf8",
+  );
 
   assert.doesNotMatch(backendSource, /AMPLIFY_DATA_GRAPHQL_ENDPOINT/);
   assert.doesNotMatch(backendSource, /_GRAPHQL_ENDPOINT/);
@@ -30,7 +33,13 @@ test("match-store runtime wiring no longer uses per-user Secrets Manager", () =>
     "utf8",
   );
   const dataPlaneStackSource = readFileSync(
-    join(repoRoot, "infra", "match-data-plane", "lib", "match-data-plane-stack.ts"),
+    join(
+      repoRoot,
+      "infra",
+      "match-data-plane",
+      "lib",
+      "match-data-plane-stack.ts",
+    ),
     "utf8",
   );
 
@@ -38,6 +47,19 @@ test("match-store runtime wiring no longer uses per-user Secrets Manager", () =>
   assert.doesNotMatch(integrationSource, /secretsmanager:/);
   assert.doesNotMatch(dataPlaneStackSource, /secretsmanager:/);
   assert.match(dataPlaneStackSource, /BB_CONNECTION_ENCRYPTION_SECRET/);
+});
+
+test("lineup helper workspace receives snapshot-table wiring", () => {
+  const integrationSource = readFileSync(
+    join(repoRoot, "amplify", "_backend", "match-store-integration.ts"),
+    "utf8",
+  );
+
+  assert.match(integrationSource, /getLineupHelperWorkspace: FunctionResource/);
+  assert.match(
+    integrationSource,
+    /const playerSnapshotReadFunctions = \[[\s\S]*backend\.getLineupHelperWorkspace[\s\S]*\];/,
+  );
 });
 
 test("scheduled maintenance rules live in the data lambda stack", () => {

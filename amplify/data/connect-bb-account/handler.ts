@@ -23,6 +23,7 @@ export const handler: Handler = async (event) => {
     leagueName: connection.leagueName ?? null,
     countryId: connection.countryId ?? null,
     countryName: connection.countryName ?? null,
+    leagueTimeZone: connection.leagueTimeZone ?? null,
     connectedAt: connection.connectedAt ?? null,
     lastValidatedAt: connection.lastValidatedAt ?? null,
     lastSyncAt: connection.lastSyncAt ?? null,
