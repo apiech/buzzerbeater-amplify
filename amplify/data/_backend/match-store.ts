@@ -329,11 +329,11 @@ export async function getMatchBoxscoreDetails(
     defStrategy: asOptionalString(boxscore.defStrategy),
     opponentOffStrategy: asOptionalString(boxscore.opponentOffStrategy),
     opponentDefStrategy: asOptionalString(boxscore.opponentDefStrategy),
-    teamRatings: asRecord(boxscore.teamRatingsJson),
-    opponentRatings: asRecord(boxscore.opponentRatingsJson),
-    teamEfficiency: asRecord(boxscore.teamEfficiencyJson),
-    opponentEfficiency: asRecord(boxscore.opponentEfficiencyJson),
-    boxscore: asRecord(boxscore.boxscoreJson),
+    teamRatings: toMetricEntries(asRecord(boxscore.teamRatingsJson)),
+    opponentRatings: toMetricEntries(asRecord(boxscore.opponentRatingsJson)),
+    teamEfficiency: toMetricEntries(asRecord(boxscore.teamEfficiencyJson)),
+    opponentEfficiency: toMetricEntries(asRecord(boxscore.opponentEfficiencyJson)),
+    context: buildMatchContext(asRecord(boxscore.boxscoreJson)),
     source: "LEGACY_CACHE",
   };
 }
@@ -575,12 +575,49 @@ function buildMatchStoreBoxscorePayload(
     defStrategy: asOptionalString(perspective.team.defStrategy),
     opponentOffStrategy: asOptionalString(perspective.opponent.offStrategy),
     opponentDefStrategy: asOptionalString(perspective.opponent.defStrategy),
-    teamRatings: asRecord(perspective.team.ratings),
-    opponentRatings: asRecord(perspective.opponent.ratings),
-    teamEfficiency: asRecord(perspective.team.efficiency),
-    opponentEfficiency: asRecord(perspective.opponent.efficiency),
-    boxscore,
+    teamRatings: toMetricEntries(asRecord(perspective.team.ratings)),
+    opponentRatings: toMetricEntries(asRecord(perspective.opponent.ratings)),
+    teamEfficiency: toMetricEntries(asRecord(perspective.team.efficiency)),
+    opponentEfficiency: toMetricEntries(asRecord(perspective.opponent.efficiency)),
+    context: buildMatchContext(boxscore),
     source: "CANONICAL_MATCH_STORE",
+  };
+}
+
+function toMetricEntries(
+  values: Record<string, unknown> | null,
+): Array<Record<string, unknown>> {
+  if (!values) {
+    return [];
+  }
+
+  return Object.entries(values)
+    .filter(([key]) => !key.startsWith("__"))
+    .map(([key, rawValue]) => {
+      const numberValue = asOptionalNumber(rawValue);
+      return {
+        key,
+        numberValue,
+        textValue: numberValue === null ? asOptionalString(rawValue) : null,
+      };
+    })
+    .sort((left, right) => String(left.key).localeCompare(String(right.key)));
+}
+
+function buildMatchContext(
+  boxscore: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!boxscore) {
+    return null;
+  }
+
+  const homeTeam = asRecord(boxscore.homeTeam);
+  const awayTeam = asRecord(boxscore.awayTeam);
+  return {
+    homeTeamName: asOptionalString(homeTeam?.teamName),
+    awayTeamName: asOptionalString(awayTeam?.teamName),
+    effortDelta: asOptionalNumber(boxscore.effortDelta),
+    neutral: asOptionalBoolean(boxscore.neutral),
   };
 }
 

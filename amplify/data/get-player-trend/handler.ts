@@ -6,15 +6,9 @@ import { getPlayerTrend } from "../_backend/workspace";
 type Handler = Schema["getPlayerTrend"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
-  const payload = await getPlayerTrend({
+  return getPlayerTrend({
     env,
     identity: event.identity,
     playerId: event.arguments.playerId,
   });
-
-  return {
-    status: "READY",
-    payload,
-    error: null,
-  };
 };

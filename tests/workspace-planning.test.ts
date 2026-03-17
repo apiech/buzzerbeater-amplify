@@ -34,8 +34,14 @@ test("buildLineupPlanPayload ranks a five-man starter group and minute targets",
       summary: {
         teamName: "Opponent",
         tendencies: {
-          offense: { Push: 3, Motion: 1 },
-          defense: { ManToMan: 2, Press: 1 },
+          offense: [
+            { key: "Push", count: 3 },
+            { key: "Motion", count: 1 },
+          ],
+          defense: [
+            { key: "ManToMan", count: 2 },
+            { key: "Press", count: 1 },
+          ],
         },
       },
     },
@@ -50,7 +56,9 @@ test("buildLineupPlanPayload ranks a five-man starter group and minute targets",
     "PG",
   );
   assert.ok(
-    Object.keys(plan.minuteTargets as Record<string, number>).includes("p1"),
+    (plan.minuteTargets as Array<{ playerId: string }>).some(
+      (entry) => entry.playerId === "p1",
+    ),
   );
   assert.equal(Array.isArray(plan.rotationNotes), true);
   assert.equal(Array.isArray(plan.matchupRationale), true);
@@ -103,8 +111,6 @@ function createPlayer(
     gameShape,
     dmi: 120000,
     injuryWeeks,
-    stats: {
-      ppg,
-    },
+    ppg,
   };
 }

@@ -66,43 +66,39 @@ export type LineupHelperEvaluationRecord = NonNullable<
 export type SalaryProjection = NonNullable<
   Schema["getSalaryProjection"]["returnType"]
 >;
-
-export type WorkspaceResponse = NonNullable<
+export type HomeWorkspacePayload = NonNullable<
   Schema["getHomeWorkspace"]["returnType"]
 >;
-export type JsonLookupResponse = NonNullable<
+export type TeamHubPayload = NonNullable<Schema["getTeamHub"]["returnType"]>;
+export type ScoutWorkspacePayload = NonNullable<
+  Schema["getScoutWorkspace"]["returnType"]
+>;
+export type LeagueIntelPayload = NonNullable<
+  Schema["getLeagueIntel"]["returnType"]
+>;
+export type PlayerLabPayload = NonNullable<Schema["getPlayerLab"]["returnType"]>;
+export type PlayerTrendPayload = NonNullable<
   Schema["getPlayerTrend"]["returnType"]
 >;
+export type MatchBoxscorePayload = NonNullable<
+  Schema["getMatchBoxscoreDetails"]["returnType"]
+>;
+export type TeamHighlightsPayload = NonNullable<
+  Schema["getMyTeamHighlights"]["returnType"]
+>;
+export type SharedPlayerCardLookupPayload = NonNullable<
+  Schema["lookupSharedPlayerCard"]["returnType"]
+>;
 export type AppPlanId = PlanId;
-
-export type TeamRecordSummary = {
-  wins: number | null;
-  losses: number | null;
-};
-
-export type InjurySummary = {
-  playerId: string | null;
-  fullName: string;
-  injuryWeeks: number | null;
-};
-
-export type PlayerSummary = {
-  playerId: string | null;
-  fullName: string;
-  bestPosition: string | null;
-  salary: number | null;
-  age?: number | null;
-  gameShape?: string | null;
-  dmi?: number | null;
-  injuryWeeks?: number | null;
-  projectedStarterCount?: number | null;
-  stats?: JsonRecord | null;
-};
-
-export type TendenciesSummary = {
-  offense: Record<string, number>;
-  defense: Record<string, number>;
-};
+export type TeamRecordSummary = NonNullable<HomeWorkspacePayload["team"]["record"]>;
+export type InjurySummary = HomeWorkspacePayload["team"]["injuries"][number];
+export type PlayerSummary = TeamHubPayload["roster"][number];
+export type TrendCountEntry = NonNullable<
+  NonNullable<HomeWorkspacePayload["nextOpponent"]>["tendencies"]
+>["offense"][number];
+export type TendenciesSummary = NonNullable<
+  NonNullable<HomeWorkspacePayload["nextOpponent"]>["tendencies"]
+>;
 
 export type PositionCode = "PG" | "SG" | "SF" | "PF" | "C";
 
@@ -169,130 +165,10 @@ export type DecodedLineupHelperWorkspace = {
   availableDefenses: string[];
   availableLocations: string[];
 };
-
-export type MatchSummary = {
-  matchId: string | null;
-  startTime: string | null;
-  type: string | null;
-  opponentTeamName: string | null;
-  teamScore: number | null;
-  opponentScore: number | null;
-  outcome: string | null;
-  effortDelta?: number | null;
-  hasBoxscore?: boolean | null;
-};
-
-export type OpponentSummary = {
-  teamId: string | null;
-  teamName: string | null;
-  wins: number | null;
-  losses: number | null;
-  pointMargin: number | null;
-};
-
-export type LeagueIntelPayload = {
-  league: {
-    id?: string | null;
-    name?: string | null;
-  } | null;
-  standings: Array<{
-    index: number;
-    teams: Array<{
-      teamId: string | null;
-      teamName: string | null;
-      wins: number | null;
-      losses: number | null;
-      pointMargin: number | null;
-    }>;
-  }>;
-};
-
-export type HomeWorkspacePayload = {
-  connection: BbConnectionRecord;
-  team: {
-    teamId: string | null;
-    teamName: string | null;
-    shortName: string | null;
-    record: TeamRecordSummary | null;
-    injuries: InjurySummary[];
-    topPlayers: PlayerSummary[];
-  };
-  nextMatch: {
-    matchId: string | null;
-    startTime: string | null;
-    type: string | null;
-    opponentTeamId: string | null;
-    opponentTeamName: string | null;
-    isHome: boolean | null;
-  } | null;
-  nextOpponent: {
-    teamId: string | null;
-    teamName: string | null;
-    record: TeamRecordSummary | null;
-    injuries: InjurySummary[];
-    tendencies: TendenciesSummary;
-  } | null;
-  recentMatches: MatchSummary[];
-  league: LeagueIntelPayload;
-};
-
-export type TeamHubPayload = {
-  team: JsonRecord;
-  roster: PlayerSummary[];
-};
-
-export type ScoutWorkspacePayload = {
-  teamId: string | null;
-  availableOpponents: OpponentSummary[];
-  recentMatchups: MatchSummary[];
-  summary: {
-    teamName: string | null;
-    nextMatch: JsonRecord | null;
-    record: TeamRecordSummary | null;
-    matchupPerspective: {
-      ourTeamId: string | null;
-      opponentTeamId: string | null;
-    };
-    tendencies: TendenciesSummary;
-    roster: PlayerSummary[];
-    topPlayers: PlayerSummary[];
-    recentGames: MatchSummary[];
-  } | null;
-  message?: string | null;
-  requestedTeamId?: string | null;
-};
-
-export type PlayerLabPayload = {
-  players: PlayerSummary[];
-};
-
-export type PlayerTrendPoint = {
-  weekKey: string | null;
-  fetchedAt: string | null;
-  salary: number | null;
-  dmi: number | null;
-  injuryWeeks: number | null;
-  gameShape: string | null;
-};
-
-export type PlayerTrendPayload = {
-  player: JsonRecord;
-  history: PlayerTrendPoint[];
-};
-
-export type MatchBoxscorePayload = {
-  matchId: string;
-  opponentTeamName: string | null;
-  offStrategy: string | null;
-  defStrategy: string | null;
-  opponentOffStrategy: string | null;
-  opponentDefStrategy: string | null;
-  teamRatings: JsonRecord | null;
-  opponentRatings: JsonRecord | null;
-  teamEfficiency: JsonRecord | null;
-  opponentEfficiency: JsonRecord | null;
-  boxscore: JsonRecord | null;
-};
+export type MatchSummary = HomeWorkspacePayload["recentMatches"][number];
+export type OpponentSummary = ScoutWorkspacePayload["availableOpponents"][number];
+export type PlayerTrendPoint = PlayerTrendPayload["history"][number];
+export type MatchMetricEntry = MatchBoxscorePayload["teamRatings"][number];
 
 export type GameDayRecapCoveragePayload = {
   availableGames: number;
@@ -318,97 +194,8 @@ export type GameDayRecapResultPayload = {
     lede: string;
   };
 };
-
-export type TeamHighlightsScanStatus = {
-  completedAt: string | null;
-  error: string | null;
-  matchesDiscovered: number | null;
-  matchesEnqueuedForIngest: number | null;
-  matchesEnqueuedForMaterialize: number | null;
-  matchesReused: number | null;
-  requestedAt: string;
-  seasonsFrom: number | null;
-  seasonsTo: number | null;
-  startedAt: string | null;
-  status: string;
-  teamId: string;
-  teamName: string | null;
-  updatedAt: string | null;
-};
-
-export type TeamHighlightsMoment = {
-  comment: string | null;
-  eventKind: string | null;
-  finalOpponentScore: number | null;
-  finalScoreAway: number | null;
-  finalScoreHome: number | null;
-  finalTeamScore: number | null;
-  freeThrowType: string | null;
-  gameclock: number | null;
-  isHome: boolean | null;
-  matchId: string;
-  matchType: string | null;
-  momentId: string;
-  opponentId: string | null;
-  opponentName: string | null;
-  opponentScoreAfter: number | null;
-  opponentScoreBefore: number | null;
-  outcomeChanged: boolean;
-  period: string | null;
-  perspective: string;
-  playerId: string | null;
-  playerName: string | null;
-  recordId: string;
-  scoreAfterAway: number | null;
-  scoreAfterHome: number | null;
-  scoreBeforeAway: number | null;
-  scoreBeforeHome: number | null;
-  scoringTeamId: string | null;
-  scoringTeamName: string | null;
-  season: number | null;
-  shotDistanceFt: number | null;
-  shotResult: string | null;
-  shotType: string | null;
-  shotTypeLabel: string | null;
-  shotX: number | null;
-  shotY: number | null;
-  startTime: string | null;
-  teamId: string;
-  teamName: string | null;
-  teamScoreAfter: number | null;
-  teamScoreBefore: number | null;
-};
-
-export type TeamHighlightsPayload = {
-  filters: {
-    onlyOutcomeChange: boolean;
-    perspective: string;
-  };
-  items: TeamHighlightsMoment[];
-  nextCursor: string | null;
-  scanStatus: TeamHighlightsScanStatus | null;
-  summary: {
-    againstMoments: number;
-    filteredMoments: number;
-    forMoments: number;
-    outcomeChangeMoments: number;
-    totalMoments: number;
-  };
-  team: {
-    teamId: string;
-    teamName: string | null;
-  };
-};
-
-export type SharedPlayerCardLookupPayload = {
-  shareToken: string;
-  shareUrl: string;
-  title: string | null;
-  note: string | null;
-  expiresAt: string | null;
-  revokedAt?: string | null;
-  payload: JsonRecord;
-};
+export type TeamHighlightsScanStatus = NonNullable<TeamHighlightsPayload["scanStatus"]>;
+export type TeamHighlightsMoment = TeamHighlightsPayload["items"][number];
 
 export type DashboardWorkspace = {
   home: HomeWorkspacePayload;

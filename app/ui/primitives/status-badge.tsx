@@ -1,6 +1,11 @@
 import type { HTMLAttributes } from "react";
 
 import { cn } from "@/app/ui/primitives/cn";
+import {
+  isActiveStatus,
+  isFailedStatus,
+  isSuccessfulStatus,
+} from "@/app/ui/presentation";
 
 type StatusBadgeProps = HTMLAttributes<HTMLSpanElement> & {
   tone?: "danger" | "neutral" | "note" | "success";
@@ -34,21 +39,19 @@ export function StatusBadge({
 }
 
 export function statusToneFromValue(status: string | null | undefined) {
-  const normalized = status?.toLowerCase();
-
-  if (!normalized) {
+  if (!status) {
     return "neutral" as const;
   }
 
-  if (["connected", "succeeded"].includes(normalized)) {
+  if (isSuccessfulStatus(status)) {
     return "success" as const;
   }
 
-  if (["error", "failed", "invalid", "disconnected"].includes(normalized)) {
+  if (isFailedStatus(status)) {
     return "danger" as const;
   }
 
-  if (["queued", "running", "pending"].includes(normalized)) {
+  if (isActiveStatus(status)) {
     return "note" as const;
   }
 

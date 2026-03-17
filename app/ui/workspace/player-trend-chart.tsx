@@ -96,14 +96,16 @@ export function PlayerTrendChart({
 
 function buildTrendSeries(
   history: PlayerTrendPayload["history"],
-  readValue: (point: PlayerTrendPayload["history"][number]) => number | null,
+  readValue: (
+    point: PlayerTrendPayload["history"][number],
+  ) => number | null | undefined,
   width: number,
   height: number,
   padding: number,
 ): string | null {
   const values = history
     .map((point) => readValue(point))
-    .filter((value): value is number => value !== null);
+    .filter((value): value is number => value !== null && value !== undefined);
 
   if (values.length < 2) {
     return null;
@@ -117,7 +119,7 @@ function buildTrendSeries(
   return history
     .map((point, index) => {
       const value = readValue(point);
-      if (value === null) {
+      if (value === null || value === undefined) {
         return null;
       }
 

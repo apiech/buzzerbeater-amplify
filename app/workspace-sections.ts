@@ -20,7 +20,7 @@ export const workspaceSections = [
   {
     id: "lineups",
     label: "Lineups",
-    description: "CoachParrot lineup helper with minute grids, tactics, and rating outputs.",
+    description: "Lineup helper with minute grids, tactics, and rating outputs.",
     group: "Club",
   },
   {

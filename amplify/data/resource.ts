@@ -6,6 +6,10 @@ import {
   type ClientSchema,
 } from "@aws-amplify/backend";
 
+import {
+  PositionCode,
+  TeamHighlightsPerspective,
+} from "./schema-enums";
 import { getAccessibleMatch } from "../get-accessible-match/resource";
 import { getAccessiblePlayByPlay } from "../get-accessible-play-by-play/resource";
 import { getMatchBoxscoreDetails } from "../get-match-boxscore-details/resource";
@@ -347,6 +351,12 @@ const schema = a
 
     ThemeId: a.enum(["clubhouse", "arena", "nightfall"]),
 
+    PositionCode: a.enum(Object.values(PositionCode)),
+
+    TeamHighlightsPerspective: a.enum(
+      Object.values(TeamHighlightsPerspective),
+    ),
+
     BillingSummary: a.customType({
       planId: a.string().required(),
       accessSource: a.string().required(),
@@ -358,13 +368,6 @@ const schema = a
 
     BillingSessionResult: a.customType({
       url: a.string().required(),
-    }),
-
-    WorkspaceResponse: a.customType({
-      status: a.string().required(),
-      syncedAt: a.datetime(),
-      payload: a.json(),
-      error: a.string(),
     }),
 
     ConnectionResult: a.customType({
@@ -384,6 +387,195 @@ const schema = a
       lastSyncError: a.string(),
     }),
 
+    NamedReference: a.customType({
+      id: a.string(),
+      name: a.string(),
+    }),
+
+    TeamRecordSummary: a.customType({
+      wins: a.integer(),
+      losses: a.integer(),
+    }),
+
+    InjurySummary: a.customType({
+      playerId: a.string(),
+      fullName: a.string().required(),
+      injuryWeeks: a.integer(),
+    }),
+
+    TrendCountEntry: a.customType({
+      key: a.string().required(),
+      count: a.integer().required(),
+    }),
+
+    TendenciesSummary: a.customType({
+      offense: a.ref("TrendCountEntry").required().array().required(),
+      defense: a.ref("TrendCountEntry").required().array().required(),
+    }),
+
+    PlayerSummary: a.customType({
+      playerId: a.string(),
+      fullName: a.string().required(),
+      bestPosition: a.string(),
+      nationalityName: a.string(),
+      salary: a.integer(),
+      age: a.integer(),
+      gameShape: a.string(),
+      dmi: a.integer(),
+      injuryWeeks: a.integer(),
+      projectedStarterCount: a.integer(),
+      ppg: a.float(),
+    }),
+
+    MatchSummary: a.customType({
+      matchId: a.string(),
+      startTime: a.datetime(),
+      type: a.string(),
+      opponentTeamName: a.string(),
+      teamScore: a.integer(),
+      opponentScore: a.integer(),
+      outcome: a.string(),
+      effortDelta: a.integer(),
+      hasBoxscore: a.boolean(),
+    }),
+
+    OpponentSummary: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      wins: a.integer(),
+      losses: a.integer(),
+      pointMargin: a.integer(),
+    }),
+
+    HomeNextMatch: a.customType({
+      matchId: a.string(),
+      startTime: a.datetime(),
+      type: a.string(),
+      opponentTeamId: a.string(),
+      opponentTeamName: a.string(),
+      isHome: a.boolean(),
+    }),
+
+    HomeWorkspaceTeam: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      shortName: a.string(),
+      record: a.ref("TeamRecordSummary"),
+      injuries: a.ref("InjurySummary").required().array().required(),
+      topPlayers: a.ref("PlayerSummary").required().array().required(),
+    }),
+
+    HomeWorkspaceOpponent: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      record: a.ref("TeamRecordSummary"),
+      injuries: a.ref("InjurySummary").required().array().required(),
+      tendencies: a.ref("TendenciesSummary").required(),
+    }),
+
+    LeagueTeamStanding: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      wins: a.integer(),
+      losses: a.integer(),
+      pointMargin: a.integer(),
+    }),
+
+    LeagueConferenceStanding: a.customType({
+      index: a.integer().required(),
+      teams: a.ref("LeagueTeamStanding").required().array().required(),
+    }),
+
+    LeagueIntelWorkspace: a.customType({
+      league: a.ref("NamedReference"),
+      standings: a.ref("LeagueConferenceStanding").required().array().required(),
+    }),
+
+    HomeWorkspace: a.customType({
+      syncedAt: a.datetime(),
+      connection: a.ref("ConnectionResult").required(),
+      team: a.ref("HomeWorkspaceTeam").required(),
+      nextMatch: a.ref("HomeNextMatch"),
+      nextOpponent: a.ref("HomeWorkspaceOpponent"),
+      recentMatches: a.ref("MatchSummary").required().array().required(),
+      league: a.ref("LeagueIntelWorkspace").required(),
+    }),
+
+    TeamInfoSummary: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      shortName: a.string(),
+      ownerName: a.string(),
+      isBot: a.boolean().required(),
+      league: a.ref("NamedReference"),
+      country: a.ref("NamedReference"),
+      rival: a.ref("NamedReference"),
+    }),
+
+    TeamHubWorkspace: a.customType({
+      syncedAt: a.datetime(),
+      team: a.ref("TeamInfoSummary").required(),
+      roster: a.ref("PlayerSummary").required().array().required(),
+    }),
+
+    ScoutMatchupPerspective: a.customType({
+      ourTeamId: a.string(),
+      opponentTeamId: a.string(),
+    }),
+
+    ScoutWorkspaceSummary: a.customType({
+      teamName: a.string(),
+      nextMatch: a.ref("MatchSummary"),
+      record: a.ref("TeamRecordSummary"),
+      matchupPerspective: a.ref("ScoutMatchupPerspective").required(),
+      tendencies: a.ref("TendenciesSummary").required(),
+      roster: a.ref("PlayerSummary").required().array().required(),
+      topPlayers: a.ref("PlayerSummary").required().array().required(),
+      recentGames: a.ref("MatchSummary").required().array().required(),
+    }),
+
+    ScoutWorkspace: a.customType({
+      syncedAt: a.datetime(),
+      teamId: a.string(),
+      availableOpponents: a.ref("OpponentSummary").required().array().required(),
+      recentMatchups: a.ref("MatchSummary").required().array().required(),
+      summary: a.ref("ScoutWorkspaceSummary"),
+      requestedTeamId: a.string(),
+      message: a.string(),
+    }),
+
+    PlayerLabWorkspace: a.customType({
+      syncedAt: a.datetime(),
+      players: a.ref("PlayerSummary").required().array().required(),
+    }),
+
+    PlayerTrendPoint: a.customType({
+      weekKey: a.string(),
+      fetchedAt: a.datetime(),
+      salary: a.integer(),
+      dmi: a.integer(),
+      injuryWeeks: a.integer(),
+      gameShape: a.string(),
+    }),
+
+    PlayerTrend: a.customType({
+      player: a.ref("PlayerSummary").required(),
+      history: a.ref("PlayerTrendPoint").required().array().required(),
+    }),
+
+    MatchMetricEntry: a.customType({
+      key: a.string().required(),
+      numberValue: a.float(),
+      textValue: a.string(),
+    }),
+
+    MatchContext: a.customType({
+      homeTeamName: a.string(),
+      awayTeamName: a.string(),
+      effortDelta: a.integer(),
+      neutral: a.boolean(),
+    }),
+
     SharedPlayerCardResult: a.customType({
       shareToken: a.string().required(),
       shareUrl: a.string(),
@@ -391,7 +583,7 @@ const schema = a
       note: a.string(),
       expiresAt: a.datetime(),
       revokedAt: a.datetime(),
-      payload: a.json(),
+      payload: a.ref("SharedPlayerCardPayload"),
     }),
 
     PredictionJobSubmitResult: a.customType({
@@ -416,14 +608,31 @@ const schema = a
       teamName: a.string(),
     }),
 
+    LineupPlanPlayer: a.customType({
+      playerId: a.string().required(),
+      fullName: a.string().required(),
+      bestPosition: a.string(),
+      projectedStarterCount: a.integer(),
+      salary: a.integer(),
+      gameShape: a.string(),
+      score: a.float(),
+      slot: a.integer(),
+      benchSlot: a.integer(),
+    }),
+
+    MinuteTargetEntry: a.customType({
+      playerId: a.string().required(),
+      minutes: a.integer().required(),
+    }),
+
     LineupPlan: a.customType({
       generatedAt: a.datetime().required(),
-      recommendedStarters: a.json().required(),
-      benchOrder: a.json().required(),
-      minuteTargets: a.json().required(),
-      rotationNotes: a.json(),
-      matchupRationale: a.json(),
-      injuryAlerts: a.json(),
+      recommendedStarters: a.ref("LineupPlanPlayer").required().array().required(),
+      benchOrder: a.ref("LineupPlanPlayer").required().array().required(),
+      minuteTargets: a.ref("MinuteTargetEntry").required().array().required(),
+      rotationNotes: a.string().required().array().required(),
+      matchupRationale: a.string().required().array().required(),
+      injuryAlerts: a.ref("InjurySummary").required().array().required(),
       confidence: a.float().required(),
     }),
 
@@ -431,36 +640,298 @@ const schema = a
       scenarioId: a.string().required(),
       name: a.string().required(),
       savedAt: a.datetime().required(),
-      starters: a.json().required(),
-      minuteTargets: a.json().required(),
+      starters: a.ref("LineupPlanPlayer").required().array().required(),
+      minuteTargets: a.ref("MinuteTargetEntry").required().array().required(),
       note: a.string(),
+    }),
+
+    LineupHelperContext: a.customType({
+      offense: a.string().required(),
+      defense: a.string().required(),
+      enthusiasm: a.integer().required(),
+      homeCourt: a.string().required(),
+    }),
+
+    LineupHelperAssignment: a.customType({
+      playerId: a.string().required(),
+      position: a.ref("PositionCode").required(),
+      minutes: a.integer().required(),
+    }),
+
+    LineupHelperRosterSkills: a.customType({
+      js: a.integer().required(),
+      jr: a.integer().required(),
+      od: a.integer().required(),
+      ha: a.integer().required(),
+      dr: a.integer().required(),
+      pa: a.integer().required(),
+      is: a.integer().required(),
+      id: a.integer().required(),
+      rb: a.integer().required(),
+      sb: a.integer().required(),
+      st: a.integer().required(),
+      ft: a.integer().required(),
+      ex: a.integer().required(),
+      gs: a.integer().required(),
+    }),
+
+    LineupHelperRosterPlayer: a.customType({
+      playerId: a.string().required(),
+      fullName: a.string().required(),
+      bestPosition: a.string(),
+      salary: a.integer(),
+      age: a.integer(),
+      gameShape: a.string(),
+      snapshotWeekKey: a.string(),
+      snapshotCapturedAt: a.datetime(),
+      available: a.boolean().required(),
+      snapshotWarning: a.string(),
+      skills: a.ref("LineupHelperRosterSkills").required(),
+    }),
+
+    LineupHelperSnapshotWarning: a.customType({
+      playerId: a.string().required(),
+      fullName: a.string().required(),
+      warning: a.string().required(),
+    }),
+
+    LineupHelperRankingEntry: a.customType({
+      playerId: a.string().required(),
+      name: a.string().required(),
+      output: a.float().required(),
+    }),
+
+    LineupHelperPositionOutput: a.customType({
+      pg: a.float().required(),
+      sg: a.float().required(),
+      sf: a.float().required(),
+      pf: a.float().required(),
+      c: a.float().required(),
+    }),
+
+    LineupHelperPlayerPositionOutput: a.customType({
+      playerId: a.string().required(),
+      output: a.ref("LineupHelperPositionOutput").required(),
+    }),
+
+    LineupHelperPositionRankings: a.customType({
+      pg: a.ref("LineupHelperRankingEntry").required().array().required(),
+      sg: a.ref("LineupHelperRankingEntry").required().array().required(),
+      sf: a.ref("LineupHelperRankingEntry").required().array().required(),
+      pf: a.ref("LineupHelperRankingEntry").required().array().required(),
+      c: a.ref("LineupHelperRankingEntry").required().array().required(),
+    }),
+
+    LineupHelperRatingValues: a.customType({
+      outsideScoring: a.float().required(),
+      insideScoring: a.float().required(),
+      outsideDefense: a.float().required(),
+      insideDefense: a.float().required(),
+      rebounding: a.float().required(),
+      offensiveFlow: a.float().required(),
+    }),
+
+    LineupHelperRatingLabels: a.customType({
+      outsideScoring: a.string().required(),
+      insideScoring: a.string().required(),
+      outsideDefense: a.string().required(),
+      insideDefense: a.string().required(),
+      rebounding: a.string().required(),
+      offensiveFlow: a.string().required(),
+    }),
+
+    LineupHelperPerPositionContributions: a.customType({
+      outsideScoring: a.ref("LineupHelperPositionOutput").required(),
+      insideScoring: a.ref("LineupHelperPositionOutput").required(),
+      outsideDefense: a.ref("LineupHelperPositionOutput").required(),
+      insideDefense: a.ref("LineupHelperPositionOutput").required(),
+      rebounding: a.ref("LineupHelperPositionOutput").required(),
+      offensiveFlow: a.ref("LineupHelperPositionOutput").required(),
     }),
 
     LineupHelperWorkspace: a.customType({
       generatedAt: a.datetime().required(),
       syncedAt: a.datetime(),
-      roster: a.json().required(),
-      defaultContext: a.json().required(),
-      defaultAssignments: a.json().required(),
-      evaluation: a.json(),
-      snapshotWarnings: a.json().required(),
-      availableOffenses: a.json().required(),
-      availableDefenses: a.json().required(),
-      availableLocations: a.json().required(),
+      roster: a.ref("LineupHelperRosterPlayer").required().array().required(),
+      defaultContext: a.ref("LineupHelperContext").required(),
+      defaultAssignments: a.ref("LineupHelperAssignment").required().array().required(),
+      evaluation: a.ref("LineupHelperEvaluation"),
+      snapshotWarnings: a.ref("LineupHelperSnapshotWarning").required().array().required(),
+      availableOffenses: a.string().required().array().required(),
+      availableDefenses: a.string().required().array().required(),
+      availableLocations: a.string().required().array().required(),
     }),
 
     LineupHelperEvaluation: a.customType({
-      context: a.json().required(),
-      normalizedLineup: a.json().required(),
-      rawRatings: a.json().required(),
-      roundedRatings: a.json().required(),
-      ratingLabels: a.json().required(),
-      outputBandLabels: a.json().required(),
-      warnings: a.json().required(),
-      rankings: a.json().required(),
-      playerPositionOutputs: a.json().required(),
-      perPositionContributions: a.json().required(),
+      context: a.ref("LineupHelperContext").required(),
+      normalizedLineup: a.ref("LineupHelperAssignment").required().array().required(),
+      rawRatings: a.ref("LineupHelperRatingValues").required(),
+      roundedRatings: a.ref("LineupHelperRatingValues").required(),
+      ratingLabels: a.ref("LineupHelperRatingLabels").required(),
+      outputBandLabels: a.ref("LineupHelperRatingLabels").required(),
+      warnings: a.string().required().array().required(),
+      rankings: a.ref("LineupHelperPositionRankings").required(),
+      playerPositionOutputs: a.ref("LineupHelperPlayerPositionOutput").required().array().required(),
+      perPositionContributions: a.ref("LineupHelperPerPositionContributions").required(),
       totalOutput: a.float().required(),
+    }),
+
+    MatchBoxscoreDetails: a.customType({
+      matchId: a.string().required(),
+      opponentTeamName: a.string(),
+      offStrategy: a.string(),
+      defStrategy: a.string(),
+      opponentOffStrategy: a.string(),
+      opponentDefStrategy: a.string(),
+      teamRatings: a.ref("MatchMetricEntry").required().array().required(),
+      opponentRatings: a.ref("MatchMetricEntry").required().array().required(),
+      teamEfficiency: a.ref("MatchMetricEntry").required().array().required(),
+      opponentEfficiency: a.ref("MatchMetricEntry").required().array().required(),
+      context: a.ref("MatchContext"),
+      source: a.string().required(),
+    }),
+
+    TeamHighlightsFilters: a.customType({
+      onlyOutcomeChange: a.boolean().required(),
+      perspective: a.ref("TeamHighlightsPerspective").required(),
+    }),
+
+    TeamHighlightsScanStatus: a.customType({
+      completedAt: a.datetime(),
+      error: a.string(),
+      matchesDiscovered: a.integer(),
+      matchesEnqueuedForIngest: a.integer(),
+      matchesEnqueuedForMaterialize: a.integer(),
+      matchesReused: a.integer(),
+      requestedAt: a.datetime().required(),
+      seasonsFrom: a.integer(),
+      seasonsTo: a.integer(),
+      startedAt: a.datetime(),
+      status: a.string().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+      updatedAt: a.datetime(),
+    }),
+
+    TeamHighlightsMoment: a.customType({
+      comment: a.string(),
+      eventKind: a.string(),
+      finalOpponentScore: a.integer(),
+      finalScoreAway: a.integer(),
+      finalScoreHome: a.integer(),
+      finalTeamScore: a.integer(),
+      freeThrowType: a.string(),
+      gameclock: a.float(),
+      isHome: a.boolean(),
+      matchId: a.string().required(),
+      matchType: a.string(),
+      momentId: a.string().required(),
+      opponentId: a.string(),
+      opponentName: a.string(),
+      opponentScoreAfter: a.integer(),
+      opponentScoreBefore: a.integer(),
+      outcomeChanged: a.boolean().required(),
+      period: a.string(),
+      perspective: a.ref("TeamHighlightsPerspective").required(),
+      playerId: a.string(),
+      playerName: a.string(),
+      recordId: a.string().required(),
+      scoreAfterAway: a.integer(),
+      scoreAfterHome: a.integer(),
+      scoreBeforeAway: a.integer(),
+      scoreBeforeHome: a.integer(),
+      scoringTeamId: a.string(),
+      scoringTeamName: a.string(),
+      season: a.integer(),
+      shotDistanceFt: a.float(),
+      shotResult: a.string(),
+      shotType: a.string(),
+      shotTypeLabel: a.string(),
+      shotX: a.float(),
+      shotY: a.float(),
+      startTime: a.datetime(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+      teamScoreAfter: a.integer(),
+      teamScoreBefore: a.integer(),
+    }),
+
+    TeamHighlightsSummary: a.customType({
+      againstMoments: a.integer().required(),
+      filteredMoments: a.integer().required(),
+      forMoments: a.integer().required(),
+      outcomeChangeMoments: a.integer().required(),
+      totalMoments: a.integer().required(),
+    }),
+
+    TeamHighlightsTeam: a.customType({
+      teamId: a.string().required(),
+      teamName: a.string(),
+    }),
+
+    TeamHighlights: a.customType({
+      filters: a.ref("TeamHighlightsFilters").required(),
+      items: a.ref("TeamHighlightsMoment").required().array().required(),
+      nextCursor: a.string(),
+      scanStatus: a.ref("TeamHighlightsScanStatus"),
+      summary: a.ref("TeamHighlightsSummary").required(),
+      team: a.ref("TeamHighlightsTeam").required(),
+    }),
+
+    PredictionManualInput: a.customType({
+      home_outsideScoring: a.float().required(),
+      home_insideScoring: a.float().required(),
+      home_outsideDefense: a.float().required(),
+      home_insideDefense: a.float().required(),
+      home_rebounding: a.float().required(),
+      home_offensiveFlow: a.float().required(),
+      away_outsideScoring: a.float().required(),
+      away_insideScoring: a.float().required(),
+      away_outsideDefense: a.float().required(),
+      away_insideDefense: a.float().required(),
+      away_rebounding: a.float().required(),
+      away_offensiveFlow: a.float().required(),
+      home_offStrategy: a.string().required(),
+      home_defStrategy: a.string().required(),
+      away_offStrategy: a.string().required(),
+      away_defStrategy: a.string().required(),
+      neutral: a.string().required(),
+      effortDelta: a.float().required(),
+    }),
+
+    PredictionConnectedInput: a.customType({
+      homeSourceMatchId: a.string(),
+      awaySourceMatchId: a.string(),
+      homeTeamId: a.string(),
+      awayTeamId: a.string(),
+      home_offStrategy: a.string(),
+      home_defStrategy: a.string(),
+      away_offStrategy: a.string(),
+      away_defStrategy: a.string(),
+      neutral: a.string(),
+      effortDelta: a.float(),
+      manualFallback: a.ref("PredictionManualInput"),
+    }),
+
+    PredictionSubmissionRequestInput: a.customType({
+      mode: a.ref("PredictionRequestMode").required(),
+      manualInput: a.ref("PredictionManualInput"),
+      connectedInput: a.ref("PredictionConnectedInput"),
+    }),
+
+    SharedPlayerCardPayloadPlayer: a.customType({
+      playerId: a.string(),
+      fullName: a.string().required(),
+      bestPosition: a.string(),
+      salary: a.integer(),
+      nationalityName: a.string(),
+      gameShape: a.string(),
+      dmi: a.integer(),
+      injuryWeeks: a.integer(),
+    }),
+
+    SharedPlayerCardPayload: a.customType({
+      player: a.ref("SharedPlayerCardPayloadPlayer").required(),
     }),
 
     SalaryProjection: a.customType({
@@ -801,19 +1272,19 @@ const schema = a
 
     refreshWorkspace: a
       .mutation()
-      .returns(a.ref("WorkspaceResponse"))
+      .returns(a.ref("HomeWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(refreshWorkspace)),
 
     getHomeWorkspace: a
       .query()
-      .returns(a.ref("WorkspaceResponse"))
+      .returns(a.ref("HomeWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getHomeWorkspace)),
 
     getTeamHub: a
       .query()
-      .returns(a.ref("WorkspaceResponse"))
+      .returns(a.ref("TeamHubWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getTeamHub)),
 
@@ -822,19 +1293,19 @@ const schema = a
       .arguments({
         teamId: a.string(),
       })
-      .returns(a.ref("WorkspaceResponse"))
+      .returns(a.ref("ScoutWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getScoutWorkspace)),
 
     getLeagueIntel: a
       .query()
-      .returns(a.ref("WorkspaceResponse"))
+      .returns(a.ref("LeagueIntelWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLeagueIntel)),
 
     getPlayerLab: a
       .query()
-      .returns(a.ref("WorkspaceResponse"))
+      .returns(a.ref("PlayerLabWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getPlayerLab)),
 
@@ -847,9 +1318,9 @@ const schema = a
     evaluateLineupHelper: a
       .query()
       .arguments({
-        roster: a.json().required(),
-        assignments: a.json().required(),
-        context: a.json().required(),
+        roster: a.ref("LineupHelperRosterPlayer").required().array().required(),
+        assignments: a.ref("LineupHelperAssignment").required().array().required(),
+        context: a.ref("LineupHelperContext").required(),
       })
       .returns(a.ref("LineupHelperEvaluation"))
       .authorization((allow) => [allow.authenticated()])
@@ -860,7 +1331,7 @@ const schema = a
       .arguments({
         playerId: a.string().required(),
       })
-      .returns(a.ref("JsonLookupResponse"))
+      .returns(a.ref("PlayerTrend"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getPlayerTrend)),
 
@@ -869,9 +1340,9 @@ const schema = a
       .arguments({
         cursor: a.string(),
         onlyOutcomeChange: a.boolean(),
-        perspective: a.string(),
+        perspective: a.ref("TeamHighlightsPerspective"),
       })
-      .returns(a.ref("JsonLookupResponse"))
+      .returns(a.ref("TeamHighlights"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getMyTeamHighlights)),
 
@@ -903,8 +1374,8 @@ const schema = a
       .mutation()
       .arguments({
         name: a.string().required(),
-        starters: a.json().required(),
-        minuteTargets: a.json().required(),
+        starters: a.ref("LineupPlanPlayer").required().array().required(),
+        minuteTargets: a.ref("MinuteTargetEntry").required().array().required(),
         note: a.string(),
       })
       .returns(a.ref("LineupScenario"))
@@ -925,7 +1396,7 @@ const schema = a
       .arguments({
         matchId: a.string().required(),
       })
-      .returns(a.ref("JsonLookupResponse"))
+      .returns(a.ref("MatchBoxscoreDetails"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getMatchBoxscoreDetails)),
 
@@ -983,14 +1454,14 @@ const schema = a
       .arguments({
         shareToken: a.string().required(),
       })
-      .returns(a.ref("JsonLookupResponse"))
+      .returns(a.ref("SharedPlayerCardResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(lookupSharedPlayerCard)),
 
     submitPredictionJob: a
       .mutation()
       .arguments({
-        request: a.json().required(),
+        request: a.ref("PredictionSubmissionRequestInput").required(),
       })
       .returns(a.ref("PredictionJobSubmitResult"))
       .authorization((allow) => [allow.authenticated()])

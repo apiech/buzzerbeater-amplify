@@ -8,6 +8,12 @@ import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
+import {
+  formatConnectionStatus,
+  formatPreviewStatus,
+  formatSyncKind,
+  formatWriteupStatus,
+} from "@/app/ui/presentation";
 import type {
   GameDayRecapRecord,
   LeagueGameDayRecapRecord,
@@ -161,44 +167,46 @@ export function OperationsPanel() {
         <StatCard
           detail={
             failedSyncCount
-              ? `${failedSyncCount} recent failure(s)`
-              : "Recent syncs are healthy."
+              ? `${failedSyncCount} recent refresh${failedSyncCount === 1 ? "" : "es"} need attention.`
+              : activeSyncCount
+                ? "Club data is updating now."
+                : "Club data looks current."
           }
           label="Active refreshes"
           value={activeSyncCount}
         />
         <StatCard
           detail={
-            predictionJobs[0]?.modelVersion
-              ? `Latest preview engine ${predictionJobs[0].modelVersion}`
-              : "No preview engine has been recorded yet."
+            predictionJobs[0]
+              ? `${formatPreviewStatus(predictionJobs[0].status)} as of ${formatTimestamp(predictionJobs[0].updatedAt)}.`
+              : "No preview activity yet."
           }
-          label="Preview queue"
+          label="Previews running"
           value={activePredictionCount}
         />
         <StatCard
           detail={
-            recapActivity[0]?.modelId
-              ? `Latest recap model ${recapActivity[0].modelId}`
-              : "No recap model has been recorded yet."
+            recapActivity[0]
+              ? `${formatWriteupStatus(recapActivity[0].status)} as of ${formatTimestamp(recapActivity[0].updatedAt)}.`
+              : "No writeup activity yet."
           }
-          label="Active recaps"
+          label="Writeups running"
           value={activeRecapCount}
         />
       </div>
 
       <div className={threeColumnGridClassName}>
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Recent refreshes" titleAs="h4" />
+          <SectionHeading title="Recent club updates" titleAs="h4" />
           {syncRuns.length ? (
             <ul className={listClassName}>
               {syncRuns.map((run) => (
                 <li className={listItemClassName} key={run.id}>
                   <strong className="text-sm text-ink">
-                    {run.kind}
+                    {formatSyncKind(run.kind)}
                   </strong>
                   <span className={statusCopyClassName}>
-                    {humanizeStatus(run.status)} • {formatTimestamp(run.startedAt)}
+                    {formatConnectionStatus(run.status)} • {formatTimestamp(run.startedAt)}
                     {run.error ? ` • ${run.error}` : ""}
                   </span>
                 </li>
@@ -216,10 +224,10 @@ export function OperationsPanel() {
               {predictionJobs.map((job) => (
                 <li className={listItemClassName} key={job.id}>
                   <strong className="text-sm text-ink">
-                    {humanizeStatus(job.status)}
+                    {describePredictionJob(job)}
                   </strong>
                   <span className={statusCopyClassName}>
-                    {job.modelVersion ? `${job.modelVersion} • ` : ""}
+                    {formatPreviewStatus(job.status)} •{" "}
                     {formatTimestamp(job.updatedAt)}
                     {job.error ? ` • ${job.error}` : ""}
                   </span>
@@ -243,8 +251,7 @@ export function OperationsPanel() {
                     {recap.title}
                   </strong>
                   <span className={statusCopyClassName}>
-                    {humanizeStatus(recap.status)} • {recap.detail}
-                    {recap.modelId ? ` • ${recap.modelId}` : ""}
+                    {formatWriteupStatus(recap.status)} • {recap.detail}
                     {recap.error ? ` • ${recap.error}` : ""}
                   </span>
                 </li>
@@ -290,18 +297,6 @@ function formatTimestamp(value: string | null | undefined): string {
   }).format(date);
 }
 
-function humanizeStatus(status: string | null | undefined): string {
-  if (!status) {
-    return "Unknown";
-  }
-
-  return status
-    .toLowerCase()
-    .split("_")
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
-}
-
 function combinedRecaps(
   gameDayRecaps: readonly GameDayRecapRecord[],
   leagueGameDayRecaps: readonly LeagueGameDayRecapRecord[],
@@ -312,28 +307,71 @@ function combinedRecaps(
       detail: recap.gameDate,
       error: recap.error ?? null,
       key: `LEAGUE_DATE:${recap.targetKey}`,
-      modelId: recap.modelId ?? null,
       status: recap.status,
-      title: recap.leagueName ?? recap.leagueId,
+      title:
+        readRecapHeadline(recap.resultJson) ??
+        recap.leagueName ??
+        "League recap",
       updatedAt: recap.updatedAt,
     })),
     ...leagueGameDayRecaps.map((recap) => ({
       detail: `Game day ${recap.gameDayNumber}${recap.season ? ` • season ${recap.season}` : ""}`,
       error: recap.error ?? null,
       key: `LEAGUE_GAME_DAY:${recap.targetKey}`,
-      modelId: recap.modelId ?? null,
       status: recap.status,
-      title: recap.leagueName ?? recap.leagueId,
+      title:
+        readRecapHeadline(recap.resultJson) ??
+        recap.leagueName ??
+        "League recap",
       updatedAt: recap.updatedAt,
     })),
     ...singleGameSummaries.map((recap) => ({
-      detail: `${recap.gameDate ?? "Date unknown"} • match ${recap.matchId}`,
+      detail: recap.gameDate ?? "Date unavailable",
       error: recap.error ?? null,
       key: `SINGLE_GAME:${recap.targetKey}`,
-      modelId: recap.modelId ?? null,
       status: recap.status,
-      title: recap.leagueName ?? "Single game summary",
+      title:
+        readRecapHeadline(recap.resultJson) ??
+        recap.leagueName ??
+        "Single-game recap",
       updatedAt: recap.updatedAt,
     })),
   ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function describePredictionJob(job: PredictionJobRecord): string {
+  if (job.error) {
+    return "Preview needs attention";
+  }
+
+  return job.mode === "CONNECTED"
+    ? "Saved-game preview"
+    : "Manual preview";
+}
+
+function readRecapHeadline(value: unknown): string | null {
+  const record = parseJsonRecord(value);
+  const summary = parseJsonRecord(record?.summary);
+  const headline = summary?.headline;
+  return typeof headline === "string" && headline.trim()
+    ? headline.trim()
+    : null;
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return parseJsonRecord(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+
+  return typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

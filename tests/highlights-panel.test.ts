@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   describeHighlightsEmptyState,
+  describeScanStatus,
   hasActiveTeamHighlightsScan,
 } from "../app/highlights-panel";
 import type { TeamHighlightsPayload, TeamHighlightsScanStatus } from "../app/types";
@@ -36,7 +37,7 @@ function createPayload(
   return {
     filters: {
       onlyOutcomeChange: true,
-      perspective: "both",
+      perspective: "BOTH" as TeamHighlightsPayload["filters"]["perspective"],
     },
     items: [],
     nextCursor: null,
@@ -71,7 +72,7 @@ test("describeHighlightsEmptyState guides the user through empty and active stat
       isLoading: true,
       onlyOutcomeChange: true,
     }),
-    /loading the latest highlights/i,
+    /loading the latest moments/i,
   );
 
   assert.match(
@@ -84,7 +85,7 @@ test("describeHighlightsEmptyState guides the user through empty and active stat
         onlyOutcomeChange: true,
       },
     ),
-    /scan is running/i,
+    /scanning team history/i,
   );
 
   assert.match(
@@ -105,4 +106,19 @@ test("describeHighlightsEmptyState guides the user through empty and active stat
     ),
     /none match the current outcome-change filter/i,
   );
+});
+
+test("describeScanStatus stays user-facing", () => {
+  const description = describeScanStatus(
+    createScanStatus("RESOLVING_HISTORY", {
+      matchesDiscovered: 24,
+      matchesReused: 6,
+      seasonsFrom: 50,
+      seasonsTo: 52,
+    }),
+  );
+
+  assert.match(description, /found 24 completed games/i);
+  assert.match(description, /6 games were already ready/i);
+  assert.doesNotMatch(description, /ingest|materialize|backfill/i);
 });

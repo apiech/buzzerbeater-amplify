@@ -848,7 +848,7 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
       now: () => new Date("2026-03-15T22:30:00Z"),
       requireFeatureAccess: async () => "premium",
       updateLeagueGameDayRecap: async () => {},
-      upsertLeagueGameDayRecap: async (_env, record) => {
+      upsertLeagueGameDayRecap: async (_env, record: any) => {
         savedModelId = record.modelId ?? null;
       },
     },
@@ -856,7 +856,10 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
 
   assert.deepStrictEqual(result, { targetKey: "100#71#gameday-3" });
   assert.equal(savedModelId, PREMIUM_RECAP_MODEL_ID);
-  assert.equal(queuedMessage?.modelId, PREMIUM_RECAP_MODEL_ID);
+  assert.equal(
+    (queuedMessage as { modelId?: string } | null)?.modelId,
+    PREMIUM_RECAP_MODEL_ID,
+  );
 });
 
 test("submitSingleGameSummary persists the routed modelId on the record and queue message", async () => {
@@ -885,7 +888,7 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
       now: () => new Date("2026-03-15T22:30:00Z"),
       requireFeatureAccess: async () => "premium",
       updateSingleGameSummary: async () => {},
-      upsertSingleGameSummary: async (_env, record) => {
+      upsertSingleGameSummary: async (_env, record: any) => {
         savedModelId = record.modelId ?? null;
       },
     },
@@ -893,7 +896,10 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
 
   assert.deepStrictEqual(result, { targetKey: "137828772" });
   assert.equal(savedModelId, PREMIUM_RECAP_MODEL_ID);
-  assert.equal(queuedMessage?.modelId, PREMIUM_RECAP_MODEL_ID);
+  assert.equal(
+    (queuedMessage as { modelId?: string } | null)?.modelId,
+    PREMIUM_RECAP_MODEL_ID,
+  );
 });
 
 test("processGameDayRecap succeeds with partial coverage when one box score is missing", async () => {

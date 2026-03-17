@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -60,6 +60,10 @@ test("lineup helper workspace receives snapshot-table wiring", () => {
     integrationSource,
     /const playerSnapshotReadFunctions = \[[\s\S]*backend\.getLineupHelperWorkspace[\s\S]*\];/,
   );
+});
+
+test("app no longer relies on the generic GraphQL JSON helper", () => {
+  assert.equal(existsSync(join(repoRoot, "app", "graphql-json.ts")), false);
 });
 
 test("scheduled maintenance rules live in the data lambda stack", () => {

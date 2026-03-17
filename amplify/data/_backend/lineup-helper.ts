@@ -281,10 +281,56 @@ function serializeEvaluation(
     ratingLabels: evaluation.ratingLabels,
     outputBandLabels: evaluation.outputBandLabels,
     warnings: evaluation.warnings,
-    rankings: evaluation.rankings,
-    playerPositionOutputs: evaluation.playerPositionOutputs,
-    perPositionContributions: evaluation.perPositionContributions,
+    rankings: {
+      pg: evaluation.rankings.PG,
+      sg: evaluation.rankings.SG,
+      sf: evaluation.rankings.SF,
+      pf: evaluation.rankings.PF,
+      c: evaluation.rankings.C,
+    },
+    playerPositionOutputs: Object.entries(evaluation.playerPositionOutputs).map(
+      ([playerId, output]) => ({
+        playerId,
+        output: {
+          pg: output.PG,
+          sg: output.SG,
+          sf: output.SF,
+          pf: output.PF,
+          c: output.C,
+        },
+      }),
+    ),
+    perPositionContributions: {
+      outsideScoring: toPositionOutput(
+        evaluation.perPositionContributions.outsideScoring,
+      ),
+      insideScoring: toPositionOutput(
+        evaluation.perPositionContributions.insideScoring,
+      ),
+      outsideDefense: toPositionOutput(
+        evaluation.perPositionContributions.outsideDefense,
+      ),
+      insideDefense: toPositionOutput(
+        evaluation.perPositionContributions.insideDefense,
+      ),
+      rebounding: toPositionOutput(evaluation.perPositionContributions.rebounding),
+      offensiveFlow: toPositionOutput(
+        evaluation.perPositionContributions.offensiveFlow,
+      ),
+    },
     totalOutput: evaluation.totalOutput,
+  };
+}
+
+function toPositionOutput(
+  value: Record<Position, number>,
+): Record<string, number> {
+  return {
+    pg: value.PG,
+    sg: value.SG,
+    sf: value.SF,
+    pf: value.PF,
+    c: value.C,
   };
 }
 

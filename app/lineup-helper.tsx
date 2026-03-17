@@ -14,10 +14,6 @@ import {
   type LineupMinuteMatrix,
   validateLineupMatrix,
 } from "@/app/lineup-helper-state";
-import {
-  decodeGraphqlJsonPayload,
-  encodeGraphqlJsonInput,
-} from "@/app/graphql-json";
 import type {
   DecodedLineupHelperWorkspace,
   LineupHelperAssignment,
@@ -156,11 +152,9 @@ export function LineupHelper() {
       void (async () => {
         setIsEvaluating(true);
         const response = await client.queries.evaluateLineupHelper({
-          roster: encodeGraphqlJsonInput(nextRoster),
-          assignments: encodeGraphqlJsonInput(
-            assignmentsFromMatrix(minuteMatrix),
-          ),
-          context: encodeGraphqlJsonInput(context),
+          roster: nextRoster.map(encodeLineupHelperRosterPlayer),
+          assignments: assignmentsFromMatrix(minuteMatrix),
+          context,
         });
 
         if (cancelled) {
@@ -224,7 +218,7 @@ export function LineupHelper() {
               onClick={() => setWorkspaceLoadVersion((current) => current + 1)}
               variant="secondary"
             >
-              Refresh cache
+              Refresh roster data
             </Button>
             <Button
               disabled={!workspace || !hasGeneratedLineup}
@@ -235,17 +229,16 @@ export function LineupHelper() {
             </Button>
           </div>
         }
-        description="CoachParrot-style ratings from your cached roster snapshots with per-position minutes and tactic context."
-        title="CoachParrot Lineup Helper"
+        description="Lineup ratings from your saved roster data with minute planning and tactic context."
+        title="Lineup Helper"
         titleAs="h4"
       />
 
       {isLoadingWorkspace && !workspace ? (
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Loading lineup workspace" titleAs="h5" />
+          <SectionHeading title="Loading lineup data" titleAs="h5" />
           <p className={statusCopyClassName}>
-            Pulling your cached roster, available snapshots, and default
-            CoachParrot lineup.
+            Pulling your saved roster, player history, and default lineup.
           </p>
         </Panel>
       ) : null}
@@ -261,9 +254,8 @@ export function LineupHelper() {
         <>
           {availableRosterCount === 0 ? (
             <Alert>
-              The roster loaded, but no canonical skill snapshots are available
-              yet. Ratings and autofill stay disabled until snapshots are
-              synced.
+              Player data is not ready yet. Ratings and autofill stay disabled
+              until a fresh roster update completes.
             </Alert>
           ) : null}
           {validation.errors.length ? (
@@ -275,8 +267,8 @@ export function LineupHelper() {
             <StatCard
               detail={
                 workspace.syncedAt
-                  ? `Cache ${formatTimestamp(workspace.syncedAt)}`
-                  : "Cache unavailable"
+                  ? `Updated ${formatTimestamp(workspace.syncedAt)}`
+                  : "Last update unavailable"
               }
               label="Roster rows"
               value={roster.length}
@@ -288,14 +280,14 @@ export function LineupHelper() {
             />
             <StatCard
               detail="Unavailable players stay disabled"
-              label="Snapshot warnings"
+              label="Players needing updates"
               value={workspace.snapshotWarnings.length}
             />
             <StatCard
               detail={
-                isEvaluating ? "Recomputing ratings" : "Latest evaluation"
+                isEvaluating ? "Refreshing analysis" : "Latest analysis"
               }
-              label="Engine status"
+              label="Analysis status"
               value={
                 isEvaluating
                   ? "Updating"
@@ -395,7 +387,7 @@ export function LineupHelper() {
                     <tr>
                       <TableHeadCell>Player</TableHeadCell>
                       <TableHeadCell>Role</TableHeadCell>
-                      <TableHeadCell>Snapshot</TableHeadCell>
+                      <TableHeadCell>Player data</TableHeadCell>
                       {LINEUP_POSITIONS.map((position) => (
                         <TableHeadCell key={position}>{position}</TableHeadCell>
                       ))}
@@ -439,11 +431,12 @@ export function LineupHelper() {
                           <TableCell>
                             <div className="grid gap-1">
                               <span className="text-ink text-sm">
-                                {player.snapshotWeekKey ?? "No snapshot"}
+                                {player.snapshotCapturedAt
+                                  ? `Updated ${formatTimestamp(player.snapshotCapturedAt)}`
+                                  : "Player data not ready"}
                               </span>
                               <span className="text-ink-muted text-xs">
-                                {player.snapshotWarning ??
-                                  formatTimestamp(player.snapshotCapturedAt)}
+                                {player.snapshotWarning ?? "Latest saved player update"}
                               </span>
                             </div>
                           </TableCell>
@@ -514,7 +507,7 @@ export function LineupHelper() {
                           key={rating.key}
                           detail={
                             availableRosterCount === 0
-                              ? "Snapshots are required before ratings can be generated"
+                              ? "Player data is required before ratings can be generated"
                               : "Waiting for a valid lineup"
                           }
                           label={rating.label}
@@ -616,72 +609,170 @@ function decodeLineupHelperWorkspace(
   return {
     generatedAt: record.generatedAt,
     syncedAt: record.syncedAt ?? null,
-    roster: decodeGraphqlJsonPayload<LineupHelperRosterPlayer[]>(record.roster),
-    defaultContext: normalizeHelperContext(
-      decodeGraphqlJsonPayload<LineupHelperContext>(record.defaultContext),
-    ),
-    defaultAssignments: decodeGraphqlJsonPayload<LineupHelperAssignment[]>(
-      record.defaultAssignments,
-    ),
-    evaluation: decodeLineupHelperEvaluationFromJson(record.evaluation),
-    snapshotWarnings: decodeGraphqlJsonPayload<
-      Array<{ playerId: string; fullName: string; warning: string }>
-    >(record.snapshotWarnings),
-    availableOffenses: decodeGraphqlJsonPayload<string[]>(
-      record.availableOffenses,
-    ),
-    availableDefenses: decodeGraphqlJsonPayload<string[]>(
-      record.availableDefenses,
-    ),
-    availableLocations: decodeGraphqlJsonPayload<string[]>(
-      record.availableLocations,
-    ),
+    roster: record.roster.map(decodeLineupHelperRosterPlayer),
+    defaultContext: normalizeHelperContext(record.defaultContext),
+    defaultAssignments: record.defaultAssignments.map(decodeLineupHelperAssignment),
+    evaluation: record.evaluation ? decodeLineupHelperEvaluation(record.evaluation) : null,
+    snapshotWarnings: record.snapshotWarnings.map((warning) => ({
+      playerId: warning.playerId,
+      fullName: warning.fullName,
+      warning: warning.warning,
+    })),
+    availableOffenses: [...record.availableOffenses],
+    availableDefenses: [...record.availableDefenses],
+    availableLocations: [...record.availableLocations],
   };
 }
 
 function decodeLineupHelperEvaluation(
   record: LineupHelperEvaluationRecord,
 ): LineupHelperEvaluation | null {
-  return decodeLineupHelperEvaluationFromJson(record);
-}
-
-function decodeLineupHelperEvaluationFromJson(
-  value: unknown,
-): LineupHelperEvaluation | null {
-  if (value == null) {
-    return null;
-  }
-  const record = value as LineupHelperEvaluationRecord;
   return {
     context: normalizeHelperContext(
-      decodeGraphqlJsonPayload<LineupHelperContext>(record.context),
+      record.context,
     ),
-    normalizedLineup: decodeGraphqlJsonPayload<LineupHelperAssignment[]>(
-      record.normalizedLineup,
+    normalizedLineup: record.normalizedLineup.map(decodeLineupHelperAssignment),
+    rawRatings: { ...record.rawRatings },
+    roundedRatings: { ...record.roundedRatings },
+    ratingLabels: { ...record.ratingLabels },
+    outputBandLabels: { ...record.outputBandLabels },
+    warnings: [...record.warnings],
+    rankings: {
+      PG: record.rankings.pg.map(decodeLineupHelperRankingEntry),
+      SG: record.rankings.sg.map(decodeLineupHelperRankingEntry),
+      SF: record.rankings.sf.map(decodeLineupHelperRankingEntry),
+      PF: record.rankings.pf.map(decodeLineupHelperRankingEntry),
+      C: record.rankings.c.map(decodeLineupHelperRankingEntry),
+    },
+    playerPositionOutputs: Object.fromEntries(
+      record.playerPositionOutputs.map((entry) => [
+        entry.playerId,
+        decodePositionOutput(entry.output),
+      ]),
     ),
-    rawRatings: decodeGraphqlJsonPayload<Record<string, number>>(
-      record.rawRatings,
-    ),
-    roundedRatings: decodeGraphqlJsonPayload<Record<string, number>>(
-      record.roundedRatings,
-    ),
-    ratingLabels: decodeGraphqlJsonPayload<Record<string, string>>(
-      record.ratingLabels,
-    ),
-    outputBandLabels: decodeGraphqlJsonPayload<Record<string, string>>(
-      record.outputBandLabels,
-    ),
-    warnings: decodeGraphqlJsonPayload<string[]>(record.warnings),
-    rankings: decodeGraphqlJsonPayload<
-      Record<PositionCode, LineupHelperRankingEntry[]>
-    >(record.rankings),
-    playerPositionOutputs: decodeGraphqlJsonPayload<
-      Record<string, Record<PositionCode, number>>
-    >(record.playerPositionOutputs),
-    perPositionContributions: decodeGraphqlJsonPayload<
-      Record<string, Record<PositionCode, number>>
-    >(record.perPositionContributions),
+    perPositionContributions: {
+      outsideScoring: decodePositionOutput(
+        record.perPositionContributions.outsideScoring,
+      ),
+      insideScoring: decodePositionOutput(
+        record.perPositionContributions.insideScoring,
+      ),
+      outsideDefense: decodePositionOutput(
+        record.perPositionContributions.outsideDefense,
+      ),
+      insideDefense: decodePositionOutput(
+        record.perPositionContributions.insideDefense,
+      ),
+      rebounding: decodePositionOutput(record.perPositionContributions.rebounding),
+      offensiveFlow: decodePositionOutput(
+        record.perPositionContributions.offensiveFlow,
+      ),
+    },
     totalOutput: Number(record.totalOutput),
+  };
+}
+
+function decodeLineupHelperRosterPlayer(
+  player: LineupHelperWorkspaceRecord["roster"][number],
+): LineupHelperRosterPlayer {
+  return {
+    playerId: player.playerId,
+    fullName: player.fullName,
+    bestPosition: player.bestPosition ?? null,
+    salary: player.salary ?? null,
+    age: player.age ?? null,
+    gameShape: player.gameShape ?? null,
+    snapshotWeekKey: player.snapshotWeekKey ?? null,
+    snapshotCapturedAt: player.snapshotCapturedAt ?? null,
+    available: player.available,
+    snapshotWarning: player.snapshotWarning ?? null,
+    skills: toSkillRecord(player.skills),
+  };
+}
+
+function encodeLineupHelperRosterPlayer(
+  player: LineupHelperRosterPlayer,
+): LineupHelperWorkspaceRecord["roster"][number] {
+  return {
+    playerId: player.playerId,
+    fullName: player.fullName,
+    bestPosition: player.bestPosition,
+    salary: player.salary,
+    age: player.age,
+    gameShape: player.gameShape,
+    snapshotWeekKey: player.snapshotWeekKey,
+    snapshotCapturedAt: player.snapshotCapturedAt,
+    available: player.available,
+    snapshotWarning: player.snapshotWarning,
+    skills: {
+      js: player.skills.js,
+      jr: player.skills.jr,
+      od: player.skills.od,
+      ha: player.skills.ha,
+      dr: player.skills.dr,
+      pa: player.skills.pa,
+      is: player.skills.is,
+      id: player.skills.id,
+      rb: player.skills.rb,
+      sb: player.skills.sb,
+      st: player.skills.st,
+      ft: player.skills.ft,
+      ex: player.skills.ex,
+      gs: player.skills.gs,
+    },
+  };
+}
+
+function decodeLineupHelperAssignment(
+  assignment: LineupHelperWorkspaceRecord["defaultAssignments"][number],
+): LineupHelperAssignment {
+  return {
+    playerId: assignment.playerId,
+    position: assignment.position as PositionCode,
+    minutes: assignment.minutes,
+  };
+}
+
+function decodeLineupHelperRankingEntry(
+  entry: LineupHelperEvaluationRecord["rankings"]["pg"][number],
+): LineupHelperRankingEntry {
+  return {
+    playerId: entry.playerId,
+    name: entry.name,
+    output: entry.output,
+  };
+}
+
+function decodePositionOutput(
+  value: LineupHelperEvaluationRecord["playerPositionOutputs"][number]["output"],
+): Record<PositionCode, number> {
+  return {
+    PG: value.pg,
+    SG: value.sg,
+    SF: value.sf,
+    PF: value.pf,
+    C: value.c,
+  };
+}
+
+function toSkillRecord(
+  skills: LineupHelperWorkspaceRecord["roster"][number]["skills"],
+): Record<string, number> {
+  return {
+    js: skills.js,
+    jr: skills.jr,
+    od: skills.od,
+    ha: skills.ha,
+    dr: skills.dr,
+    pa: skills.pa,
+    is: skills.is,
+    id: skills.id,
+    rb: skills.rb,
+    sb: skills.sb,
+    st: skills.st,
+    ft: skills.ft,
+    ex: skills.ex,
+    gs: skills.gs,
   };
 }
 

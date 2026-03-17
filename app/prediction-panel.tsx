@@ -8,7 +8,6 @@ import {
 } from "react";
 
 import { client } from "@/app/amplify-client";
-import { encodeGraphqlJsonInput } from "@/app/graphql-json";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { cn } from "@/app/ui/primitives/cn";
@@ -20,11 +19,11 @@ import {
   StatusBadge,
   statusToneFromValue,
 } from "@/app/ui/primitives/status-badge";
+import { formatPreviewStatus } from "@/app/ui/presentation";
 import type {
   DashboardWorkspace,
   ManualPredictionInput,
   PredictionJobRecord,
-  PredictionResult,
   PredictionSubmissionRequest,
 } from "@/app/types";
 
@@ -149,8 +148,9 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
   ) ?? [];
   const defaultHomeSourceMatchId = homeMatchOptions[0]?.matchId ?? "";
   const defaultAwaySourceMatchId = awayMatchOptions[0]?.matchId ?? "";
-  const homeTeamId = workspace.home.team.teamId;
-  const awayTeamId = workspace.scout.summary?.matchupPerspective.opponentTeamId ?? null;
+  const homeTeamId = workspace.home.team.teamId ?? null;
+  const awayTeamId =
+    workspace.scout.summary?.matchupPerspective.opponentTeamId ?? null;
 
   useEffect(() => {
     setConnectedSelection((current) => ({
@@ -208,7 +208,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
     });
 
     const result = await client.mutations.submitPredictionJob({
-      request: encodeGraphqlJsonInput(request),
+      request,
     });
 
     if (result.errors?.length || !result.data) {
@@ -228,7 +228,6 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
       awayTeamId,
   );
   const latestJob = jobs.length ? jobs[0] : null;
-  const latestResult = latestJob ? toPredictionResult(latestJob.result) : null;
   const latestExplanation = latestJob
     ? describeResolvedInput(latestJob.resolvedInputSnapshot)
     : [];
@@ -286,8 +285,8 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
       />
 
       <p className={statusCopyClassName}>
-        Build a preview from saved box scores or fill in the matchup yourself.
-        The manual form also doubles as a fallback when saved examples are thin.
+        Use saved box scores for a faster preview, or fill in the matchup
+        yourself when you want full control.
       </p>
 
       {predictionError ? <Alert>{predictionError}</Alert> : null}
@@ -359,8 +358,8 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <StatCard
               detail={
                 awayMatchOptions.length
-                  ? `${awayMatchOptions.length} recent opponent games cached`
-                  : "Refresh club data to populate opponent samples."
+                  ? `${awayMatchOptions.length} recent opponent games ready`
+                  : "Refresh club data to load opponent examples."
               }
               label="Opponent"
               value={workspace.scout.summary?.teamName ?? "No saved opponent"}
@@ -484,7 +483,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
         </Panel>
 
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Game context and preview status" titleAs="h4" />
+          <SectionHeading title="Game context" titleAs="h4" />
           <div className={formGridClassName}>
             <Field label="Neutral site">
               <Select
@@ -514,17 +513,12 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
           {latestJob ? (
             <div className="grid gap-2 rounded-card border border-black/5 bg-white/65 p-4">
               <StatusBadge tone={statusToneFromValue(latestJob.status)}>
-                {humanizeJobStatus(latestJob.status)}
+                {formatPreviewStatus(latestJob.status)}
               </StatusBadge>
               <strong className="text-base text-ink">{describePredictionJob(latestJob)}</strong>
               <span className="text-sm text-ink-muted">
                 Updated {formatTimestamp(latestJob.updatedAt)}
               </span>
-              {latestResult ? (
-                <span className="text-sm text-ink-muted">
-                  Model {latestResult.modelVersion}
-                </span>
-              ) : null}
               {latestExplanation.length ? (
                 <div className="flex flex-wrap gap-2">
                   {latestExplanation.map((item) => (
@@ -554,16 +548,14 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
               <li className={listItemClassName} key={job.id}>
                 <strong className="text-sm text-ink">{describePredictionJob(job)}</strong>
                 <span className={statusCopyClassName}>
-                  {humanizeJobStatus(job.status)}
-                  {job.modelVersion ? ` • ${job.modelVersion}` : ""}
-                  {" • "}
-                  {formatTimestamp(job.updatedAt)}
+                  {formatPreviewStatus(job.status)} • {formatTimestamp(job.updatedAt)}
+                  {job.error ? ` • ${job.error}` : ""}
                 </span>
               </li>
             ))}
           </ul>
         ) : (
-          <p className={statusCopyClassName}>No preview history is stored yet.</p>
+          <p className={statusCopyClassName}>No preview history yet.</p>
         )}
       </Panel>
     </Panel>
@@ -656,20 +648,28 @@ function describePredictionJob(job: PredictionJobRecord): string {
   }
 
   if (job.error) {
-    return job.error;
+    return "Preview needs attention";
   }
 
   return job.mode === "CONNECTED"
-    ? "Box-score preview queued"
-    : "Manual preview queued";
+    ? "Saved-game preview"
+    : "Manual preview";
 }
 
-function toPredictionResult(value: unknown): PredictionResult | null {
+function toPredictionResult(value: unknown): {
+  awayScore: number;
+  homeScore: number;
+  pointDiff: number;
+} | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
-  const typed = value as Partial<PredictionResult>;
+  const typed = value as {
+    awayScore?: unknown;
+    homeScore?: unknown;
+    pointDiff?: unknown;
+  };
   if (
     typeof typed.homeScore !== "number" ||
     typeof typed.awayScore !== "number" ||
@@ -682,7 +682,6 @@ function toPredictionResult(value: unknown): PredictionResult | null {
     homeScore: typed.homeScore,
     awayScore: typed.awayScore,
     pointDiff: typed.pointDiff,
-    modelVersion: typed.modelVersion ?? "unknown",
   };
 }
 
@@ -731,14 +730,6 @@ function formatAmplifyErrors(
     .join(" ");
 }
 
-function humanizeJobStatus(status: PredictionJobRecord["status"]): string {
-  return status
-    .toLowerCase()
-    .split("_")
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
-}
-
 function formatTimestamp(value: string | null | undefined): string {
   if (!value) {
     return "Unavailable";
@@ -756,10 +747,10 @@ function formatTimestamp(value: string | null | undefined): string {
 }
 
 function formatMatchOption(
-  opponentTeamName: string | null,
-  startTime: string | null,
-  teamScore: number | null,
-  opponentScore: number | null,
+  opponentTeamName: string | null | undefined,
+  startTime: string | null | undefined,
+  teamScore: number | null | undefined,
+  opponentScore: number | null | undefined,
 ): string {
   const result =
     teamScore !== null && opponentScore !== null

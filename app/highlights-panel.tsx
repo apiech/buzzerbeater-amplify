@@ -3,7 +3,6 @@
 import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
-import { decodeGraphqlJsonPayload } from "@/app/graphql-json";
 import type {
   DashboardWorkspace,
   TeamHighlightsMoment,
@@ -15,7 +14,11 @@ import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
-import { StatusBadge } from "@/app/ui/primitives/status-badge";
+import {
+  StatusBadge,
+  statusToneFromValue,
+} from "@/app/ui/primitives/status-badge";
+import { formatHighlightsStatus } from "@/app/ui/presentation";
 
 const listClassName = "grid list-none gap-3 p-0";
 const listItemClassName =
@@ -90,7 +93,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     const response = await client.queries.getMyTeamHighlights({
       cursor: options.cursor,
       onlyOutcomeChange,
-      perspective,
+      perspective: perspective.toUpperCase(),
     });
 
     if (response.errors?.length || !response.data) {
@@ -100,8 +103,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
       return;
     }
 
-    const nextPayload =
-      decodeGraphqlJsonPayload<TeamHighlightsPayload>(response.data.payload);
+    const nextPayload = response.data;
     setPayload((current) => {
       if (!options.append || !current) {
         return nextPayload;
@@ -170,36 +172,36 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
             </Button>
           </>
         }
-        description="Scan your connected club's full history, keep only buzzerbeater-derived clutch moments in v1, and view them from both team perspectives."
+        description="Scan your connected club's history for late-game moments and review them from both team perspectives."
         eyebrow="Highlights"
         title="My Team All-time Highlights"
       />
 
       <p className={statusCopyClassName}>
-        Default view shows only late Q4 and overtime moments that changed the game
-        state for your club.
+        Default view keeps the focus on late regulation and overtime swings that
+        changed the result for your club.
       </p>
 
       {panelError ? <Alert>{panelError}</Alert> : null}
 
       <div className={summaryGridClassName}>
         <StatCard
-          detail="Objective moments currently stored for your primary team."
+          detail="Late-game moments saved for your club."
           label="All moments"
           value={summary.totalMoments}
         />
         <StatCard
-          detail="Moments where your team delivered the dagger."
+          detail="Finishes your club delivered."
           label="For us"
           value={summary.forMoments}
         />
         <StatCard
-          detail="Moments where the dagger landed against your club."
+          detail="Finishes opponents delivered against your club."
           label="Against us"
           value={summary.againstMoments}
         />
         <StatCard
-          detail="Moments visible under the current filters."
+          detail="Moments shown with the current filters."
           label="Visible now"
           value={summary.filteredMoments}
         />
@@ -266,9 +268,8 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
           <div className="grid gap-2 rounded-card border border-black/8 bg-white/55 p-4">
             <strong className="text-sm text-ink">What counts in v1</strong>
             <p className={statusCopyClassName}>
-              These are late buzzerbeater-derived moments built from canonical
-              play-by-play and box score payloads. Broader highlight types stay out
-              of scope for now.
+              These are late-game buzzerbeaters and free throws pulled from saved
+              game data. Broader highlight types stay out of scope for now.
             </p>
           </div>
         </Panel>
@@ -282,8 +283,8 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
                 <strong className="text-sm text-ink">
                   {scanStatus.teamName ?? focusTeamName}
                 </strong>
-                <StatusBadge tone={toneForHighlightsStatus(scanStatus.status)}>
-                  {humanizeHighlightsStatus(scanStatus.status)}
+                <StatusBadge tone={statusToneFromValue(scanStatus.status)}>
+                  {formatHighlightsStatus(scanStatus.status)}
                 </StatusBadge>
               </div>
               <p className={statusCopyClassName}>
@@ -395,19 +396,19 @@ export function describeHighlightsEmptyState(
   },
 ): string {
   if (options.isLoading && !payload) {
-    return "Loading the latest highlights for your primary team.";
+    return "Loading the latest moments for your club.";
   }
 
   if (payload?.items.length) {
-    return "Late buzzerbeater-derived moments are sorted newest first.";
+    return "Late-game moments are sorted newest first.";
   }
 
   if (!payload?.scanStatus) {
-    return "Run a full-history scan to populate all-time team moments for your primary club.";
+    return "Run a team history scan to build your all-time moments list.";
   }
 
   if (hasActiveTeamHighlightsScan(payload.scanStatus)) {
-    return "The scan is running. This list will refresh as the status advances.";
+    return "Scanning team history now. This list refreshes automatically.";
   }
 
   if (payload.summary.totalMoments > 0) {
@@ -416,7 +417,7 @@ export function describeHighlightsEmptyState(
       : "Moments exist for this team, but none match the current perspective filter.";
   }
 
-  return "No buzzerbeater-derived moments have been materialized for this team yet.";
+  return "No late-game moments are ready for this team yet.";
 }
 
 function buildMomentHeadline(moment: TeamHighlightsMoment): string {
@@ -452,7 +453,7 @@ function describeMomentAction(moment: TeamHighlightsMoment): string {
     return `${player} made a free throw as time expired.`;
   }
 
-  if (shotLabel && moment.shotDistanceFt !== null) {
+  if (shotLabel && typeof moment.shotDistanceFt === "number") {
     return `${player} scored on a ${shotLabel} from ${moment.shotDistanceFt.toFixed(1)} ft as time expired.`;
   }
 
@@ -479,43 +480,23 @@ function formatMomentMeta(moment: TeamHighlightsMoment): string {
   return parts.join(" | ");
 }
 
-function describeScanStatus(status: TeamHighlightsScanStatus): string {
+export function describeScanStatus(status: TeamHighlightsScanStatus): string {
+  const discovered = status.matchesDiscovered ?? 0;
+  const reused = status.matchesReused ?? 0;
+  const intro =
+    status.status === "SUCCEEDED" ? "Scanned" : "Scanning";
+
   if (status.seasonsFrom !== null && status.seasonsTo !== null) {
-    return `Scanning seasons ${status.seasonsFrom} through ${status.seasonsTo}. Enqueued ${status.matchesEnqueuedForIngest ?? 0} ingest jobs and ${status.matchesEnqueuedForMaterialize ?? 0} materialize jobs.`;
+    const reusedCopy = reused
+      ? ` ${reused} game${reused === 1 ? " was" : "s were"} already ready.`
+      : "";
+    return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}`;
   }
 
-  return "The history scan is building the backfill plan for your current primary team.";
+  return "Scanning your club's history and preparing new moments.";
 }
 
-function humanizeHighlightsStatus(status: string): string {
-  return status
-    .toLowerCase()
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function toneForHighlightsStatus(
-  status: string,
-): "danger" | "neutral" | "note" | "success" {
-  const normalized = status.toLowerCase();
-  if (normalized === "failed") {
-    return "danger";
-  }
-  if (normalized === "succeeded") {
-    return "success";
-  }
-  if (
-    normalized === "queued" ||
-    normalized === "resolving_history" ||
-    normalized === "enqueuing_matches"
-  ) {
-    return "note";
-  }
-  return "neutral";
-}
-
-function normalizeShotLabel(value: string | null): string | null {
+function normalizeShotLabel(value: string | null | undefined): string | null {
   if (!value) {
     return null;
   }

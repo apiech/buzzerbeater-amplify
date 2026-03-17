@@ -13,6 +13,7 @@ import {
   StatusBadge,
   statusToneFromValue,
 } from "@/app/ui/primitives/status-badge";
+import { formatWriteupStatus } from "@/app/ui/presentation";
 import type {
   DashboardWorkspace,
   GameDayRecapCoveragePayload,
@@ -52,7 +53,6 @@ type RecapHistoryRecord = {
   leagueId: string | null;
   leagueName: string | null;
   matchId: string | null;
-  modelId: string | null;
   requestJson: unknown;
   requestedAt: string;
   resultJson: unknown;
@@ -74,7 +74,7 @@ const recapModes: Array<{
   value: RecapMode;
 }> = [
   {
-    description: "Pick a league and calendar date in the league's local time zone.",
+    description: "Pick a league number and calendar date in the league's local time zone.",
     label: "League date",
     value: "LEAGUE_DATE",
   },
@@ -84,7 +84,7 @@ const recapModes: Array<{
     value: "LEAGUE_GAME_DAY",
   },
   {
-    description: "Summarize one finished game directly from its BuzzerBeater match id.",
+    description: "Summarize one finished game by entering its BuzzerBeater game number.",
     label: "Single game",
     value: "SINGLE_GAME",
   },
@@ -225,7 +225,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   const recapDetail = selectedRecap
     ? describeRecapRecord(selectedRecap)
     : "No recap selected";
-  const currentLeagueName = workspace.home.connection.leagueName ?? "Connected league";
+  const currentLeagueName = workspace.home.connection.leagueName ?? "Your league";
   const normalizedLeagueTimeZone = normalizeLeagueTimeZone(leagueTimeZone);
   const maxGameDate = resolveRecapInputMaxDate(leagueTimeZone);
   const activeMode = recapModes.find((entry) => entry.value === mode) ?? recapModes[0];
@@ -249,7 +249,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
             {submitLabelForMode(mode)}
           </Button>
         }
-        description="Switch between league-by-date, regular-season game day, and direct match-id summaries without leaving the workspace."
+        description="Use your connected league by default, or switch to manual league and single-game requests when you need them."
         eyebrow="Recaps"
         title="Recap generator"
       />
@@ -285,10 +285,10 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
           {mode === "LEAGUE_DATE" ? (
             <>
               <div className={formGridClassName}>
-                <Field label="League id">
+                <Field label="League number">
                   <Input
                     onChange={(event) => setLeagueId(event.target.value)}
-                    placeholder="League id"
+                    placeholder="League number"
                     value={leagueId}
                   />
                 </Field>
@@ -311,7 +311,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
                     ? "Enter a valid IANA time zone such as America/New_York."
                     : null
                 }
-                hint="Date-based recaps use the league's local calendar day to match schedules."
+                hint="Date-based recaps use the league's local calendar day to match that day's schedule."
                 label="League time zone"
               >
                 <Input
@@ -325,10 +325,10 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
 
           {mode === "LEAGUE_GAME_DAY" ? (
             <div className={formGridClassName}>
-              <Field label="League id">
+              <Field label="League number">
                 <Input
                   onChange={(event) => setLeagueId(event.target.value)}
-                  placeholder="League id"
+                  placeholder="League number"
                   value={leagueId}
                 />
               </Field>
@@ -357,11 +357,11 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
           ) : null}
 
           {mode === "SINGLE_GAME" ? (
-            <Field hint="Example: 137828772" label="Match id">
+            <Field hint="Example: 137828772" label="Game number">
               <Input
                 inputMode="numeric"
                 onChange={(event) => setMatchId(event.target.value)}
-                placeholder="Match id"
+                placeholder="Game number"
                 value={matchId}
               />
             </Field>
@@ -391,11 +391,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
 
           <div className="grid gap-4 md:grid-cols-2">
             <StatCard
-              detail={
-                workspace.home.connection.leagueId
-                  ? `Connected league ${workspace.home.connection.leagueId}`
-                  : "No connected league detected."
-              }
+              detail="Uses your connected club by default."
               label="Default source"
               value={currentLeagueName}
             />
@@ -448,7 +444,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
                           {recapTitle(recap)}
                         </strong>
                         <StatusBadge tone={statusToneFromValue(recap.status)}>
-                          {humanizeStatus(recap.status)}
+                          {formatWriteupStatus(recap.status)}
                         </StatusBadge>
                       </div>
                       <span className={statusCopyClassName}>
@@ -464,7 +460,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
             </ul>
           ) : (
             <p className={statusCopyClassName}>
-              No recap jobs have been recorded yet.
+              No writeups have been recorded yet.
             </p>
           )}
         </Panel>
@@ -481,12 +477,9 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
           <div className="grid gap-4">
             <div className="flex flex-wrap items-center gap-3">
               <StatusBadge tone={statusToneFromValue(selectedRecap.status)}>
-                {humanizeStatus(selectedRecap.status)}
+                {formatWriteupStatus(selectedRecap.status)}
               </StatusBadge>
               <StatusBadge tone="neutral">{modeLabelForRecord(selectedRecap)}</StatusBadge>
-              {selectedRecap.modelId ? (
-                <span className={statusCopyClassName}>Model {selectedRecap.modelId}</span>
-              ) : null}
               {selectedRecap.completedAt ? (
                 <span className={statusCopyClassName}>
                   Completed {formatTimestamp(selectedRecap.completedAt)}
@@ -515,11 +508,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
                 <div className="grid gap-4">
                   {selectedResult.games.map((game) => (
                     <Panel as="article" key={game.matchId} padding="sm" variant="glass">
-                      <SectionHeading
-                        description={`Match ${game.matchId}`}
-                        title={game.headline}
-                        titleAs="h5"
-                      />
+                      <SectionHeading title={game.headline} titleAs="h5" />
                       <p className="text-sm leading-7 text-ink">{game.writeup}</p>
                       {game.evidenceTags.length ? (
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -538,7 +527,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
               <p className={statusCopyClassName}>
                 {selectedRecap.status === "FAILED"
                   ? "The selected recap failed before a structured result was saved."
-                  : "Structured recap output will appear here once the job finishes."}
+                  : "Writeup details will appear here once the request finishes."}
               </p>
             )}
           </div>
@@ -568,7 +557,7 @@ async function submitRecapRequest(args: {
   switch (args.mode) {
     case "LEAGUE_DATE": {
       if (!normalizedLeagueId || !args.gameDate) {
-        throw new Error("Pick a league, date, and time zone before requesting a recap.");
+        throw new Error("Pick a league number, date, and time zone before requesting a recap.");
       }
       if (!normalizedTimeZone) {
         throw new Error("Enter a valid league time zone before requesting a date-based recap.");
@@ -596,7 +585,7 @@ async function submitRecapRequest(args: {
       const numericGameDay = Number(args.gameDayNumber);
       const seasonValue = args.season.trim() ? Number(args.season) : undefined;
       if (!normalizedLeagueId || !Number.isInteger(numericGameDay)) {
-        throw new Error("Enter a league and regular-season game day from 1 to 22.");
+        throw new Error("Enter a league number and regular-season game day from 1 to 22.");
       }
       if (numericGameDay < 1 || numericGameDay > 22) {
         throw new Error("League game day must be between 1 and 22.");
@@ -617,7 +606,7 @@ async function submitRecapRequest(args: {
     case "SINGLE_GAME": {
       const normalizedMatchId = args.matchId.trim();
       if (!/^\d+$/.test(normalizedMatchId)) {
-        throw new Error("Enter a numeric BuzzerBeater match id.");
+        throw new Error("Enter a numeric BuzzerBeater game number.");
       }
 
       return client.mutations.submitSingleGameSummary({
@@ -638,7 +627,6 @@ function adaptLeagueDateRecap(record: GameDayRecapRecord): RecapHistoryRecord {
     leagueId: record.leagueId,
     leagueName: record.leagueName ?? null,
     matchId: null,
-    modelId: record.modelId ?? null,
     requestJson: record.requestJson,
     requestedAt: record.requestedAt,
     resultJson: record.resultJson,
@@ -663,7 +651,6 @@ function adaptLeagueGameDayRecap(
     leagueId: record.leagueId,
     leagueName: record.leagueName ?? null,
     matchId: null,
-    modelId: record.modelId ?? null,
     requestJson: record.requestJson,
     requestedAt: record.requestedAt,
     resultJson: record.resultJson,
@@ -686,7 +673,6 @@ function adaptSingleGameSummary(record: SingleGameSummaryRecord): RecapHistoryRe
     leagueId: record.leagueId ?? null,
     leagueName: record.leagueName ?? null,
     matchId: record.matchId,
-    modelId: record.modelId ?? null,
     requestJson: record.requestJson,
     requestedAt: record.requestedAt,
     resultJson: record.resultJson,
@@ -713,22 +699,27 @@ function hasActiveRecap(recaps: readonly RecapHistoryRecord[]): boolean {
 }
 
 function recapTitle(record: RecapHistoryRecord): string {
-  if (record.kind === "SINGLE_GAME") {
-    return `Match ${record.matchId ?? record.targetKey}`;
+  const headline = toGameDayRecapResult(record.resultJson)?.summary.headline;
+  if (headline) {
+    return headline;
   }
 
-  return record.leagueName ?? record.leagueId ?? "League recap";
+  if (record.kind === "SINGLE_GAME") {
+    return "Single-game recap";
+  }
+
+  return record.leagueName ?? "League recap";
 }
 
 function describeRecapRecord(record: RecapHistoryRecord): string {
   switch (record.kind) {
     case "LEAGUE_GAME_DAY":
-      return `${record.leagueName ?? record.leagueId} • game day ${record.gameDayNumber}${record.season ? ` • season ${record.season}` : ""}`;
+      return `${record.leagueName ?? "League"} • game day ${record.gameDayNumber}${record.season ? ` • season ${record.season}` : ""}`;
     case "SINGLE_GAME":
-      return `${record.leagueName ?? "Single game"} • match ${record.matchId}${record.gameDate ? ` • ${record.gameDate}` : ""}`;
+      return `${record.leagueName ?? "Single game"}${record.gameDate ? ` • ${record.gameDate}` : ""}`;
     case "LEAGUE_DATE":
     default:
-      return `${record.leagueName ?? record.leagueId} • ${record.gameDate ?? "date unavailable"}`;
+      return `${record.leagueName ?? "League"} • ${record.gameDate ?? "date unavailable"}`;
   }
 }
 
@@ -759,7 +750,7 @@ function getSubmissionBlockReason(args: {
   switch (args.mode) {
     case "LEAGUE_DATE":
       if (!args.leagueId.trim() || !args.gameDate) {
-        return "League date recaps require both a league id and a game date.";
+        return "League date recaps require both a league number and a game date.";
       }
       if (!normalizeLeagueTimeZone(args.leagueTimeZone)) {
         return "Date-based recaps require a valid league time zone.";
@@ -768,7 +759,7 @@ function getSubmissionBlockReason(args: {
     case "LEAGUE_GAME_DAY": {
       const numericGameDay = Number(args.gameDayNumber);
       if (!args.leagueId.trim()) {
-        return "League game-day recaps require a league id.";
+        return "League game-day recaps require a league number.";
       }
       if (!Number.isInteger(numericGameDay) || numericGameDay < 1 || numericGameDay > 22) {
         return "League game day must be a whole number from 1 to 22.";
@@ -778,7 +769,7 @@ function getSubmissionBlockReason(args: {
     case "SINGLE_GAME":
       return /^\d+$/.test(args.matchId.trim())
         ? null
-        : "Single-game summaries require a numeric match id.";
+        : "Single-game summaries require a numeric game number.";
   }
 }
 
@@ -943,18 +934,6 @@ function formatTimestamp(value: string | null | undefined): string {
   }).format(date);
 }
 
-function humanizeStatus(status: string | null | undefined): string {
-  if (!status) {
-    return "Unknown";
-  }
-
-  return status
-    .toLowerCase()
-    .split("_")
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
-}
-
 function describeCoverage(coverage: GameDayRecapCoveragePayload): string {
   return coverage.partial
     ? `${coverage.availableGames} of ${coverage.requestedGames} final games were available.`
@@ -966,3 +945,8 @@ function formatEvidenceTag(tag: string): string {
     .replace(/_/g, " ")
     .replace(/\b\w/g, (segment) => segment.toUpperCase());
 }
+
+export const __testing = {
+  describeRecapRecord,
+  recapTitle,
+};

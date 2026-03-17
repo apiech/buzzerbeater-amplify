@@ -577,7 +577,7 @@ export async function getPlayerTrend(args: {
     }));
 
   return {
-    player,
+    player: projectPlayerSummary(player),
     history,
   };
 }
@@ -609,11 +609,12 @@ export async function getMatchBoxscoreDetails(args: {
     defStrategy: asString(boxscore.defStrategy),
     opponentOffStrategy: asString(boxscore.opponentOffStrategy),
     opponentDefStrategy: asString(boxscore.opponentDefStrategy),
-    teamRatings: toRecord(boxscore.teamRatingsJson),
-    opponentRatings: toRecord(boxscore.opponentRatingsJson),
-    teamEfficiency: toRecord(boxscore.teamEfficiencyJson),
-    opponentEfficiency: toRecord(boxscore.opponentEfficiencyJson),
-    boxscore: toRecord(boxscore.boxscoreJson),
+    teamRatings: toMetricEntries(toRecord(boxscore.teamRatingsJson)),
+    opponentRatings: toMetricEntries(toRecord(boxscore.opponentRatingsJson)),
+    teamEfficiency: toMetricEntries(toRecord(boxscore.teamEfficiencyJson)),
+    opponentEfficiency: toMetricEntries(toRecord(boxscore.opponentEfficiencyJson)),
+    context: buildMatchContext(toRecord(boxscore.boxscoreJson)),
+    source: "LEGACY_CACHE",
   };
 }
 
@@ -650,13 +651,13 @@ export async function saveLineupScenario(args: {
   const scenarioId = randomUUID();
   const savedAt = new Date().toISOString();
   const starters = toRecordArray(args.starters);
-  const minuteTargets = toRecord(args.minuteTargets);
+  const minuteTargets = toMinuteTargetEntries(args.minuteTargets);
 
   if (!starters.length) {
     throw new Error("At least one starter must be provided.");
   }
 
-  if (!minuteTargets) {
+  if (!minuteTargets.length) {
     throw new Error("Minute targets must be provided.");
   }
 
@@ -722,9 +723,8 @@ export function buildLineupPlanPayload(
 
   const rankedPlayers = roster
     .map((player) => {
-      const stats = toRecord(player.stats);
       const projectedStarterCount = asNumber(player.projectedStarterCount) ?? 0;
-      const ppg = asNumber(stats?.ppg) ?? 0;
+      const ppg = asNumber(player.ppg) ?? 0;
       const salary = asNumber(player.salary) ?? 0;
       const dmi = asNumber(player.dmi) ?? 0;
       const injuryWeeks = asNumber(player.injuryWeeks) ?? 0;
@@ -748,7 +748,6 @@ export function buildLineupPlanPayload(
         dmi,
         injuryWeeks,
         projectedStarterCount,
-        stats,
         score,
       };
     })
@@ -798,12 +797,10 @@ export function buildLineupPlanPayload(
     }))
     .slice(0, 7);
 
-  const minuteTargets = Object.fromEntries(
-    recommendedStarters.map((player, index) => [
-      player.playerId,
-      suggestMinutes(player.gameShape, index),
-    ]),
-  );
+  const minuteTargets = recommendedStarters.map((player, index) => ({
+    playerId: player.playerId,
+    minutes: suggestMinutes(player.gameShape, index),
+  }));
 
   const home = toRecord(workspace.home);
   const homeTeam = toRecord(home?.team);
@@ -1307,7 +1304,10 @@ function buildHomeWorkspace(
               fullName: player.fullName,
               injuryWeeks: player.injuryWeeks,
             })),
-          tendencies: summarizeTendencies(opponentWorkspace.recentBoxScores, opponentWorkspace.teamInfo.teamId),
+          tendencies: summarizeTendencies(
+            opponentWorkspace.recentBoxScores,
+            opponentWorkspace.teamInfo.teamId,
+          ),
         }
       : null,
     recentMatches: recentMatches.map((match) => ({
@@ -1330,7 +1330,7 @@ function buildTeamHub(
 ): Record<string, unknown> {
   const starterCounts = countStarters(currentBoxScores, workspace.teamInfo.teamId);
   return {
-    team: workspace.teamInfo,
+    team: projectTeamInfo(workspace.teamInfo),
     roster: workspace.roster.players.map((player) => ({
       playerId: player.id,
       fullName: player.fullName,
@@ -1342,7 +1342,7 @@ function buildTeamHub(
       dmi: player.dmi,
       injuryWeeks: player.injuryWeeks,
       projectedStarterCount: starterCounts[player.id ?? ""] ?? 0,
-      stats: lookupPlayerStats(workspace.teamStats, player),
+      ppg: extractPpg(workspace.teamStats, player),
     })),
   };
 }
@@ -1415,6 +1415,7 @@ export function buildScoutWorkspace(
         dmi: player.dmi,
         injuryWeeks: player.injuryWeeks,
         projectedStarterCount: null,
+        ppg: extractPpg(opponentWorkspace.teamStats, player),
       })),
       topPlayers: buildTopPlayers(opponentWorkspace.roster.players, opponentWorkspace.teamStats),
       recentGames: opponentWorkspace.recentMatches.map((match) => ({
@@ -1530,7 +1531,7 @@ function buildPlayerLab(
       dmi: player.dmi,
       injuryWeeks: player.injuryWeeks,
       projectedStarterCount: starterCounts[player.id ?? ""] ?? 0,
-      stats: lookupPlayerStats(workspace.teamStats, player),
+      ppg: extractPpg(workspace.teamStats, player),
     })),
   };
 }
@@ -1683,9 +1684,109 @@ function summarizeTendencies(
   }
 
   return {
-    offense: Object.fromEntries(offense),
-    defense: Object.fromEntries(defense),
+    offense: toTrendEntries(offense),
+    defense: toTrendEntries(defense),
   };
+}
+
+function toTrendEntries(values: Map<string, number>): Array<Record<string, unknown>> {
+  return Array.from(values.entries())
+    .map(([key, count]) => ({
+      key,
+      count,
+    }))
+    .sort((left, right) => String(left.key).localeCompare(String(right.key)));
+}
+
+function toMetricEntries(
+  values: Record<string, unknown> | null,
+): Array<Record<string, unknown>> {
+  if (!values) {
+    return [];
+  }
+
+  return Object.entries(values)
+    .filter(([key]) => !key.startsWith("__"))
+    .map(([key, rawValue]) => {
+      const numberValue = asNumber(rawValue);
+      return {
+        key,
+        numberValue,
+        textValue: numberValue === null ? asString(rawValue) : null,
+      };
+    })
+    .sort((left, right) => String(left.key).localeCompare(String(right.key)));
+}
+
+function buildMatchContext(
+  boxscore: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!boxscore) {
+    return null;
+  }
+
+  const homeTeam = toRecord(boxscore.homeTeam);
+  const awayTeam = toRecord(boxscore.awayTeam);
+  return {
+    homeTeamName: asString(homeTeam?.teamName),
+    awayTeamName: asString(awayTeam?.teamName),
+    effortDelta: asNumber(boxscore.effortDelta),
+    neutral: asBoolean(boxscore.neutral),
+  };
+}
+
+function projectTeamInfo(teamInfo: BBApiTeamInfo): Record<string, unknown> {
+  return {
+    teamId: teamInfo.teamId,
+    teamName: teamInfo.teamName,
+    shortName: teamInfo.shortName,
+    ownerName: teamInfo.ownerName,
+    isBot: teamInfo.isBot,
+    league: teamInfo.league,
+    country: teamInfo.country,
+    rival: teamInfo.rival,
+  };
+}
+
+function projectPlayerSummary(player: Record<string, unknown>): Record<string, unknown> {
+  return {
+    playerId: asString(player.playerId),
+    fullName: asString(player.fullName) ?? "Unknown player",
+    bestPosition: asString(player.bestPosition),
+    nationalityName: asString(player.nationalityName),
+    salary: asNumber(player.salary),
+    age: asNumber(player.age),
+    gameShape: asString(player.gameShape),
+    dmi: asNumber(player.dmi),
+    injuryWeeks: asNumber(player.injuryWeeks),
+    projectedStarterCount: asNumber(player.projectedStarterCount),
+    ppg: asNumber(player.ppg),
+  };
+}
+
+function toMinuteTargetEntries(value: unknown): Array<Record<string, unknown>> {
+  const source = toRecord(value);
+  if (source) {
+    return Object.entries(source)
+      .map(([playerId, minutes]) => ({
+        playerId,
+        minutes: asNumber(minutes),
+      }))
+      .filter(
+        (entry): entry is { playerId: string; minutes: number } =>
+          Boolean(entry.playerId) && entry.minutes !== null,
+      );
+  }
+
+  return toRecordArray(value)
+    .map((entry) => ({
+      playerId: asString(entry.playerId) ?? "",
+      minutes: asNumber(entry.minutes),
+    }))
+    .filter(
+      (entry): entry is { playerId: string; minutes: number } =>
+        Boolean(entry.playerId) && entry.minutes !== null,
+    );
 }
 
 function buildTopPlayers(
@@ -1698,22 +1799,22 @@ function buildTopPlayers(
       fullName: player.fullName,
       bestPosition: player.bestPosition,
       salary: player.salary,
-      stats: lookupPlayerStats(teamStats, player),
+      ppg: extractPpg(teamStats, player),
     }))
     .sort((left, right) => {
-      const leftPpg = asNumber(left.stats?.ppg);
-      const rightPpg = asNumber(right.stats?.ppg);
+      const leftPpg = asNumber(left.ppg);
+      const rightPpg = asNumber(right.ppg);
       return (rightPpg ?? 0) - (leftPpg ?? 0);
     })
     .slice(0, 5);
 }
 
-function lookupPlayerStats(
+function extractPpg(
   teamStats: BBApiTeamStats | null,
   player: BBApiRosterPlayer,
-): Record<string, unknown> | null {
+): number | null {
   const statsEntry = teamStats?.players.find((entry) => entry.id === player.id);
-  return statsEntry?.stats ?? null;
+  return asNumber(statsEntry?.stats?.ppg);
 }
 
 function lookupRecord(

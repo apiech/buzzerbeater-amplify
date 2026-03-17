@@ -6,15 +6,9 @@ import { lookupSharedPlayerCardByToken } from "../_backend/workspace";
 type Handler = Schema["lookupSharedPlayerCard"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
-  const payload = await lookupSharedPlayerCardByToken({
+  return lookupSharedPlayerCardByToken({
     env,
     identity: event.identity,
     shareToken: event.arguments.shareToken,
   });
-
-  return {
-    status: payload ? "READY" : "NOT_FOUND",
-    payload,
-    error: payload ? null : "The requested shared player card was not found.",
-  };
 };

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  __testing as recapTesting,
   hasActiveGameDayRecap,
   resolveDefaultRecapDate,
   sortGameDayRecaps,
@@ -13,12 +14,10 @@ function createWorkspace(): DashboardWorkspace {
     home: {
       connection: {
         bbLoginName: "coach-alpha",
-        createdAt: "2026-03-15T20:00:00Z",
         leagueId: "100",
         leagueName: "Elite League",
+        lastSyncAt: "2026-03-15T22:00:00Z",
         status: "CONNECTED",
-        updatedAt: "2026-03-15T22:00:00Z",
-        userId: "user-1",
       },
       league: {
         league: { id: "100", name: "Elite League" },
@@ -63,7 +62,9 @@ function createWorkspace(): DashboardWorkspace {
     syncedAt: "2026-03-15T22:00:00Z",
     teamHub: {
       roster: [],
-      team: {},
+      team: {
+        isBot: false,
+      },
     },
   };
 }
@@ -132,4 +133,44 @@ test("hasActiveGameDayRecap detects non-terminal recap work", () => {
     ]),
     true,
   );
+});
+
+test("recap labels prefer headlines and league/date copy over raw ids", () => {
+  const record = {
+    completedAt: "2026-03-15T23:15:00Z",
+    coverageJson: null,
+    error: null,
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    kind: "SINGLE_GAME",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: "137828772",
+    requestJson: {},
+    requestedAt: "2026-03-15T23:00:00Z",
+    resultJson: {
+      games: [
+        {
+          evidenceTags: [],
+          headline: "Alpha survives Beta late",
+          matchId: "137828772",
+          writeup: "Alpha finished the job.",
+        },
+      ],
+      summary: {
+        headline: "Alpha survives Beta late",
+        lede: "A close finish swung late.",
+      },
+    },
+    selectionKey: "SINGLE_GAME:137828772",
+    season: null,
+    status: "SUCCEEDED",
+    targetKey: "137828772",
+    updatedAt: "2026-03-15T23:10:00Z",
+  } as const;
+
+  assert.equal(recapTesting.recapTitle(record), "Alpha survives Beta late");
+  assert.match(recapTesting.describeRecapRecord(record), /Elite League/);
+  assert.match(recapTesting.describeRecapRecord(record), /2026-03-15/);
+  assert.doesNotMatch(recapTesting.describeRecapRecord(record), /137828772/);
 });

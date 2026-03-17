@@ -6,15 +6,9 @@ import { getMatchBoxscoreDetails } from "../_backend/match-store";
 type Handler = Schema["getMatchBoxscoreDetails"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
-  const payload = await getMatchBoxscoreDetails({
+  return getMatchBoxscoreDetails({
     env,
     identity: event.identity,
     matchId: event.arguments.matchId,
   });
-
-  return {
-    status: "READY",
-    payload,
-    error: null,
-  };
 };

@@ -286,7 +286,7 @@ export async function getMyTeamHighlights(
   return {
     filters: {
       onlyOutcomeChange,
-      perspective: perspective.toLowerCase(),
+      perspective,
     },
     items: pageItems.map((item) => ({
       comment: item.comment ?? null,
@@ -307,7 +307,7 @@ export async function getMyTeamHighlights(
       opponentScoreBefore: item.opponentScoreBefore ?? null,
       outcomeChanged: Boolean(item.outcomeChanged),
       period: item.period ?? null,
-      perspective: item.perspective,
+      perspective: normalizePerspective(item.perspective),
       playerId: item.playerId ?? null,
       playerName: item.playerName ?? null,
       recordId: item.recordId,

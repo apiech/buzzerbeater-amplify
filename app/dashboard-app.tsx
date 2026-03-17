@@ -26,7 +26,6 @@ import {
 } from "@/app/auth-flow";
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import { fetchBillingSummary } from "@/app/billing-client";
-import { decodeGraphqlJsonPayload } from "@/app/graphql-json";
 import { HighlightsPanel } from "@/app/highlights-panel";
 import { LineupHelper } from "@/app/lineup-helper";
 import { OperationsPanel } from "@/app/operations-panel";
@@ -39,17 +38,12 @@ import type {
   ConnectBbAccountInput,
   ConnectBbAccountResult,
   DashboardWorkspace,
-  HomeWorkspacePayload,
-  JsonLookupResponse,
-  LeagueIntelPayload,
   MatchBoxscorePayload,
-  PlayerLabPayload,
+  MatchMetricEntry,
   PlayerSummary,
   PlayerTrendPayload,
   SalaryProjection,
-  ScoutWorkspacePayload,
-  TeamHubPayload,
-  WorkspaceResponse,
+  TrendCountEntry,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
@@ -69,6 +63,7 @@ import {
 import { PlayerTrendChart } from "@/app/ui/workspace/player-trend-chart";
 import { ThemeSelect } from "@/app/ui/theme/theme-select";
 import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
+import { formatConnectionStatus } from "@/app/ui/presentation";
 import { hasFeature } from "@/lib/billing/plans";
 import { type WorkspaceSection } from "@/app/workspace-sections";
 
@@ -1110,11 +1105,11 @@ function AuthenticatedWorkspace({
     }
 
     setWorkspace({
-      home: readPayload<HomeWorkspacePayload>(homeResponse.data),
-      teamHub: readPayload<TeamHubPayload>(teamHubResponse.data),
-      scout: readPayload<ScoutWorkspacePayload>(scoutResponse.data),
-      leagueIntel: readPayload<LeagueIntelPayload>(leagueIntelResponse.data),
-      playerLab: readPayload<PlayerLabPayload>(playerLabResponse.data),
+      home: homeResponse.data,
+      teamHub: teamHubResponse.data,
+      scout: scoutResponse.data,
+      leagueIntel: leagueIntelResponse.data,
+      playerLab: playerLabResponse.data,
       syncedAt: homeResponse.data.syncedAt ?? null,
     });
     setIsLoadingWorkspace(false);
@@ -1236,7 +1231,7 @@ function AuthenticatedWorkspace({
                 actions={
                   <>
                     <StatusBadge tone={statusToneFromValue(connection.status)}>
-                      {humanizeStatus(connection.status)}
+                      {formatConnectionStatus(connection.status)}
                     </StatusBadge>
                     <Button
                       loading={isLoadingWorkspace}
@@ -1265,29 +1260,39 @@ function AuthenticatedWorkspace({
 
               <div className={summaryGridClassName}>
                 <StatCard
-                  detail={connection.accessKeyLast4 ?? "Securely stored"}
+                  detail="Used for your BuzzerBeater connection."
                   label="Login name"
                   value={connection.bbLoginName || "Not set"}
                 />
                 <StatCard
-                  detail={connection.countryName ?? "Country unavailable"}
-                  label="League"
-                  value={connection.leagueName ?? "Unassigned"}
+                  detail={
+                    [connection.leagueName, connection.countryName]
+                      .filter(Boolean)
+                      .join(" • ") || "Club details update after refresh."
+                  }
+                  label="Club"
+                  value={connection.teamName ?? "Connected club"}
                 />
                 <StatCard
-                  detail={`Connected ${formatTimestamp(connection.connectedAt)}`}
-                  label="Last check"
-                  value={formatTimestamp(connection.lastValidatedAt)}
+                  detail={
+                    connection.lastValidatedAt
+                      ? `Last checked ${formatTimestamp(connection.lastValidatedAt)}`
+                      : "No validation has run yet."
+                  }
+                  label="Connection health"
+                  value={formatConnectionStatus(connection.status)}
                 />
                 <StatCard
                   detail={
                     connection.lastSyncError ??
-                    "Your latest sync completed cleanly."
+                    "Club data is up to date."
                   }
                   label="Latest refresh"
-                  value={formatTimestamp(
-                    workspace?.syncedAt ?? connection.lastSyncAt,
-                  )}
+                  value={
+                    (workspace?.syncedAt ?? connection.lastSyncAt)
+                      ? formatTimestamp(workspace?.syncedAt ?? connection.lastSyncAt)
+                      : "Waiting to refresh"
+                  }
                 />
               </div>
 
@@ -1299,7 +1304,7 @@ function AuthenticatedWorkspace({
                 <SectionHeading title="Building your club view" titleAs="h4" />
                 <p className={statusCopyClassName}>
                   Pulling your team, next opponent, league table, and player
-                  snapshots.
+                  history.
                 </p>
               </Panel>
             ) : workspace ? (
@@ -1533,7 +1538,7 @@ function WorkspaceDashboard({
       return;
     }
 
-    setScout(readPayload<ScoutWorkspacePayload>(response.data));
+    setScout(response.data);
     setIsLoadingScout(false);
   }
 
@@ -1549,7 +1554,7 @@ function WorkspaceDashboard({
       return;
     }
 
-    setBoxscoreDetails(readPayload<MatchBoxscorePayload>(response.data));
+    setBoxscoreDetails(response.data);
     setLoadingMatchId(null);
   }
 
@@ -1572,7 +1577,7 @@ function WorkspaceDashboard({
       return;
     }
 
-    setPlayerTrend(readPayload<PlayerTrendPayload>(response.data));
+    setPlayerTrend(response.data);
     setLoadingTrendPlayerId(null);
   }
 
@@ -1627,7 +1632,7 @@ function WorkspaceDashboard({
               detail={
                 home.nextOpponent?.record
                   ? `Record ${formatRecord(home.nextOpponent.record)}`
-                  : "No opponent snapshot available."
+                  : "No opponent data available."
               }
               label="Next opponent"
               value={home.nextOpponent?.teamName ?? "No opponent"}
@@ -1663,7 +1668,7 @@ function WorkspaceDashboard({
                   ))
                 ) : (
                   <li className="text-ink-muted text-sm">
-                    No rotation snapshot is available yet.
+                    No rotation data is available yet.
                   </li>
                 )}
               </ul>
@@ -1775,8 +1780,8 @@ function WorkspaceDashboard({
       {activeSection === "lineups" ? (
         <Panel>
           <SectionHeading
-            eyebrow="CoachParrot"
-            title="Lineup construction and rating outputs"
+            eyebrow="Lineups"
+            title="Lineup helper and rating outputs"
           />
           <LineupHelper />
         </Panel>
@@ -1837,12 +1842,9 @@ function WorkspaceDashboard({
                   value={String(scout.summary.recentGames.length)}
                 />
                 <StatCard
-                  detail="Planning tools stay locked to your current club."
-                  label="Selected team ID"
-                  value={
-                    scout.summary.matchupPerspective.opponentTeamId ??
-                    "Unavailable"
-                  }
+                  detail="Lineup tools stay anchored to your current club."
+                  label="Scouting focus"
+                  value={scout.summary.teamName ?? "Selected team"}
                 />
               </div>
 
@@ -2028,14 +2030,16 @@ function WorkspaceDashboard({
           <SectionHeading
             eyebrow="Box Score"
             title={
-              boxscoreDetails?.opponentTeamName ?? "Saved box score detail"
+              boxscoreDetails?.opponentTeamName
+                ? `${boxscoreDetails.opponentTeamName} game details`
+                : "Saved game details"
             }
           />
           {boxscoreError ? <Alert>{boxscoreError}</Alert> : null}
           {boxscoreDetails ? (
             <div className={twoColumnGridClassName}>
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Strategy snapshot" titleAs="h4" />
+                <SectionHeading title="Tactics" titleAs="h4" />
                 <dl className="grid gap-3 sm:grid-cols-2">
                   <div className="grid gap-1">
                     <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
@@ -2073,7 +2077,7 @@ function WorkspaceDashboard({
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Ratings snapshot" titleAs="h4" />
+                <SectionHeading title="Ratings" titleAs="h4" />
                 <div className="overflow-x-auto">
                   <div className={ratingGridClassName}>
                     <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
@@ -2094,7 +2098,7 @@ function WorkspaceDashboard({
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Efficiency snapshot" titleAs="h4" />
+                <SectionHeading title="Efficiency" titleAs="h4" />
                 <div className="overflow-x-auto">
                   <div className={ratingGridClassName}>
                     <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
@@ -2115,13 +2119,13 @@ function WorkspaceDashboard({
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Saved game context" titleAs="h4" />
+                <SectionHeading title="Game context" titleAs="h4" />
                 <p className={statusCopyClassName}>
-                  Match {boxscoreDetails.matchId}. This saved snapshot keeps the
-                  strategy and effort context available for later comparison.
+                  This saved game view keeps tactics and effort clues available
+                  for later comparison.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {renderBoxscoreContext(boxscoreDetails.boxscore)}
+                  {renderBoxscoreContext(boxscoreDetails.context)}
                 </div>
               </Panel>
             </div>
@@ -2136,9 +2140,9 @@ function WorkspaceDashboard({
           <PremiumFeatureGatePanel
             billingSummary={billingSummary}
             error={billingError}
-            featureName="Prediction engine"
+            featureName="Matchup previews"
             isLoading={isLoadingBilling}
-            message="Run matchup forecasts and compare connected or manual inputs with the premium prediction engine."
+            message="Run matchup forecasts from saved games or manual inputs with a premium plan."
           />
         )
       ) : null}
@@ -2219,7 +2223,7 @@ function WorkspaceDashboard({
             ) : (
               <Panel as="article" padding="sm" variant="solid">
                 <p className={statusCopyClassName}>
-                  No standings snapshot is ready yet.
+                  No standings are ready yet.
                 </p>
               </Panel>
             )}
@@ -2294,7 +2298,7 @@ function WorkspaceDashboard({
           <div className={twoColumnGridClassName}>
             <Panel as="article" padding="sm" variant="solid">
               <SectionHeading
-                description="Weekly snapshots from your saved club history."
+                description="Weekly updates from your saved club history."
                 title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
                 titleAs="h4"
               />
@@ -2308,7 +2312,7 @@ function WorkspaceDashboard({
                   />
                 ) : (
                   <p className={statusCopyClassName}>
-                    Need at least two weekly snapshots to draw a trend chart.
+                    Need at least two weekly updates to draw a trend chart.
                   </p>
                 )
               ) : (
@@ -2384,14 +2388,6 @@ function WorkspaceDashboard({
   );
 }
 
-function readPayload<T>(response: WorkspaceResponse | JsonLookupResponse): T {
-  return decodeGraphqlJsonPayload<T>(response.payload);
-}
-
-export const __testing = {
-  readPayload,
-};
-
 function formatEffortDelta(value: number | null | undefined) {
   if (value === null || value === undefined) {
     return "Effort clue unavailable";
@@ -2404,8 +2400,8 @@ function formatEffortDelta(value: number | null | undefined) {
   return value > 0 ? `Effort edge: +${value}` : `Effort edge: ${value}`;
 }
 
-function renderTrendChips(prefix: string, values: Record<string, number>) {
-  const entries = Object.entries(values);
+function renderTrendChips(prefix: string, values: TrendCountEntry[]) {
+  const entries = values.map((entry) => [entry.key, entry.count] as const);
   if (!entries.length) {
     return (
       <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
@@ -2425,22 +2421,22 @@ function renderTrendChips(prefix: string, values: Record<string, number>) {
 }
 
 function renderBoxscoreMetricRows(
-  left: Record<string, unknown> | null,
-  right: Record<string, unknown> | null,
+  left: MatchMetricEntry[],
+  right: MatchMetricEntry[],
 ) {
+  const leftMap = new Map(left.map((entry) => [entry.key, entry]));
+  const rightMap = new Map(right.map((entry) => [entry.key, entry]));
   const keys = Array.from(
     new Set([
-      ...(left ? Object.keys(left) : []),
-      ...(right ? Object.keys(right) : []),
+      ...Array.from(leftMap.keys()),
+      ...Array.from(rightMap.keys()),
     ]),
-  )
-    .filter((key) => !key.startsWith("__"))
-    .sort((leftKey, rightKey) => leftKey.localeCompare(rightKey));
+  ).sort((leftKey, rightKey) => leftKey.localeCompare(rightKey));
 
   if (!keys.length) {
     return (
       <div className="contents" key="empty-metrics">
-        <span className="text-ink font-semibold">No cached metrics</span>
+        <span className="text-ink font-semibold">No ratings available</span>
         <span className="text-ink-muted">-</span>
         <span className="text-ink-muted">-</span>
       </div>
@@ -2450,40 +2446,44 @@ function renderBoxscoreMetricRows(
   return keys.slice(0, 8).map((key) => (
     <div className="contents" key={key}>
       <span className="text-ink font-semibold">{humanizeKey(key)}</span>
-      <span className="text-ink text-sm">{formatMetricValue(left?.[key])}</span>
       <span className="text-ink text-sm">
-        {formatMetricValue(right?.[key])}
+        {formatMetricValue(readMetricValue(leftMap.get(key)))}
+      </span>
+      <span className="text-ink text-sm">
+        {formatMetricValue(readMetricValue(rightMap.get(key)))}
       </span>
     </div>
   ));
 }
 
-function renderBoxscoreContext(boxscore: Record<string, unknown> | null) {
-  if (!boxscore) {
+function renderBoxscoreContext(
+  context: MatchBoxscorePayload["context"] | null | undefined,
+) {
+  if (!context) {
     return (
       <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
-        No raw boxscore context
+        No game context available
       </span>
     );
   }
 
-  const homeTeam = toRecord(boxscore.homeTeam);
-  const awayTeam = toRecord(boxscore.awayTeam);
   const tags = [
-    homeTeam?.teamName ? `Home: ${String(homeTeam.teamName)}` : null,
-    awayTeam?.teamName ? `Away: ${String(awayTeam.teamName)}` : null,
-    boxscore.effortDelta !== undefined
-      ? `Effort Δ: ${String(boxscore.effortDelta)}`
+    context.homeTeamName ? `Home: ${String(context.homeTeamName)}` : null,
+    context.awayTeamName ? `Away: ${String(context.awayTeamName)}` : null,
+    context.effortDelta !== null && context.effortDelta !== undefined
+      ? formatEffortDelta(context.effortDelta)
       : null,
-    boxscore.neutral !== undefined
-      ? `Neutral: ${String(boxscore.neutral)}`
-      : null,
+    context.neutral === null || context.neutral === undefined
+      ? null
+      : context.neutral
+        ? "Neutral site"
+        : "Home court",
   ].filter((value): value is string => Boolean(value));
 
   if (!tags.length) {
     return (
       <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
-        No raw boxscore context
+        No game context available
       </span>
     );
   }
@@ -2533,14 +2533,6 @@ function formatAuthError(error: unknown): string {
   return "Authentication failed without a detailed error message.";
 }
 
-function humanizeStatus(status: BbConnectionRecord["status"]) {
-  return status
-    .toLowerCase()
-    .split("_")
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
-}
-
 function formatTimestamp(value: string | null | undefined): string {
   if (!value) {
     return "Unavailable";
@@ -2558,7 +2550,13 @@ function formatTimestamp(value: string | null | undefined): string {
 }
 
 function formatRecord(
-  record: { wins: number | null; losses: number | null } | null,
+  record:
+    | {
+        wins?: number | null;
+        losses?: number | null;
+      }
+    | null
+    | undefined,
 ): string {
   if (!record) {
     return "No record";
@@ -2604,10 +2602,10 @@ function formatSigned(value: number | null | undefined): string {
 }
 
 function formatMatchResult(match: {
-  outcome: string | null;
-  teamScore: number | null;
-  opponentScore: number | null;
-  startTime?: string | null;
+  outcome?: string | null;
+  teamScore?: number | null;
+  opponentScore?: number | null;
+  startTime?: string | null | undefined;
 }): string {
   const scoreline =
     match.teamScore !== null && match.opponentScore !== null
@@ -2646,16 +2644,26 @@ function formatPlayerMeta(player: PlayerSummary): string {
   const parts = [
     player.bestPosition,
     player.salary !== null ? formatCurrency(player.salary) : null,
-    player.stats && typeof player.stats.ppg === "number"
-      ? `${player.stats.ppg} PPG`
-      : null,
+    typeof player.ppg === "number" ? `${player.ppg} PPG` : null,
   ];
 
   return parts.filter(Boolean).join(" • ") || "No profile details yet.";
 }
 
-function toRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+function readMetricValue(entry: MatchMetricEntry | undefined): unknown {
+  if (!entry) {
+    return null;
+  }
+
+  return entry.numberValue ?? entry.textValue ?? null;
 }
+
+function readPayload<T>(response: { payload: T | string }): T {
+  return typeof response.payload === "string"
+    ? (JSON.parse(response.payload) as T)
+    : response.payload;
+}
+
+export const __testing = {
+  readPayload,
+};

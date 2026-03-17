@@ -12,9 +12,7 @@ export const handler: Handler = async (event) => {
   });
 
   return {
-    status: "READY",
     syncedAt: workspace.connection.lastSyncAt ?? null,
-    payload: workspace.teamHub,
-    error: workspace.connection.lastSyncError ?? null,
+    ...workspace.teamHub,
   };
 };

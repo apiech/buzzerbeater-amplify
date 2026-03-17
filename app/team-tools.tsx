@@ -4,7 +4,6 @@ import { useEffect, useEffectEvent, useState } from "react";
 import Link from "next/link";
 
 import { client } from "@/app/amplify-client";
-import { encodeGraphqlJsonInput } from "@/app/graphql-json";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input } from "@/app/ui/primitives/field";
@@ -103,8 +102,11 @@ export function LineupPlanner() {
 
     const response = await client.mutations.saveLineupScenario({
       name: scenarioName.trim() || "Primary lineup",
-      starters: encodeGraphqlJsonInput(toLineupPlayers(plan.recommendedStarters)),
-      minuteTargets: encodeGraphqlJsonInput(minuteTargets),
+      starters: toLineupPlayers(plan.recommendedStarters),
+      minuteTargets: Object.entries(minuteTargets).map(([playerId, minutes]) => ({
+        playerId,
+        minutes,
+      })),
       note: scenarioNote.trim() || undefined,
     });
 
@@ -140,11 +142,11 @@ export function LineupPlanner() {
               className="inline-flex min-h-11 items-center justify-center rounded-full border border-border-soft bg-white/70 px-4 py-2.5 text-sm font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90"
               href="/workspace/lineups"
             >
-              Open CoachParrot helper
+              Open Lineup Helper
             </Link>
           </div>
         }
-        description="Recommendation engine for starters, minutes, and saved lineup scenarios."
+        description="Recommendations for starters, minutes, and saved lineup scenarios."
         title="Lineup Planner"
         titleAs="h4"
       />
@@ -347,15 +349,17 @@ function toLineupPlayers(value: unknown): LineupPlayer[] {
     : [];
 }
 
-function toMinuteTargets(value: unknown): Record<string, number> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function toMinuteTargets(
+  value: Array<{ minutes?: number | null; playerId?: string | null }> | null | undefined,
+): Record<string, number> {
+  if (!Array.isArray(value)) {
     return {};
   }
 
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .map(([key, rawValue]) => [key, Number(rawValue)])
-      .filter((entry) => Number.isFinite(entry[1])),
+    value
+      .map((entry) => [entry.playerId ?? "", Number(entry.minutes)] as const)
+      .filter(([playerId, minutes]) => Boolean(playerId) && Number.isFinite(minutes)),
   );
 }
 
