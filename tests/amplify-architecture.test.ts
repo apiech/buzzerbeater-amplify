@@ -7,13 +7,19 @@ import { fileURLToPath } from "node:url";
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(currentDir, "..");
 const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx"]);
+const testFilePattern = /\.(?:test|spec)\.[^.]+$/;
+
+function listRepoEntries(rootPath: string) {
+  return readdirSync(rootPath, { withFileTypes: true }).map((entry) => ({
+    entry,
+    entryPath: join(rootPath, entry.name),
+  }));
+}
 
 function listSourceFiles(rootPath: string): string[] {
-  const entries = readdirSync(rootPath, { withFileTypes: true });
   const files: string[] = [];
 
-  for (const entry of entries) {
-    const entryPath = join(rootPath, entry.name);
+  for (const { entry, entryPath } of listRepoEntries(rootPath)) {
     if (entry.isDirectory()) {
       if (
         entry.name === ".amplify" ||
@@ -30,6 +36,28 @@ function listSourceFiles(rootPath: string): string[] {
     if (sourceExtensions.has(extension)) {
       files.push(entryPath);
     }
+  }
+
+  return files;
+}
+
+function listFiles(rootPath: string): string[] {
+  const files: string[] = [];
+
+  for (const { entry, entryPath } of listRepoEntries(rootPath)) {
+    if (entry.isDirectory()) {
+      if (
+        entry.name === ".amplify" ||
+        entry.name === ".next" ||
+        entry.name === "node_modules"
+      ) {
+        continue;
+      }
+      files.push(...listFiles(entryPath));
+      continue;
+    }
+
+    files.push(entryPath);
   }
 
   return files;
@@ -176,6 +204,38 @@ test("runtime source does not use Amplify model.list scans", () => {
     for (const sourceFile of listSourceFiles(runtimeRoot)) {
       const source = readFileSync(sourceFile, "utf8");
       assert.doesNotMatch(source, /\.list\s*\(/);
+    }
+  }
+});
+
+test("deployable source never colocates or imports test modules", () => {
+  const deployableRoots = [
+    join(repoRoot, "app"),
+    join(repoRoot, "public"),
+    join(repoRoot, "amplify"),
+    join(repoRoot, "lib"),
+  ];
+
+  const misplacedTestFiles = deployableRoots.flatMap((rootPath) =>
+    listFiles(rootPath).filter((filePath) => testFilePattern.test(filePath)),
+  );
+  assert.deepStrictEqual(misplacedTestFiles, []);
+
+  const importPatterns = [
+    /from\s+["'`][^"'`]*\/tests\//,
+    /from\s+["'`][^"'`]*\.(?:test|spec)\.[^"'`]*/,
+    /import\s*\(\s*["'`][^"'`]*\/tests\//,
+    /import\s*\(\s*["'`][^"'`]*\.(?:test|spec)\.[^"'`]*/,
+    /require\s*\(\s*["'`][^"'`]*\/tests\//,
+    /require\s*\(\s*["'`][^"'`]*\.(?:test|spec)\.[^"'`]*/,
+  ];
+
+  for (const rootPath of deployableRoots.filter((rootPath) => !rootPath.endsWith("/public"))) {
+    for (const sourceFile of listSourceFiles(rootPath)) {
+      const source = readFileSync(sourceFile, "utf8");
+      for (const pattern of importPatterns) {
+        assert.doesNotMatch(source, pattern);
+      }
     }
   }
 });

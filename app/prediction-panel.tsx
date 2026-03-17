@@ -20,6 +20,7 @@ import {
   statusToneFromValue,
 } from "@/app/ui/primitives/status-badge";
 import { formatPreviewStatus } from "@/app/ui/presentation";
+import { buzzerBeaterColorStyle } from "@/lib/buzzerbeater/rating-scale";
 import type {
   DashboardWorkspace,
   ManualPredictionInput,
@@ -389,6 +390,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                 <div className="contents" key={field.label}>
                   <span className="font-semibold text-ink">{field.label}</span>
                   <Input
+                    className="font-semibold"
                     onChange={(event) =>
                       updateNumericField(
                         field.homeKey,
@@ -396,11 +398,16 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                         setManualInput,
                       )
                     }
+                    style={buzzerBeaterColorStyle({
+                      scale: "team_rating",
+                      value: manualInput[field.homeKey],
+                    })}
                     step="0.1"
                     type="number"
                     value={manualInput[field.homeKey]}
                   />
                   <Input
+                    className="font-semibold"
                     onChange={(event) =>
                       updateNumericField(
                         field.awayKey,
@@ -408,6 +415,10 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                         setManualInput,
                       )
                     }
+                    style={buzzerBeaterColorStyle({
+                      scale: "team_rating",
+                      value: manualInput[field.awayKey],
+                    })}
                     step="0.1"
                     type="number"
                     value={manualInput[field.awayKey]}

@@ -46,6 +46,7 @@ import type {
   TrendCountEntry,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
+import { BuzzerBeaterRatingText } from "@/app/ui/primitives/buzzerbeater-rating-text";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
@@ -1780,7 +1781,14 @@ function WorkspaceDashboard({
                       <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
                       <TableCell>{player.age ?? "N/A"}</TableCell>
                       <TableCell>{formatCurrency(player.salary)}</TableCell>
-                      <TableCell>{player.gameShape ?? "N/A"}</TableCell>
+                      <TableCell>
+                        <BuzzerBeaterRatingText
+                          label={player.gameShape}
+                          scale="game_shape"
+                        >
+                          {player.gameShape ?? "N/A"}
+                        </BuzzerBeaterRatingText>
+                      </TableCell>
                       <TableCell>{player.dmi ?? "N/A"}</TableCell>
                       <TableCell>{formatInjury(player.injuryWeeks)}</TableCell>
                       <TableCell>{player.projectedStarterCount ?? 0}</TableCell>
@@ -1982,7 +1990,14 @@ function WorkspaceDashboard({
                           <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
                           <TableCell>{player.age ?? "N/A"}</TableCell>
                           <TableCell>{formatCurrency(player.salary)}</TableCell>
-                          <TableCell>{player.gameShape ?? "N/A"}</TableCell>
+                          <TableCell>
+                            <BuzzerBeaterRatingText
+                              label={player.gameShape}
+                              scale="game_shape"
+                            >
+                              {player.gameShape ?? "N/A"}
+                            </BuzzerBeaterRatingText>
+                          </TableCell>
                           <TableCell>{player.dmi ?? "N/A"}</TableCell>
                           <TableCell>
                             {formatInjury(player.injuryWeeks)}
@@ -2289,7 +2304,14 @@ function WorkspaceDashboard({
                     <TableCell>{player.fullName}</TableCell>
                     <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
                     <TableCell>{formatCurrency(player.salary)}</TableCell>
-                    <TableCell>{player.gameShape ?? "N/A"}</TableCell>
+                    <TableCell>
+                      <BuzzerBeaterRatingText
+                        label={player.gameShape}
+                        scale="game_shape"
+                      >
+                        {player.gameShape ?? "N/A"}
+                      </BuzzerBeaterRatingText>
+                    </TableCell>
                     <TableCell>{player.dmi ?? "N/A"}</TableCell>
                     <TableCell>{player.projectedStarterCount ?? 0}</TableCell>
                     <TableCell className="flex flex-wrap gap-2">

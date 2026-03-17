@@ -1,4 +1,5 @@
 import type { PlayerTrendPayload } from "@/app/types";
+import { BuzzerBeaterRatingText } from "@/app/ui/primitives/buzzerbeater-rating-text";
 import { StatCard } from "@/app/ui/primitives/stat-card";
 
 type PlayerTrendChartProps = {
@@ -83,7 +84,18 @@ export function PlayerTrendChart({
       <div className="grid gap-3 lg:grid-cols-4">
         {history.slice(-4).reverse().map((point) => (
           <StatCard
-            detail={`DMI ${point.dmi ?? "N/A"} • ${point.gameShape ?? "N/A"} • Injury ${formatInjury(point.injuryWeeks)}`}
+            detail={
+              <>
+                DMI {point.dmi ?? "N/A"} •{" "}
+                <BuzzerBeaterRatingText
+                  label={point.gameShape}
+                  scale="game_shape"
+                >
+                  {point.gameShape ?? "N/A"}
+                </BuzzerBeaterRatingText>{" "}
+                • Injury {formatInjury(point.injuryWeeks)}
+              </>
+            }
             key={point.weekKey ?? point.fetchedAt ?? "snapshot"}
             label={point.weekKey ?? "Snapshot"}
             value={formatCurrency(point.salary)}

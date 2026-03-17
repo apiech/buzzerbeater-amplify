@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   assignmentMatrixFromLineup,
   assignmentsFromMatrix,
+  coerceEnthusiasm,
   emptyMinuteMatrix,
   validateLineupMatrix,
 } from "../app/lineup-helper-state";
@@ -69,4 +70,10 @@ test("lineup helper validation accepts a complete five-player allocation", () =>
   const validation = validateLineupMatrix(players, matrix);
   assert.deepEqual(validation.errors, []);
   assert.equal(validation.teamTotal, 240);
+});
+
+test("lineup helper enthusiasm coercion now accepts the documented 1..15 range", () => {
+  assert.equal(coerceEnthusiasm(15), 15);
+  assert.equal(coerceEnthusiasm(99), 15);
+  assert.equal(coerceEnthusiasm(0), 1);
 });

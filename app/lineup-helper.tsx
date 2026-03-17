@@ -27,6 +27,7 @@ import type {
   PositionCode,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
+import { BuzzerBeaterRatingText } from "@/app/ui/primitives/buzzerbeater-rating-text";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
@@ -38,6 +39,7 @@ import {
   TableHeadCell,
   TableShell,
 } from "@/app/ui/primitives/table-shell";
+import { allScaleValues } from "@/lib/buzzerbeater/rating-scale";
 
 const ratingLabels: Array<{
   key: keyof LineupHelperEvaluation["rawRatings"];
@@ -56,6 +58,7 @@ const twoColumnGridClassName =
   "grid gap-4 2xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,1fr)]";
 const rankingsGridClassName = "grid gap-4 lg:grid-cols-2 xl:grid-cols-3";
 const EMPTY_ROSTER: LineupHelperRosterPlayer[] = [];
+const ENTHUSIASM_OPTIONS = [...allScaleValues("enthusiasm")].reverse();
 
 export function LineupHelper() {
   const [workspace, setWorkspace] =
@@ -369,13 +372,11 @@ export function LineupHelper() {
                       }
                       value={String(context.enthusiasm)}
                     >
-                      {Array.from({ length: 12 }, (_, index) => 12 - index).map(
-                        (value) => (
-                          <option key={value} value={value}>
-                            {value}
-                          </option>
-                        ),
-                      )}
+                      {ENTHUSIASM_OPTIONS.map((entry) => (
+                        <option key={entry.value} value={entry.value}>
+                          {entry.value} - {entry.label}
+                        </option>
+                      ))}
                     </Select>
                   </Field>
                 </div>
@@ -422,7 +423,13 @@ export function LineupHelper() {
                                 {player.available ? "Ready" : "Unavailable"}
                               </StatusBadge>
                               <span className="text-ink-muted text-xs">
-                                {player.gameShape ?? "No shape"} • Age{" "}
+                                <BuzzerBeaterRatingText
+                                  label={player.gameShape}
+                                  scale="game_shape"
+                                >
+                                  {player.gameShape ?? "No shape"}
+                                </BuzzerBeaterRatingText>{" "}
+                                • Age{" "}
                                 {player.age ?? "N/A"}
                               </span>
                             </div>
@@ -494,11 +501,28 @@ export function LineupHelper() {
                     ? ratingLabels.map((rating) => (
                         <StatCard
                           key={rating.key}
-                          detail={`${visibleEvaluation.ratingLabels[rating.key]} • ${visibleEvaluation.outputBandLabels[rating.key]}`}
+                          detail={
+                            <>
+                              <BuzzerBeaterRatingText
+                                label={visibleEvaluation.ratingLabels[rating.key]}
+                                scale="team_rating"
+                              >
+                                {visibleEvaluation.ratingLabels[rating.key]}
+                              </BuzzerBeaterRatingText>{" "}
+                              • {visibleEvaluation.outputBandLabels[rating.key]}
+                            </>
+                          }
                           label={rating.label}
-                          value={Number(
-                            visibleEvaluation.roundedRatings[rating.key],
-                          ).toFixed(1)}
+                          value={
+                            <BuzzerBeaterRatingText
+                              scale="team_rating"
+                              value={visibleEvaluation.roundedRatings[rating.key]}
+                            >
+                              {Number(
+                                visibleEvaluation.roundedRatings[rating.key],
+                              ).toFixed(1)}
+                            </BuzzerBeaterRatingText>
+                          }
                         />
                       ))
                     : ratingLabels.map((rating) => (
@@ -778,9 +802,23 @@ function toSkillRecord(
 function skillHeadline(player: LineupHelperRosterPlayer) {
   const sorted = Object.entries(player.skills)
     .sort((left, right) => right[1] - left[1])
-    .slice(0, 3)
-    .map(([key, value]) => `${key.toUpperCase()} ${value}`);
-  return sorted.join(" • ");
+    .slice(0, 3);
+  return sorted.flatMap(([key, value], index) => [
+    index > 0 ? (
+      <span className="text-ink-muted" key={`${key}-separator`}>
+        {" "}
+        •{" "}
+      </span>
+    ) : null,
+    <BuzzerBeaterRatingText
+      className="font-semibold"
+      key={key}
+      scale="player_rating"
+      value={value}
+    >
+      {`${key.toUpperCase()} ${value}`}
+    </BuzzerBeaterRatingText>,
+  ]);
 }
 
 function formatDecimal(value: number | null) {

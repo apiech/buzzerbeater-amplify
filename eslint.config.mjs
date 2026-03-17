@@ -10,6 +10,11 @@ const repoRoot = dirname(fileURLToPath(import.meta.url));
 const frontendFiles = ["app/**/*.{js,jsx,mjs,ts,tsx,mts,cts}"];
 const frontendTypeFiles = ["app/**/*.ts", "app/**/*.tsx"];
 const backendTypeFiles = ["amplify/**/*.ts"];
+const deployableSourceFiles = [
+  "app/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
+  "lib/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
+  "amplify/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
+];
 const runtimeFiles = [
   "app/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
   "lib/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
@@ -105,6 +110,23 @@ export default [
           property: "env",
           message:
             "Runtime code must not read process.env. Use Amplify-generated env or launcher-derived values instead.",
+        },
+      ],
+    },
+  },
+  {
+    files: deployableSourceFiles,
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/tests/**", "**/*.test.*", "**/*.spec.*"],
+              message:
+                "Deployable source must not import test modules. Keep tests under /tests and out of runtime dependency graphs.",
+            },
+          ],
         },
       ],
     },

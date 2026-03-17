@@ -1,0 +1,83 @@
+{
+  "scales": [
+    {
+      "id": "player_rating",
+      "aliases": ["game_shape", "team_rating"],
+      "overflow": "repeat_top_label",
+      "entries": [
+        { "value": 1, "label": "atrocious", "color": "#000000" },
+        { "value": 2, "label": "pitiful", "color": "#0C0C5F" },
+        { "value": 3, "label": "awful", "color": "#1C0D82" },
+        { "value": 4, "label": "inept", "color": "#2B0E9D" },
+        { "value": 5, "label": "mediocre", "color": "#6D06A0" },
+        { "value": 6, "label": "average", "color": "#8F069B" },
+        { "value": 7, "label": "respectable", "color": "#AB0585" },
+        { "value": 8, "label": "strong", "color": "#B50556" },
+        { "value": 9, "label": "proficient", "color": "#9A052D" },
+        { "value": 10, "label": "prominent", "color": "#A50500" },
+        { "value": 11, "label": "prolific", "color": "#BB2100" },
+        { "value": 12, "label": "sensational", "color": "#CA2C00" },
+        { "value": 13, "label": "tremendous", "color": "#D83700" },
+        { "value": 14, "label": "wondrous", "color": "#DA6B00" },
+        { "value": 15, "label": "marvelous", "color": "#8E652A" },
+        { "value": 16, "label": "prodigious", "color": "#AA8304" },
+        { "value": 17, "label": "stupendous", "color": "#8C9600" },
+        { "value": 18, "label": "phenomenal", "color": "#448B00" },
+        { "value": 19, "label": "colossal", "color": "#08AC23" },
+        { "value": 20, "label": "legendary", "color": "#09B163" }
+      ]
+    },
+    {
+      "id": "enthusiasm",
+      "overflow": "repeat_top_label",
+      "entries": [
+        { "value": 1, "label": "exhausted", "color": "#000000" },
+        { "value": 2, "label": "worn out", "color": "#121263" },
+        { "value": 3, "label": "weary", "color": "#30139F" },
+        { "value": 4, "label": "reserved", "color": "#700BA2" },
+        { "value": 5, "label": "ready", "color": "#910B9D" },
+        { "value": 6, "label": "encouraged", "color": "#B70B5A" },
+        { "value": 7, "label": "focused", "color": "#9C0B32" },
+        { "value": 8, "label": "eager", "color": "#A70B00" },
+        { "value": 9, "label": "motivated", "color": "#CB3100" },
+        { "value": 10, "label": "determined", "color": "#D93C00" },
+        { "value": 11, "label": "inspired", "color": "#DB6E04" },
+        { "value": 12, "label": "zealous", "color": "#AC860A" },
+        { "value": 13, "label": "fanatical", "color": "#8E9800" },
+        { "value": 14, "label": "obsessed", "color": "#498E00" },
+        { "value": 15, "label": "unstoppable", "color": "#0EB366" }
+      ]
+    },
+    {
+      "id": "potential",
+      "overflow": "cap_top_label",
+      "entries": [
+        { "value": 0, "label": "announcer", "color": "#700BA2" },
+        { "value": 1, "label": "bench warmer", "color": "#910B9D" },
+        { "value": 2, "label": "role player", "color": "#AD0B88" },
+        { "value": 3, "label": "6th man", "color": "#B70B5A" },
+        { "value": 4, "label": "starter", "color": "#9C0B32" },
+        { "value": 5, "label": "star", "color": "#A70B00" },
+        { "value": 6, "label": "allstar", "color": "#BD2600" },
+        { "value": 7, "label": "perennial allstar", "color": "#CB3100" },
+        { "value": 8, "label": "superstar", "color": "#D93C00" },
+        { "value": 9, "label": "MVP", "color": "#91692F" },
+        { "value": 10, "label": "hall of famer", "color": "#AC860A" },
+        { "value": 11, "label": "all-time great", "color": "#8E9800" }
+      ]
+    },
+    {
+      "id": "staff_skill",
+      "overflow": "cap_top_label",
+      "entries": [
+        { "value": 0, "label": "minimal", "color": "#000000" },
+        { "value": 1, "label": "basic", "color": "#30139F" },
+        { "value": 2, "label": "competent", "color": "#AD0B88" },
+        { "value": 3, "label": "advanced", "color": "#9C0B32" },
+        { "value": 4, "label": "superior", "color": "#BD2600" },
+        { "value": 5, "label": "exceptional", "color": "#D93C00" },
+        { "value": 6, "label": "world-renowned", "color": "#DB6E04" }
+      ]
+    }
+  ]
+}

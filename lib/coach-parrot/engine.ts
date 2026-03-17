@@ -6,6 +6,7 @@ import {
   normalizeOffense,
   resolveHomeCourtFlag,
 } from "./artifacts";
+import { resolveBuzzerBeaterNumericValue } from "@/lib/buzzerbeater/rating-scale";
 import type {
   CoachParrotContext,
   CoachParrotEvaluation,
@@ -36,33 +37,6 @@ type CanonicalSkillField =
   | "ft"
   | "ex"
   | "gs";
-
-const TEXT_SKILL_LABELS = [
-  "atrocious",
-  "pitiful",
-  "awful",
-  "inept",
-  "mediocre",
-  "average",
-  "respectable",
-  "strong",
-  "proficient",
-  "prominent",
-  "prolific",
-  "sensational",
-  "tremendous",
-  "wondrous",
-  "marvelous",
-  "prodigious",
-  "stupendous",
-  "phenomenal",
-  "colossal",
-  "legendary",
-] as const;
-
-const TEXT_SKILL_TO_VALUE = Object.fromEntries(
-  TEXT_SKILL_LABELS.map((label, index) => [label, index + 1]),
-) as Record<string, number>;
 
 const SKILL_ALIASES: Partial<Record<string, CanonicalSkillField>> = {
   jumpshot: "js",
@@ -130,8 +104,7 @@ export function normalizeSkillValue(rawValue: unknown): number | null {
   if (Number.isFinite(numeric)) {
     return Math.round(numeric);
   }
-  const normalized = text.toLowerCase().replaceAll(" ", "").replaceAll("-", "");
-  return TEXT_SKILL_TO_VALUE[normalized] ?? null;
+  return resolveBuzzerBeaterNumericValue("player_rating", text);
 }
 
 export function buildRawPlayerSkills(input: {
