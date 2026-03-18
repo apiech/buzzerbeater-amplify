@@ -184,7 +184,7 @@ function classifyArtifactType(artifactPath: string, deployable: boolean): Artifa
     return "non-shipping-metadata"
   }
 
-  if (normalized.includes("/site-packages/") || normalized.includes("/venv/")) {
+  if (normalized.includes("/site-packages/") || normalized.includes("/venv/") || normalized.includes("/.venv/")) {
     return "vendored-python-environment"
   }
 

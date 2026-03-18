@@ -48,6 +48,7 @@ export class MatchupPredictorStack extends Stack {
         ".git",
         ".venv-codex",
         ".venv-codex312",
+        ".venv",
         "venv",
         "__pycache__",
         "tests",
