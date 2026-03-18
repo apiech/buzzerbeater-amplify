@@ -2464,7 +2464,7 @@ function buildConnectionRecord(
   existingConnection: BbConnectionRecord | null,
   updates: Partial<BbConnectionRecord>,
 ): BbConnectionRecord {
-  const record: BbConnectionRecord = {
+  const record: Omit<BbConnectionRecord, "refreshSortAt"> = {
     userId,
     bbLoginName: resolveConnectionField(
       existingConnection,
@@ -2565,14 +2565,22 @@ function buildConnectionRecord(
     ),
   };
 
+  const requestedRefreshSortAt = Object.prototype.hasOwnProperty.call(
+    updates,
+    "refreshSortAt",
+  )
+    ? updates.refreshSortAt
+    : existingConnection?.refreshSortAt;
+
   return {
     ...record,
     refreshSortAt:
+      requestedRefreshSortAt ??
       record.lastSyncAt ??
       record.connectedAt ??
       record.lastValidatedAt ??
       existingConnection?.refreshSortAt ??
-      null,
+      new Date().toISOString(),
   };
 }
 

@@ -1071,6 +1071,7 @@ test("processGameDayRecap succeeds with partial coverage when one box score is m
       getBbConnection: async () => ({
         bbLoginName: "coach-alpha",
         leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-15T23:10:00.000Z",
         status: "CONNECTED",
         userId: "user-1",
       }),
@@ -1223,6 +1224,7 @@ test("processGameDayRecap resolves the current open season before fetching seaso
       getBbConnection: async () => ({
         bbLoginName: "coach-alpha",
         leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T07:03:52.000Z",
         status: "CONNECTED",
         userId: "user-1",
       }),
@@ -1368,6 +1370,7 @@ test("processGameDayRecap falls back to historical season candidates when curren
       getBbConnection: async () => ({
         bbLoginName: "coach-alpha",
         leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T07:03:52.000Z",
         status: "CONNECTED",
         userId: "user-1",
       }),
@@ -1455,6 +1458,7 @@ test("processGameDayRecap fails with a slate-specific error when no candidate se
         getBbConnection: async () => ({
           bbLoginName: "coach-alpha",
           leagueTimeZone: "America/New_York",
+          refreshSortAt: "2026-03-17T07:03:52.000Z",
           status: "CONNECTED",
           userId: "user-1",
         }),
@@ -1595,6 +1599,7 @@ test("processLeagueGameDayRecap resolves a full regular-season slate by ordinal 
         leagueId: "1",
         leagueName: "NBBA",
         leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T10:49:23.000Z",
         status: "CONNECTED",
         userId: "user-1",
       }),
@@ -1683,6 +1688,7 @@ test("processSingleGameSummary summarizes one finished match without standings o
         leagueId: "1",
         leagueName: "NBBA",
         leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T10:49:23.000Z",
         status: "CONNECTED",
         userId: "user-1",
       }),

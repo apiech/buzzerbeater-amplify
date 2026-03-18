@@ -1024,7 +1024,7 @@ const schema = a
         connectedAt: a.datetime(),
         lastValidatedAt: a.datetime(),
         lastSyncAt: a.datetime(),
-        refreshSortAt: a.datetime(),
+        refreshSortAt: a.datetime().required(),
         lastSyncError: a.string(),
         profileJson: a.json(),
         workspaceCacheJson: a.json(),
@@ -1187,8 +1187,8 @@ const schema = a
         completedAt: a.datetime(),
         error: a.string(),
         detailsJson: a.json(),
-        expiryKey: a.string(),
-        expiresAt: a.datetime(),
+        expiryKey: a.string().required(),
+        expiresAt: a.datetime().required(),
       })
       .secondaryIndexes((index) => [
         index("userId")
@@ -1237,14 +1237,14 @@ const schema = a
         userId: a.string().required(),
         status: a.ref("PredictionJobStatus").required(),
         mode: a.ref("PredictionRequestMode").required(),
-        requestedAt: a.datetime(),
+        requestedAt: a.datetime().required(),
         request: a.json().required(),
         resolvedInputSnapshot: a.json(),
         result: a.json(),
         error: a.string(),
         modelVersion: a.string(),
-        expiryKey: a.string(),
-        expiresAt: a.datetime(),
+        expiryKey: a.string().required(),
+        expiresAt: a.datetime().required(),
       })
       .secondaryIndexes((index) => [
         index("userId")

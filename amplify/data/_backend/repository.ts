@@ -50,10 +50,14 @@ export type BbConnectionRecord = {
   connectedAt?: string | null;
   lastValidatedAt?: string | null;
   lastSyncAt?: string | null;
-  refreshSortAt?: string | null;
+  refreshSortAt: string;
   lastSyncError?: string | null;
   profileJson?: unknown;
   workspaceCacheJson?: unknown;
+};
+
+type BbConnectionRecordInput = Omit<BbConnectionRecord, "refreshSortAt"> & {
+  refreshSortAt?: string | null;
 };
 
 export type BillingAccountRecord = {
@@ -97,8 +101,8 @@ export type SyncRunRecord = {
   completedAt?: string | null;
   error?: string | null;
   detailsJson?: unknown;
-  expiryKey?: string | null;
-  expiresAt?: string | null;
+  expiryKey: string;
+  expiresAt: string;
 };
 
 export type PredictionJobRecord = {
@@ -106,7 +110,7 @@ export type PredictionJobRecord = {
   userId: string;
   status: PredictionJobStatus;
   mode: PredictionRequestMode;
-  requestedAt?: string | null;
+  requestedAt: string;
   request: unknown;
   resolvedInputSnapshot?: unknown;
   result?: unknown;
@@ -114,8 +118,8 @@ export type PredictionJobRecord = {
   modelVersion?: string | null;
   createdAt?: string;
   updatedAt?: string;
-  expiryKey?: string | null;
-  expiresAt?: string | null;
+  expiryKey: string;
+  expiresAt: string;
 };
 
 export type GameDayRecapRecord = {
@@ -377,9 +381,24 @@ export async function listStaleConnectedBbConnections(
 
 export async function upsertBbConnection(
   env: RepositoryEnv,
-  record: BbConnectionRecord,
+  record: BbConnectionRecordInput,
 ): Promise<void> {
-  await upsertModelRecord(env, "BbConnection", ["userId"], record);
+  const model = await getModel<BbConnectionRecord>(env, "BbConnection");
+  const currentRecord = await assertSuccessful(
+    model.get({ userId: record.userId }),
+    "load BbConnection record",
+  );
+  const payload = prepareModelInput(
+    "BbConnection",
+    normalizeBbConnectionRecord(record, currentRecord),
+  );
+
+  if (currentRecord) {
+    await assertSuccessful(model.update(payload), "update BbConnection record");
+    return;
+  }
+
+  await assertSuccessful(model.create(payload), "create BbConnection record");
 }
 
 export async function getBbCredential(
@@ -420,7 +439,10 @@ export async function deleteBbCredential(
 
 export async function createSyncRun(
   env: RepositoryEnv,
-  input: Omit<SyncRunRecord, "id">,
+  input: Omit<SyncRunRecord, "id" | "expiryKey" | "expiresAt"> & {
+    expiryKey?: string | null;
+    expiresAt?: string | null;
+  },
 ): Promise<SyncRunRecord> {
   const model = await getModel<SyncRunRecord>(env, "SyncRun");
   const recordInput = prepareModelInput("SyncRun", {
@@ -487,7 +509,14 @@ export async function deleteSyncRun(
 
 export async function createPredictionJob(
   env: RepositoryEnv,
-  input: Omit<PredictionJobRecord, "createdAt" | "updatedAt">,
+  input: Omit<
+    PredictionJobRecord,
+    "createdAt" | "updatedAt" | "requestedAt" | "expiryKey" | "expiresAt"
+  > & {
+    requestedAt?: string | null;
+    expiryKey?: string | null;
+    expiresAt?: string | null;
+  },
 ): Promise<PredictionJobRecord> {
   const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
   const now = new Date().toISOString();
@@ -902,6 +931,26 @@ function prepareModelInput<TRecord extends Record<string, unknown>>(
   return omitUndefinedValues(encodeAwsJsonFields(modelName, input));
 }
 
+function normalizeBbConnectionRecord(
+  record: BbConnectionRecordInput,
+  currentRecord: BbConnectionRecord | null,
+): BbConnectionRecord {
+  return {
+    ...record,
+    refreshSortAt:
+      firstDefinedString(
+        record.refreshSortAt,
+        record.lastSyncAt,
+        record.connectedAt,
+        record.lastValidatedAt,
+        currentRecord?.refreshSortAt,
+        currentRecord?.lastSyncAt,
+        currentRecord?.connectedAt,
+        currentRecord?.lastValidatedAt,
+      ) ?? new Date().toISOString(),
+  };
+}
+
 async function getModelRecord<TRecord>(
   env: RepositoryEnv,
   modelName: string,
@@ -1005,6 +1054,18 @@ function omitUndefinedValues<TRecord extends Record<string, unknown>>(
   return Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== undefined),
   ) as TRecord;
+}
+
+function firstDefinedString(
+  ...values: Array<string | null | undefined>
+): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function pickFields(

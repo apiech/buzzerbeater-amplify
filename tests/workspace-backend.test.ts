@@ -531,7 +531,9 @@ test("buildConnectionRecord preserves explicit null updates when clearing stale 
     },
   );
 
-  assert.deepStrictEqual(record, {
+  const { refreshSortAt, ...rest } = record;
+
+  assert.deepStrictEqual(rest, {
     userId: "user-1",
     bbLoginName: "coach",
     status: "CONNECTED",
@@ -547,11 +549,12 @@ test("buildConnectionRecord preserves explicit null updates when clearing stale 
     connectedAt: null,
     lastValidatedAt: null,
     lastSyncAt: null,
-    refreshSortAt: null,
     lastSyncError: null,
     profileJson: null,
     workspaceCacheJson: null,
   });
+  assert.equal(typeof refreshSortAt, "string");
+  assert.equal(Number.isNaN(Date.parse(refreshSortAt)), false);
 });
 
 test("lookupSharedPlayerCardByToken unwraps only the sanitized share payload", async () => {

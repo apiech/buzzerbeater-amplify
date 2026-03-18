@@ -12,6 +12,7 @@ import {
   listExpiredSyncRuns,
   listStaleConnectedBbConnections,
   updateSyncRun,
+  upsertBbConnection,
   upsertUserPreference,
   upsertTrackedPlayer,
 } from "../amplify/data/_backend/repository";
@@ -141,6 +142,104 @@ test("generic upserts serialize AWSJSON payloads before model.create", async (t)
     teamId: "t1",
     fullName: "Prospect",
     profileJson: '{"playerId":"p1","skills":{"outsideScoring":12}}',
+  });
+});
+
+test("upsertBbConnection backfills refreshSortAt before model.create", async (t) => {
+  let getInput: Record<string, unknown> | null = null;
+  let createInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          BbConnection: {
+            get: async (input: Record<string, unknown>) => {
+              getInput = input;
+              return { data: null };
+            },
+            create: async (input: Record<string, unknown>) => {
+              createInput = input;
+              return { data: { userId: "u1" } };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertBbConnection({} as any, {
+    userId: "u1",
+    bbLoginName: "coach",
+    status: "INVALID",
+    connectedAt: null,
+    lastValidatedAt: null,
+    lastSyncAt: null,
+    refreshSortAt: null,
+  });
+
+  assert.deepStrictEqual(getInput, { userId: "u1" });
+  assert.ok(createInput);
+  assert.equal(createInput["userId"], "u1");
+  assert.equal(createInput["bbLoginName"], "coach");
+  assert.equal(createInput["status"], "INVALID");
+  assert.equal(createInput["connectedAt"], null);
+  assert.equal(createInput["lastValidatedAt"], null);
+  assert.equal(createInput["lastSyncAt"], null);
+  assert.equal(typeof createInput["refreshSortAt"], "string");
+  assert.equal(
+    Number.isNaN(Date.parse(String(createInput["refreshSortAt"]))),
+    false,
+  );
+});
+
+test("upsertBbConnection rehydrates a stale null refreshSortAt before update", async (t) => {
+  let updateInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          BbConnection: {
+            get: async () => ({
+              data: {
+                userId: "u1",
+                bbLoginName: "coach",
+                status: "DISCONNECTED",
+                connectedAt: "2026-03-15T00:00:00.000Z",
+                refreshSortAt: null,
+              },
+            }),
+            update: async (input: Record<string, unknown>) => {
+              updateInput = input;
+              return { data: { userId: "u1" } };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertBbConnection({} as any, {
+    userId: "u1",
+    bbLoginName: "coach",
+    status: "DISCONNECTED",
+    connectedAt: null,
+    lastValidatedAt: null,
+    lastSyncAt: null,
+    refreshSortAt: null,
+  });
+
+  assert.deepStrictEqual(updateInput, {
+    userId: "u1",
+    bbLoginName: "coach",
+    status: "DISCONNECTED",
+    connectedAt: null,
+    lastValidatedAt: null,
+    lastSyncAt: null,
+    refreshSortAt: "2026-03-15T00:00:00.000Z",
   });
 });
 
