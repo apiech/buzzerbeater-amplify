@@ -179,6 +179,28 @@ test("backend no longer carries a handwritten $amplify/env shim", () => {
   assert.equal(existsSync(join(repoRoot, "amplify", "env.d.ts")), false);
 });
 
+test("backend-reachable source does not use the Next app alias", () => {
+  const backendReachableRoots = [
+    join(repoRoot, "amplify"),
+    join(repoRoot, "lib", "coach-parrot"),
+    join(repoRoot, "lib", "buzzerbeater"),
+  ];
+  const aliasImportPatterns = [
+    /from\s+["'`]@\//,
+    /import\s*\(\s*["'`]@\//,
+    /require\s*\(\s*["'`]@\//,
+  ];
+
+  for (const runtimeRoot of backendReachableRoots) {
+    for (const sourceFile of listSourceFiles(runtimeRoot)) {
+      const source = readFileSync(sourceFile, "utf8");
+      for (const pattern of aliasImportPatterns) {
+        assert.doesNotMatch(source, pattern);
+      }
+    }
+  }
+});
+
 test("runtime code does not read process.env directly", () => {
   const runtimeRoots = [
     join(repoRoot, "app"),

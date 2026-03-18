@@ -7,6 +7,7 @@ import {
   getBbConnection,
   getUserPreference,
   listConnectedBbConnections,
+  listPlayerSkillObservations,
   listExpiredPredictionJobs,
   listExpiredSyncRuns,
   listStaleConnectedBbConnections,
@@ -258,6 +259,91 @@ test("listConnectedBbConnections queries the status index", async (t) => {
   });
 });
 
+test("listPlayerSkillObservations queries the user history index with a player prefix", async (t) => {
+  const queryCalls: Array<{
+    input: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          PlayerSkillObservation: {
+            listPlayerSkillObservationsByUserIdAndPlayerCapturedAtKey: async (
+              input: Record<string, unknown>,
+              options?: Record<string, unknown>,
+            ) => {
+              queryCalls.push({ input, options });
+              if (options?.nextToken === "page-2") {
+                return {
+                  data: [
+                    {
+                      userId: "u1",
+                      playerId: "p1",
+                      capturedAt: "2026-03-10T00:00:00.000Z",
+                      playerCapturedAtKey: "p1#2026-03-10T00:00:00.000Z",
+                      fullName: "Prospect Player",
+                      teamId: "t1",
+                    },
+                  ],
+                  nextToken: null,
+                };
+              }
+
+              return {
+                data: [
+                  {
+                    userId: "u1",
+                    playerId: "p1",
+                    capturedAt: "2026-03-17T00:00:00.000Z",
+                    playerCapturedAtKey: "p1#2026-03-17T00:00:00.000Z",
+                    fullName: "Prospect Player",
+                    teamId: "t1",
+                  },
+                ],
+                nextToken: "page-2",
+              };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  const records = await listPlayerSkillObservations({} as any, "u1", "p1", 2);
+
+  assert.deepStrictEqual(queryCalls, [
+    {
+      input: {
+        userId: "u1",
+        playerCapturedAtKey: { beginsWith: "p1#" },
+      },
+      options: {
+        limit: 2,
+        nextToken: null,
+        sortDirection: "DESC",
+      },
+    },
+    {
+      input: {
+        userId: "u1",
+        playerCapturedAtKey: { beginsWith: "p1#" },
+      },
+      options: {
+        limit: 1,
+        nextToken: "page-2",
+        sortDirection: "DESC",
+      },
+    },
+  ]);
+  assert.deepStrictEqual(
+    records.map((record) => record.capturedAt),
+    ["2026-03-17T00:00:00.000Z", "2026-03-10T00:00:00.000Z"],
+  );
+});
+
 test("listStaleConnectedBbConnections applies the stale cutoff on the index", async (t) => {
   let queryInput: Record<string, unknown> | null = null;
   let queryOptions: Record<string, unknown> | null = null;
@@ -339,7 +425,14 @@ test("expired operational record helpers query expiry indexes", async (t) => {
             ) => {
               predictionJobCalls.push({ input, options });
               return {
-                data: [{ id: "job-1", userId: "u1", status: "FAILED", mode: "MANUAL" }],
+                data: [
+                  {
+                    id: "job-1",
+                    userId: "u1",
+                    status: "FAILED",
+                    mode: "MANUAL",
+                  },
+                ],
                 nextToken: null,
               };
             },

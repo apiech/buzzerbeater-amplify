@@ -203,6 +203,24 @@ export type SavedLineupScenarioRecord = {
   savedAt: string;
 };
 
+export type PlayerSkillObservationRecord = {
+  userId: string;
+  playerId: string;
+  capturedAt: string;
+  playerCapturedAtKey: string;
+  weekKey?: string | null;
+  teamId: string;
+  teamName?: string | null;
+  fullName: string;
+  bestPosition?: string | null;
+  salary?: number | null;
+  gameShape?: string | null;
+  dmi?: number | null;
+  injuryWeeks?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 type RepositoryEnv = Record<string, string | undefined>;
 
 type ClientError = { message?: string };
@@ -701,6 +719,13 @@ export async function upsertTrackedPlayer(
   await upsertModelRecord(env, "TrackedPlayer", ["userId", "playerId"], input);
 }
 
+export function buildPlayerSkillObservationSortKey(
+  playerId: string,
+  capturedAt: string,
+): string {
+  return `${playerId}#${capturedAt}`;
+}
+
 export async function getTrackedPlayer(
   env: RepositoryEnv,
   userId: string,
@@ -714,6 +739,53 @@ export async function getTrackedPlayer(
   );
 
   return decodeAwsJsonFields("TrackedPlayer", record);
+}
+
+export async function upsertPlayerSkillObservation(
+  env: RepositoryEnv,
+  record: PlayerSkillObservationRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "PlayerSkillObservation",
+    ["userId", "playerId", "capturedAt"],
+    record,
+  );
+}
+
+export async function listPlayerSkillObservations(
+  env: RepositoryEnv,
+  userId: string,
+  playerId: string,
+  limit = 365,
+): Promise<PlayerSkillObservationRecord[]> {
+  const records: PlayerSkillObservationRecord[] = [];
+  let nextToken: string | null = null;
+
+  do {
+    const page: PagedRecords<PlayerSkillObservationRecord> =
+      await queryModelIndexPage<PlayerSkillObservationRecord>(
+        env,
+        "PlayerSkillObservation",
+        "listPlayerSkillObservationsByUserIdAndPlayerCapturedAtKey",
+        {
+          userId,
+          playerCapturedAtKey: {
+            beginsWith: `${playerId}#`,
+          },
+        },
+        {
+          limit: Math.max(1, limit - records.length),
+          nextToken,
+          sortDirection: "DESC",
+        },
+        "list player skill observations",
+      );
+    records.push(...decodeAwsJsonList("PlayerSkillObservation", page.records));
+    nextToken = page.nextToken;
+  } while (nextToken && records.length < limit);
+
+  return records.slice(0, limit);
 }
 
 export async function upsertTrackedMatch(
@@ -849,7 +921,10 @@ async function queryModelIndexPage<TRecord>(
   context: string,
 ): Promise<PagedRecords<TRecord>> {
   const query = await getModelIndexQuery<TRecord>(env, modelName, queryField);
-  const result = await query(omitUndefinedValues(input), omitUndefinedValues(options));
+  const result = await query(
+    omitUndefinedValues(input),
+    omitUndefinedValues(options),
+  );
 
   if (!result.errors?.length) {
     return {
@@ -887,9 +962,9 @@ async function getModelIndexQuery<TRecord>(
   queryField: string,
 ): Promise<IndexQueryMethod<TRecord>> {
   const model = await getModel<TRecord>(env, modelName);
-  const query = (model as unknown as Record<string, IndexQueryMethod<TRecord> | undefined>)[
-    queryField
-  ];
+  const query = (
+    model as unknown as Record<string, IndexQueryMethod<TRecord> | undefined>
+  )[queryField];
 
   if (!query) {
     throw new Error(

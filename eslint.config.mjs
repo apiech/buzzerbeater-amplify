@@ -8,7 +8,7 @@ import tseslint from "typescript-eslint";
 const repoRoot = dirname(fileURLToPath(import.meta.url));
 
 const frontendFiles = ["app/**/*.{js,jsx,mjs,ts,tsx,mts,cts}"];
-const frontendTypeFiles = ["app/**/*.ts", "app/**/*.tsx"];
+const frontendTypeFiles = ["app/**/*.ts", "app/**/*.tsx", "proxy.ts"];
 const backendTypeFiles = ["amplify/**/*.ts"];
 const deployableSourceFiles = [
   "app/**/*.{js,jsx,mjs,ts,tsx,mts,cts}",
@@ -23,6 +23,7 @@ const runtimeFiles = [
 const sharedTypeFiles = [
   "lib/**/*.ts",
   "infra/**/*.ts",
+  "next.config.ts",
   "scripts/**/*.ts",
 ];
 const testTypeFiles = ["tests/**/*.ts"];

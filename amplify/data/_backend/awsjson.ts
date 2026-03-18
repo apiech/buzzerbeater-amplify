@@ -4,6 +4,7 @@ const AWS_JSON_FIELDS = {
   BbConnection: ["profileJson", "workspaceCacheJson"],
   TrackedTeam: ["summaryJson"],
   TrackedPlayer: ["profileJson"],
+  PlayerSkillObservation: [],
   TrackedMatch: ["matchJson"],
   MatchBoxscore: [
     "teamRatingsJson",

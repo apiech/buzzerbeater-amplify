@@ -46,7 +46,7 @@ test("account theme persistence is modeled as an owner-scoped user preference", 
 });
 
 test("workspace requests are routed through server-authenticated Next entry points", () => {
-  const proxySource = readRepoFile("proxy.js");
+  const proxySource = readRepoFile("proxy.ts");
   const homePageSource = readRepoFile("app", "page.tsx");
   const workspacePageSource = readRepoFile(
     "app",
@@ -64,7 +64,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
   );
   const dashboardSource = readRepoFile("app", "dashboard-app.tsx");
 
-  assert.match(proxySource, /export async function proxy\(request\)/);
+  assert.match(proxySource, /export async function proxy\(request: NextRequest\)/);
   assert.match(proxySource, /matcher:\s*\["\/", "\/workspace\/:path\*"\]/);
   assert.match(proxySource, /new URL\("\/login", request\.url\)/);
   assert.match(homePageSource, /redirect\("\/workspace\/home"\)/);

@@ -18,12 +18,24 @@ export function PlayerTrendChart({
   const width = 720;
   const height = 220;
   const padding = 20;
-  const salarySeries = buildTrendSeries(history, (point) => point.salary, width, height, padding);
-  const dmiSeries = buildTrendSeries(history, (point) => point.dmi, width, height, padding);
+  const salarySeries = buildTrendSeries(
+    history,
+    (point) => point.salary,
+    width,
+    height,
+    padding,
+  );
+  const dmiSeries = buildTrendSeries(
+    history,
+    (point) => point.dmi,
+    width,
+    height,
+    padding,
+  );
 
   return (
     <div className="grid gap-4">
-      <div className="grid gap-3 rounded-card border border-black/5 bg-surface-strong p-4">
+      <div className="rounded-card bg-surface-strong grid gap-3 border border-black/5 p-4">
         <svg
           aria-label="Player trend chart"
           className="h-auto w-full"
@@ -65,42 +77,58 @@ export function PlayerTrendChart({
           ) : null}
         </svg>
         <div className="flex flex-wrap gap-2">
-          <span className="inline-flex rounded-full bg-note-bg px-3 py-1.5 text-sm font-semibold text-note">
+          <span className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold">
             Salary
           </span>
-          <span className="inline-flex rounded-full bg-note-bg/80 px-3 py-1.5 text-sm font-semibold text-note">
+          <span className="bg-note-bg/80 text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold">
             DMI
           </span>
         </div>
-        <div className="grid gap-2 text-xs text-ink-muted sm:grid-cols-4">
-          {history.map((point) => (
-            <span key={point.weekKey ?? point.fetchedAt ?? "trend-point"}>
-              {point.weekKey ?? formatTimestamp(point.fetchedAt)}
+        <div className="text-ink-muted grid gap-2 text-xs sm:grid-cols-4">
+          {history.map((point, index) => (
+            <span
+              key={
+                point.fetchedAt ??
+                `${point.weekKey ?? "trend-point"}-${index + 1}`
+              }
+            >
+              {point.fetchedAt
+                ? formatTimestamp(point.fetchedAt)
+                : (point.weekKey ?? "Snapshot")}
             </span>
           ))}
         </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-4">
-        {history.slice(-4).reverse().map((point) => (
-          <StatCard
-            detail={
-              <>
-                DMI {point.dmi ?? "N/A"} •{" "}
-                <BuzzerBeaterRatingText
-                  label={point.gameShape}
-                  scale="game_shape"
-                >
-                  {point.gameShape ?? "N/A"}
-                </BuzzerBeaterRatingText>{" "}
-                • Injury {formatInjury(point.injuryWeeks)}
-              </>
-            }
-            key={point.weekKey ?? point.fetchedAt ?? "snapshot"}
-            label={point.weekKey ?? "Snapshot"}
-            value={formatCurrency(point.salary)}
-          />
-        ))}
+        {history
+          .slice(-4)
+          .reverse()
+          .map((point, index) => (
+            <StatCard
+              detail={
+                <>
+                  DMI {point.dmi ?? "N/A"} •{" "}
+                  <BuzzerBeaterRatingText
+                    label={point.gameShape}
+                    scale="game_shape"
+                  >
+                    {point.gameShape ?? "N/A"}
+                  </BuzzerBeaterRatingText>{" "}
+                  • Injury {formatInjury(point.injuryWeeks)}
+                </>
+              }
+              key={
+                point.fetchedAt ?? `${point.weekKey ?? "snapshot"}-${index + 1}`
+              }
+              label={
+                point.fetchedAt
+                  ? formatTimestamp(point.fetchedAt)
+                  : (point.weekKey ?? "Snapshot")
+              }
+              value={formatCurrency(point.salary)}
+            />
+          ))}
       </div>
     </div>
   );
@@ -125,7 +153,8 @@ function buildTrendSeries(
 
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const xStep = history.length > 1 ? (width - padding * 2) / (history.length - 1) : 0;
+  const xStep =
+    history.length > 1 ? (width - padding * 2) / (history.length - 1) : 0;
   const yRange = max - min || 1;
 
   return history
@@ -136,7 +165,8 @@ function buildTrendSeries(
       }
 
       const x = padding + index * xStep;
-      const y = height - padding - ((value - min) / yRange) * (height - padding * 2);
+      const y =
+        height - padding - ((value - min) / yRange) * (height - padding * 2);
       return `${x},${y}`;
     })
     .filter((point): point is string => Boolean(point))

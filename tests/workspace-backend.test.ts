@@ -4,7 +4,9 @@ import test from "node:test";
 import { __testing as lineupHelperTesting } from "../amplify/data/_backend/lineup-helper";
 import {
   __testing as workspaceTesting,
+  buildSalaryProjectionPayload,
   buildScoutWorkspace,
+  getPlayerTrend,
   lookupSharedPlayerCardByToken,
   revokePlayerCard,
 } from "../amplify/data/_backend/workspace";
@@ -166,6 +168,102 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
     }),
     true,
   );
+});
+
+test("getPlayerTrend preserves multiple observations captured in the same week", async () => {
+  const trend = await getPlayerTrend(
+    {
+      env: {} as any,
+      identity: { sub: "user-1" },
+      playerId: "p1",
+    },
+    {
+      getTrackedPlayer: async () =>
+        ({
+          playerId: "p1",
+          fullName: "Prospect Player",
+          bestPosition: "PG",
+          salary: 120000,
+        }) as any,
+      listWeeklyPlayerSnapshots: async () => [
+        {
+          weekKey: "2026-W11",
+          capturedAt: "2026-03-10T10:00:00.000Z",
+          salary: 120000,
+          dmi: 1500,
+          gameShape: "proficient",
+          injuryWeeks: 0,
+        },
+        {
+          weekKey: "2026-W11",
+          capturedAt: "2026-03-12T10:00:00.000Z",
+          salary: 121000,
+          dmi: 1800,
+          gameShape: "strong",
+          injuryWeeks: 0,
+        },
+        {
+          weekKey: "2026-W12",
+          capturedAt: "2026-03-19T10:00:00.000Z",
+          salary: 122000,
+          dmi: 2000,
+          gameShape: "respectable",
+          injuryWeeks: 1,
+        },
+      ],
+    } as any,
+  );
+
+  assert.deepStrictEqual(
+    trend.history.map((point) => point.fetchedAt),
+    [
+      "2026-03-10T10:00:00.000Z",
+      "2026-03-12T10:00:00.000Z",
+      "2026-03-19T10:00:00.000Z",
+    ],
+  );
+  assert.deepStrictEqual(
+    trend.history.map((point) => point.weekKey),
+    ["2026-W11", "2026-W11", "2026-W12"],
+  );
+});
+
+test("buildSalaryProjectionPayload uses the latest snapshot from each week", () => {
+  const payload = buildSalaryProjectionPayload({
+    player: {
+      playerId: "p1",
+      fullName: "Prospect Player",
+      salary: 121000,
+      profileJson: null,
+    } as any,
+    snapshots: [
+      {
+        weekKey: "2026-W11",
+        capturedAt: "2026-03-10T10:00:00.000Z",
+        salary: 100000,
+      },
+      {
+        weekKey: "2026-W11",
+        capturedAt: "2026-03-12T10:00:00.000Z",
+        salary: 100000,
+      },
+      {
+        weekKey: "2026-W12",
+        capturedAt: "2026-03-19T10:00:00.000Z",
+        salary: 110000,
+      },
+      {
+        weekKey: "2026-W13",
+        capturedAt: "2026-03-26T10:00:00.000Z",
+        salary: 121000,
+      },
+    ],
+    teamCountryName: null,
+  });
+
+  assert.equal(payload.currentSalary, 121000);
+  assert.equal(payload.weeklyDelta, 10500);
+  assert.equal(payload.projectedSalary, 131500);
 });
 
 test("lineup helper workspace payload includes defaults, evaluation, and snapshot warnings", () => {

@@ -6,10 +6,7 @@ import {
   type ClientSchema,
 } from "@aws-amplify/backend";
 
-import {
-  PositionCode,
-  TeamHighlightsPerspective,
-} from "./schema-enums";
+import { PositionCode, TeamHighlightsPerspective } from "./schema-enums";
 import { getAccessibleMatch } from "../get-accessible-match/resource";
 import { getAccessiblePlayByPlay } from "../get-accessible-play-by-play/resource";
 import { getMatchBoxscoreDetails } from "../get-match-boxscore-details/resource";
@@ -353,9 +350,7 @@ const schema = a
 
     PositionCode: a.enum(Object.values(PositionCode)),
 
-    TeamHighlightsPerspective: a.enum(
-      Object.values(TeamHighlightsPerspective),
-    ),
+    TeamHighlightsPerspective: a.enum(Object.values(TeamHighlightsPerspective)),
 
     BillingSummary: a.customType({
       planId: a.string().required(),
@@ -488,7 +483,11 @@ const schema = a
 
     LeagueIntelWorkspace: a.customType({
       league: a.ref("NamedReference"),
-      standings: a.ref("LeagueConferenceStanding").required().array().required(),
+      standings: a
+        .ref("LeagueConferenceStanding")
+        .required()
+        .array()
+        .required(),
     }),
 
     HomeWorkspace: a.customType({
@@ -537,7 +536,11 @@ const schema = a
     ScoutWorkspace: a.customType({
       syncedAt: a.datetime(),
       teamId: a.string(),
-      availableOpponents: a.ref("OpponentSummary").required().array().required(),
+      availableOpponents: a
+        .ref("OpponentSummary")
+        .required()
+        .array()
+        .required(),
       recentMatchups: a.ref("MatchSummary").required().array().required(),
       summary: a.ref("ScoutWorkspaceSummary"),
       requestedTeamId: a.string(),
@@ -627,7 +630,11 @@ const schema = a
 
     LineupPlan: a.customType({
       generatedAt: a.datetime().required(),
-      recommendedStarters: a.ref("LineupPlanPlayer").required().array().required(),
+      recommendedStarters: a
+        .ref("LineupPlanPlayer")
+        .required()
+        .array()
+        .required(),
       benchOrder: a.ref("LineupPlanPlayer").required().array().required(),
       minuteTargets: a.ref("MinuteTargetEntry").required().array().required(),
       rotationNotes: a.string().required().array().required(),
@@ -754,9 +761,17 @@ const schema = a
       syncedAt: a.datetime(),
       roster: a.ref("LineupHelperRosterPlayer").required().array().required(),
       defaultContext: a.ref("LineupHelperContext").required(),
-      defaultAssignments: a.ref("LineupHelperAssignment").required().array().required(),
+      defaultAssignments: a
+        .ref("LineupHelperAssignment")
+        .required()
+        .array()
+        .required(),
       evaluation: a.ref("LineupHelperEvaluation"),
-      snapshotWarnings: a.ref("LineupHelperSnapshotWarning").required().array().required(),
+      snapshotWarnings: a
+        .ref("LineupHelperSnapshotWarning")
+        .required()
+        .array()
+        .required(),
       availableOffenses: a.string().required().array().required(),
       availableDefenses: a.string().required().array().required(),
       availableLocations: a.string().required().array().required(),
@@ -764,15 +779,25 @@ const schema = a
 
     LineupHelperEvaluation: a.customType({
       context: a.ref("LineupHelperContext").required(),
-      normalizedLineup: a.ref("LineupHelperAssignment").required().array().required(),
+      normalizedLineup: a
+        .ref("LineupHelperAssignment")
+        .required()
+        .array()
+        .required(),
       rawRatings: a.ref("LineupHelperRatingValues").required(),
       roundedRatings: a.ref("LineupHelperRatingValues").required(),
       ratingLabels: a.ref("LineupHelperRatingLabels").required(),
       outputBandLabels: a.ref("LineupHelperRatingLabels").required(),
       warnings: a.string().required().array().required(),
       rankings: a.ref("LineupHelperPositionRankings").required(),
-      playerPositionOutputs: a.ref("LineupHelperPlayerPositionOutput").required().array().required(),
-      perPositionContributions: a.ref("LineupHelperPerPositionContributions").required(),
+      playerPositionOutputs: a
+        .ref("LineupHelperPlayerPositionOutput")
+        .required()
+        .array()
+        .required(),
+      perPositionContributions: a
+        .ref("LineupHelperPerPositionContributions")
+        .required(),
       totalOutput: a.float().required(),
     }),
 
@@ -786,7 +811,11 @@ const schema = a
       teamRatings: a.ref("MatchMetricEntry").required().array().required(),
       opponentRatings: a.ref("MatchMetricEntry").required().array().required(),
       teamEfficiency: a.ref("MatchMetricEntry").required().array().required(),
-      opponentEfficiency: a.ref("MatchMetricEntry").required().array().required(),
+      opponentEfficiency: a
+        .ref("MatchMetricEntry")
+        .required()
+        .array()
+        .required(),
       context: a.ref("MatchContext"),
       source: a.string().required(),
     }),
@@ -1059,6 +1088,32 @@ const schema = a
         fetchedAt: a.datetime(),
       })
       .identifier(["userId", "playerId"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    PlayerSkillObservation: a
+      .model({
+        userId: a.string().required(),
+        playerId: a.string().required(),
+        capturedAt: a.datetime().required(),
+        playerCapturedAtKey: a.string().required(),
+        weekKey: a.string(),
+        teamId: a.string().required(),
+        teamName: a.string(),
+        fullName: a.string().required(),
+        bestPosition: a.string(),
+        salary: a.integer(),
+        gameShape: a.string(),
+        dmi: a.integer(),
+        injuryWeeks: a.integer(),
+      })
+      .identifier(["userId", "playerId", "capturedAt"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["playerCapturedAtKey"])
+          .queryField(
+            "listPlayerSkillObservationsByUserIdAndPlayerCapturedAtKey",
+          ),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     TrackedMatch: a
@@ -1348,7 +1403,11 @@ const schema = a
       .query()
       .arguments({
         roster: a.ref("LineupHelperRosterPlayer").required().array().required(),
-        assignments: a.ref("LineupHelperAssignment").required().array().required(),
+        assignments: a
+          .ref("LineupHelperAssignment")
+          .required()
+          .array()
+          .required(),
         context: a.ref("LineupHelperContext").required(),
       })
       .returns(a.ref("LineupHelperEvaluation"))

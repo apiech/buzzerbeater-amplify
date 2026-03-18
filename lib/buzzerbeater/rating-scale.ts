@@ -192,8 +192,8 @@ export function buzzerBeaterColorStyle(args: {
     return undefined;
   }
   return {
-    ["--bb-rating-color" as "--bb-rating-color"]: resolved.color,
-  };
+    ["--bb-rating-color" as string]: resolved.color,
+  } as CSSProperties;
 }
 
 export function renderBuzzerBeaterHtmlSpan(

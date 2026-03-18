@@ -6,7 +6,7 @@ import {
   normalizeOffense,
   resolveHomeCourtFlag,
 } from "./artifacts";
-import { resolveBuzzerBeaterNumericValue } from "@/lib/buzzerbeater/rating-scale";
+import { resolveBuzzerBeaterNumericValue } from "../buzzerbeater/rating-scale";
 import type {
   CoachParrotContext,
   CoachParrotEvaluation,

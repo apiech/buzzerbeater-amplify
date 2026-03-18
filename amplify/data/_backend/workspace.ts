@@ -24,6 +24,7 @@ import {
 } from "./canonical-player-snapshots";
 import { encryptValue, getEncryptionSecret } from "./encryption";
 import {
+  buildPlayerSkillObservationSortKey,
   createSavedLineupScenario,
   type BbConnectionRecord,
   type BbCredentialRecord,
@@ -35,13 +36,16 @@ import {
   getBbCredential,
   getMatchBoxscore,
   getSharedPlayerCardRecord,
+  listPlayerSkillObservations,
   listConnectedBbConnections,
   listStaleConnectedBbConnections,
+  type PlayerSkillObservationRecord,
   upsertBbConnection,
   upsertBbCredential,
   updateSharedPlayerCard,
   updateSyncRun,
   upsertMatchBoxscore,
+  upsertPlayerSkillObservation,
   upsertTrackedTeam,
 } from "./repository";
 import { resolveBbAccessKey } from "./credentials";
@@ -110,9 +114,10 @@ export type ActiveTrackedTeamCredentialBackfillResult = {
   trackedTeamsUpdated: number;
 };
 
-type ActiveTrackedTeamCredentialContext = ActiveTrackedTeamCredentialProjection & {
-  bbLoginName: string;
-};
+type ActiveTrackedTeamCredentialContext =
+  ActiveTrackedTeamCredentialProjection & {
+    bbLoginName: string;
+  };
 
 type WorkspaceDependencies = {
   getSharedPlayerCardRecord: typeof getSharedPlayerCardRecord;
@@ -135,8 +140,13 @@ const SHARED_PLAYER_CARD_TTL_DAYS = 30;
 const defaultWorkspaceDependencies: WorkspaceDependencies = {
   getSharedPlayerCardRecord,
   getTrackedPlayer: getCachedWorkspacePlayer,
-  listWeeklyPlayerSnapshots: async (env, _userId, playerId) =>
-    listCanonicalPlayerSkillSnapshots(env, playerId),
+  listWeeklyPlayerSnapshots: async (env, userId, playerId) => {
+    const [observations, canonicalSnapshots] = await Promise.all([
+      listPlayerSkillObservations(env, userId, playerId),
+      listCanonicalPlayerSkillSnapshots(env, playerId, 104),
+    ]);
+    return mergePlayerSkillSnapshotHistory(observations, canonicalSnapshots);
+  },
   getMatchBoxscore,
   updateSharedPlayerCard,
 };
@@ -175,7 +185,8 @@ export async function connectAccount(args: {
       bbLoginName,
       status: "INVALID",
       accessKeyLast4: existingConnection?.accessKeyLast4 ?? null,
-      lastSyncError: "Both the BuzzerBeater login name and access key are required.",
+      lastSyncError:
+        "Both the BuzzerBeater login name and access key are required.",
       workspaceCacheJson: null,
     });
     await upsertBbConnection(args.env, invalidRecord);
@@ -267,7 +278,9 @@ export async function setLeagueTimeZone(args: {
 
   const existingConnection = await getBbConnection(args.env, userId);
   if (!existingConnection) {
-    throw new Error("Connect a BuzzerBeater account before setting a league time zone.");
+    throw new Error(
+      "Connect a BuzzerBeater account before setting a league time zone.",
+    );
   }
 
   const leagueTimeZone = normalizeLeagueTimeZone(args.leagueTimeZone);
@@ -299,7 +312,9 @@ export async function getOrRefreshWorkspace(args: {
   });
 }
 
-export async function listConnectedUsers(env: GraphqlEnv): Promise<BbConnectionRecord[]> {
+export async function listConnectedUsers(
+  env: GraphqlEnv,
+): Promise<BbConnectionRecord[]> {
   const connections: BbConnectionRecord[] = [];
   let nextToken: string | null = null;
 
@@ -359,7 +374,8 @@ export async function listStaleConnectedUsers(args: {
     ? Array.from(selected.values())
     : staleConnections;
   orderedConnections.sort(
-    (left, right) => connectionFreshnessSortKey(left) - connectionFreshnessSortKey(right),
+    (left, right) =>
+      connectionFreshnessSortKey(left) - connectionFreshnessSortKey(right),
   );
 
   return orderedConnections.slice(0, maxUsers);
@@ -374,7 +390,10 @@ export async function backfillActiveTrackedTeamCredentialProjection(
   let trackedTeamsUpdated = 0;
 
   for (const connection of connections) {
-    const credential = await backfillRuntime.getBbCredential(env, connection.userId);
+    const credential = await backfillRuntime.getBbCredential(
+      env,
+      connection.userId,
+    );
     if (!credential) {
       usersMissingCredentials += 1;
       continue;
@@ -385,10 +404,11 @@ export async function backfillActiveTrackedTeamCredentialProjection(
       connection.bbLoginName,
       credential,
     );
-    const activeTrackedTeams = await backfillRuntime.listActiveTrackedTeamsForUser(
-      env,
-      connection.userId,
-    );
+    const activeTrackedTeams =
+      await backfillRuntime.listActiveTrackedTeamsForUser(
+        env,
+        connection.userId,
+      );
 
     for (const trackedTeam of activeTrackedTeams) {
       if (!trackedTeam.active) {
@@ -427,13 +447,20 @@ export async function generatePlayerCard(args: {
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
-  const player = await getCachedWorkspacePlayer(args.env, userId, args.playerId);
+  const player = await getCachedWorkspacePlayer(
+    args.env,
+    userId,
+    args.playerId,
+  );
   if (!player) {
-    throw new Error("The requested player is not available in the current workspace.");
+    throw new Error(
+      "The requested player is not available in the current workspace.",
+    );
   }
 
   const shareToken = randomUUID();
-  const title = normalizeSharedCardText(args.title) ?? asString(player.fullName);
+  const title =
+    normalizeSharedCardText(args.title) ?? asString(player.fullName);
   const note = normalizeSharedCardText(args.note);
   const expiresAt = new Date(
     Date.now() + SHARED_PLAYER_CARD_TTL_DAYS * 24 * 60 * 60 * 1000,
@@ -461,11 +488,14 @@ export async function generatePlayerCard(args: {
   });
 }
 
-export async function revokePlayerCard(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-  shareToken: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<SharedPlayerCardResult> {
+export async function revokePlayerCard(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+    shareToken: string;
+  },
+  dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
+): Promise<SharedPlayerCardResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -476,7 +506,10 @@ export async function revokePlayerCard(args: {
     throw new Error("A shared player card token is required.");
   }
 
-  const record = await dependencies.getSharedPlayerCardRecord(args.env, shareToken);
+  const record = await dependencies.getSharedPlayerCardRecord(
+    args.env,
+    shareToken,
+  );
   if (!record || record.userId !== userId) {
     throw new Error("The requested shared player card was not found.");
   }
@@ -513,7 +546,10 @@ export async function getScoutWorkspaceForTeam(args: {
   });
 
   const requestedTeamId = args.teamId?.trim() ?? "";
-  if (!requestedTeamId || requestedTeamId === (baseWorkspace.scout.teamId ?? null)) {
+  if (
+    !requestedTeamId ||
+    requestedTeamId === (baseWorkspace.scout.teamId ?? null)
+  ) {
     return {
       connection: baseWorkspace.connection,
       scout: {
@@ -575,11 +611,14 @@ export async function getScoutWorkspaceForTeam(args: {
   };
 }
 
-export async function lookupSharedPlayerCardByToken(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-  shareToken: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<SharedPlayerCardResult | null> {
+export async function lookupSharedPlayerCardByToken(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+    shareToken: string;
+  },
+  dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
+): Promise<SharedPlayerCardResult | null> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -590,8 +629,15 @@ export async function lookupSharedPlayerCardByToken(args: {
     throw new Error("A shared player card token is required.");
   }
 
-  const record = await dependencies.getSharedPlayerCardRecord(args.env, shareToken);
-  if (!record || record.userId !== userId || !isSharedPlayerCardActive(record)) {
+  const record = await dependencies.getSharedPlayerCardRecord(
+    args.env,
+    shareToken,
+  );
+  if (
+    !record ||
+    record.userId !== userId ||
+    !isSharedPlayerCardActive(record)
+  ) {
     return null;
   }
 
@@ -610,11 +656,14 @@ export async function lookupSharedPlayerCardByToken(args: {
   });
 }
 
-export async function getPlayerTrend(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-  playerId: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<PlayerTrendResult> {
+export async function getPlayerTrend(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+    playerId: string;
+  },
+  dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
+): Promise<PlayerTrendResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -631,7 +680,9 @@ export async function getPlayerTrend(args: {
   ]);
 
   if (!player) {
-    throw new Error("The requested player is not available in the current workspace.");
+    throw new Error(
+      "The requested player is not available in the current workspace.",
+    );
   }
 
   const history = snapshots
@@ -660,11 +711,14 @@ export async function getPlayerTrend(args: {
   };
 }
 
-export async function getMatchBoxscoreDetails(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-  matchId: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<MatchBoxscoreDetailsResult> {
+export async function getMatchBoxscoreDetails(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+    matchId: string;
+  },
+  dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
+): Promise<MatchBoxscoreDetailsResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -675,7 +729,11 @@ export async function getMatchBoxscoreDetails(args: {
     throw new Error("A match id is required.");
   }
 
-  const boxscore = await dependencies.getMatchBoxscore(args.env, userId, matchId);
+  const boxscore = await dependencies.getMatchBoxscore(
+    args.env,
+    userId,
+    matchId,
+  );
   if (!boxscore) {
     throw new Error("The requested match boxscore is not available in cache.");
   }
@@ -690,7 +748,9 @@ export async function getMatchBoxscoreDetails(args: {
     teamRatings: toMetricEntries(toRecord(boxscore.teamRatingsJson)),
     opponentRatings: toMetricEntries(toRecord(boxscore.opponentRatingsJson)),
     teamEfficiency: toMetricEntries(toRecord(boxscore.teamEfficiencyJson)),
-    opponentEfficiency: toMetricEntries(toRecord(boxscore.opponentEfficiencyJson)),
+    opponentEfficiency: toMetricEntries(
+      toRecord(boxscore.opponentEfficiencyJson),
+    ),
     context: buildMatchContext(toRecord(boxscore.boxscoreJson)),
     source: "LEGACY_CACHE",
   };
@@ -759,11 +819,14 @@ export async function saveLineupScenario(args: {
   };
 }
 
-export async function getSalaryProjection(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-  playerId: string;
-}, dependencies: WorkspaceDependencies = defaultWorkspaceDependencies): Promise<SalaryProjectionResult> {
+export async function getSalaryProjection(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+    playerId: string;
+  },
+  dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
+): Promise<SalaryProjectionResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -781,7 +844,9 @@ export async function getSalaryProjection(args: {
   ]);
 
   if (!player) {
-    throw new Error("The requested player is not available in the current workspace.");
+    throw new Error(
+      "The requested player is not available in the current workspace.",
+    );
   }
 
   return buildSalaryProjectionPayload({
@@ -833,35 +898,37 @@ export function buildLineupPlanPayload(
 
   const positions = ["PG", "SG", "SF", "PF", "C"] as const;
   const usedPlayerIds = new Set<string>();
-  const recommendedStarters: LineupPlanStarter[] = positions.flatMap((position, index) => {
-    const exact = rankedPlayers.find(
-      (player) =>
-        player.playerId &&
-        !usedPlayerIds.has(player.playerId) &&
-        player.bestPosition === position,
-    );
-    const fallback = rankedPlayers.find(
-      (player) => player.playerId && !usedPlayerIds.has(player.playerId),
-    );
-    const selected = exact ?? fallback;
-    if (!selected?.playerId) {
-      return [];
-    }
+  const recommendedStarters: LineupPlanStarter[] = positions.flatMap(
+    (position, index) => {
+      const exact = rankedPlayers.find(
+        (player) =>
+          player.playerId &&
+          !usedPlayerIds.has(player.playerId) &&
+          player.bestPosition === position,
+      );
+      const fallback = rankedPlayers.find(
+        (player) => player.playerId && !usedPlayerIds.has(player.playerId),
+      );
+      const selected = exact ?? fallback;
+      if (!selected?.playerId) {
+        return [];
+      }
 
-    usedPlayerIds.add(selected.playerId);
-    return [
-      {
-        playerId: selected.playerId,
-        fullName: selected.fullName,
-        bestPosition: position,
-        projectedStarterCount: selected.projectedStarterCount,
-        salary: selected.salary,
-        gameShape: selected.gameShape,
-        score: Number(selected.score.toFixed(2)),
-        slot: index + 1,
-      },
-    ];
-  });
+      usedPlayerIds.add(selected.playerId);
+      return [
+        {
+          playerId: selected.playerId,
+          fullName: selected.fullName,
+          bestPosition: position,
+          projectedStarterCount: selected.projectedStarterCount,
+          salary: selected.salary,
+          gameShape: selected.gameShape,
+          score: Number(selected.score.toFixed(2)),
+          slot: index + 1,
+        },
+      ];
+    },
+  );
 
   const benchOrder: LineupPlanBenchPlayer[] = rankedPlayers
     .filter((player) => player.playerId && !usedPlayerIds.has(player.playerId))
@@ -917,7 +984,8 @@ export function buildLineupPlanPayload(
   ].filter((note): note is string => Boolean(note));
 
   const confidenceInputs = recommendedStarters.reduce(
-    (total, player) => total + ((player.projectedStarterCount ?? 0) > 0 ? 1 : 0),
+    (total, player) =>
+      total + ((player.projectedStarterCount ?? 0) > 0 ? 1 : 0),
     0,
   );
   const confidence = Math.max(
@@ -949,11 +1017,7 @@ export function buildSalaryProjectionPayload(args: {
   const player = args.player;
   const profile = toRecord(player.profileJson);
   const profileNationality = toRecord(profile?.nationality);
-  const orderedSnapshots = [...args.snapshots].sort((left, right) =>
-    String(left.capturedAt ?? left.fetchedAt ?? left.weekKey ?? "").localeCompare(
-      String(right.capturedAt ?? right.fetchedAt ?? right.weekKey ?? ""),
-    ),
-  );
+  const orderedSnapshots = collapseSnapshotsToLatestPeriod(args.snapshots);
   const salarySeries = orderedSnapshots
     .map((snapshot) => asNumber(snapshot.salary))
     .filter((salary): salary is number => salary !== null);
@@ -968,7 +1032,8 @@ export function buildSalaryProjectionPayload(args: {
   const recentDeltas = deltas.slice(-3);
   const weeklyDelta = recentDeltas.length
     ? Math.round(
-        recentDeltas.reduce((sum, value) => sum + value, 0) / recentDeltas.length,
+        recentDeltas.reduce((sum, value) => sum + value, 0) /
+          recentDeltas.length,
       )
     : 0;
   const projectedSalary =
@@ -980,14 +1045,15 @@ export function buildSalaryProjectionPayload(args: {
     null;
   const isFlagTarget = Boolean(
     nationalityName &&
-      args.teamCountryName &&
-      nationalityName.toLowerCase() === args.teamCountryName.toLowerCase(),
+    args.teamCountryName &&
+    nationalityName.toLowerCase() === args.teamCountryName.toLowerCase(),
   );
 
   return {
     playerId: asString(player.playerId) ?? "",
     fullName: asString(player.fullName) ?? "Unknown player",
-    bestPosition: asString(player.bestPosition) ?? asString(profile?.bestPosition),
+    bestPosition:
+      asString(player.bestPosition) ?? asString(profile?.bestPosition),
     nationalityName,
     currentSalary,
     projectedSalary,
@@ -1002,6 +1068,69 @@ export function buildSalaryProjectionPayload(args: {
   };
 }
 
+function mergePlayerSkillSnapshotHistory(
+  observations: PlayerSkillObservationRecord[],
+  canonicalSnapshots: ReadonlyArray<Record<string, unknown>>,
+): Record<string, unknown>[] {
+  const merged = new Map<string, Record<string, unknown>>();
+
+  for (const snapshot of canonicalSnapshots) {
+    const key = buildPlayerSnapshotHistoryKey(snapshot);
+    if (key) {
+      merged.set(key, snapshot);
+    }
+  }
+
+  for (const observation of observations) {
+    const key = buildPlayerSnapshotHistoryKey(observation);
+    if (key) {
+      merged.set(key, observation);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+function buildPlayerSnapshotHistoryKey(
+  snapshot: Record<string, unknown>,
+): string | null {
+  return (
+    asString(snapshot.capturedAt ?? snapshot.fetchedAt) ??
+    asString(snapshot.weekKey)
+  );
+}
+
+function collapseSnapshotsToLatestPeriod(
+  snapshots: readonly Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const latestByPeriod = new Map<string, Record<string, unknown>>();
+  const orderedSnapshots = [...snapshots].sort((left, right) =>
+    String(
+      left.capturedAt ?? left.fetchedAt ?? left.weekKey ?? "",
+    ).localeCompare(
+      String(right.capturedAt ?? right.fetchedAt ?? right.weekKey ?? ""),
+    ),
+  );
+
+  for (const snapshot of orderedSnapshots) {
+    const key =
+      asString(snapshot.weekKey) ??
+      asString(snapshot.capturedAt ?? snapshot.fetchedAt);
+    if (!key) {
+      continue;
+    }
+    latestByPeriod.set(key, snapshot);
+  }
+
+  return Array.from(latestByPeriod.values()).sort((left, right) =>
+    String(
+      left.capturedAt ?? left.fetchedAt ?? left.weekKey ?? "",
+    ).localeCompare(
+      String(right.capturedAt ?? right.fetchedAt ?? right.weekKey ?? ""),
+    ),
+  );
+}
+
 async function syncWorkspace(args: {
   env: GraphqlEnv;
   userId: string;
@@ -1014,7 +1143,9 @@ async function syncWorkspace(args: {
     args.connectionOverride ?? (await getBbConnection(args.env, args.userId));
 
   if (!connection) {
-    throw new Error("No BuzzerBeater connection has been configured for this user.");
+    throw new Error(
+      "No BuzzerBeater connection has been configured for this user.",
+    );
   }
 
   const cachedWorkspace = readCachedWorkspace(connection);
@@ -1036,9 +1167,11 @@ async function syncWorkspace(args: {
   });
 
   try {
-    const accessKey = args.credentialsOverride?.accessKey
-      ?? (await resolveAccessKey(args.env, args.userId));
-    const bbLoginName = args.credentialsOverride?.bbLoginName ?? connection.bbLoginName;
+    const accessKey =
+      args.credentialsOverride?.accessKey ??
+      (await resolveAccessKey(args.env, args.userId));
+    const bbLoginName =
+      args.credentialsOverride?.bbLoginName ?? connection.bbLoginName;
 
     const client = new BBXmlApiClient({
       username: bbLoginName,
@@ -1046,16 +1179,25 @@ async function syncWorkspace(args: {
     });
 
     const currentWorkspace = await client.getCurrentWorkspace();
-    const nextMatch = selectNextMatch(currentWorkspace.schedule.matches, currentWorkspace.teamInfo.teamId);
+    const nextMatch = selectNextMatch(
+      currentWorkspace.schedule.matches,
+      currentWorkspace.teamInfo.teamId,
+    );
     const recentMatches = selectRecentMatches(
       currentWorkspace.schedule.matches,
       currentWorkspace.teamInfo.teamId,
     );
     const currentBoxScores = await fetchRecentBoxScores(client, recentMatches);
-    const nextOpponentTeamId = nextMatch ? deriveOpponentTeamId(nextMatch, currentWorkspace.teamInfo.teamId) : null;
+    const nextOpponentTeamId = nextMatch
+      ? deriveOpponentTeamId(nextMatch, currentWorkspace.teamInfo.teamId)
+      : null;
 
     const opponentWorkspace = nextOpponentTeamId
-      ? await fetchOpponentWorkspace(client, nextOpponentTeamId, currentWorkspace)
+      ? await fetchOpponentWorkspace(
+          client,
+          nextOpponentTeamId,
+          currentWorkspace,
+        )
       : null;
 
     const now = new Date().toISOString();
@@ -1109,15 +1251,19 @@ async function syncWorkspace(args: {
       connectionForViews.lastSyncAt ?? null,
     );
 
-    const updatedConnection = buildConnectionRecord(args.userId, connectionForViews, {
-      workspaceCacheJson: {
-        home,
-        teamHub,
-        scout,
-        leagueIntel,
-        playerLab,
+    const updatedConnection = buildConnectionRecord(
+      args.userId,
+      connectionForViews,
+      {
+        workspaceCacheJson: {
+          home,
+          teamHub,
+          scout,
+          leagueIntel,
+          playerLab,
+        },
       },
-    });
+    );
     const credentialContext = await loadActiveTrackedTeamCredentialContext(
       args.env,
       args.userId,
@@ -1257,11 +1403,28 @@ async function persistWorkspace(
       player,
       fetchedAt,
     );
-    await upsertCanonicalPlayerSkillSnapshot(env, snapshot);
+    const observation = playerToHistoricalPlayerObservation(
+      userId,
+      workspace.teamInfo.teamId,
+      workspace.teamInfo.teamName,
+      player,
+      fetchedAt,
+    );
+    await Promise.all([
+      upsertCanonicalPlayerSkillSnapshot(env, snapshot),
+      upsertPlayerSkillObservation(env, observation),
+    ]);
   }
 
-  for (const boxScore of [...currentBoxScores, ...(opponentWorkspace?.recentBoxScores ?? [])]) {
-    const perspective = determinePerspective(boxScore, workspace.teamInfo.teamId, opponentWorkspace?.teamInfo.teamId ?? null);
+  for (const boxScore of [
+    ...currentBoxScores,
+    ...(opponentWorkspace?.recentBoxScores ?? []),
+  ]) {
+    const perspective = determinePerspective(
+      boxScore,
+      workspace.teamInfo.teamId,
+      opponentWorkspace?.teamInfo.teamId ?? null,
+    );
     await upsertMatchBoxscore(env, {
       userId,
       matchId: boxScore.matchId,
@@ -1299,11 +1462,13 @@ async function fetchOpponentWorkspace(
   const [teamInfo, roster, teamStats, schedule] = await Promise.all([
     client.getTeamInfo(opponentTeamId),
     client.getRoster(opponentTeamId),
-    client.getTeamStats(
-      opponentTeamId,
-      currentWorkspace.schedule.season ?? undefined,
-      "averages",
-    ).catch(() => null),
+    client
+      .getTeamStats(
+        opponentTeamId,
+        currentWorkspace.schedule.season ?? undefined,
+        "averages",
+      )
+      .catch(() => null),
     client.getSchedule(
       opponentTeamId,
       currentWorkspace.schedule.season ?? undefined,
@@ -1338,7 +1503,9 @@ async function fetchRecentBoxScores(
     }),
   );
 
-  return boxScores.filter((boxScore): boxScore is BBApiBoxScore => boxScore !== null);
+  return boxScores.filter(
+    (boxScore): boxScore is BBApiBoxScore => boxScore !== null,
+  );
 }
 
 function buildHomeWorkspace(
@@ -1349,7 +1516,9 @@ function buildHomeWorkspace(
   opponentWorkspace: OpponentWorkspace | null,
   connection: BbConnectionRecord,
 ): HomeWorkspaceResult {
-  const cachedMatchIds = new Set(currentBoxScores.map((boxScore) => boxScore.matchId));
+  const cachedMatchIds = new Set(
+    currentBoxScores.map((boxScore) => boxScore.matchId),
+  );
   return {
     syncedAt: connection.lastSyncAt ?? null,
     connection,
@@ -1365,7 +1534,10 @@ function buildHomeWorkspace(
           fullName: player.fullName,
           injuryWeeks: player.injuryWeeks,
         })),
-      topPlayers: buildTopPlayers(workspace.roster.players, workspace.teamStats),
+      topPlayers: buildTopPlayers(
+        workspace.roster.players,
+        workspace.teamStats,
+      ),
     },
     nextMatch: nextMatch
       ? buildHomeNextMatch(nextMatch, workspace.teamInfo.teamId)
@@ -1374,7 +1546,10 @@ function buildHomeWorkspace(
       ? {
           teamId: opponentWorkspace.teamInfo.teamId,
           teamName: opponentWorkspace.teamInfo.teamName,
-          record: lookupRecord(workspace.standings, opponentWorkspace.teamInfo.teamId),
+          record: lookupRecord(
+            workspace.standings,
+            opponentWorkspace.teamInfo.teamId,
+          ),
           injuries: opponentWorkspace.roster.players
             .filter((player) => (player.injuryWeeks ?? 0) > 0)
             .map((player) => ({
@@ -1404,7 +1579,10 @@ function buildTeamHub(
   currentBoxScores: BBApiBoxScore[],
   syncedAt: string | null,
 ): TeamHubWorkspaceResult {
-  const starterCounts = countStarters(currentBoxScores, workspace.teamInfo.teamId);
+  const starterCounts = countStarters(
+    currentBoxScores,
+    workspace.teamInfo.teamId,
+  );
   return {
     syncedAt,
     team: projectTeamInfo(workspace.teamInfo),
@@ -1461,7 +1639,10 @@ export function buildScoutWorkspace(
   const effortByMatchId = new Map(
     opponentWorkspace.recentBoxScores
       .filter((boxScore) => Boolean(boxScore.matchId))
-      .map((boxScore) => [boxScore.matchId as string, boxScore.effortDelta ?? null]),
+      .map((boxScore) => [
+        boxScore.matchId as string,
+        boxScore.effortDelta ?? null,
+      ]),
   );
   const recentMatchups = buildRecentMatchups(
     currentWorkspace.schedule.matches,
@@ -1483,15 +1664,18 @@ export function buildScoutWorkspace(
             opponentWorkspace.nextMatch,
             opponentWorkspace.teamInfo.teamId,
             Boolean(
-              opponentWorkspace.nextMatch.id
-                && cachedOpponentMatchIds.has(opponentWorkspace.nextMatch.id),
+              opponentWorkspace.nextMatch.id &&
+              cachedOpponentMatchIds.has(opponentWorkspace.nextMatch.id),
             ),
             opponentWorkspace.nextMatch.id
               ? (effortByMatchId.get(opponentWorkspace.nextMatch.id) ?? null)
               : null,
           )
         : null,
-      record: lookupRecord(currentWorkspace.standings, opponentWorkspace.teamInfo.teamId),
+      record: lookupRecord(
+        currentWorkspace.standings,
+        opponentWorkspace.teamInfo.teamId,
+      ),
       matchupPerspective: {
         ourTeamId: currentWorkspace.teamInfo.teamId,
         opponentTeamId: opponentWorkspace.teamInfo.teamId,
@@ -1509,7 +1693,10 @@ export function buildScoutWorkspace(
         projectedStarterCount: null,
         ppg: extractPpg(opponentWorkspace.teamStats, player),
       })),
-      topPlayers: buildTopPlayers(opponentWorkspace.roster.players, opponentWorkspace.teamStats),
+      topPlayers: buildTopPlayers(
+        opponentWorkspace.roster.players,
+        opponentWorkspace.teamStats,
+      ),
       recentGames: opponentWorkspace.recentMatches.map((match) =>
         buildMatchSummary(
           match,
@@ -1522,7 +1709,9 @@ export function buildScoutWorkspace(
   };
 }
 
-function buildLeagueIntel(standings: BBApiStandings | null): LeagueIntelWorkspaceResult {
+function buildLeagueIntel(
+  standings: BBApiStandings | null,
+): LeagueIntelWorkspaceResult {
   if (!standings) {
     return {
       league: null,
@@ -1551,16 +1740,18 @@ function buildAvailableOpponents(
   currentTeamId: string | null,
   selectedTeam: BBApiTeamInfo | null | undefined,
 ): OpponentSummaryRecord[] {
-  const teams = standings?.conferences
-    .flatMap((conference) => conference.teams)
-    .filter((team) => team.id !== currentTeamId)
-    .map((team) => ({
-      teamId: team.id,
-      teamName: team.teamName,
-      wins: team.wins,
-      losses: team.losses,
-      pointMargin: team.pf !== null && team.pa !== null ? team.pf - team.pa : null,
-    })) ?? [];
+  const teams =
+    standings?.conferences
+      .flatMap((conference) => conference.teams)
+      .filter((team) => team.id !== currentTeamId)
+      .map((team) => ({
+        teamId: team.id,
+        teamName: team.teamName,
+        wins: team.wins,
+        losses: team.losses,
+        pointMargin:
+          team.pf !== null && team.pa !== null ? team.pf - team.pa : null,
+      })) ?? [];
 
   if (
     selectedTeam?.teamId &&
@@ -1587,7 +1778,9 @@ function buildRecentMatchups(
   cachedMatchIds: Set<string>,
 ): MatchSummaryRecord[] {
   return matches
-    .filter((match) => deriveOpponentTeamId(match, currentTeamId) === opponentTeamId)
+    .filter(
+      (match) => deriveOpponentTeamId(match, currentTeamId) === opponentTeamId,
+    )
     .filter((match) => deriveTeamScore(match, currentTeamId) !== null)
     .sort(byStartTimeDescending)
     .slice(0, 5)
@@ -1638,7 +1831,10 @@ function buildPlayerLab(
   currentBoxScores: BBApiBoxScore[],
   syncedAt: string | null,
 ): PlayerLabWorkspaceResult {
-  const starterCounts = countStarters(currentBoxScores, workspace.teamInfo.teamId);
+  const starterCounts = countStarters(
+    currentBoxScores,
+    workspace.teamInfo.teamId,
+  );
   return {
     syncedAt,
     players: workspace.roster.players.map((player) => ({
@@ -1680,7 +1876,9 @@ function playerToCanonicalPlayerSnapshot(
   payload: Record<string, unknown>;
 } {
   if (!player.id || !teamId) {
-    throw new Error("Canonical player snapshots require both a player id and team id.");
+    throw new Error(
+      "Canonical player snapshots require both a player id and team id.",
+    );
   }
 
   return {
@@ -1708,6 +1906,39 @@ function playerToCanonicalPlayerSnapshot(
   };
 }
 
+function playerToHistoricalPlayerObservation(
+  userId: string,
+  teamId: string | null,
+  teamName: string | null,
+  player: BBApiRosterPlayer,
+  fetchedAt: string,
+): PlayerSkillObservationRecord {
+  if (!player.id || !teamId) {
+    throw new Error(
+      "Historical player observations require both a player id and team id.",
+    );
+  }
+
+  return {
+    userId,
+    playerId: player.id,
+    capturedAt: fetchedAt,
+    playerCapturedAtKey: buildPlayerSkillObservationSortKey(
+      player.id,
+      fetchedAt,
+    ),
+    weekKey: getWeekKey(new Date(fetchedAt)),
+    teamId,
+    teamName,
+    fullName: player.fullName,
+    bestPosition: player.bestPosition,
+    salary: player.salary,
+    gameShape: asString(player.skills.gameShape),
+    dmi: player.dmi,
+    injuryWeeks: player.injuryWeeks,
+  };
+}
+
 function determinePerspective(
   boxScore: BBApiBoxScore,
   primaryTeamId: string | null,
@@ -1719,9 +1950,16 @@ function determinePerspective(
   team: BBApiBoxScoreTeam;
   opponent: BBApiBoxScoreTeam;
 } {
-  if (boxScore.homeTeam.id === primaryTeamId || boxScore.awayTeam.id === primaryTeamId) {
-    const team = boxScore.homeTeam.id === primaryTeamId ? boxScore.homeTeam : boxScore.awayTeam;
-    const opponent = team === boxScore.homeTeam ? boxScore.awayTeam : boxScore.homeTeam;
+  if (
+    boxScore.homeTeam.id === primaryTeamId ||
+    boxScore.awayTeam.id === primaryTeamId
+  ) {
+    const team =
+      boxScore.homeTeam.id === primaryTeamId
+        ? boxScore.homeTeam
+        : boxScore.awayTeam;
+    const opponent =
+      team === boxScore.homeTeam ? boxScore.awayTeam : boxScore.homeTeam;
     return {
       teamId: primaryTeamId,
       opponentTeamId: opponent.id,
@@ -1731,9 +1969,17 @@ function determinePerspective(
     };
   }
 
-  if (secondaryTeamId && (boxScore.homeTeam.id === secondaryTeamId || boxScore.awayTeam.id === secondaryTeamId)) {
-    const team = boxScore.homeTeam.id === secondaryTeamId ? boxScore.homeTeam : boxScore.awayTeam;
-    const opponent = team === boxScore.homeTeam ? boxScore.awayTeam : boxScore.homeTeam;
+  if (
+    secondaryTeamId &&
+    (boxScore.homeTeam.id === secondaryTeamId ||
+      boxScore.awayTeam.id === secondaryTeamId)
+  ) {
+    const team =
+      boxScore.homeTeam.id === secondaryTeamId
+        ? boxScore.homeTeam
+        : boxScore.awayTeam;
+    const opponent =
+      team === boxScore.homeTeam ? boxScore.awayTeam : boxScore.homeTeam;
     return {
       teamId: secondaryTeamId,
       opponentTeamId: opponent.id,
@@ -1756,9 +2002,15 @@ function selectNextMatch(
   matches: BBApiScheduleMatch[],
   teamId: string | null,
 ): BBApiScheduleMatch | null {
-  return [...matches]
-    .filter((match) => deriveTeamScore(match, teamId) === null || deriveOpponentScore(match, teamId) === null)
-    .sort(byStartTimeAscending)[0] ?? null;
+  return (
+    [...matches]
+      .filter(
+        (match) =>
+          deriveTeamScore(match, teamId) === null ||
+          deriveOpponentScore(match, teamId) === null,
+      )
+      .sort(byStartTimeAscending)[0] ?? null
+  );
 }
 
 function selectRecentMatches(
@@ -1766,7 +2018,11 @@ function selectRecentMatches(
   teamId: string | null,
 ): BBApiScheduleMatch[] {
   return [...matches]
-    .filter((match) => deriveTeamScore(match, teamId) !== null && deriveOpponentScore(match, teamId) !== null)
+    .filter(
+      (match) =>
+        deriveTeamScore(match, teamId) !== null &&
+        deriveOpponentScore(match, teamId) !== null,
+    )
     .sort(byStartTimeDescending)
     .slice(0, 5);
 }
@@ -1776,7 +2032,8 @@ function countStarters(
   teamId: string | null,
 ): Record<string, number> {
   return boxScores.reduce<Record<string, number>>((accumulator, boxScore) => {
-    const team = boxScore.homeTeam.id === teamId ? boxScore.homeTeam : boxScore.awayTeam;
+    const team =
+      boxScore.homeTeam.id === teamId ? boxScore.homeTeam : boxScore.awayTeam;
     for (const player of team.players) {
       const started = asBoolean(player.details.isStarter) ?? false;
       if (started && player.id) {
@@ -1795,7 +2052,8 @@ function summarizeTendencies(
   const defense = new Map<string, number>();
 
   for (const boxScore of boxScores) {
-    const team = boxScore.homeTeam.id === teamId ? boxScore.homeTeam : boxScore.awayTeam;
+    const team =
+      boxScore.homeTeam.id === teamId ? boxScore.homeTeam : boxScore.awayTeam;
     if (team.offStrategy) {
       offense.set(team.offStrategy, (offense.get(team.offStrategy) ?? 0) + 1);
     }
@@ -1869,7 +2127,9 @@ function projectTeamInfo(teamInfo: BBApiTeamInfo): TeamInfoSummary {
   };
 }
 
-function projectPlayerSummary(player: PlayerSummaryRecord): PlayerSummaryRecord {
+function projectPlayerSummary(
+  player: PlayerSummaryRecord,
+): PlayerSummaryRecord {
   return {
     playerId: asString(player.playerId),
     fullName: asString(player.fullName) ?? "Unknown player",
@@ -1999,7 +2259,9 @@ function deriveTeamScore(
   if (!teamId) {
     return null;
   }
-  return match.homeTeam.id === teamId ? match.homeTeam.score : match.awayTeam.score;
+  return match.homeTeam.id === teamId
+    ? match.homeTeam.score
+    : match.awayTeam.score;
 }
 
 function deriveOpponentScore(
@@ -2009,7 +2271,9 @@ function deriveOpponentScore(
   if (!teamId) {
     return null;
   }
-  return match.homeTeam.id === teamId ? match.awayTeam.score : match.homeTeam.score;
+  return match.homeTeam.id === teamId
+    ? match.awayTeam.score
+    : match.homeTeam.score;
 }
 
 function deriveOutcome(
@@ -2102,7 +2366,9 @@ function isSharedPlayerCardActive(record: {
   return expiresAt > Date.now();
 }
 
-function normalizeSharedCardText(value: string | null | undefined): string | null {
+function normalizeSharedCardText(
+  value: string | null | undefined,
+): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
 }
@@ -2186,7 +2452,10 @@ function buildActiveTrackedTeamCredentialContext(
   };
 }
 
-async function resolveAccessKey(env: GraphqlEnv, userId: string): Promise<string> {
+async function resolveAccessKey(
+  env: GraphqlEnv,
+  userId: string,
+): Promise<string> {
   return resolveBbAccessKey(env, userId);
 }
 
@@ -2203,7 +2472,12 @@ function buildConnectionRecord(
       "bbLoginName",
       "",
     ),
-    status: resolveConnectionField(existingConnection, updates, "status", "UNSET"),
+    status: resolveConnectionField(
+      existingConnection,
+      updates,
+      "status",
+      "UNSET",
+    ),
     accessKeyLast4: resolveConnectionField(
       existingConnection,
       updates,
@@ -2211,16 +2485,36 @@ function buildConnectionRecord(
       null,
     ),
     teamId: resolveConnectionField(existingConnection, updates, "teamId", null),
-    teamName: resolveConnectionField(existingConnection, updates, "teamName", null),
-    shortName: resolveConnectionField(existingConnection, updates, "shortName", null),
-    leagueId: resolveConnectionField(existingConnection, updates, "leagueId", null),
+    teamName: resolveConnectionField(
+      existingConnection,
+      updates,
+      "teamName",
+      null,
+    ),
+    shortName: resolveConnectionField(
+      existingConnection,
+      updates,
+      "shortName",
+      null,
+    ),
+    leagueId: resolveConnectionField(
+      existingConnection,
+      updates,
+      "leagueId",
+      null,
+    ),
     leagueName: resolveConnectionField(
       existingConnection,
       updates,
       "leagueName",
       null,
     ),
-    countryId: resolveConnectionField(existingConnection, updates, "countryId", null),
+    countryId: resolveConnectionField(
+      existingConnection,
+      updates,
+      "countryId",
+      null,
+    ),
     countryName: resolveConnectionField(
       existingConnection,
       updates,
@@ -2245,14 +2539,24 @@ function buildConnectionRecord(
       "lastValidatedAt",
       null,
     ),
-    lastSyncAt: resolveConnectionField(existingConnection, updates, "lastSyncAt", null),
+    lastSyncAt: resolveConnectionField(
+      existingConnection,
+      updates,
+      "lastSyncAt",
+      null,
+    ),
     lastSyncError: resolveConnectionField(
       existingConnection,
       updates,
       "lastSyncError",
       null,
     ),
-    profileJson: resolveConnectionField(existingConnection, updates, "profileJson", null),
+    profileJson: resolveConnectionField(
+      existingConnection,
+      updates,
+      "profileJson",
+      null,
+    ),
     workspaceCacheJson: resolveConnectionField(
       existingConnection,
       updates,
@@ -2285,7 +2589,9 @@ function resolveConnectionField<Key extends keyof BbConnectionRecord>(
   return value === undefined ? fallback : value;
 }
 
-function readCachedWorkspace(connection: BbConnectionRecord): WorkspaceBundle | null {
+function readCachedWorkspace(
+  connection: BbConnectionRecord,
+): WorkspaceBundle | null {
   const cache = connection.workspaceCacheJson;
   if (!cache || typeof cache !== "object") {
     return null;
@@ -2434,7 +2740,10 @@ function summarizeLeaningTendencies(
   return ordered.map((entry) => `${entry.name} x${entry.count}`).join(", ");
 }
 
-function classifySalaryTrend(recentDeltas: number[], weeklyDelta: number): string {
+function classifySalaryTrend(
+  recentDeltas: number[],
+  weeklyDelta: number,
+): string {
   if (!recentDeltas.length) {
     return "FLAT";
   }
@@ -2492,10 +2801,16 @@ function connectionFreshnessSortKey(connection: BbConnectionRecord): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function byStartTimeAscending(left: BBApiScheduleMatch, right: BBApiScheduleMatch): number {
+function byStartTimeAscending(
+  left: BBApiScheduleMatch,
+  right: BBApiScheduleMatch,
+): number {
   return (left.startTime ?? "").localeCompare(right.startTime ?? "");
 }
 
-function byStartTimeDescending(left: BBApiScheduleMatch, right: BBApiScheduleMatch): number {
+function byStartTimeDescending(
+  left: BBApiScheduleMatch,
+  right: BBApiScheduleMatch,
+): number {
   return (right.startTime ?? "").localeCompare(left.startTime ?? "");
 }

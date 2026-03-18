@@ -4,8 +4,10 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { deriveAmplifyAppOrigin } from "../lib/env/public-app-origin.js";
+import publicAppOrigin from "../lib/env/public-app-origin.ts";
 import { loadProjectEnvFiles } from "./project-env.mjs";
+
+const { deriveAmplifyAppOrigin } = publicAppOrigin;
 
 const require = createRequire(import.meta.url);
 const currentDir = dirname(fileURLToPath(import.meta.url));
