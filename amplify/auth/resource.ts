@@ -2,7 +2,7 @@ import { defineAuth } from "@aws-amplify/backend";
 import {
   LOCALHOST_APP_ORIGIN,
   resolvePublicAppOrigin,
-} from "../../lib/env/public-app-origin.js";
+} from "../_shared/public-app-origin.js";
 
 const appBaseUrl = resolvePublicAppOrigin(process.env, {
   fallback: LOCALHOST_APP_ORIGIN,

@@ -5,7 +5,7 @@ import {
   type IFunction,
 } from "aws-cdk-lib/aws-lambda";
 
-import { resolvePublicAppOrigin } from "../../lib/env/public-app-origin.js";
+import { resolvePublicAppOrigin } from "../_shared/public-app-origin.js";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;

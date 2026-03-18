@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -162,8 +162,8 @@ test("public app origin flows through the shared helper and CI syncs external ma
   );
   const amplifyYamlSource = readFileSync(join(repoRoot, "amplify.yml"), "utf8");
 
-  assert.match(authSource, /resolvePublicAppOrigin/);
-  assert.match(billingIntegrationSource, /resolvePublicAppOrigin/);
+  assert.match(authSource, /_shared\/public-app-origin\.js/);
+  assert.match(billingIntegrationSource, /_shared\/public-app-origin\.js/);
   assert.match(nextWithEnvSource, /deriveAmplifyAppOrigin/);
   assert.match(
     amplifyYamlSource,
@@ -177,6 +177,32 @@ test("public app origin flows through the shared helper and CI syncs external ma
 
 test("backend no longer carries a handwritten $amplify/env shim", () => {
   assert.equal(existsSync(join(repoRoot, "amplify", "env.d.ts")), false);
+});
+
+test("synth-time backend files do not import root lib helpers", () => {
+  const amplifyRoot = join(repoRoot, "amplify");
+  const rootLibImportPatterns = [
+    /from\s+["'`](?:\.\.\/)+lib\//,
+    /import\s*\(\s*["'`](?:\.\.\/)+lib\//,
+    /require\s*\(\s*["'`](?:\.\.\/)+lib\//,
+  ];
+
+  const synthTimeFiles = listSourceFiles(amplifyRoot).filter((sourceFile) => {
+    const relativePath = relative(amplifyRoot, sourceFile).replaceAll("\\", "/");
+
+    return (
+      relativePath === "backend.ts" ||
+      relativePath.startsWith("_backend/") ||
+      /(?:^|\/)resource\.ts$/.test(relativePath)
+    );
+  });
+
+  for (const sourceFile of synthTimeFiles) {
+    const source = readFileSync(sourceFile, "utf8");
+    for (const pattern of rootLibImportPatterns) {
+      assert.doesNotMatch(source, pattern, sourceFile);
+    }
+  }
 });
 
 test("backend-reachable source does not use the Next app alias", () => {
