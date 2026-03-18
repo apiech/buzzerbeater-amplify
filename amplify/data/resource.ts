@@ -17,6 +17,7 @@ import { gameDayRecapWorker } from "../game-day-recap-worker/resource";
 import { listAccessibleMatches } from "../list-accessible-matches/resource";
 import { predictionSubmit } from "../prediction-submit/resource";
 import { predictionWorker } from "../prediction-worker/resource";
+import { resolveBillingConfig } from "../_shared/synth-env";
 
 const secureFunctionEnvironment = {
   BB_CONNECTION_ENCRYPTION_SECRET: secret("BB_CONNECTION_ENCRYPTION_SECRET"),
@@ -24,6 +25,16 @@ const secureFunctionEnvironment = {
 
 const stripeSecretFunctionEnvironment = {
   STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
+};
+
+const billingSynthConfig = resolveBillingConfig();
+const billingPortalFunctionEnvironment = {
+  ...stripeSecretFunctionEnvironment,
+  APP_BASE_URL: billingSynthConfig.appBaseUrl,
+};
+const billingCheckoutFunctionEnvironment = {
+  ...billingPortalFunctionEnvironment,
+  STRIPE_PREMIUM_PRICE_ID: billingSynthConfig.premiumPriceId,
 };
 
 export const connectBbAccount = defineFunction({
@@ -155,7 +166,7 @@ export const createBillingCheckoutSession = defineFunction({
   entry: "./create-billing-checkout-session/handler.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
-  environment: stripeSecretFunctionEnvironment,
+  environment: billingCheckoutFunctionEnvironment,
 });
 
 export const createBillingPortalSession = defineFunction({
@@ -164,7 +175,7 @@ export const createBillingPortalSession = defineFunction({
   entry: "./create-billing-portal-session/handler.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
-  environment: stripeSecretFunctionEnvironment,
+  environment: billingPortalFunctionEnvironment,
 });
 
 const getLineupPlan = defineFunction({

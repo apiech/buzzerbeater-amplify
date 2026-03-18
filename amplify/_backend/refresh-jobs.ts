@@ -1,9 +1,11 @@
-import { Duration, Stack } from "aws-cdk-lib";
+import { Duration, Stack, type RemovalPolicy } from "aws-cdk-lib";
 import * as events from "aws-cdk-lib/aws-events";
 import * as targets from "aws-cdk-lib/aws-events-targets";
 import type { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Queue } from "aws-cdk-lib/aws-sqs";
+
+import type { RefreshJobsSynthConfig } from "../_shared/synth-env.js";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
@@ -18,23 +20,26 @@ type RefreshJobsBackend = {
   refreshBbWorkspaceWorker: FunctionResource;
 };
 
-const DEFAULT_STALE_AFTER_HOURS = "24";
-const DEFAULT_MAX_USERS_PER_RUN = "50";
-const DEFAULT_DEDUPE_BY_TEAM = "false";
 const DEFAULT_WORKER_CONCURRENCY = 5;
 
-export function configureRefreshJobs(backend: RefreshJobsBackend): void {
+export function configureRefreshJobs(
+  backend: RefreshJobsBackend,
+  config: RefreshJobsSynthConfig,
+  removalPolicy: RemovalPolicy,
+): void {
   const stack = backend.createStack("refresh-jobs");
   const deadLetterQueue = new Queue(stack, "WorkspaceRefreshJobDlq", {
+    removalPolicy,
     retentionPeriod: Duration.days(14),
   });
   const refreshQueue = new Queue(stack, "WorkspaceRefreshJobQueue", {
-    visibilityTimeout: Duration.minutes(5),
-    retentionPeriod: Duration.days(4),
     deadLetterQueue: {
       maxReceiveCount: 3,
       queue: deadLetterQueue,
     },
+    removalPolicy,
+    retentionPeriod: Duration.days(4),
+    visibilityTimeout: Duration.minutes(5),
   });
 
   backend.refreshBbWorkspaces.addEnvironment(
@@ -43,15 +48,15 @@ export function configureRefreshJobs(backend: RefreshJobsBackend): void {
   );
   backend.refreshBbWorkspaces.addEnvironment(
     "WORKSPACE_REFRESH_STALE_AFTER_HOURS",
-    process.env.WORKSPACE_REFRESH_STALE_AFTER_HOURS ?? DEFAULT_STALE_AFTER_HOURS,
+    config.staleAfterHours,
   );
   backend.refreshBbWorkspaces.addEnvironment(
     "WORKSPACE_REFRESH_MAX_USERS_PER_RUN",
-    process.env.WORKSPACE_REFRESH_MAX_USERS_PER_RUN ?? DEFAULT_MAX_USERS_PER_RUN,
+    config.maxUsersPerRun,
   );
   backend.refreshBbWorkspaces.addEnvironment(
     "WORKSPACE_REFRESH_DEDUPE_BY_TEAM",
-    process.env.WORKSPACE_REFRESH_DEDUPE_BY_TEAM ?? DEFAULT_DEDUPE_BY_TEAM,
+    config.dedupeByTeam,
   );
 
   refreshQueue.grantSendMessages(backend.refreshBbWorkspaces.resources.lambda);
@@ -67,14 +72,13 @@ export function configureRefreshJobs(backend: RefreshJobsBackend): void {
   );
   workerLambda.addEnvironment(
     "WORKSPACE_REFRESH_STALE_AFTER_HOURS",
-    process.env.WORKSPACE_REFRESH_STALE_AFTER_HOURS ?? DEFAULT_STALE_AFTER_HOURS,
+    config.staleAfterHours,
   );
   workerLambda.addEnvironment(
     "WORKSPACE_REFRESH_MAX_USERS_PER_RUN",
-    process.env.WORKSPACE_REFRESH_MAX_USERS_PER_RUN ?? DEFAULT_MAX_USERS_PER_RUN,
+    config.maxUsersPerRun,
   );
 
-  // Keep the schedule in the Lambda's owning stack to avoid a nested-stack cycle.
   const scheduleStack = Stack.of(backend.refreshBbWorkspaces.resources.lambda);
   new events.Rule(scheduleStack, "WorkspaceRefreshSchedule", {
     schedule: events.Schedule.rate(Duration.hours(6)),

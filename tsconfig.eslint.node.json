@@ -13,7 +13,6 @@
     "app/**/*.tsx",
     "amplify/**/*.ts",
     "lib/**/*.ts",
-    "infra/**/*.ts",
     "proxy.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts"

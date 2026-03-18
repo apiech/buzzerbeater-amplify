@@ -14,13 +14,6 @@ APP_BASE_URL=http://localhost:3000
 STRIPE_PREMIUM_PRICE_ID=price_sandbox_placeholder
 GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 
-# Match data plane mode.
-MATCH_DATA_PLANE_SOURCE=local
-# MATCH_DATA_PLANE_STACK_NAME=MatchDataPlane
-# When MATCH_DATA_PLANE_SOURCE=external, run:
-#   npm run sync:match-data-plane
-# This generates .env.match-data-plane with the imported resource names.
-
 # Optional deploy-time tuning. Defaults or recommended values shown below.
 # GAME_DAY_RECAP_MODEL_ID_PREMIUM=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # BILLING_DEFAULT_PLAN=premium
@@ -33,17 +26,19 @@ MATCH_DATA_PLANE_SOURCE=local
 # SYNC_RUN_RETENTION_DAYS=14
 # PREDICTION_JOB_RETENTION_DAYS=30
 
-# Generated only when MATCH_DATA_PLANE_SOURCE=external.
-# Do not maintain these values by hand in .env.
-# .env.match-data-plane contains:
-# - MATCH_STORE_BUCKET_NAME
-# - MATCH_CATALOG_TABLE_NAME
-# - TEAM_MATCH_PROJECTION_TABLE_NAME
-# - ACTIVE_TRACKED_TEAMS_TABLE_NAME
-# - PLAYER_SKILL_SNAPSHOT_TABLE_NAME
-# - TEAM_MOMENTS_TABLE_NAME
-# - TEAM_HIGHLIGHTS_STATUS_TABLE_NAME
-# - TEAM_HIGHLIGHTS_SCAN_QUEUE_URL
+# Shared ML Data Infra bindings come from deterministic SSM parameter names
+# published by bb-shared-infra. Do not set imported resource names in .env.
+#
+# Local sandbox runs:
+# - `npm run sandbox` sets BB_SHARED_ENVIRONMENT_NAME and bootstraps ML Data Infra.
+# - Predictor endpoints are not bootstrapped implicitly. Release one explicitly
+#   before the first sandbox or dev deploy that needs predictions.
+# - Plain `npx ampx sandbox` expects shared infra and predictor resources for
+#   that sandbox identifier to already exist in AWS.
+#
+# Hosted builds derive the shared infra environment from AWS_BRANCH.
+# Optional local/manual override:
+# BB_SHARED_ENVIRONMENT_NAME=sandbox-karey
 
 # Amplify secrets are required separately and should not be stored in .env.
 # Local sandbox:
@@ -51,6 +46,12 @@ MATCH_DATA_PLANE_SOURCE=local
 #   npm run ampx -- sandbox secret set STRIPE_SECRET_KEY
 #   npm run ampx -- sandbox secret set STRIPE_WEBHOOK_SECRET
 #   npm run ampx -- sandbox secret set BILLING_ADMIN_TOKEN
+#
+# Shared ML Data Infra deploys:
+#   export BB_CONNECTION_ENCRYPTION_SECRET=<same value as the Amplify secret>
+#   npm run shared-infra:deploy:ml-data-infra -- --environment dev
+# Predictor deploys:
+#   ./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>
 #
 # Amplify Hosting secrets:
 # - BB_CONNECTION_ENCRYPTION_SECRET

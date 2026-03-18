@@ -1,14 +1,10 @@
 import type { Stack } from "aws-cdk-lib";
-import {
-  AttributeType,
-  BillingMode,
-  Table,
-  type ITable,
-} from "aws-cdk-lib/aws-dynamodb";
-import { type IFunction } from "aws-cdk-lib/aws-lambda";
+import { Table, type ITable } from "aws-cdk-lib/aws-dynamodb";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { type IFunction } from "aws-cdk-lib/aws-lambda";
 import { Bucket, type IBucket } from "aws-cdk-lib/aws-s3";
-import { Queue } from "aws-cdk-lib/aws-sqs";
+
+import type { SharedInfraBindings } from "../_shared/shared-infra-contract.js";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
@@ -29,172 +25,58 @@ type MatchStoreBackend = {
   getLineupHelperWorkspace: FunctionResource;
   getMatchBoxscoreDetails: FunctionResource;
   getMyTeamHighlights: FunctionResource;
-  getPlayerTrend: FunctionResource;
   getPlayerLab: FunctionResource;
+  getPlayerTrend: FunctionResource;
   getSalaryProjection: FunctionResource;
   getScoutWorkspace: FunctionResource;
   getTeamHub: FunctionResource;
   listAccessibleMatches: FunctionResource;
-  refreshBbWorkspaces: FunctionResource;
   refreshBbWorkspaceWorker: FunctionResource;
+  refreshBbWorkspaces: FunctionResource;
   refreshWorkspace: FunctionResource;
   submitMyTeamHighlightsScan: FunctionResource;
 };
 
-type ExternalMatchStoreConfig = {
-  bucketName: string;
-  catalogTableName: string;
-  projectionTableName: string;
-  activeTrackedTeamsTableName: string;
-  playerSkillSnapshotTableName: string;
-  teamMomentsTableName: string;
-  teamHighlightsStatusTableName: string;
-  teamHighlightsScanQueueUrl: string;
-};
-
-export const __testing = {
-  resolveExternalMatchStoreConfig,
-  resolveMatchDataPlaneSource,
-};
-
 export function configureMatchStoreIntegration(
   backend: MatchStoreBackend,
+  bindings: SharedInfraBindings,
 ): void {
   const stack = backend.createStack("match-store-integration");
-  const externalConfig = resolveExternalMatchStoreConfig();
-
-  const matchStoreBucket = externalConfig
-    ? Bucket.fromBucketName(
-        stack,
-        "ImportedMatchStoreBucket",
-        externalConfig.bucketName,
-      )
-    : new Bucket(stack, "MatchStoreBucket");
-  const matchCatalogTable = externalConfig
-    ? Table.fromTableName(
-        stack,
-        "ImportedMatchCatalogTable",
-        externalConfig.catalogTableName,
-      )
-    : new Table(stack, "MatchCatalogTable", {
-        billingMode: BillingMode.PAY_PER_REQUEST,
-        partitionKey: {
-          name: "matchId",
-          type: AttributeType.STRING,
-        },
-      });
-  const teamMatchProjectionTable = externalConfig
-    ? Table.fromTableName(
-        stack,
-        "ImportedTeamMatchProjectionTable",
-        externalConfig.projectionTableName,
-      )
-    : new Table(stack, "TeamMatchProjectionTable", {
-        billingMode: BillingMode.PAY_PER_REQUEST,
-        partitionKey: {
-          name: "teamId",
-          type: AttributeType.STRING,
-        },
-        sortKey: {
-          name: "seasonStartMatchKey",
-          type: AttributeType.STRING,
-        },
-      });
-  const activeTrackedTeamsTable = externalConfig
-    ? Table.fromTableName(
-        stack,
-        "ImportedActiveTrackedTeamsTable",
-        externalConfig.activeTrackedTeamsTableName,
-      )
-    : new Table(stack, "ActiveTrackedTeamsTable", {
-        billingMode: BillingMode.PAY_PER_REQUEST,
-        partitionKey: {
-          name: "userId",
-          type: AttributeType.STRING,
-        },
-        sortKey: {
-          name: "teamId",
-          type: AttributeType.STRING,
-        },
-      });
-  const playerSkillSnapshotTable = externalConfig
-    ? Table.fromTableName(
-        stack,
-        "ImportedPlayerSkillSnapshotTable",
-        externalConfig.playerSkillSnapshotTableName,
-      )
-    : new Table(stack, "PlayerSkillSnapshotTable", {
-        billingMode: BillingMode.PAY_PER_REQUEST,
-        partitionKey: {
-          name: "playerId",
-          type: AttributeType.STRING,
-        },
-        sortKey: {
-          name: "weekKey",
-          type: AttributeType.STRING,
-        },
-      });
-  const teamMomentsTable = externalConfig
-    ? Table.fromTableName(
-        stack,
-        "ImportedTeamMomentsTable",
-        externalConfig.teamMomentsTableName,
-      )
-    : new Table(stack, "TeamMomentsTable", {
-        billingMode: BillingMode.PAY_PER_REQUEST,
-        partitionKey: {
-          name: "teamId",
-          type: AttributeType.STRING,
-        },
-        sortKey: {
-          name: "momentSortKey",
-          type: AttributeType.STRING,
-        },
-      });
-  const teamHighlightsStatusTable = externalConfig
-    ? Table.fromTableName(
-        stack,
-        "ImportedTeamHighlightsStatusTable",
-        externalConfig.teamHighlightsStatusTableName,
-      )
-    : new Table(stack, "TeamHighlightsStatusTable", {
-        billingMode: BillingMode.PAY_PER_REQUEST,
-        partitionKey: {
-          name: "userId",
-          type: AttributeType.STRING,
-        },
-        sortKey: {
-          name: "teamId",
-          type: AttributeType.STRING,
-        },
-      });
-  const teamHighlightsScanQueue = externalConfig
-    ? null
-    : new Queue(stack, "TeamHighlightsScanQueue");
-
-  const matchStoreBucketName =
-    externalConfig?.bucketName ?? matchStoreBucket.bucketName;
-  const matchCatalogTableName =
-    externalConfig?.catalogTableName ?? matchCatalogTable.tableName;
-  const teamMatchProjectionTableName =
-    externalConfig?.projectionTableName ?? teamMatchProjectionTable.tableName;
-  const activeTrackedTeamsTableName =
-    externalConfig?.activeTrackedTeamsTableName ??
-    activeTrackedTeamsTable.tableName;
-  const playerSkillSnapshotTableName =
-    externalConfig?.playerSkillSnapshotTableName ??
-    playerSkillSnapshotTable.tableName;
-  const teamMomentsTableName =
-    externalConfig?.teamMomentsTableName ?? teamMomentsTable.tableName;
-  const teamHighlightsStatusTableName =
-    externalConfig?.teamHighlightsStatusTableName ??
-    teamHighlightsStatusTable.tableName;
-  const teamHighlightsScanQueueUrl =
-    externalConfig?.teamHighlightsScanQueueUrl ??
-    teamHighlightsScanQueue?.queueUrl;
-  if (!teamHighlightsScanQueueUrl) {
-    throw new Error("Team highlights scan queue URL could not be resolved.");
-  }
+  const matchStoreBucket = Bucket.fromBucketName(
+    stack,
+    "ImportedMatchStoreBucket",
+    bindings.matchStoreBucketName,
+  );
+  const matchCatalogTable = Table.fromTableName(
+    stack,
+    "ImportedMatchCatalogTable",
+    bindings.matchCatalogTableName,
+  );
+  const teamMatchProjectionTable = Table.fromTableName(
+    stack,
+    "ImportedTeamMatchProjectionTable",
+    bindings.teamMatchProjectionTableName,
+  );
+  const activeTrackedTeamsTable = Table.fromTableName(
+    stack,
+    "ImportedActiveTrackedTeamsTable",
+    bindings.activeTrackedTeamsTableName,
+  );
+  const playerSkillSnapshotTable = Table.fromTableName(
+    stack,
+    "ImportedPlayerSkillSnapshotTable",
+    bindings.playerSkillSnapshotTableName,
+  );
+  const teamMomentsTable = Table.fromTableName(
+    stack,
+    "ImportedTeamMomentsTable",
+    bindings.teamMomentsTableName,
+  );
+  const teamHighlightsStatusTable = Table.fromTableName(
+    stack,
+    "ImportedTeamHighlightsStatusTable",
+    bindings.teamHighlightsStatusTableName,
+  );
 
   const matchStoreReadFunctions = [
     backend.listAccessibleMatches,
@@ -223,11 +105,14 @@ export function configureMatchStoreIntegration(
   const teamHighlightsReadFunctions = [backend.getMyTeamHighlights];
 
   for (const resource of matchStoreReadFunctions) {
-    resource.addEnvironment("MATCH_STORE_BUCKET_NAME", matchStoreBucketName);
-    resource.addEnvironment("MATCH_CATALOG_TABLE_NAME", matchCatalogTableName);
+    resource.addEnvironment("MATCH_STORE_BUCKET_NAME", bindings.matchStoreBucketName);
+    resource.addEnvironment(
+      "MATCH_CATALOG_TABLE_NAME",
+      bindings.matchCatalogTableName,
+    );
     resource.addEnvironment(
       "TEAM_MATCH_PROJECTION_TABLE_NAME",
-      teamMatchProjectionTableName,
+      bindings.teamMatchProjectionTableName,
     );
   }
 
@@ -239,11 +124,11 @@ export function configureMatchStoreIntegration(
   for (const resource of workspaceSyncFunctions) {
     resource.addEnvironment(
       "ACTIVE_TRACKED_TEAMS_TABLE_NAME",
-      activeTrackedTeamsTableName,
+      bindings.activeTrackedTeamsTableName,
     );
     resource.addEnvironment(
       "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
-      playerSkillSnapshotTableName,
+      bindings.playerSkillSnapshotTableName,
     );
     activeTrackedTeamsTable.grantReadWriteData(resource.resources.lambda);
     playerSkillSnapshotTable.grantReadWriteData(resource.resources.lambda);
@@ -252,16 +137,16 @@ export function configureMatchStoreIntegration(
   for (const resource of playerSnapshotReadFunctions) {
     resource.addEnvironment(
       "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
-      playerSkillSnapshotTableName,
+      bindings.playerSkillSnapshotTableName,
     );
     playerSkillSnapshotTable.grantReadData(resource.resources.lambda);
   }
 
   for (const resource of teamHighlightsReadFunctions) {
-    resource.addEnvironment("TEAM_MOMENTS_TABLE_NAME", teamMomentsTableName);
+    resource.addEnvironment("TEAM_MOMENTS_TABLE_NAME", bindings.teamMomentsTableName);
     resource.addEnvironment(
       "TEAM_HIGHLIGHTS_STATUS_TABLE_NAME",
-      teamHighlightsStatusTableName,
+      bindings.teamHighlightsStatusTableName,
     );
     teamMomentsTable.grantReadData(resource.resources.lambda);
     teamHighlightsStatusTable.grantReadData(resource.resources.lambda);
@@ -269,26 +154,20 @@ export function configureMatchStoreIntegration(
 
   backend.submitMyTeamHighlightsScan.addEnvironment(
     "TEAM_HIGHLIGHTS_STATUS_TABLE_NAME",
-    teamHighlightsStatusTableName,
+    bindings.teamHighlightsStatusTableName,
   );
   backend.submitMyTeamHighlightsScan.addEnvironment(
     "TEAM_HIGHLIGHTS_SCAN_QUEUE_URL",
-    teamHighlightsScanQueueUrl,
+    bindings.teamHighlightsScanQueueUrl,
   );
   teamHighlightsStatusTable.grantReadWriteData(
     backend.submitMyTeamHighlightsScan.resources.lambda,
   );
-  if (teamHighlightsScanQueue) {
-    teamHighlightsScanQueue.grantSendMessages(
-      backend.submitMyTeamHighlightsScan.resources.lambda,
-    );
-  } else {
-    grantSqsSendAccessFromQueueUrl(
-      stack,
-      backend.submitMyTeamHighlightsScan.resources.lambda,
-      teamHighlightsScanQueueUrl,
-    );
-  }
+  grantSqsSendAccessFromQueueUrl(
+    stack,
+    backend.submitMyTeamHighlightsScan.resources.lambda,
+    bindings.teamHighlightsScanQueueUrl,
+  );
 }
 
 function grantMatchStoreReadAccess(
@@ -316,70 +195,6 @@ function grantMatchStoreReadAccess(
   );
   matchCatalogTable.grantReadData(
     backend.getMatchBoxscoreDetails.resources.lambda,
-  );
-}
-
-function resolveExternalMatchStoreConfig(
-  env: Record<string, string | undefined> = process.env,
-): ExternalMatchStoreConfig | null {
-  const source = resolveMatchDataPlaneSource(env);
-  if (source === "local") {
-    return null;
-  }
-
-  const bucketName = env.MATCH_STORE_BUCKET_NAME;
-  const catalogTableName = env.MATCH_CATALOG_TABLE_NAME;
-  const projectionTableName = env.TEAM_MATCH_PROJECTION_TABLE_NAME;
-  const activeTrackedTeamsTableName = env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
-  const playerSkillSnapshotTableName = env.PLAYER_SKILL_SNAPSHOT_TABLE_NAME;
-  const teamMomentsTableName = env.TEAM_MOMENTS_TABLE_NAME;
-  const teamHighlightsStatusTableName = env.TEAM_HIGHLIGHTS_STATUS_TABLE_NAME;
-  const teamHighlightsScanQueueUrl = env.TEAM_HIGHLIGHTS_SCAN_QUEUE_URL;
-
-  const values = [
-    bucketName,
-    catalogTableName,
-    projectionTableName,
-    activeTrackedTeamsTableName,
-    playerSkillSnapshotTableName,
-    teamMomentsTableName,
-    teamHighlightsStatusTableName,
-    teamHighlightsScanQueueUrl,
-  ];
-
-  if (values.some((value) => !value)) {
-    throw new Error(
-      "MATCH_DATA_PLANE_SOURCE=external requires MATCH_STORE_BUCKET_NAME, MATCH_CATALOG_TABLE_NAME, TEAM_MATCH_PROJECTION_TABLE_NAME, ACTIVE_TRACKED_TEAMS_TABLE_NAME, PLAYER_SKILL_SNAPSHOT_TABLE_NAME, TEAM_MOMENTS_TABLE_NAME, TEAM_HIGHLIGHTS_STATUS_TABLE_NAME, and TEAM_HIGHLIGHTS_SCAN_QUEUE_URL. Run `npm run sync:match-data-plane` to regenerate `.env.match-data-plane` before deploying.",
-    );
-  }
-
-  return {
-    bucketName: bucketName!,
-    catalogTableName: catalogTableName!,
-    projectionTableName: projectionTableName!,
-    activeTrackedTeamsTableName: activeTrackedTeamsTableName!,
-    playerSkillSnapshotTableName: playerSkillSnapshotTableName!,
-    teamMomentsTableName: teamMomentsTableName!,
-    teamHighlightsStatusTableName: teamHighlightsStatusTableName!,
-    teamHighlightsScanQueueUrl: teamHighlightsScanQueueUrl!,
-  };
-}
-
-function resolveMatchDataPlaneSource(
-  env: Record<string, string | undefined>,
-): "local" | "external" {
-  const configuredSource =
-    env.MATCH_DATA_PLANE_SOURCE?.trim().toLowerCase() ?? "";
-  if (!configuredSource) {
-    return "local";
-  }
-
-  if (configuredSource === "local" || configuredSource === "external") {
-    return configuredSource;
-  }
-
-  throw new Error(
-    "MATCH_DATA_PLANE_SOURCE must be set to either 'local' or 'external'.",
   );
 }
 

@@ -1,64 +1,30 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { __testing as matchStoreIntegrationTesting } from "../amplify/_backend/match-store-integration";
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(currentDir, "..");
+const source = readFileSync(
+  join(repoRoot, "amplify", "_backend", "match-store-integration.ts"),
+  "utf8",
+);
 
-test("external match-store config ignores generated env in local mode", () => {
-  assert.equal(
-    matchStoreIntegrationTesting.resolveExternalMatchStoreConfig({
-      MATCH_DATA_PLANE_SOURCE: "local",
-      MATCH_STORE_BUCKET_NAME: "bucket",
-      MATCH_CATALOG_TABLE_NAME: "catalog",
-      TEAM_MATCH_PROJECTION_TABLE_NAME: "projection",
-      ACTIVE_TRACKED_TEAMS_TABLE_NAME: "active",
-      PLAYER_SKILL_SNAPSHOT_TABLE_NAME: "snapshots",
-      TEAM_MOMENTS_TABLE_NAME: "moments",
-      TEAM_HIGHLIGHTS_STATUS_TABLE_NAME: "status",
-      TEAM_HIGHLIGHTS_SCAN_QUEUE_URL: "https://queue",
-    }),
-    null,
-  );
+test("match-store integration imports shared infra resources instead of provisioning app-local copies", () => {
+  assert.match(source, /SharedInfraBindings/);
+  assert.match(source, /Bucket\.fromBucketName/);
+  assert.match(source, /Table\.fromTableName/);
+  assert.doesNotMatch(source, /new Bucket\(/);
+  assert.doesNotMatch(source, /new Table\(/);
+  assert.doesNotMatch(source, /MATCH_DATA_PLANE_SOURCE/);
+  assert.doesNotMatch(source, /resolveExternalMatchStoreConfig/);
+  assert.doesNotMatch(source, /sync:match-data-plane/);
+  assert.doesNotMatch(source, /\.env\.match-data-plane/);
 });
 
-test("external match-store config resolves imported resources in external mode", () => {
-  assert.deepEqual(
-    matchStoreIntegrationTesting.resolveExternalMatchStoreConfig({
-      MATCH_DATA_PLANE_SOURCE: "external",
-      MATCH_STORE_BUCKET_NAME: "bucket",
-      MATCH_CATALOG_TABLE_NAME: "catalog",
-      TEAM_MATCH_PROJECTION_TABLE_NAME: "projection",
-      ACTIVE_TRACKED_TEAMS_TABLE_NAME: "active",
-      PLAYER_SKILL_SNAPSHOT_TABLE_NAME: "snapshots",
-      TEAM_MOMENTS_TABLE_NAME: "moments",
-      TEAM_HIGHLIGHTS_STATUS_TABLE_NAME: "status",
-      TEAM_HIGHLIGHTS_SCAN_QUEUE_URL: "https://queue",
-    }),
-    {
-      activeTrackedTeamsTableName: "active",
-      bucketName: "bucket",
-      catalogTableName: "catalog",
-      playerSkillSnapshotTableName: "snapshots",
-      projectionTableName: "projection",
-      teamHighlightsScanQueueUrl: "https://queue",
-      teamHighlightsStatusTableName: "status",
-      teamMomentsTableName: "moments",
-    },
-  );
-});
-
-test("external match-store config points users to the sync workflow when generated env is missing", () => {
-  assert.throws(
-    () =>
-      matchStoreIntegrationTesting.resolveExternalMatchStoreConfig({
-        MATCH_DATA_PLANE_SOURCE: "external",
-      }),
-    /npm run sync:match-data-plane/,
-  );
-  assert.throws(
-    () =>
-      matchStoreIntegrationTesting.resolveExternalMatchStoreConfig({
-        MATCH_DATA_PLANE_SOURCE: "external",
-      }),
-    /\.env\.match-data-plane/,
-  );
+test("team highlights submitter derives queue access from the imported shared infra queue url", () => {
+  assert.match(source, /TEAM_HIGHLIGHTS_SCAN_QUEUE_URL/);
+  assert.match(source, /grantSqsSendAccessFromQueueUrl/);
+  assert.match(source, /arn:\$\{stack\.partition\}:sqs:/);
 });

@@ -83,26 +83,21 @@ test("backend.ts does not manually wire GraphQL endpoint environment variables",
   assert.doesNotMatch(backendSource, /_GRAPHQL_ENDPOINT/);
 });
 
-test("match-store runtime wiring no longer uses per-user Secrets Manager", () => {
+test("match-store runtime wiring imports shared infra resources instead of app-local provisioning", () => {
   const integrationSource = readFileSync(
     join(repoRoot, "amplify", "_backend", "match-store-integration.ts"),
     "utf8",
   );
-  const dataPlaneStackSource = readFileSync(
-    join(
-      repoRoot,
-      "infra",
-      "match-data-plane",
-      "lib",
-      "match-data-plane-stack.ts",
-    ),
-    "utf8",
-  );
 
-  assert.doesNotMatch(integrationSource, /BB_CONNECTION_SECRET_PREFIX/);
+  assert.match(integrationSource, /SharedInfraBindings/);
+  assert.match(integrationSource, /Bucket\.fromBucketName/);
+  assert.match(integrationSource, /Table\.fromTableName/);
+  assert.doesNotMatch(integrationSource, /new Bucket\(/);
+  assert.doesNotMatch(integrationSource, /new Table\(/);
+  assert.doesNotMatch(integrationSource, /MATCH_DATA_PLANE_SOURCE/);
+  assert.doesNotMatch(integrationSource, /sync:match-data-plane/);
+  assert.doesNotMatch(integrationSource, /\.env\.match-data-plane/);
   assert.doesNotMatch(integrationSource, /secretsmanager:/);
-  assert.doesNotMatch(dataPlaneStackSource, /secretsmanager:/);
-  assert.match(dataPlaneStackSource, /BB_CONNECTION_ENCRYPTION_SECRET/);
 });
 
 test("lineup helper workspace receives snapshot-table wiring", () => {
@@ -147,7 +142,7 @@ test("auth controls pin the lite tier and relax the password policy", () => {
   assert.match(authControlsSource, /requireUppercase: false/);
 });
 
-test("public app origin flows through the shared helper and CI syncs external match-data-plane config", () => {
+test("public app origin and hosted builds rely on shared synth config without sync bridges", () => {
   const authSource = readFileSync(
     join(repoRoot, "amplify", "auth", "resource.ts"),
     "utf8",
@@ -162,17 +157,14 @@ test("public app origin flows through the shared helper and CI syncs external ma
   );
   const amplifyYamlSource = readFileSync(join(repoRoot, "amplify.yml"), "utf8");
 
-  assert.match(authSource, /_shared\/public-app-origin\.js/);
-  assert.match(billingIntegrationSource, /_shared\/public-app-origin\.js/);
+  assert.match(authSource, /_shared\/synth-env\.js/);
+  assert.match(billingIntegrationSource, /_shared\/synth-env\.js/);
   assert.match(nextWithEnvSource, /deriveAmplifyAppOrigin/);
-  assert.match(
-    amplifyYamlSource,
-    /MATCH_DATA_PLANE_SOURCE:-local.*npm run sync:match-data-plane[\s\S]*npx ampx pipeline-deploy/,
-  );
-  assert.match(
-    amplifyYamlSource,
-    /MATCH_DATA_PLANE_SOURCE:-local.*npm run sync:match-data-plane[\s\S]*npm run build/,
-  );
+  assert.doesNotMatch(amplifyYamlSource, /MATCH_DATA_PLANE_SOURCE/);
+  assert.doesNotMatch(amplifyYamlSource, /sync:match-data-plane/);
+  assert.doesNotMatch(amplifyYamlSource, /\.env\.match-data-plane/);
+  assert.match(amplifyYamlSource, /npx ampx pipeline-deploy/);
+  assert.match(amplifyYamlSource, /npm run build/);
 });
 
 test("backend no longer carries a handwritten $amplify/env shim", () => {
@@ -203,6 +195,34 @@ test("synth-time backend files do not import root lib helpers", () => {
       assert.doesNotMatch(source, pattern, sourceFile);
     }
   }
+});
+
+test("synth-time backend files only read process.env through the shared synth env helper", () => {
+  const amplifyRoot = join(repoRoot, "amplify");
+  const synthTimeFiles = listSourceFiles(amplifyRoot).filter((sourceFile) => {
+    const relativePath = relative(amplifyRoot, sourceFile).replaceAll("\\", "/");
+
+    return (
+      relativePath === "backend.ts" ||
+      relativePath.startsWith("_backend/") ||
+      /(?:^|\/)resource\.ts$/.test(relativePath)
+    );
+  });
+
+  for (const sourceFile of synthTimeFiles) {
+    const relativePath = relative(amplifyRoot, sourceFile).replaceAll("\\", "/");
+    if (relativePath === "_shared/synth-env.ts") {
+      continue;
+    }
+
+    const source = readFileSync(sourceFile, "utf8");
+    assert.doesNotMatch(source, /process\.env/, sourceFile);
+  }
+});
+
+test("bb-amplify no longer carries the in-repo ML infra stacks", () => {
+  assert.equal(existsSync(join(repoRoot, "infra", "match-data-plane")), false);
+  assert.equal(existsSync(join(repoRoot, "infra", "matchup-predictor")), false);
 });
 
 test("backend-reachable source does not use the Next app alias", () => {

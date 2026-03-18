@@ -15,6 +15,12 @@ import {
   loadProjectEnvFiles,
   normalizeOptionalString,
 } from "./project-env.mjs";
+import {
+  assertSandboxPredictorReady,
+  bootstrapSandboxSharedInfra,
+  resolveSandboxEnvironmentName,
+  shouldBootstrapSandboxSharedInfra,
+} from "./shared-infra-bootstrap.mjs";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDir, "..");
@@ -282,11 +288,24 @@ export async function resolveBillingWebhookUrl(
 export async function main(argv = process.argv.slice(2)) {
   loadLocalEnv();
 
+  const sharedInfraBootstrap = bootstrapSandboxSharedInfra(argv);
+  assertSandboxPredictorReady(argv);
   const sandboxArgv = applySandboxDefaults(argv);
   const command = process.platform === "win32" ? "npx.cmd" : "npx";
+  const childEnv = {
+    ...process.env,
+  };
+  if (sharedInfraBootstrap) {
+    childEnv.BB_SHARED_ENVIRONMENT_NAME = sharedInfraBootstrap.environmentName;
+  } else if (shouldBootstrapSandboxSharedInfra(argv)) {
+    // Keep the sandbox environment identity stable even when infra already exists.
+    childEnv.BB_SHARED_ENVIRONMENT_NAME =
+      childEnv.BB_SHARED_ENVIRONMENT_NAME ??
+      resolveSandboxEnvironmentName(argv);
+  }
   const child = spawn(command, ["ampx", ...sandboxArgv], {
     cwd: projectRoot,
-    env: process.env,
+    env: childEnv,
     stdio: "inherit",
   });
 

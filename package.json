@@ -7,10 +7,10 @@
   },
   "scripts": {
     "ampx": "node ./scripts/ampx-with-env.mjs",
-    "sync:match-data-plane": "node ./scripts/sync-match-data-plane-config.mjs",
     "render:env-docs": "node ./scripts/render-env-docs.mjs",
     "sandbox": "node ./scripts/ampx-with-env.mjs sandbox",
     "sandbox:once": "node ./scripts/ampx-with-env.mjs sandbox --once",
+    "shared-infra:deploy:ml-data-infra": "npm --prefix ../bb-shared-infra run deploy:ml-data-infra --",
     "ap": "date && time npm run lint && date && time npm run build && date && npm run dev",
     "dev": "node --import tsx ./scripts/next-with-env.mjs dev",
     "dev:3003": "node --import tsx ./scripts/next-with-env.mjs dev -p 3003",
@@ -22,19 +22,13 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "start": "node --import tsx ./scripts/next-with-env.mjs start",
-    "lint": "eslint app amplify tests scripts lib infra proxy.ts next.config.ts eslint.config.mjs",
+    "lint": "eslint app amplify tests scripts lib proxy.ts next.config.ts eslint.config.mjs",
     "typecheck:app": "tsc -p tsconfig.json --noEmit",
     "typecheck:amplify": "node ./scripts/typecheck-amplify.mjs",
     "test": "node --test --import tsx ./tests/*.test.ts",
     "test:bbapi": "node --test --import tsx ./tests/bbapi-parser.test.ts",
     "generate:bbapi-goldens": "node --import tsx ./scripts/generate-bbapi-goldens.ts",
-    "billing:override": "node --import tsx ./scripts/set-billing-override.ts",
-    "cdk:match-data-plane:synth": "cdk synth --app 'tsx infra/match-data-plane/bin/match-data-plane.ts'",
-    "cdk:match-data-plane:deploy": "cdk deploy --app 'tsx infra/match-data-plane/bin/match-data-plane.ts'",
-    "cdk:matchup-predictor:synth:dev": "cdk synth --app 'tsx infra/matchup-predictor/bin/matchup-predictor.ts' --context stage=dev",
-    "cdk:matchup-predictor:deploy:dev": "cdk deploy --app 'tsx infra/matchup-predictor/bin/matchup-predictor.ts' --context stage=dev",
-    "cdk:matchup-predictor:synth:prod": "cdk synth --app 'tsx infra/matchup-predictor/bin/matchup-predictor.ts' --context stage=prod",
-    "cdk:matchup-predictor:deploy:prod": "cdk deploy --app 'tsx infra/matchup-predictor/bin/matchup-predictor.ts' --context stage=prod"
+    "billing:override": "node --import tsx ./scripts/set-billing-override.ts"
   },
   "dependencies": {
     "@aws-amplify/adapter-nextjs": "^1.7.2",

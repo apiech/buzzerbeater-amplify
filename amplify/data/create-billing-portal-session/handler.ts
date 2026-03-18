@@ -4,10 +4,15 @@ import type { Schema } from "../resource";
 import { createBillingPortalSession } from "../_backend/billing";
 
 type Handler = Schema["createBillingPortalSession"]["functionHandler"];
+type BillingPortalRuntimeEnv = typeof env & {
+  APP_BASE_URL?: string;
+};
 
 export const handler: Handler = async (event) => {
-  const stripeSecretKey = env.STRIPE_SECRET_KEY;
-  const appBaseUrl = env.APP_BASE_URL;
+  // Amplify's generated env typings can lag synth-time function env wiring locally.
+  const runtimeEnv = env as BillingPortalRuntimeEnv;
+  const stripeSecretKey = runtimeEnv.STRIPE_SECRET_KEY;
+  const appBaseUrl = runtimeEnv.APP_BASE_URL;
   if (!stripeSecretKey || !appBaseUrl) {
     throw new Error(
       "Stripe billing portal requires STRIPE_SECRET_KEY and APP_BASE_URL.",
@@ -16,7 +21,7 @@ export const handler: Handler = async (event) => {
 
   return createBillingPortalSession({
     appBaseUrl,
-    env,
+    env: runtimeEnv,
     identity: event.identity,
     stripeSecretKey,
   });

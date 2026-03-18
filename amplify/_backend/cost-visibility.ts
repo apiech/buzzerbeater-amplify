@@ -1,4 +1,4 @@
-import { CfnOutput, Duration } from "aws-cdk-lib";
+import { CfnOutput, Duration, type RemovalPolicy } from "aws-cdk-lib";
 import { CfnBudget } from "aws-cdk-lib/aws-budgets";
 import {
   Alarm,
@@ -14,6 +14,8 @@ import {
   SmsSubscription,
 } from "aws-cdk-lib/aws-sns-subscriptions";
 import type { Stack } from "aws-cdk-lib";
+
+import type { CostVisibilitySynthConfig } from "../_shared/synth-env.js";
 
 type CostVisibilityBackend = {
   createStack(name: string): Stack;
@@ -88,8 +90,10 @@ const SERVICE_GUARDRAILS: readonly ServiceCostGuardrail[] = [
 
 export function configureCostVisibility(
   backend: CostVisibilityBackend,
+  config: CostVisibilitySynthConfig,
+  removalPolicy: RemovalPolicy,
 ): void {
-  if (!shouldConfigureCostVisibility()) {
+  if (!config.enabled) {
     return;
   }
 
@@ -97,6 +101,7 @@ export function configureCostVisibility(
   const topic = new Topic(stack, "CostAlertsTopic", {
     displayName: "BuzzerBeater cost alerts",
   });
+  topic.applyRemovalPolicy(removalPolicy);
 
   topic.addToResourcePolicy(
     new PolicyStatement({
@@ -109,10 +114,10 @@ export function configureCostVisibility(
     }),
   );
 
-  for (const email of parseEmailSubscriptions(process.env.COST_ALERT_EMAILS)) {
+  for (const email of parseEmailSubscriptions(config.alertEmails)) {
     topic.addSubscription(new EmailSubscription(email));
   }
-  for (const phoneNumber of parseSmsSubscriptions(process.env.COST_ALERT_SMS_NUMBERS)) {
+  for (const phoneNumber of parseSmsSubscriptions(config.alertSmsNumbers)) {
     topic.addSubscription(new SmsSubscription(phoneNumber));
   }
 
@@ -162,10 +167,6 @@ export function configureCostVisibility(
     value: topic.topicArn,
     description: "SNS topic that receives service cost guardrail notifications.",
   });
-}
-
-function shouldConfigureCostVisibility(): boolean {
-  return parseBooleanEnv(process.env.ENABLE_COST_VISIBILITY);
 }
 
 function buildBudgetNotification(
@@ -230,13 +231,4 @@ function normalizePhoneNumber(value: string): string | null {
   }
 
   return null;
-}
-
-function parseBooleanEnv(value: string | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }

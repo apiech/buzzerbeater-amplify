@@ -1,8 +1,10 @@
-import { Duration, Stack } from "aws-cdk-lib";
+import { Duration, Stack, type RemovalPolicy } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import type { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Queue } from "aws-cdk-lib/aws-sqs";
+
+import type { SharedInfraBindings } from "../_shared/shared-infra-contract.js";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
@@ -17,28 +19,33 @@ type PredictionBackend = {
   predictionWorker: FunctionResource;
 };
 
-export function configurePredictionJobs(backend: PredictionBackend): void {
+export function configurePredictionJobs(
+  backend: PredictionBackend,
+  bindings: Pick<SharedInfraBindings, "predictionEndpointName">,
+  removalPolicy: RemovalPolicy,
+): void {
   const queueStack = backend.createStack("prediction-jobs");
   const deadLetterQueue = new Queue(queueStack, "PredictionJobDlq", {
+    removalPolicy,
     retentionPeriod: Duration.days(14),
   });
   const predictionJobQueue = new Queue(queueStack, "PredictionJobQueue", {
-    visibilityTimeout: Duration.minutes(3),
-    retentionPeriod: Duration.days(4),
     deadLetterQueue: {
       maxReceiveCount: 3,
       queue: deadLetterQueue,
     },
+    removalPolicy,
+    retentionPeriod: Duration.days(4),
+    visibilityTimeout: Duration.minutes(3),
   });
 
-  const predictionEndpointName = resolvePredictionEndpointName();
   backend.predictionSubmit.addEnvironment(
     "PREDICTION_JOB_QUEUE_URL",
     predictionJobQueue.queueUrl,
   );
   backend.predictionWorker.addEnvironment(
     "PREDICTION_ENDPOINT_NAME",
-    predictionEndpointName,
+    bindings.predictionEndpointName,
   );
 
   predictionJobQueue.grantSendMessages(backend.predictionSubmit.resources.lambda);
@@ -57,21 +64,11 @@ export function configurePredictionJobs(backend: PredictionBackend): void {
       actions: ["sagemaker:InvokeEndpoint"],
       resources: [
         workerStack.formatArn({
-          service: "sagemaker",
           resource: "endpoint",
-          resourceName: predictionEndpointName,
+          resourceName: bindings.predictionEndpointName,
+          service: "sagemaker",
         }),
       ],
     }),
   );
-}
-
-function resolvePredictionEndpointName(): string {
-  const branchName = (process.env.AWS_BRANCH ?? "dev").toLowerCase();
-  const deploymentStage =
-    branchName === "main" || branchName === "master" || branchName === "prod"
-      ? "prod"
-      : "dev";
-
-  return `bb-matchup-predictor-${deploymentStage}`;
 }

@@ -8,6 +8,15 @@ import { configureMatchStoreIntegration } from "./_backend/match-store-integrati
 import { configureOperationalRetention } from "./_backend/operational-retention.js";
 import { configurePredictionJobs } from "./_backend/prediction-jobs.js";
 import { configureRefreshJobs } from "./_backend/refresh-jobs.js";
+import {
+  resolveAppResourceRemovalPolicy,
+  resolveBillingConfig,
+  resolveCostVisibilityConfig,
+  resolveGameDayRecapConfig,
+  resolveOperationalRetentionConfig,
+  resolveRefreshJobsConfig,
+  resolveSharedInfraBindings,
+} from "./_shared/synth-env.js";
 import { auth } from "./auth/resource.js";
 import { billingAdminOverride } from "./billing-admin-override/resource.js";
 import { billingWebhook } from "./billing-webhook/resource.js";
@@ -24,8 +33,8 @@ import {
   getLeagueIntel,
   getLineupHelperWorkspace,
   getMyTeamHighlights,
-  getPlayerTrend,
   getPlayerLab,
+  getPlayerTrend,
   getSalaryProjection,
   getScoutWorkspace,
   getTeamHub,
@@ -86,11 +95,26 @@ const backend = defineBackend({
   billingAdminOverride,
 });
 
+const sharedInfraBindings = resolveSharedInfraBindings();
+const appResourceRemovalPolicy = resolveAppResourceRemovalPolicy();
+
 configureAuthControls(backend);
-configureBillingIntegration(backend);
-configureCostVisibility(backend);
-configureGameDayRecapJobs(backend);
-configurePredictionJobs(backend);
-configureRefreshJobs(backend);
-configureMatchStoreIntegration(backend);
-configureOperationalRetention(backend);
+configureBillingIntegration(backend, resolveBillingConfig());
+configureCostVisibility(
+  backend,
+  resolveCostVisibilityConfig(),
+  appResourceRemovalPolicy,
+);
+configureGameDayRecapJobs(
+  backend,
+  resolveGameDayRecapConfig(),
+  appResourceRemovalPolicy,
+);
+configurePredictionJobs(backend, sharedInfraBindings, appResourceRemovalPolicy);
+configureRefreshJobs(
+  backend,
+  resolveRefreshJobsConfig(),
+  appResourceRemovalPolicy,
+);
+configureMatchStoreIntegration(backend, sharedInfraBindings);
+configureOperationalRetention(backend, resolveOperationalRetentionConfig());

@@ -40,8 +40,12 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 
    Use [`env-template`](/Users/karey/projects/bb/bb-amplify/env-template) as the source of truth for required, optional, and conditional build-time variables.
    The repo-local `npm run ampx -- ...` and `npm run sandbox` wrappers load `.env` automatically before running `ampx`, so local sandbox deploys pick up synth-time values like `APP_BASE_URL` without extra shell setup.
-   If you set `MATCH_DATA_PLANE_SOURCE=external`, run `npm run sync:match-data-plane` before sandbox or frontend builds so `.env.match-data-plane` is refreshed from the deployed `MatchDataPlane` stack.
    The repo-local Next.js launcher derives `AMPLIFY_APP_ORIGIN` from `APP_BASE_URL`, so `npm run dev`, `npm run build`, and `npm run start` do not need a second origin variable.
+   `npm run sandbox` also bootstraps ML Data Infra for the sandbox identifier, but the first shared-infra deploy still needs `BB_CONNECTION_ENCRYPTION_SECRET` in your shell so it can match the Amplify secret:
+
+   ```bash
+   export BB_CONNECTION_ENCRYPTION_SECRET="<same value you set in Amplify sandbox secrets>"
+   ```
 
 4. Start the backend sandbox and Next.js app:
 
@@ -74,7 +78,7 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - Required for local sandbox deploys and Amplify Hosting backend/frontend builds.
   - Recommended local value: `http://localhost:3000`.
 - `STRIPE_PREMIUM_PRICE_ID`
-  - Stripe recurring `price_...` id for the premium subscription checkout flow.
+  - Stripe recurring `price_...` identifier used by the premium checkout flow.
   - Required for local sandbox deploys and Amplify Hosting backend builds.
   - Recommended local value: `price_sandbox_placeholder`.
 - `GAME_DAY_RECAP_MODEL_ID`
@@ -82,40 +86,16 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - Required for local sandbox deploys and Amplify Hosting backend builds.
   - Recommended local value: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
 
-### Match Data Plane Mode
-
-- `MATCH_DATA_PLANE_SOURCE`
-  - Controls whether bb-amplify provisions app-local match-store resources or imports the separate MatchDataPlane stack.
-  - Default: `local`.
-  - Allowed values: `local`, `external`.
-- `MATCH_DATA_PLANE_STACK_NAME`
-  - CloudFormation stack name read by `npm run sync:match-data-plane` when external mode is enabled.
-  - Default: `MatchDataPlane`.
-  - Required when: `MATCH_DATA_PLANE_SOURCE=external`.
-
-- Generated external-data-plane env file
-  - `npm run sync:match-data-plane` reads CloudFormation outputs from the external MatchDataPlane stack and writes `.env.match-data-plane`.
-  - The repo-local `npm run ampx -- ...` and Next.js launcher load `.env.match-data-plane` after `.env` when `MATCH_DATA_PLANE_SOURCE=external`.
-  - Generated variables:
-    - `MATCH_STORE_BUCKET_NAME`: Generated from the external MatchDataPlane stack output `MatchStoreBucketName`.
-    - `MATCH_CATALOG_TABLE_NAME`: Generated from the external MatchDataPlane stack output `MatchCatalogTableName`.
-    - `TEAM_MATCH_PROJECTION_TABLE_NAME`: Generated from the external MatchDataPlane stack output `TeamMatchProjectionTableName`.
-    - `ACTIVE_TRACKED_TEAMS_TABLE_NAME`: Generated from the external MatchDataPlane stack output `ActiveTrackedTeamsTableName`.
-    - `PLAYER_SKILL_SNAPSHOT_TABLE_NAME`: Generated from the external MatchDataPlane stack output `PlayerSkillSnapshotTableName`.
-    - `TEAM_MOMENTS_TABLE_NAME`: Generated from the external MatchDataPlane stack output `TeamMomentsTableName`.
-    - `TEAM_HIGHLIGHTS_STATUS_TABLE_NAME`: Generated from the external MatchDataPlane stack output `TeamHighlightsStatusTableName`.
-    - `TEAM_HIGHLIGHTS_SCAN_QUEUE_URL`: Generated from the external MatchDataPlane stack output `TeamHighlightsScanQueueUrl`.
-
 ### Optional Plain Env
 
 - `GAME_DAY_RECAP_MODEL_ID_PREMIUM`
   - Premium recap override model. Premium recap jobs fall back to `GAME_DAY_RECAP_MODEL_ID` when this is unset.
   - Default or recommended value: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
 - `BILLING_DEFAULT_PLAN`
-  - Branch-wide default plan override used before per-user billing state is resolved.
-  - Default or recommended value: Unset by default; non-prod branches fall back to premium, prod-like branches leave it unset.
+  - Optional override for the environment-wide default plan. When unset, non-prod environments default to premium and prod leaves the default unset.
+  - Default or recommended value: Unset by default; non-prod environments fall back to premium while prod stays unset.
 - `ENABLE_COST_VISIBILITY`
-  - Enables account-global AWS Budgets and billing alarms.
+  - Synth-time flag for AWS Budgets and billing alarms. Enable this in exactly one owning environment at a time.
   - Default or recommended value: `false`.
 - `COST_ALERT_EMAILS`
   - Comma-separated email recipients for cost guardrail notifications.
@@ -139,11 +119,29 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - Retention window for prediction-job records.
   - Default or recommended value: `30`.
 
+### Shared ML Infra Bindings
+
+- Shared infra discovery
+  - `bb-amplify` no longer provisions app-local match-store resources and no longer depends on a generated local env bridge file.
+  - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.
+  - `npm run sandbox` bootstraps ML Data Infra for the sandbox identifier and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
+  - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.
+  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`.
+- Imported runtime bindings
+  - `MATCH_STORE_BUCKET_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
+  - `MATCH_CATALOG_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
+  - `TEAM_MATCH_PROJECTION_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match/workspace readers.
+  - `ACTIVE_TRACKED_TEAMS_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into workspace sync lambdas.
+  - `PLAYER_SKILL_SNAPSHOT_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into workspace and lineup lambdas.
+  - `TEAM_MOMENTS_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into highlights readers.
+  - `TEAM_HIGHLIGHTS_STATUS_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into highlights readers and submitters.
+  - `TEAM_HIGHLIGHTS_SCAN_QUEUE_URL`: Imported at synth time from the shared ML Data Infra SSM contract and injected into the highlights submitter.
+
 ### Required Secrets
 
 - `BB_CONNECTION_ENCRYPTION_SECRET`
-  - Encrypts and decrypts stored BuzzerBeater access keys across bb-amplify and the external match-data-plane.
-  - Current raw shared secret stays manual in this pass. Follow-up: move to a centrally provisioned secret reference before attempting rotation.
+  - Encrypts and decrypts stored BuzzerBeater access keys across bb-amplify and shared ML Data Infra.
+  - Set this as an Amplify secret for sandbox/hosting, and use the same raw value when deploying `bb-shared-infra` so both systems can read the same encrypted credentials.
 - `STRIPE_SECRET_KEY`
   - Authenticates server-side Stripe API requests.
 - `STRIPE_WEBHOOK_SECRET`
@@ -155,17 +153,19 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 ### Internal Or Platform-Provided Env
 
 - `AMPLIFY_APP_ORIGIN`
-  - Derived by the repo-local Next.js launcher from `APP_BASE_URL`. Do not set this manually.
+  - Required by the installed Next.js Amplify adapter for server-side auth. The repo-local Next.js launcher derives it from `APP_BASE_URL` to avoid a second source of truth.
+- `BB_SHARED_ENVIRONMENT_NAME`
+  - Optional synth-time override for shared infra discovery. `npm run sandbox` sets this automatically, while hosted builds derive the environment from `AWS_BRANCH`.
 - `AWS_BRANCH`
-  - Provided by Amplify Hosting and used for branch-aware defaults such as billing plan behavior and predictor stage selection.
+  - Provided by Amplify Hosting and used to derive the shared infra environment name plus branch-aware defaults such as billing plan behavior.
 - `AWS_APP_ID`
   - Provided by Amplify Hosting for `npx ampx pipeline-deploy`.
 - `AWS_REGION`
-  - Region discovered from AWS credentials or provided by the environment for CloudFormation lookups and runtime wiring.
+  - Region discovered from AWS credentials or provided by the environment for SSM lookups and runtime wiring.
 - `AWS_DEFAULT_REGION`
   - Fallback region for local tooling when `AWS_REGION` is unset.
 - `AMPLIFY_DATA_DEFAULT_NAME`
-  - Amplify-generated runtime data client identifier. Do not set this manually.
+  - Amplify-generated identifier consumed by the runtime data client. Never user-set.
 
 ### Local Script-Only Env
 
@@ -197,11 +197,11 @@ Premium access defaults:
 
 Prediction infrastructure requirements:
 
-- A SageMaker endpoint named `bb-matchup-predictor-dev` or `bb-matchup-predictor-prod`
-  - The backend selects the suffix from `AWS_BRANCH` in [`amplify/backend.ts`](/Users/karey/projects/bb/bb-amplify/amplify/backend.ts).
-  - All non-prod branches and sandbox-like environments use `bb-matchup-predictor-dev`.
-  - Prod branches use `bb-matchup-predictor-prod`.
-  - Provision or update it with [`scripts/matchup-predictor-release`](/Users/karey/projects/bb/scripts/matchup-predictor-release).
+- A shared-ML-infra-published SageMaker endpoint for the current environment
+  - `bb-amplify` imports the predictor endpoint name from the shared ML infra SSM contract during backend synth.
+  - Sandboxes get sandbox-scoped endpoints such as `buzzerbeater-machine-learning-predictor-sandbox-karey`.
+  - Hosted `dev` and `prod` get their own endpoints such as `buzzerbeater-machine-learning-predictor-dev` and `buzzerbeater-machine-learning-predictor-prod`.
+  - Provision or update it through [`bb-shared-infra`](/Users/karey/projects/bb/bb-shared-infra) or [`scripts/matchup-predictor-release`](/Users/karey/projects/bb/scripts/matchup-predictor-release).
   - Runbook: [`docs/runbooks/matchup-predictor-release.md`](/Users/karey/projects/bb/docs/runbooks/matchup-predictor-release.md)
 - The prediction submit Lambda needs SQS send access.
 - The prediction worker Lambda needs SQS consume access and `sagemaker:InvokeEndpoint`.
@@ -255,7 +255,8 @@ Use `npm run billing:override -- --help` for the full CLI options.
 
 ## Deploy Notes
 
-- Deploy the predictor with `./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>` before testing `/workspace/predictions`; otherwise prediction jobs fail with `Endpoint bb-matchup-predictor-<stage> not found`.
+- Bring up shared ML infra before expecting `/workspace/predictions` to work. For local sandboxes, `npm run sandbox` bootstraps ML Data Infra automatically and then fails fast if the predictor endpoint is missing; for hosted `dev` and `prod`, deploy shared infra separately first.
+- Deploy or update the predictor with `./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>` before testing hosted `dev` predictions.
 - Promote with `./scripts/matchup-predictor-release prod --release-id <release-id>` only after the same release passes in `dev`.
 - The workspace sync path stores encrypted BB credentials server-side and refreshes cached data only on initial connect plus explicit manual refresh.
 - The ops section surfaces recent `SyncRun` and `PredictionJob` records so failures are visible inside the product.

@@ -31,8 +31,13 @@ test("README env section stays synchronized with the env contract renderer", () 
     new RegExp(readmeEnvSectionEnd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
   );
   assert.equal(source, applyReadmeEnvSection(source));
-  assert.match(source, /MATCH_DATA_PLANE_SOURCE/);
-  assert.match(source, /sync:match-data-plane/);
+  assert.match(source, /Shared ML Infra Bindings/);
+  assert.match(source, /BB_SHARED_ENVIRONMENT_NAME/);
+  assert.match(source, /MATCH_STORE_BUCKET_NAME/);
+  assert.doesNotMatch(source, /MATCH_DATA_PLANE_SOURCE/);
+  assert.doesNotMatch(source, /MATCH_DATA_PLANE_STACK_NAME/);
+  assert.doesNotMatch(source, /sync:match-data-plane/);
+  assert.doesNotMatch(source, /\.env\.match-data-plane/);
   assert.match(
     source,
     new RegExp(renderReadmeEnvSection().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),

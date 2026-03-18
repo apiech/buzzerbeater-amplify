@@ -1,8 +1,10 @@
-import { Duration, type Stack } from "aws-cdk-lib";
+import { Duration, type RemovalPolicy, type Stack } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import type { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { Queue } from "aws-cdk-lib/aws-sqs";
+
+import type { GameDayRecapSynthConfig } from "../_shared/synth-env.js";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
@@ -21,33 +23,36 @@ type GameDayRecapBackend = {
 
 export function configureGameDayRecapJobs(
   backend: GameDayRecapBackend,
+  config: GameDayRecapSynthConfig,
+  removalPolicy: RemovalPolicy,
 ): void {
   const queueStack = backend.createStack("game-day-recap-jobs");
   const deadLetterQueue = new Queue(queueStack, "GameDayRecapDlq", {
+    removalPolicy,
     retentionPeriod: Duration.days(14),
   });
   const recapJobQueue = new Queue(queueStack, "GameDayRecapQueue", {
-    visibilityTimeout: Duration.minutes(3),
-    retentionPeriod: Duration.days(4),
     deadLetterQueue: {
       maxReceiveCount: 3,
       queue: deadLetterQueue,
     },
+    removalPolicy,
+    retentionPeriod: Duration.days(4),
+    visibilityTimeout: Duration.minutes(3),
   });
 
-  const recapModels = resolveGameDayRecapModels();
   backend.gameDayRecapSubmit.addEnvironment(
     "GAME_DAY_RECAP_QUEUE_URL",
     recapJobQueue.queueUrl,
   );
   backend.gameDayRecapSubmit.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
-    recapModels.defaultModelId,
+    config.defaultModelId,
   );
-  if (recapModels.premiumModelId) {
+  if (config.premiumModelId) {
     backend.gameDayRecapSubmit.addEnvironment(
       "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
-      recapModels.premiumModelId,
+      config.premiumModelId,
     );
   }
   backend.submitLeagueGameDayRecap.addEnvironment(
@@ -56,12 +61,12 @@ export function configureGameDayRecapJobs(
   );
   backend.submitLeagueGameDayRecap.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
-    recapModels.defaultModelId,
+    config.defaultModelId,
   );
-  if (recapModels.premiumModelId) {
+  if (config.premiumModelId) {
     backend.submitLeagueGameDayRecap.addEnvironment(
       "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
-      recapModels.premiumModelId,
+      config.premiumModelId,
     );
   }
   backend.submitSingleGameSummary.addEnvironment(
@@ -70,17 +75,17 @@ export function configureGameDayRecapJobs(
   );
   backend.submitSingleGameSummary.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
-    recapModels.defaultModelId,
+    config.defaultModelId,
   );
-  if (recapModels.premiumModelId) {
+  if (config.premiumModelId) {
     backend.submitSingleGameSummary.addEnvironment(
       "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
-      recapModels.premiumModelId,
+      config.premiumModelId,
     );
   }
   backend.gameDayRecapWorker.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
-    recapModels.defaultModelId,
+    config.defaultModelId,
   );
 
   recapJobQueue.grantSendMessages(backend.gameDayRecapSubmit.resources.lambda);
@@ -119,22 +124,4 @@ export function configureGameDayRecapJobs(
       },
     }),
   );
-}
-
-function resolveGameDayRecapModels(): {
-  defaultModelId: string;
-  premiumModelId: string | null;
-} {
-  const defaultModelId = process.env.GAME_DAY_RECAP_MODEL_ID?.trim();
-  if (!defaultModelId) {
-    throw new Error(
-      "GAME_DAY_RECAP_MODEL_ID must be set for recap generation.",
-    );
-  }
-
-  const premiumModelId = process.env.GAME_DAY_RECAP_MODEL_ID_PREMIUM?.trim();
-  return {
-    defaultModelId,
-    premiumModelId: premiumModelId || null,
-  };
 }

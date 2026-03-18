@@ -16,7 +16,7 @@ export const envContract = {
       {
         name: "STRIPE_PREMIUM_PRICE_ID",
         purpose:
-          "Stripe recurring `price_...` id for the premium subscription checkout flow.",
+          "Stripe recurring `price_...` identifier used by the premium checkout flow.",
         appliesTo:
           "Required for local sandbox deploys and Amplify Hosting backend builds.",
         recommendedValue: "price_sandbox_placeholder",
@@ -31,23 +31,6 @@ export const envContract = {
         templateValue: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       },
     ],
-    mode: [
-      {
-        name: "MATCH_DATA_PLANE_SOURCE",
-        purpose:
-          "Controls whether bb-amplify provisions app-local match-store resources or imports the separate MatchDataPlane stack.",
-        defaultValue: "local",
-        options: ["local", "external"],
-      },
-      {
-        name: "MATCH_DATA_PLANE_STACK_NAME",
-        purpose:
-          "CloudFormation stack name read by `npm run sync:match-data-plane` when external mode is enabled.",
-        defaultValue: "MatchDataPlane",
-        templateValue: "MatchDataPlane",
-        requiredWhen: "`MATCH_DATA_PLANE_SOURCE=external`",
-      },
-    ],
     optional: [
       {
         name: "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
@@ -59,14 +42,15 @@ export const envContract = {
       {
         name: "BILLING_DEFAULT_PLAN",
         purpose:
-          "Branch-wide default plan override used before per-user billing state is resolved.",
+          "Optional override for the environment-wide default plan. When unset, non-prod environments default to premium and prod leaves the default unset.",
         defaultValue:
-          "Unset by default; non-prod branches fall back to premium, prod-like branches leave it unset",
+          "Unset by default; non-prod environments fall back to premium while prod stays unset",
         templateValue: "premium",
       },
       {
         name: "ENABLE_COST_VISIBILITY",
-        purpose: "Enables account-global AWS Budgets and billing alarms.",
+        purpose:
+          "Synth-time flag for AWS Budgets and billing alarms. Enable this in exactly one owning environment at a time.",
         defaultValue: "false",
         templateValue: "false",
       },
@@ -121,51 +105,51 @@ export const envContract = {
     {
       name: "MATCH_STORE_BUCKET_NAME",
       purpose:
-        "Generated from the external MatchDataPlane stack output `MatchStoreBucketName`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.",
     },
     {
       name: "MATCH_CATALOG_TABLE_NAME",
       purpose:
-        "Generated from the external MatchDataPlane stack output `MatchCatalogTableName`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.",
     },
     {
       name: "TEAM_MATCH_PROJECTION_TABLE_NAME",
       purpose:
-        "Generated from the external MatchDataPlane stack output `TeamMatchProjectionTableName`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into match/workspace readers.",
     },
     {
       name: "ACTIVE_TRACKED_TEAMS_TABLE_NAME",
       purpose:
-        "Generated from the external MatchDataPlane stack output `ActiveTrackedTeamsTableName`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into workspace sync lambdas.",
     },
     {
       name: "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
       purpose:
-        "Generated from the external MatchDataPlane stack output `PlayerSkillSnapshotTableName`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into workspace and lineup lambdas.",
     },
     {
       name: "TEAM_MOMENTS_TABLE_NAME",
       purpose:
-        "Generated from the external MatchDataPlane stack output `TeamMomentsTableName`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into highlights readers.",
     },
     {
       name: "TEAM_HIGHLIGHTS_STATUS_TABLE_NAME",
       purpose:
-        "Generated from the external MatchDataPlane stack output `TeamHighlightsStatusTableName`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into highlights readers and submitters.",
     },
     {
       name: "TEAM_HIGHLIGHTS_SCAN_QUEUE_URL",
       purpose:
-        "Generated from the external MatchDataPlane stack output `TeamHighlightsScanQueueUrl`.",
+        "Imported at synth time from the shared ML Data Infra SSM contract and injected into the highlights submitter.",
     },
   ],
   secrets: [
     {
       name: "BB_CONNECTION_ENCRYPTION_SECRET",
       purpose:
-        "Encrypts and decrypts stored BuzzerBeater access keys across bb-amplify and the external match-data-plane.",
+        "Encrypts and decrypts stored BuzzerBeater access keys across bb-amplify and shared ML Data Infra.",
       followUp:
-        "Current raw shared secret stays manual in this pass. Follow-up: move to a centrally provisioned secret reference before attempting rotation.",
+        "Set this as an Amplify secret for sandbox/hosting, and use the same raw value when deploying `bb-shared-infra` so both systems can read the same encrypted credentials.",
     },
     {
       name: "STRIPE_SECRET_KEY",
@@ -188,12 +172,17 @@ export const envContract = {
     {
       name: "AMPLIFY_APP_ORIGIN",
       purpose:
-        "Derived by the repo-local Next.js launcher from `APP_BASE_URL`. Do not set this manually.",
+        "Required by the installed Next.js Amplify adapter for server-side auth. The repo-local Next.js launcher derives it from `APP_BASE_URL` to avoid a second source of truth.",
+    },
+    {
+      name: "BB_SHARED_ENVIRONMENT_NAME",
+      purpose:
+        "Optional synth-time override for shared infra discovery. `npm run sandbox` sets this automatically, while hosted builds derive the environment from `AWS_BRANCH`.",
     },
     {
       name: "AWS_BRANCH",
       purpose:
-        "Provided by Amplify Hosting and used for branch-aware defaults such as billing plan behavior and predictor stage selection.",
+        "Provided by Amplify Hosting and used to derive the shared infra environment name plus branch-aware defaults such as billing plan behavior.",
     },
     {
       name: "AWS_APP_ID",
@@ -202,7 +191,7 @@ export const envContract = {
     {
       name: "AWS_REGION",
       purpose:
-        "Region discovered from AWS credentials or provided by the environment for CloudFormation lookups and runtime wiring.",
+        "Region discovered from AWS credentials or provided by the environment for SSM lookups and runtime wiring.",
     },
     {
       name: "AWS_DEFAULT_REGION",
@@ -211,7 +200,29 @@ export const envContract = {
     {
       name: "AMPLIFY_DATA_DEFAULT_NAME",
       purpose:
-        "Amplify-generated runtime data client identifier. Do not set this manually.",
+        "Amplify-generated identifier consumed by the runtime data client. Never user-set.",
+    },
+  ],
+  runtimeInjected: [
+    {
+      name: "GAME_DAY_RECAP_QUEUE_URL",
+      purpose:
+        "Backend-injected queue URL wired during synth for recap submit lambdas.",
+    },
+    {
+      name: "REFRESH_WORKSPACE_JOB_QUEUE_URL",
+      purpose:
+        "Backend-injected queue URL wired during synth for workspace refresh scheduling.",
+    },
+    {
+      name: "PREDICTION_JOB_QUEUE_URL",
+      purpose:
+        "Backend-injected queue URL wired during synth for prediction submit lambdas.",
+    },
+    {
+      name: "PREDICTION_ENDPOINT_NAME",
+      purpose:
+        "Backend-injected SageMaker endpoint name imported from the shared ML Data Infra SSM contract.",
     },
   ],
   localScripts: [
@@ -295,26 +306,34 @@ export function renderEnvTemplate() {
     "# Required for backend synth/deploy and Next.js builds.",
     renderTemplateAssignments(envContract.plain.required),
     "",
-    "# Match data plane mode.",
-    `MATCH_DATA_PLANE_SOURCE=${envContract.plain.mode[0].defaultValue}`,
-    `# MATCH_DATA_PLANE_STACK_NAME=${envContract.plain.mode[1].defaultValue}`,
-    "# When MATCH_DATA_PLANE_SOURCE=external, run:",
-    "#   npm run sync:match-data-plane",
-    "# This generates .env.match-data-plane with the imported resource names.",
-    "",
     "# Optional deploy-time tuning. Defaults or recommended values shown below.",
     renderCommentedTemplateAssignments(envContract.plain.optional),
     "",
-    "# Generated only when MATCH_DATA_PLANE_SOURCE=external.",
-    "# Do not maintain these values by hand in .env.",
-    "# .env.match-data-plane contains:",
-    ...envContract.generated.map((entry) => `# - ${entry.name}`),
+    "# Shared ML Data Infra bindings come from deterministic SSM parameter names",
+    "# published by bb-shared-infra. Do not set imported resource names in .env.",
+    "#",
+    "# Local sandbox runs:",
+    "# - `npm run sandbox` sets BB_SHARED_ENVIRONMENT_NAME and bootstraps ML Data Infra.",
+    "# - Predictor endpoints are not bootstrapped implicitly. Release one explicitly",
+    "#   before the first sandbox or dev deploy that needs predictions.",
+    "# - Plain `npx ampx sandbox` expects shared infra and predictor resources for",
+    "#   that sandbox identifier to already exist in AWS.",
+    "#",
+    "# Hosted builds derive the shared infra environment from AWS_BRANCH.",
+    "# Optional local/manual override:",
+    "# BB_SHARED_ENVIRONMENT_NAME=sandbox-karey",
     "",
     "# Amplify secrets are required separately and should not be stored in .env.",
     "# Local sandbox:",
     ...envContract.secrets.map(
       (entry) => `#   npm run ampx -- sandbox secret set ${entry.name}`,
     ),
+    "#",
+    "# Shared ML Data Infra deploys:",
+    "#   export BB_CONNECTION_ENCRYPTION_SECRET=<same value as the Amplify secret>",
+    "#   npm run shared-infra:deploy:ml-data-infra -- --environment dev",
+    "# Predictor deploys:",
+    "#   ./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>",
     "#",
     "# Amplify Hosting secrets:",
     ...envContract.secrets.map((entry) => `# - ${entry.name}`),
@@ -335,32 +354,6 @@ export function renderReadmeEnvSection() {
       ]),
     ),
     "",
-    "### Match Data Plane Mode",
-    "",
-    renderReadmeEntries(envContract.plain.mode, (entry) => {
-      const lines = [entry.purpose];
-      if (entry.defaultValue) {
-        lines.push(`Default: ${formatReadmeValue(entry.defaultValue)}.`);
-      }
-      if (entry.options) {
-        lines.push(
-          `Allowed values: ${entry.options.map((value) => `\`${value}\``).join(", ")}.`,
-        );
-      }
-      if (entry.requiredWhen) {
-        lines.push(`Required when: ${entry.requiredWhen}.`);
-      }
-      return renderReadmeEntry(entry, lines);
-    }),
-    "",
-    "- Generated external-data-plane env file",
-    "  - `npm run sync:match-data-plane` reads CloudFormation outputs from the external MatchDataPlane stack and writes `.env.match-data-plane`.",
-    "  - The repo-local `npm run ampx -- ...` and Next.js launcher load `.env.match-data-plane` after `.env` when `MATCH_DATA_PLANE_SOURCE=external`.",
-    "  - Generated variables:",
-    ...envContract.generated.map(
-      (entry) => `    - \`${entry.name}\`: ${entry.purpose}`,
-    ),
-    "",
     "### Optional Plain Env",
     "",
     renderReadmeEntries(envContract.plain.optional, (entry) =>
@@ -370,6 +363,19 @@ export function renderReadmeEnvSection() {
           entry.defaultValue ?? entry.recommendedValue,
         )}.`,
       ]),
+    ),
+    "",
+    "### Shared ML Infra Bindings",
+    "",
+    "- Shared infra discovery",
+    "  - `bb-amplify` no longer provisions app-local match-store resources and no longer depends on a generated local env bridge file.",
+    "  - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.",
+    "  - `npm run sandbox` bootstraps ML Data Infra for the sandbox identifier and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.",
+    "  - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.",
+    "  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`.",
+    "- Imported runtime bindings",
+    ...envContract.generated.map(
+      (entry) => `  - \`${entry.name}\`: ${entry.purpose}`,
     ),
     "",
     "### Required Secrets",

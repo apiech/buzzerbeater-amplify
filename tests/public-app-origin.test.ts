@@ -38,10 +38,10 @@ test("resolvePublicAppOrigin throws when APP_BASE_URL is required but missing", 
       resolvePublicAppOrigin(
         {},
         {
-          errorMessage: "APP_BASE_URL must be configured for Stripe billing.",
+          errorMessage: "APP_BASE_URL should be configured.",
         },
       ),
-    /APP_BASE_URL must be configured for Stripe billing\./,
+    /APP_BASE_URL should be configured\./,
   );
 });
 

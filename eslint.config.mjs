@@ -22,7 +22,6 @@ const runtimeFiles = [
 ];
 const sharedTypeFiles = [
   "lib/**/*.ts",
-  "infra/**/*.ts",
   "next.config.ts",
   "scripts/**/*.ts",
 ];

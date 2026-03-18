@@ -477,8 +477,8 @@ function buildFeatureAccessError(featureKey: FeatureKey): string {
 
 function buildAppUrl(appBaseUrl: string, path: string): string {
   const base = appBaseUrl.trim().replace(/\/+$/, "");
-  if (!base) {
-    throw new Error("APP_BASE_URL must be configured for Stripe billing.");
+  if (!base) {    
+    throw new Error("Cannot buildAppUrl without app base url. is APP_BASE_URL configured?");
   }
 
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
