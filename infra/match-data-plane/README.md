@@ -18,8 +18,8 @@ Current schedules:
 
 1. Build and push the Python image with the workspace-root Docker context so it includes:
    - `bb-xml-api-client`
-   - `bb-events`
    - `bb-machine-learning`
+   - `bb-machine-learning/bb-events`
 2. Run:
 
 `npm run cdk:match-data-plane:deploy`
