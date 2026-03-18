@@ -11,6 +11,7 @@
     "render:env-docs": "node ./scripts/render-env-docs.mjs",
     "sandbox": "npm run typecheck:amplify && node ./scripts/ampx-with-env.mjs sandbox",
     "sandbox:once": "node ./scripts/ampx-with-env.mjs sandbox --once",
+    "ap": "date && time npm run lint && date && time npm run build && date && npm run dev",
     "dev": "node --import tsx ./scripts/next-with-env.mjs dev",
     "dev:3003": "node --import tsx ./scripts/next-with-env.mjs dev -p 3003",
     "build": "node --import tsx ./scripts/next-with-env.mjs build",
