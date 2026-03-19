@@ -64,3 +64,48 @@ test("buildRivalryMatch shapes a completed head-to-head result", () => {
   assert.equal(match.opponentScore, 88);
   assert.equal(match.venue, "HOME");
 });
+
+test("buildRivalryMatch skips completed games that do not include the active team", () => {
+  const match = __testing.buildRivalryMatch({
+    match: {
+      awayTeam: {
+        id: "2",
+        score: 101,
+        teamName: "Great 8",
+      },
+      homeTeam: {
+        id: "1",
+        score: 99,
+        teamName: "Team 1",
+      },
+      id: "all-star-like",
+      startTime: "2026-03-02T19:00:00Z",
+      type: "league.allstar",
+    },
+    season: 61,
+    teamId: "999",
+  });
+
+  assert.equal(
+    __testing.matchIncludesTeam(
+      {
+        awayTeam: {
+          id: "2",
+          score: 101,
+          teamName: "Great 8",
+        },
+        homeTeam: {
+          id: "1",
+          score: 99,
+          teamName: "Team 1",
+        },
+        id: "all-star-like",
+        startTime: "2026-03-02T19:00:00Z",
+        type: "league.allstar",
+      },
+      "999",
+    ),
+    false,
+  );
+  assert.equal(match, null);
+});

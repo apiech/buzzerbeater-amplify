@@ -1,5 +1,7 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
+import { createPageMetadata } from "@/app/site-config";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 
@@ -8,6 +10,14 @@ const authLinkClassName =
 
 const secondaryLinkClassName =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-border-soft bg-white/70 px-4 py-2.5 text-sm font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90";
+
+export const metadata: Metadata = createPageMetadata({
+  path: "/login",
+  title: "Sign In",
+  description:
+    "Sign in, create an account, or return to the workspace through the managed BuzzerBeater Assistant Coach login flow.",
+  noindex: true,
+});
 
 export default function LoginPage() {
   return (

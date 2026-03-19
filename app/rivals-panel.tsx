@@ -43,6 +43,25 @@ type MatchSortKey =
 
 type SortDirection = "asc" | "desc";
 
+type CheckboxFilterOption = {
+  label: string;
+  value: string;
+};
+
+type SeasonRangeSelection = {
+  endSeason: string;
+  startSeason: string;
+};
+
+type RivalryMatchFilters = {
+  endSeason: string;
+  selectedCompetitions: readonly string[];
+  selectedOutcomes: readonly string[];
+  selectedTvScopes: readonly string[];
+  selectedVenues: readonly string[];
+  startSeason: string;
+};
+
 type RivalryRow = {
   averageMargin: number;
   currentStreak: string;
@@ -94,9 +113,12 @@ type SeasonBreakdownRow = {
 };
 
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-4";
-const filterGridClassName = "grid gap-4 md:grid-cols-2 xl:grid-cols-6";
+const filterGridClassName = "grid gap-4 md:grid-cols-2 xl:grid-cols-3";
 const detailGridClassName = "grid gap-4 xl:grid-cols-2";
 const subduedCopyClassName = "text-sm leading-7 text-ink-muted";
+const checkboxListClassName = "grid gap-2";
+const checkboxOptionClassName =
+  "flex items-center gap-3 rounded-card border border-black/8 bg-white/70 px-3 py-2 text-sm text-ink";
 
 const aggregateSortOptions: Array<{
   key: AggregateSortKey;
@@ -134,6 +156,21 @@ const competitionLabelByKey: Record<string, string> = {
   SCRIMMAGE: "Scrimmage",
 };
 
+const venueFilterOptions: CheckboxFilterOption[] = [
+  { label: "Home", value: "HOME" },
+  { label: "Road", value: "ROAD" },
+];
+
+const outcomeFilterOptions: CheckboxFilterOption[] = [
+  { label: "Wins", value: "WIN" },
+  { label: "Losses", value: "LOSS" },
+];
+
+const tvScopeFilterOptions: CheckboxFilterOption[] = [
+  { label: "TV", value: "TV" },
+  { label: "Non-TV", value: "NON_TV" },
+];
+
 const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   month: "short",
@@ -153,11 +190,20 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
   const [panelError, setPanelError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
-  const [competitionFilter, setCompetitionFilter] = useState("ALL");
-  const [seasonFilter, setSeasonFilter] = useState("ALL");
-  const [venueFilter, setVenueFilter] = useState("ALL");
-  const [outcomeFilter, setOutcomeFilter] = useState("ALL");
-  const [tvFilter, setTvFilter] = useState("ALL");
+  const [selectedCompetitions, setSelectedCompetitions] = useState<string[]>(
+    [],
+  );
+  const [selectedVenues, setSelectedVenues] = useState<string[]>(() =>
+    venueFilterOptions.map((option) => option.value),
+  );
+  const [selectedOutcomes, setSelectedOutcomes] = useState<string[]>(() =>
+    outcomeFilterOptions.map((option) => option.value),
+  );
+  const [selectedTvScopes, setSelectedTvScopes] = useState<string[]>(() =>
+    tvScopeFilterOptions.map((option) => option.value),
+  );
+  const [startSeason, setStartSeason] = useState("");
+  const [endSeason, setEndSeason] = useState("");
   const [minimumGames, setMinimumGames] = useState("");
   const [sortKey, setSortKey] = useState<AggregateSortKey>("wins");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -185,42 +231,40 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
     }
 
     setPayload(response.data);
+    setSelectedCompetitions(
+      buildCompetitionOptions(response.data.matches).map(
+        (option) => option.value,
+      ),
+    );
+    setSelectedVenues(venueFilterOptions.map((option) => option.value));
+    setSelectedOutcomes(outcomeFilterOptions.map((option) => option.value));
+    setSelectedTvScopes(tvScopeFilterOptions.map((option) => option.value));
+    const defaultSeasonRange = buildDefaultSeasonRange(
+      buildSeasonValues(response.data.matches),
+    );
+    setStartSeason(defaultSeasonRange.startSeason);
+    setEndSeason(defaultSeasonRange.endSeason);
     setIsLoading(false);
   }
 
   const matches = payload?.matches ?? [];
+  const competitionOptions = buildCompetitionOptions(matches);
+  const seasonValues = buildSeasonValues(matches);
+  const effectiveSeasonRange = normalizeSeasonRange(
+    seasonValues,
+    startSeason,
+    endSeason,
+  );
   const minimumGamesValue = Math.max(1, Number.parseInt(minimumGames, 10) || 1);
   const normalizedSearch = deferredSearchText.trim().toLowerCase();
 
-  const filteredMatches = matches.filter((match) => {
-    if (
-      competitionFilter !== "ALL" &&
-      match.competitionKey !== competitionFilter
-    ) {
-      return false;
-    }
-
-    if (seasonFilter !== "ALL" && String(match.season) !== seasonFilter) {
-      return false;
-    }
-
-    if (venueFilter !== "ALL" && match.venue !== venueFilter) {
-      return false;
-    }
-
-    if (outcomeFilter !== "ALL" && match.outcome !== outcomeFilter) {
-      return false;
-    }
-
-    if (tvFilter === "TV_ONLY" && !match.isTvGame) {
-      return false;
-    }
-
-    if (tvFilter === "NON_TV" && match.isTvGame) {
-      return false;
-    }
-
-    return true;
+  const filteredMatches = filterRivalryMatches(matches, {
+    endSeason: effectiveSeasonRange.endSeason,
+    selectedCompetitions,
+    selectedOutcomes,
+    selectedTvScopes,
+    selectedVenues,
+    startSeason: effectiveSeasonRange.startSeason,
   });
 
   const rivalryRows = sortRivalryRows(
@@ -268,12 +312,6 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
   );
   const competitionBreakdown = buildCompetitionBreakdown(selectedMatches);
   const seasonBreakdown = buildSeasonBreakdown(selectedMatches);
-  const competitionOptions = buildCompetitionOptions(matches);
-  const seasonOptions = Array.from(
-    new Set(matches.map((match) => match.season)),
-  )
-    .sort((left, right) => right - left)
-    .map(String);
 
   const activeTeamName =
     payload?.team.teamName ?? workspace.home.team.teamName ?? "Your club";
@@ -358,75 +396,138 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
             />
           </Field>
 
-          <Field label="Competition">
-            <Select
-              onChange={(event) => setCompetitionFilter(event.target.value)}
-              value={competitionFilter}
-            >
-              <option value="ALL">All competitions</option>
-              {competitionOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
+          <Field label="Minimum meetings">
+            <Input
+              inputMode="numeric"
+              min={1}
+              onChange={(event) => setMinimumGames(event.target.value)}
+              placeholder="Minimum meetings"
+              type="number"
+              value={minimumGames}
+            />
           </Field>
 
-          <Field label="Season">
-            <Select
-              onChange={(event) => setSeasonFilter(event.target.value)}
-              value={seasonFilter}
-            >
-              <option value="ALL">All seasons</option>
-              {seasonOptions.map((season) => (
-                <option key={season} value={season}>
-                  Season {season}
-                </option>
-              ))}
-            </Select>
+          <Field label="Season range">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Select
+                disabled={!seasonValues.length}
+                onChange={(event) => {
+                  const nextRange = updateSeasonRangeFromStart(
+                    seasonValues,
+                    event.target.value,
+                    effectiveSeasonRange.endSeason,
+                  );
+                  setStartSeason(nextRange.startSeason);
+                  setEndSeason(nextRange.endSeason);
+                }}
+                value={effectiveSeasonRange.startSeason}
+              >
+                {seasonValues.length ? (
+                  seasonValues.map((season) => (
+                    <option key={`start-${season}`} value={season}>
+                      Start S{season}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No seasons</option>
+                )}
+              </Select>
+              <Select
+                disabled={!seasonValues.length}
+                onChange={(event) => {
+                  const nextRange = updateSeasonRangeFromEnd(
+                    seasonValues,
+                    effectiveSeasonRange.startSeason,
+                    event.target.value,
+                  );
+                  setStartSeason(nextRange.startSeason);
+                  setEndSeason(nextRange.endSeason);
+                }}
+                value={effectiveSeasonRange.endSeason}
+              >
+                {seasonValues.length ? (
+                  seasonValues.map((season) => (
+                    <option key={`end-${season}`} value={season}>
+                      End S{season}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No seasons</option>
+                )}
+              </Select>
+            </div>
+          </Field>
+
+          <Field label="Competition">
+            <CheckboxFilterGroup
+              onSelectAll={() =>
+                setSelectedCompetitions(
+                  competitionOptions.map((option) => option.value),
+                )
+              }
+              onSelectNone={() => setSelectedCompetitions([])}
+              onToggleValue={(value) =>
+                setSelectedCompetitions((current) =>
+                  toggleSelectedValue(current, value),
+                )
+              }
+              options={competitionOptions}
+              selectedValues={selectedCompetitions}
+            />
           </Field>
 
           <Field label="Venue">
-            <Select
-              onChange={(event) => setVenueFilter(event.target.value)}
-              value={venueFilter}
-            >
-              <option value="ALL">Home and road</option>
-              <option value="HOME">Home</option>
-              <option value="ROAD">Road</option>
-            </Select>
+            <CheckboxFilterGroup
+              onSelectAll={() =>
+                setSelectedVenues(
+                  venueFilterOptions.map((option) => option.value),
+                )
+              }
+              onSelectNone={() => setSelectedVenues([])}
+              onToggleValue={(value) =>
+                setSelectedVenues((current) =>
+                  toggleSelectedValue(current, value),
+                )
+              }
+              options={venueFilterOptions}
+              selectedValues={selectedVenues}
+            />
           </Field>
 
           <Field label="Outcome">
-            <Select
-              onChange={(event) => setOutcomeFilter(event.target.value)}
-              value={outcomeFilter}
-            >
-              <option value="ALL">Wins and losses</option>
-              <option value="WIN">Wins only</option>
-              <option value="LOSS">Losses only</option>
-            </Select>
+            <CheckboxFilterGroup
+              onSelectAll={() =>
+                setSelectedOutcomes(
+                  outcomeFilterOptions.map((option) => option.value),
+                )
+              }
+              onSelectNone={() => setSelectedOutcomes([])}
+              onToggleValue={(value) =>
+                setSelectedOutcomes((current) =>
+                  toggleSelectedValue(current, value),
+                )
+              }
+              options={outcomeFilterOptions}
+              selectedValues={selectedOutcomes}
+            />
           </Field>
 
-          <Field label="TV and minimum">
-            <div className="grid gap-3">
-              <Select
-                onChange={(event) => setTvFilter(event.target.value)}
-                value={tvFilter}
-              >
-                <option value="ALL">TV and non-TV</option>
-                <option value="TV_ONLY">TV only</option>
-                <option value="NON_TV">Non-TV only</option>
-              </Select>
-              <Input
-                inputMode="numeric"
-                min={1}
-                onChange={(event) => setMinimumGames(event.target.value)}
-                placeholder="Minimum meetings"
-                type="number"
-                value={minimumGames}
-              />
-            </div>
+          <Field label="TV">
+            <CheckboxFilterGroup
+              onSelectAll={() =>
+                setSelectedTvScopes(
+                  tvScopeFilterOptions.map((option) => option.value),
+                )
+              }
+              onSelectNone={() => setSelectedTvScopes([])}
+              onToggleValue={(value) =>
+                setSelectedTvScopes((current) =>
+                  toggleSelectedValue(current, value),
+                )
+              }
+              options={tvScopeFilterOptions}
+              selectedValues={selectedTvScopes}
+            />
           </Field>
         </div>
 
@@ -786,11 +887,13 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
 
   function resetFilters() {
     setSearchText("");
-    setCompetitionFilter("ALL");
-    setSeasonFilter("ALL");
-    setVenueFilter("ALL");
-    setOutcomeFilter("ALL");
-    setTvFilter("ALL");
+    setSelectedCompetitions(competitionOptions.map((option) => option.value));
+    setSelectedVenues(venueFilterOptions.map((option) => option.value));
+    setSelectedOutcomes(outcomeFilterOptions.map((option) => option.value));
+    setSelectedTvScopes(tvScopeFilterOptions.map((option) => option.value));
+    const defaultSeasonRange = buildDefaultSeasonRange(seasonValues);
+    setStartSeason(defaultSeasonRange.startSeason);
+    setEndSeason(defaultSeasonRange.endSeason);
     setMinimumGames("");
     setSortKey("wins");
     setSortDirection("desc");
@@ -1060,6 +1163,176 @@ function buildCurrentStreak(matches: readonly RivalryMatchRecord[]): string {
   return `${streakOutcome === "WIN" ? "W" : "L"}${streakLength}`;
 }
 
+function filterRivalryMatches(
+  matches: readonly RivalryMatchRecord[],
+  filters: RivalryMatchFilters,
+): RivalryMatchRecord[] {
+  const startSeasonNumber = parseSeasonValue(filters.startSeason);
+  const endSeasonNumber = parseSeasonValue(filters.endSeason);
+
+  return matches.filter((match) => {
+    if (!filters.selectedCompetitions.includes(match.competitionKey)) {
+      return false;
+    }
+
+    if (!filters.selectedVenues.includes(match.venue)) {
+      return false;
+    }
+
+    if (!filters.selectedOutcomes.includes(match.outcome)) {
+      return false;
+    }
+
+    if (!filters.selectedTvScopes.includes(resolveTvScope(match))) {
+      return false;
+    }
+
+    if (
+      startSeasonNumber !== null &&
+      endSeasonNumber !== null &&
+      (match.season < startSeasonNumber || match.season > endSeasonNumber)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function buildSeasonValues(matches: readonly RivalryMatchRecord[]): string[] {
+  return Array.from(new Set(matches.map((match) => String(match.season)))).sort(
+    (left, right) => Number(left) - Number(right),
+  );
+}
+
+function buildDefaultSeasonRange(
+  seasonValues: readonly string[],
+): SeasonRangeSelection {
+  const firstSeason = seasonValues[0] ?? "";
+  const lastSeason = seasonValues.at(-1) ?? firstSeason;
+
+  return {
+    endSeason: lastSeason,
+    startSeason: firstSeason,
+  };
+}
+
+function normalizeSeasonRange(
+  seasonValues: readonly string[],
+  startSeason: string,
+  endSeason: string,
+): SeasonRangeSelection {
+  const defaults = buildDefaultSeasonRange(seasonValues);
+  if (!seasonValues.length) {
+    return defaults;
+  }
+
+  const resolvedStart = seasonValues.includes(startSeason)
+    ? startSeason
+    : defaults.startSeason;
+  const resolvedEnd = seasonValues.includes(endSeason)
+    ? endSeason
+    : defaults.endSeason;
+
+  if (compareSeasonValues(resolvedStart, resolvedEnd) <= 0) {
+    return {
+      endSeason: resolvedEnd,
+      startSeason: resolvedStart,
+    };
+  }
+
+  return {
+    endSeason: resolvedStart,
+    startSeason: resolvedEnd,
+  };
+}
+
+function updateSeasonRangeFromStart(
+  seasonValues: readonly string[],
+  nextStartSeason: string,
+  currentEndSeason: string,
+): SeasonRangeSelection {
+  const defaults = buildDefaultSeasonRange(seasonValues);
+  if (!seasonValues.length) {
+    return defaults;
+  }
+
+  const resolvedStart = seasonValues.includes(nextStartSeason)
+    ? nextStartSeason
+    : defaults.startSeason;
+  const resolvedEnd = seasonValues.includes(currentEndSeason)
+    ? currentEndSeason
+    : defaults.endSeason;
+
+  if (compareSeasonValues(resolvedStart, resolvedEnd) <= 0) {
+    return {
+      endSeason: resolvedEnd,
+      startSeason: resolvedStart,
+    };
+  }
+
+  return {
+    endSeason: resolvedStart,
+    startSeason: resolvedStart,
+  };
+}
+
+function updateSeasonRangeFromEnd(
+  seasonValues: readonly string[],
+  currentStartSeason: string,
+  nextEndSeason: string,
+): SeasonRangeSelection {
+  const defaults = buildDefaultSeasonRange(seasonValues);
+  if (!seasonValues.length) {
+    return defaults;
+  }
+
+  const resolvedStart = seasonValues.includes(currentStartSeason)
+    ? currentStartSeason
+    : defaults.startSeason;
+  const resolvedEnd = seasonValues.includes(nextEndSeason)
+    ? nextEndSeason
+    : defaults.endSeason;
+
+  if (compareSeasonValues(resolvedStart, resolvedEnd) <= 0) {
+    return {
+      endSeason: resolvedEnd,
+      startSeason: resolvedStart,
+    };
+  }
+
+  return {
+    endSeason: resolvedEnd,
+    startSeason: resolvedEnd,
+  };
+}
+
+function compareSeasonValues(left: string, right: string): number {
+  return Number(left) - Number(right);
+}
+
+function parseSeasonValue(value: string): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toggleSelectedValue(
+  selectedValues: readonly string[],
+  value: string,
+): string[] {
+  return selectedValues.includes(value)
+    ? selectedValues.filter((entry) => entry !== value)
+    : [...selectedValues, value];
+}
+
+function resolveTvScope(match: RivalryMatchRecord): string {
+  return match.isTvGame ? "TV" : "NON_TV";
+}
+
 function sortRivalryRows(
   rows: readonly RivalryRow[],
   sortKey: AggregateSortKey,
@@ -1247,6 +1520,54 @@ function buildCompetitionOptions(matches: readonly RivalryMatchRecord[]) {
     .map(([value, label]) => ({ label, value }));
 }
 
+function CheckboxFilterGroup({
+  onSelectAll,
+  onSelectNone,
+  onToggleValue,
+  options,
+  selectedValues,
+}: {
+  onSelectAll: () => void;
+  onSelectNone: () => void;
+  onToggleValue: (value: string) => void;
+  options: readonly CheckboxFilterOption[];
+  selectedValues: readonly string[];
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap gap-2">
+        <button
+          className="text-accent text-xs font-semibold tracking-[0.08em] uppercase"
+          onClick={onSelectAll}
+          type="button"
+        >
+          All
+        </button>
+        <button
+          className="text-ink-muted text-xs font-semibold tracking-[0.08em] uppercase"
+          onClick={onSelectNone}
+          type="button"
+        >
+          None
+        </button>
+      </div>
+      <div className={checkboxListClassName}>
+        {options.map((option) => (
+          <label className={checkboxOptionClassName} key={option.value}>
+            <input
+              checked={selectedValues.includes(option.value)}
+              className="accent-accent size-4"
+              onChange={() => onToggleValue(option.value)}
+              type="checkbox"
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SortHeadCell({
   active,
   direction,
@@ -1298,3 +1619,13 @@ function SortDirectionButton({
     </button>
   );
 }
+
+export const __testing = {
+  buildDefaultSeasonRange,
+  buildSeasonValues,
+  filterRivalryMatches,
+  normalizeSeasonRange,
+  toggleSelectedValue,
+  updateSeasonRangeFromEnd,
+  updateSeasonRangeFromStart,
+};

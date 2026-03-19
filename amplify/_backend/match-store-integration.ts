@@ -102,6 +102,10 @@ export function configureMatchStoreIntegration(
     backend.getSalaryProjection,
     backend.generateSharedPlayerCard,
   ];
+  const teamHighlightsFunctions = [
+    backend.getMyTeamHighlights,
+    backend.submitMyTeamHighlightsScan,
+  ];
   const teamHighlightsReadFunctions = [backend.getMyTeamHighlights];
 
   for (const resource of matchStoreReadFunctions) {
@@ -140,6 +144,14 @@ export function configureMatchStoreIntegration(
       bindings.playerSkillSnapshotTableName,
     );
     playerSkillSnapshotTable.grantReadData(resource.resources.lambda);
+  }
+
+  for (const resource of teamHighlightsFunctions) {
+    resource.addEnvironment(
+      "ACTIVE_TRACKED_TEAMS_TABLE_NAME",
+      bindings.activeTrackedTeamsTableName,
+    );
+    activeTrackedTeamsTable.grantReadData(resource.resources.lambda);
   }
 
   for (const resource of teamHighlightsReadFunctions) {

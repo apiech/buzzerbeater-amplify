@@ -1,3 +1,6 @@
+import type { Metadata } from "next";
+
+import { createPageMetadata } from "@/app/site-config";
 import { Storefront } from "@/app/store/storefront";
 import {
   getServerCurrentUser,
@@ -10,13 +13,20 @@ type StorePageProps = {
   }>;
 };
 
+export const metadata: Metadata = createPageMetadata({
+  path: "/store",
+  title: "Support the Project",
+  description:
+    "Support the hobby project and unlock premium BuzzerBeater tools when you want deeper predictions, league writeups, and account extras.",
+});
+
 export default async function StorePage({ searchParams }: StorePageProps) {
   const currentUser = await getServerCurrentUser();
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const billingValue = resolvedSearchParams?.billing;
   const billingNotice = Array.isArray(billingValue)
-    ? billingValue[0] ?? null
-    : billingValue ?? null;
+    ? (billingValue[0] ?? null)
+    : (billingValue ?? null);
 
   return (
     <Storefront

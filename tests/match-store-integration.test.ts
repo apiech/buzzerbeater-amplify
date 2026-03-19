@@ -28,3 +28,11 @@ test("team highlights submitter derives queue access from the imported shared in
   assert.match(source, /grantSqsSendAccessFromQueueUrl/);
   assert.match(source, /arn:\$\{stack\.partition\}:sqs:/);
 });
+
+test("team highlights handlers receive active tracked team table wiring", () => {
+  assert.match(source, /const teamHighlightsFunctions = \[/);
+  assert.match(source, /backend\.getMyTeamHighlights/);
+  assert.match(source, /backend\.submitMyTeamHighlightsScan/);
+  assert.match(source, /ACTIVE_TRACKED_TEAMS_TABLE_NAME/);
+  assert.match(source, /activeTrackedTeamsTable\.grantReadData/);
+});

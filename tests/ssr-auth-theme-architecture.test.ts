@@ -65,10 +65,18 @@ test("workspace requests are routed through server-authenticated Next entry poin
   );
   const dashboardSource = readRepoFile("app", "dashboard-app.tsx");
 
-  assert.match(proxySource, /export async function proxy\(request: NextRequest\)/);
-  assert.match(proxySource, /matcher:\s*\["\/", "\/workspace\/:path\*"\]/);
+  assert.match(
+    proxySource,
+    /export async function proxy\(request: NextRequest\)/,
+  );
+  assert.match(proxySource, /matcher:\s*\["\/workspace\/:path\*"\]/);
   assert.match(proxySource, /new URL\("\/login", request\.url\)/);
-  assert.match(homePageSource, /redirect\("\/workspace\/home"\)/);
+  assert.match(homePageSource, /getServerCurrentUser/);
+  assert.match(
+    homePageSource,
+    /const primaryHref = currentUser \? "\/workspace\/home" : "\/login";/,
+  );
+  assert.match(homePageSource, /href="\/store"/);
   assert.match(workspacePageSource, /redirect\("\/login"\)/);
   assert.match(
     workspacePageSource,

@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
 import { getServerCurrentUser } from "@/app/server/amplify-server";
+import { sharedMetadata, sharedViewport } from "@/app/site-config";
 import { resolveServerThemeId } from "@/app/server/theme-preferences";
 
 const spaceGrotesk = Space_Grotesk({
@@ -10,11 +11,8 @@ const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
 });
 
-export const metadata: Metadata = {
-  title: "BuzzerBeater Assistant Coach",
-  description:
-    "A BuzzerBeater companion for team prep, opponent reads, league context, and roster decisions.",
-};
+export const metadata: Metadata = sharedMetadata;
+export const viewport: Viewport = sharedViewport;
 
 export default async function RootLayout({
   children,

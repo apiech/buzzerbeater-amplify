@@ -57,6 +57,7 @@ export const __testing = {
   buildRivalryMatch,
   classifyScheduleMatchType,
   formatStageToken,
+  matchIncludesTeam,
 };
 
 export async function getRivalsWorkspace(
@@ -192,6 +193,10 @@ function buildRivalryMatch(args: {
     return null;
   }
 
+  if (!matchIncludesTeam(match, teamId)) {
+    return null;
+  }
+
   const teamScore = deriveTeamScore(match, teamId);
   const opponentScore = deriveOpponentScore(match, teamId);
   const opponentTeamId = deriveOpponentTeamId(match, teamId);
@@ -227,6 +232,10 @@ function buildRivalryMatch(args: {
     teamScore,
     venue: isTeamHome(match, teamId) ? "HOME" : "ROAD",
   };
+}
+
+function matchIncludesTeam(match: BBApiScheduleMatch, teamId: string): boolean {
+  return match.homeTeam.id === teamId || match.awayTeam.id === teamId;
 }
 
 function classifyScheduleMatchType(
