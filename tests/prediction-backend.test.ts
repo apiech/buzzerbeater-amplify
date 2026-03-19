@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   normalizePredictionRequest,
+  processPredictionJob,
   resolveConnectedInput,
   submitPredictionJob,
 } from "../amplify/data/_backend/prediction";
@@ -207,7 +208,8 @@ test("normalizePredictionRequest tolerates historical GDP keys in stored jobs", 
   });
 
   assert.equal(normalized.mode, "MANUAL");
-  const manualInput = (normalized as { manualInput: Record<string, unknown> }).manualInput;
+  const manualInput = (normalized as { manualInput: Record<string, unknown> })
+    .manualInput;
   assert.equal(manualInput.home_gdp_focus, "Balanced.hit");
   assert.equal(manualInput.home_gdp_pace, "Normal.hit");
 });
@@ -283,7 +285,9 @@ test("submitPredictionJob rejects free-plan users before queueing work", async (
             throw new Error("createPredictionJob should not be called");
           },
           requireFeatureAccess: async () => {
-            throw new Error("Premium is required to use the prediction engine.");
+            throw new Error(
+              "Premium is required to use the prediction engine.",
+            );
           },
           sendQueueMessage: async () => {
             throw new Error("sendQueueMessage should not be called");
@@ -363,7 +367,9 @@ test("submitPredictionJob allows access when premium is granted by the environme
         }) as any,
       requireFeatureAccess: (args) =>
         requireFeatureAccess(args, {
-          createPortalSession: async () => ({ url: "https://example.com/portal" }),
+          createPortalSession: async () => ({
+            url: "https://example.com/portal",
+          }),
           createSubscriptionCheckoutSession: async () => ({
             url: "https://example.com/checkout",
           }),
@@ -384,4 +390,137 @@ test("submitPredictionJob allows access when premium is granted by the environme
     jobId: result.jobId,
     userId: "user-1",
   });
+});
+
+test("processPredictionJob stores grid-enabled endpoint results without extra invocations", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  let endpointCalls = 0;
+
+  await processPredictionJob(
+    {
+      env: {},
+      endpointName: "predictor-endpoint",
+      messageBody: JSON.stringify({
+        jobId: "job-1",
+        userId: "user-1",
+      }),
+    },
+    {
+      getPredictionJob: async () =>
+        ({
+          id: "job-1",
+          request: {
+            mode: "MANUAL",
+            manualInput: manualFallback,
+          },
+          userId: "user-1",
+        }) as any,
+      invokePredictionEndpoint: async (_endpointName, resolvedInput) => {
+        endpointCalls += 1;
+        assert.deepStrictEqual(resolvedInput, manualFallback);
+        return {
+          awayScore: 94.8,
+          homeScore: 101.3,
+          modelVersion: "bundle-v1",
+          pointDiff: 6.5,
+          tacticsGrid: {
+            offenses: ["Base", "Motion"],
+            defenses: ["ManToMan", "23Zone"],
+            cells: [
+              [
+                {
+                  awayDefense: "ManToMan",
+                  awayScore: 94.8,
+                  homeOffense: "Base",
+                  homeScore: 101.3,
+                  pointDiff: 6.5,
+                },
+                {
+                  awayDefense: "ManToMan",
+                  awayScore: 92.1,
+                  homeOffense: "Motion",
+                  homeScore: 104.7,
+                  pointDiff: 12.6,
+                },
+              ],
+              [
+                {
+                  awayDefense: "23Zone",
+                  awayScore: 96.4,
+                  homeOffense: "Base",
+                  homeScore: 99.3,
+                  pointDiff: 2.9,
+                },
+                {
+                  awayDefense: "23Zone",
+                  awayScore: null,
+                  homeOffense: "Motion",
+                  homeScore: null,
+                  pointDiff: null,
+                },
+              ],
+            ],
+          },
+        };
+      },
+      resolveConnectedInput: async () => {
+        throw new Error(
+          "resolveConnectedInput should not be called for manual jobs",
+        );
+      },
+      updatePredictionJob: async (_env, input) => {
+        updates.push(input as Record<string, unknown>);
+      },
+    },
+  );
+
+  assert.equal(endpointCalls, 1);
+  assert.equal(updates[0]?.status, "RESOLVING_INPUT");
+  assert.equal(updates[1]?.status, "INVOKING_MODEL");
+  assert.equal(updates[2]?.status, "SUCCEEDED");
+  assert.deepStrictEqual(updates[2]?.result, {
+    awayScore: 94.8,
+    homeScore: 101.3,
+    modelVersion: "bundle-v1",
+    pointDiff: 6.5,
+    tacticsGrid: {
+      offenses: ["Base", "Motion"],
+      defenses: ["ManToMan", "23Zone"],
+      cells: [
+        [
+          {
+            awayDefense: "ManToMan",
+            awayScore: 94.8,
+            homeOffense: "Base",
+            homeScore: 101.3,
+            pointDiff: 6.5,
+          },
+          {
+            awayDefense: "ManToMan",
+            awayScore: 92.1,
+            homeOffense: "Motion",
+            homeScore: 104.7,
+            pointDiff: 12.6,
+          },
+        ],
+        [
+          {
+            awayDefense: "23Zone",
+            awayScore: 96.4,
+            homeOffense: "Base",
+            homeScore: 99.3,
+            pointDiff: 2.9,
+          },
+          {
+            awayDefense: "23Zone",
+            awayScore: null,
+            homeOffense: "Motion",
+            homeScore: null,
+            pointDiff: null,
+          },
+        ],
+      ],
+    },
+  });
+  assert.equal(updates[2]?.modelVersion, "bundle-v1");
 });

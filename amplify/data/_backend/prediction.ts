@@ -64,7 +64,20 @@ type ResolveConnectedInputDependencies = {
 type SubmitPredictionDependencies = {
   createPredictionJob: typeof createPredictionJob;
   requireFeatureAccess: typeof requireFeatureAccess;
-  sendQueueMessage: (queueUrl: string, message: { jobId: string; userId: string }) => Promise<void>;
+  sendQueueMessage: (
+    queueUrl: string,
+    message: { jobId: string; userId: string },
+  ) => Promise<void>;
+  updatePredictionJob: typeof updatePredictionJob;
+};
+
+type ProcessPredictionDependencies = {
+  getPredictionJob: typeof getPredictionJob;
+  invokePredictionEndpoint: (
+    endpointName: string,
+    resolvedInput: JsonRecord,
+  ) => Promise<JsonRecord>;
+  resolveConnectedInput: typeof resolveConnectedInput;
   updatePredictionJob: typeof updatePredictionJob;
 };
 
@@ -105,12 +118,15 @@ const defaultSubmitDependencies: SubmitPredictionDependencies = {
   updatePredictionJob,
 };
 
-export async function submitPredictionJob(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-  request: unknown;
-  queueUrl: string;
-}, dependencies: SubmitPredictionDependencies = defaultSubmitDependencies): Promise<{ jobId: string }> {
+export async function submitPredictionJob(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+    request: unknown;
+    queueUrl: string;
+  },
+  dependencies: SubmitPredictionDependencies = defaultSubmitDependencies,
+): Promise<{ jobId: string }> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -151,19 +167,29 @@ export async function submitPredictionJob(args: {
   return { jobId };
 }
 
-export async function processPredictionJob(args: {
-  env: GraphqlEnv;
-  endpointName: string;
-  messageBody: string;
-}): Promise<void> {
+export async function processPredictionJob(
+  args: {
+    env: GraphqlEnv;
+    endpointName: string;
+    messageBody: string;
+  },
+  dependencies: ProcessPredictionDependencies = {
+    getPredictionJob,
+    invokePredictionEndpoint,
+    resolveConnectedInput,
+    updatePredictionJob,
+  },
+): Promise<void> {
   const message = parseQueueMessage(args.messageBody);
-  const job = await getPredictionJob(args.env, message.jobId);
+  const job = await dependencies.getPredictionJob(args.env, message.jobId);
   if (!job || job.userId !== message.userId) {
-    throw new Error("Prediction job is missing or no longer belongs to the enqueued user.");
+    throw new Error(
+      "Prediction job is missing or no longer belongs to the enqueued user.",
+    );
   }
 
   try {
-    await updatePredictionJob(args.env, {
+    await dependencies.updatePredictionJob(args.env, {
       id: job.id,
       status: "RESOLVING_INPUT",
       error: null,
@@ -173,17 +199,24 @@ export async function processPredictionJob(args: {
     const resolvedInput =
       request.mode === "MANUAL"
         ? request.manualInput
-        : await resolveConnectedInput(args.env, message.userId, request.connectedInput);
+        : await dependencies.resolveConnectedInput(
+            args.env,
+            message.userId,
+            request.connectedInput,
+          );
 
-    await updatePredictionJob(args.env, {
+    await dependencies.updatePredictionJob(args.env, {
       id: job.id,
       status: "INVOKING_MODEL",
       resolvedInputSnapshot: resolvedInput,
       error: null,
     });
 
-    const result = await invokePredictionEndpoint(args.endpointName, resolvedInput);
-    await updatePredictionJob(args.env, {
+    const result = await dependencies.invokePredictionEndpoint(
+      args.endpointName,
+      resolvedInput,
+    );
+    await dependencies.updatePredictionJob(args.env, {
       id: job.id,
       status: "SUCCEEDED",
       resolvedInputSnapshot: resolvedInput,
@@ -192,7 +225,7 @@ export async function processPredictionJob(args: {
       error: null,
     });
   } catch (error) {
-    await updatePredictionJob(args.env, {
+    await dependencies.updatePredictionJob(args.env, {
       id: job.id,
       status: "FAILED",
       error: error instanceof Error ? error.message : String(error),
@@ -224,7 +257,9 @@ export function normalizePredictionRequest(
     };
   }
 
-  throw new Error("Prediction request mode must be either MANUAL or CONNECTED.");
+  throw new Error(
+    "Prediction request mode must be either MANUAL or CONNECTED.",
+  );
 }
 
 export async function resolveConnectedInput(
@@ -257,7 +292,9 @@ export async function resolveConnectedInput(
       connectedInput.homeSourceMatchId,
     );
     if (!homeBoxscore && !canFallback) {
-      throw new Error("The selected home source match is unavailable in cache.");
+      throw new Error(
+        "The selected home source match is unavailable in cache.",
+      );
     }
     if (homeBoxscore) {
       Object.assign(
@@ -274,7 +311,9 @@ export async function resolveConnectedInput(
       connectedInput.awaySourceMatchId,
     );
     if (!awayBoxscore && !canFallback) {
-      throw new Error("The selected away source match is unavailable in cache.");
+      throw new Error(
+        "The selected away source match is unavailable in cache.",
+      );
     }
     if (awayBoxscore) {
       Object.assign(
@@ -307,7 +346,10 @@ function buildSideFromBoxscore(
   requestedTeamId: string | undefined,
   side: "home" | "away",
 ): JsonRecord {
-  const perspective = resolveBoxscorePerspective(matchBoxscore, requestedTeamId);
+  const perspective = resolveBoxscorePerspective(
+    matchBoxscore,
+    requestedTeamId,
+  );
   const output: JsonRecord = {};
 
   for (const field of RATING_FIELDS) {
@@ -344,7 +386,10 @@ function resolveBoxscorePerspective(
     throw new Error("A team id is required to resolve a source match.");
   }
 
-  const { team: selectedSide } = selectBoxscorePerspective(boxscore, selectedTeamId);
+  const { team: selectedSide } = selectBoxscorePerspective(
+    boxscore,
+    selectedTeamId,
+  );
   if (!selectedSide) {
     throw new Error(
       `The requested team ${selectedTeamId} was not found in the stored boxscore.`,
@@ -384,7 +429,10 @@ async function invokePredictionEndpoint(
     "SageMaker prediction response",
   );
 
-  if (typeof parsed.homeScore !== "number" || typeof parsed.awayScore !== "number") {
+  if (
+    typeof parsed.homeScore !== "number" ||
+    typeof parsed.awayScore !== "number"
+  ) {
     throw new Error("SageMaker response did not contain numeric scores.");
   }
 

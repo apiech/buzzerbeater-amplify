@@ -408,9 +408,24 @@ export type PredictionSubmissionRequest =
       connectedInput: ConnectedPredictionInput;
     };
 
+export type PredictionGridCell = {
+  homeOffense: string;
+  awayDefense: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  pointDiff: number | null;
+};
+
+export type PredictionTacticsGrid = {
+  offenses: string[];
+  defenses: string[];
+  cells: PredictionGridCell[][];
+};
+
 export type PredictionResult = {
   homeScore: number;
   awayScore: number;
   pointDiff: number;
   modelVersion: string;
+  tacticsGrid?: PredictionTacticsGrid;
 };

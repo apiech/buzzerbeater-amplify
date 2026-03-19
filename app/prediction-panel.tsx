@@ -4,6 +4,13 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import { client } from "@/app/amplify-client";
 import {
+  findBestPredictionGridCell,
+  findPredictionGridCell,
+  isPredictionGridSelectionSupported,
+  readPredictionGridSelection,
+  toPredictionResult,
+} from "@/app/prediction-result";
+import {
   buildSubmissionRequest,
   clearForecastPrefill,
   createDefaultManualPredictionInput,
@@ -12,6 +19,7 @@ import {
 import type {
   DashboardWorkspace,
   ManualPredictionInput,
+  PredictionGridCell,
   PredictionConnectedOverrides,
   PredictionDraftState,
   PredictionJobRecord,
@@ -27,6 +35,11 @@ import {
   StatusBadge,
   statusToneFromValue,
 } from "@/app/ui/primitives/status-badge";
+import {
+  TableCell,
+  TableHeadCell,
+  TableShell,
+} from "@/app/ui/primitives/table-shell";
 import { formatPreviewStatus } from "@/app/ui/presentation";
 import { buzzerBeaterColorStyle } from "@/lib/buzzerbeater/rating-scale";
 
@@ -182,9 +195,11 @@ export function PredictionPanel({
   useEffect(() => {
     onDraftChange((current) => {
       const nextHome =
-        current.connectedSelection.homeSourceMatchId || defaultHomeSourceMatchId;
+        current.connectedSelection.homeSourceMatchId ||
+        defaultHomeSourceMatchId;
       const nextAway =
-        current.connectedSelection.awaySourceMatchId || defaultAwaySourceMatchId;
+        current.connectedSelection.awaySourceMatchId ||
+        defaultAwaySourceMatchId;
       if (
         nextHome === current.connectedSelection.homeSourceMatchId &&
         nextAway === current.connectedSelection.awaySourceMatchId
@@ -221,7 +236,9 @@ export function PredictionPanel({
 
   async function loadJobs() {
     setIsLoadingJobs(true);
-    const { data, errors } = await client.reads.getPredictionHistory({ limit: 12 });
+    const { data, errors } = await client.reads.getPredictionHistory({
+      limit: 12,
+    });
 
     if (errors?.length || !data) {
       setPredictionError(formatAmplifyErrors(errors));
@@ -356,17 +373,51 @@ export function PredictionPanel({
 
   const connectedReady = Boolean(
     connectedSelection.homeSourceMatchId &&
-      connectedSelection.awaySourceMatchId &&
-      homeTeamId &&
-      awayTeamId,
+    connectedSelection.awaySourceMatchId &&
+    homeTeamId &&
+    awayTeamId,
   );
   const latestJob = jobs.length ? jobs[0] : null;
   const latestExplanation = latestJob
     ? [
         ...describeResolvedInput(latestJob.resolvedInputSnapshot),
-        summarizeForecastContext(extractForecastContextFromRequest(latestJob.request)),
+        summarizeForecastContext(
+          extractForecastContextFromRequest(latestJob.request),
+        ),
       ].filter((entry): entry is string => Boolean(entry))
     : [];
+  const latestSuccessfulJob =
+    jobs.find(
+      (job) =>
+        job.status === "SUCCEEDED" && Boolean(toPredictionResult(job.result)),
+    ) ?? null;
+  const latestSuccessfulResult = latestSuccessfulJob
+    ? toPredictionResult(latestSuccessfulJob.result)
+    : null;
+  const latestTacticsGrid = latestSuccessfulResult?.tacticsGrid ?? null;
+  const latestGridSelection = latestSuccessfulJob
+    ? readPredictionGridSelection(latestSuccessfulJob.resolvedInputSnapshot)
+    : null;
+  const selectedGridPairSupported =
+    latestTacticsGrid && latestGridSelection
+      ? isPredictionGridSelectionSupported(
+          latestTacticsGrid,
+          latestGridSelection,
+        )
+      : false;
+  const selectedGridCell =
+    latestTacticsGrid && latestGridSelection && selectedGridPairSupported
+      ? findPredictionGridCell(latestTacticsGrid, latestGridSelection)
+      : null;
+  const bestGridCell = latestTacticsGrid
+    ? findBestPredictionGridCell(latestTacticsGrid)
+    : null;
+  const unsupportedSelectedAwayDefense =
+    latestTacticsGrid &&
+    latestGridSelection &&
+    !latestTacticsGrid.defenses.includes(latestGridSelection.awayDefense)
+      ? latestGridSelection.awayDefense
+      : null;
 
   return (
     <Panel>
@@ -431,11 +482,11 @@ export function PredictionPanel({
         <Alert tone="note">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="grid gap-1">
-              <strong className="text-sm text-ink">
+              <strong className="text-ink text-sm">
                 Forecast prefill: {forecastPrefill.context.scenarioLabel} (
                 {formatPercent(forecastPrefill.context.scenarioProbability)})
               </strong>
-              <span className="text-sm text-ink-muted">
+              <span className="text-ink-muted text-sm">
                 Model {forecastPrefill.context.forecastModelVersion} • Generated{" "}
                 {formatTimestamp(forecastPrefill.context.forecastGeneratedAt)} •
                 Effort is mapped relative to a Normal home effort.
@@ -466,7 +517,10 @@ export function PredictionPanel({
             <Field label="Your source game">
               <Select
                 onChange={(event) =>
-                  updateConnectedSelection("homeSourceMatchId", event.target.value)
+                  updateConnectedSelection(
+                    "homeSourceMatchId",
+                    event.target.value,
+                  )
                 }
                 value={connectedSelection.homeSourceMatchId}
               >
@@ -487,7 +541,10 @@ export function PredictionPanel({
             <Field label="Opponent source game">
               <Select
                 onChange={(event) =>
-                  updateConnectedSelection("awaySourceMatchId", event.target.value)
+                  updateConnectedSelection(
+                    "awaySourceMatchId",
+                    event.target.value,
+                  )
                 }
                 value={connectedSelection.awaySourceMatchId}
               >
@@ -537,22 +594,25 @@ export function PredictionPanel({
 
           <div className="overflow-x-auto">
             <div className={ratingGridClassName}>
-              <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+              <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                 Metric
               </div>
-              <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+              <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                 Home
               </div>
-              <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+              <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                 Away
               </div>
               {RATING_FIELDS.map((field) => (
                 <div className="contents" key={field.label}>
-                  <span className="font-semibold text-ink">{field.label}</span>
+                  <span className="text-ink font-semibold">{field.label}</span>
                   <Input
                     className="font-semibold"
                     onChange={(event) =>
-                      updateManualNumericField(field.homeKey, event.target.value)
+                      updateManualNumericField(
+                        field.homeKey,
+                        event.target.value,
+                      )
                     }
                     style={buzzerBeaterColorStyle({
                       scale: "team_rating",
@@ -565,7 +625,10 @@ export function PredictionPanel({
                   <Input
                     className="font-semibold"
                     onChange={(event) =>
-                      updateManualNumericField(field.awayKey, event.target.value)
+                      updateManualNumericField(
+                        field.awayKey,
+                        event.target.value,
+                      )
                     }
                     style={buzzerBeaterColorStyle({
                       scale: "team_rating",
@@ -590,8 +653,14 @@ export function PredictionPanel({
               <Select
                 onChange={(event) =>
                   mode === "MANUAL"
-                    ? updateManualTextField("home_offStrategy", event.target.value)
-                    : updateConnectedTextField("home_offStrategy", event.target.value)
+                    ? updateManualTextField(
+                        "home_offStrategy",
+                        event.target.value,
+                      )
+                    : updateConnectedTextField(
+                        "home_offStrategy",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("home_offStrategy", "home_offStrategy")}
               >
@@ -606,8 +675,14 @@ export function PredictionPanel({
               <Select
                 onChange={(event) =>
                   mode === "MANUAL"
-                    ? updateManualTextField("home_defStrategy", event.target.value)
-                    : updateConnectedTextField("home_defStrategy", event.target.value)
+                    ? updateManualTextField(
+                        "home_defStrategy",
+                        event.target.value,
+                      )
+                    : updateConnectedTextField(
+                        "home_defStrategy",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("home_defStrategy", "home_defStrategy")}
               >
@@ -622,8 +697,14 @@ export function PredictionPanel({
               <Select
                 onChange={(event) =>
                   mode === "MANUAL"
-                    ? updateManualTextField("away_offStrategy", event.target.value)
-                    : updateConnectedTextField("away_offStrategy", event.target.value)
+                    ? updateManualTextField(
+                        "away_offStrategy",
+                        event.target.value,
+                      )
+                    : updateConnectedTextField(
+                        "away_offStrategy",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("away_offStrategy", "away_offStrategy")}
               >
@@ -638,8 +719,14 @@ export function PredictionPanel({
               <Select
                 onChange={(event) =>
                   mode === "MANUAL"
-                    ? updateManualTextField("away_defStrategy", event.target.value)
-                    : updateConnectedTextField("away_defStrategy", event.target.value)
+                    ? updateManualTextField(
+                        "away_defStrategy",
+                        event.target.value,
+                      )
+                    : updateConnectedTextField(
+                        "away_defStrategy",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("away_defStrategy", "away_defStrategy")}
               >
@@ -654,8 +741,14 @@ export function PredictionPanel({
               <Select
                 onChange={(event) =>
                   mode === "MANUAL"
-                    ? updateManualTextField("home_gdp_focus", event.target.value)
-                    : updateConnectedTextField("home_gdp_focus", event.target.value)
+                    ? updateManualTextField(
+                        "home_gdp_focus",
+                        event.target.value,
+                      )
+                    : updateConnectedTextField(
+                        "home_gdp_focus",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("home_gdp_focus", "home_gdp_focus")}
               >
@@ -671,7 +764,10 @@ export function PredictionPanel({
                 onChange={(event) =>
                   mode === "MANUAL"
                     ? updateManualTextField("home_gdp_pace", event.target.value)
-                    : updateConnectedTextField("home_gdp_pace", event.target.value)
+                    : updateConnectedTextField(
+                        "home_gdp_pace",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("home_gdp_pace", "home_gdp_pace")}
               >
@@ -686,8 +782,14 @@ export function PredictionPanel({
               <Select
                 onChange={(event) =>
                   mode === "MANUAL"
-                    ? updateManualTextField("away_gdp_focus", event.target.value)
-                    : updateConnectedTextField("away_gdp_focus", event.target.value)
+                    ? updateManualTextField(
+                        "away_gdp_focus",
+                        event.target.value,
+                      )
+                    : updateConnectedTextField(
+                        "away_gdp_focus",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("away_gdp_focus", "away_gdp_focus")}
               >
@@ -703,7 +805,10 @@ export function PredictionPanel({
                 onChange={(event) =>
                   mode === "MANUAL"
                     ? updateManualTextField("away_gdp_pace", event.target.value)
-                    : updateConnectedTextField("away_gdp_pace", event.target.value)
+                    : updateConnectedTextField(
+                        "away_gdp_pace",
+                        event.target.value,
+                      )
                 }
                 value={currentTextValue("away_gdp_pace", "away_gdp_pace")}
               >
@@ -739,8 +844,14 @@ export function PredictionPanel({
                 min={-2}
                 onChange={(event) =>
                   mode === "MANUAL"
-                    ? updateManualNumericField("effortDelta", event.target.value)
-                    : updateConnectedNumericField("effortDelta", event.target.value)
+                    ? updateManualNumericField(
+                        "effortDelta",
+                        event.target.value,
+                      )
+                    : updateConnectedNumericField(
+                        "effortDelta",
+                        event.target.value,
+                      )
                 }
                 step={1}
                 type="number"
@@ -750,21 +861,21 @@ export function PredictionPanel({
           </div>
 
           {latestJob ? (
-            <div className="grid gap-2 rounded-card border border-black/5 bg-white/65 p-4">
+            <div className="rounded-card grid gap-2 border border-black/5 bg-white/65 p-4">
               <StatusBadge tone={statusToneFromValue(latestJob.status)}>
                 {formatPreviewStatus(latestJob.status)}
               </StatusBadge>
-              <strong className="text-base text-ink">
+              <strong className="text-ink text-base">
                 {describePredictionJob(latestJob)}
               </strong>
-              <span className="text-sm text-ink-muted">
+              <span className="text-ink-muted text-sm">
                 Updated {formatTimestamp(latestJob.updatedAt)}
               </span>
               {latestExplanation.length ? (
                 <div className="flex flex-wrap gap-2">
                   {latestExplanation.map((item) => (
                     <span
-                      className="inline-flex rounded-full bg-note-bg px-3 py-1.5 text-sm font-semibold text-note"
+                      className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
                       key={item}
                     >
                       {item}
@@ -774,10 +885,107 @@ export function PredictionPanel({
               ) : null}
             </div>
           ) : (
-            <p className={statusCopyClassName}>No previews have been run yet.</p>
+            <p className={statusCopyClassName}>
+              No previews have been run yet.
+            </p>
           )}
         </Panel>
       </div>
+
+      {latestTacticsGrid ? (
+        <Panel as="article" padding="sm" variant="solid">
+          <SectionHeading
+            description="Rows show opponent defense. Columns show your offense."
+            title="Tactic matchup grid"
+            titleAs="h4"
+          />
+
+          <div className="grid gap-3">
+            {bestGridCell && bestGridCell.pointDiff !== null ? (
+              <Alert tone="note">
+                Best shown matchup: {bestGridCell.homeOffense} vs{" "}
+                {bestGridCell.awayDefense} (
+                {formatSigned(bestGridCell.pointDiff)})
+              </Alert>
+            ) : null}
+
+            <span className={statusCopyClassName}>
+              Latest successful preview updated{" "}
+              {formatTimestamp(latestSuccessfulJob?.updatedAt)}
+            </span>
+
+            {unsupportedSelectedAwayDefense ? (
+              <Alert tone="note">
+                The grid covers ML-supported opponent defenses only, so{" "}
+                {unsupportedSelectedAwayDefense} is not included in the
+                comparison set.
+              </Alert>
+            ) : null}
+          </div>
+
+          <TableShell className="mt-4" tableClassName="min-w-[56rem]">
+            <thead>
+              <tr>
+                <TableHeadCell className="bg-surface sticky left-0 z-10">
+                  Opponent defense
+                </TableHeadCell>
+                {latestTacticsGrid.offenses.map((offense) => (
+                  <TableHeadCell className="text-center" key={offense}>
+                    {offense}
+                  </TableHeadCell>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {latestTacticsGrid.defenses.map((defense, rowIndex) => {
+                const row = latestTacticsGrid.cells[rowIndex] ?? [];
+
+                return (
+                  <tr key={defense}>
+                    <TableCell className="bg-surface sticky left-0 z-10 font-semibold">
+                      {defense}
+                    </TableCell>
+                    {row.map((cell) => {
+                      const isSelected =
+                        selectedGridCell?.homeOffense === cell.homeOffense &&
+                        selectedGridCell?.awayDefense === cell.awayDefense;
+
+                      return (
+                        <TableCell
+                          className="min-w-[8.5rem] text-center"
+                          key={cell.homeOffense}
+                        >
+                          <div
+                            className={cn(
+                              "rounded-card grid gap-1 border px-2 py-2",
+                              isSelected
+                                ? "border-accent bg-accent/10 shadow-sm"
+                                : "border-black/8",
+                            )}
+                            style={predictionGridCellStyle(cell.pointDiff)}
+                          >
+                            <strong className="text-ink text-sm">
+                              {formatGridScore(cell)}
+                            </strong>
+                            <span className="text-ink-muted text-xs font-semibold">
+                              {formatGridDiff(cell)}
+                            </span>
+                            {isSelected ? (
+                              <span className="text-accent text-[0.68rem] font-bold tracking-[0.1em] uppercase">
+                                Current
+                              </span>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </TableShell>
+        </Panel>
+      ) : null}
 
       <Panel as="article" padding="sm" variant="solid">
         <SectionHeading title="Recent previews" titleAs="h4" />
@@ -786,10 +994,12 @@ export function PredictionPanel({
         ) : jobs.length ? (
           <ul className={listClassName}>
             {jobs.map((job) => {
-              const forecastContext = extractForecastContextFromRequest(job.request);
+              const forecastContext = extractForecastContextFromRequest(
+                job.request,
+              );
               return (
                 <li className={listItemClassName} key={job.id}>
-                  <strong className="text-sm text-ink">
+                  <strong className="text-ink text-sm">
                     {describePredictionJob(job)}
                   </strong>
                   <span className={statusCopyClassName}>
@@ -798,7 +1008,7 @@ export function PredictionPanel({
                     {job.error ? ` • ${job.error}` : ""}
                   </span>
                   {forecastContext ? (
-                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-note">
+                    <span className="text-note text-xs font-semibold tracking-[0.12em] uppercase">
                       Forecast {forecastContext.scenarioLabel} •{" "}
                       {formatPercent(forecastContext.scenarioProbability)}
                     </span>
@@ -826,35 +1036,6 @@ function describePredictionJob(job: PredictionJobRecord): string {
   }
 
   return job.mode === "CONNECTED" ? "Saved-game preview" : "Manual preview";
-}
-
-function toPredictionResult(value: unknown): {
-  awayScore: number;
-  homeScore: number;
-  pointDiff: number;
-} | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  const typed = value as {
-    awayScore?: unknown;
-    homeScore?: unknown;
-    pointDiff?: unknown;
-  };
-  if (
-    typeof typed.homeScore !== "number" ||
-    typeof typed.awayScore !== "number" ||
-    typeof typed.pointDiff !== "number"
-  ) {
-    return null;
-  }
-
-  return {
-    homeScore: typed.homeScore,
-    awayScore: typed.awayScore,
-    pointDiff: typed.pointDiff,
-  };
 }
 
 function describeResolvedInput(value: unknown): string[] {
@@ -984,7 +1165,9 @@ function summarizeMatchupEdge(
     return null;
   }
 
-  const diff = treatAsDefense ? offenseValue - defenseValue : offenseValue - defenseValue;
+  const diff = treatAsDefense
+    ? offenseValue - defenseValue
+    : offenseValue - defenseValue;
   return `${label} ${formatSigned(diff)}`;
 }
 
@@ -1012,4 +1195,34 @@ function asOptionalNumber(value: unknown): number | null {
   }
 
   return null;
+}
+
+function formatGridScore(cell: PredictionGridCell): string {
+  if (cell.homeScore === null || cell.awayScore === null) {
+    return "Unavailable";
+  }
+
+  return `${cell.homeScore.toFixed(1)}-${cell.awayScore.toFixed(1)}`;
+}
+
+function formatGridDiff(cell: PredictionGridCell): string {
+  if (cell.pointDiff === null) {
+    return "No result";
+  }
+
+  return formatSigned(cell.pointDiff);
+}
+
+function predictionGridCellStyle(pointDiff: number | null) {
+  if (pointDiff === null) {
+    return undefined;
+  }
+
+  const alpha = Math.min(0.28, 0.08 + Math.abs(pointDiff) / 24);
+  return {
+    backgroundColor:
+      pointDiff >= 0
+        ? `rgba(20, 138, 95, ${alpha.toFixed(3)})`
+        : `rgba(184, 55, 64, ${alpha.toFixed(3)})`,
+  };
 }
