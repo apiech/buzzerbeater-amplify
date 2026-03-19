@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { BBXmlApiClient, BBXmlApiError } from "../../../lib/bbapi";
 import type {
   BBApiBoxScore,
+  BBApiBoxScorePlayer,
   BBApiBoxScoreTeam,
   BBApiCurrentWorkspace,
   BBApiRosterPlayer,
@@ -11,6 +12,11 @@ import type {
   BBApiTeamInfo,
   BBApiTeamStats,
 } from "../../../lib/bbapi";
+import {
+  buildRawPlayerSkills,
+  rankRoster,
+  type RawPlayerSkills,
+} from "../../../lib/coach-parrot";
 import {
   buildActiveTrackedTeamCredentialProjection,
   deactivateActiveTrackedTeamsForUser,
@@ -25,7 +31,6 @@ import {
 } from "./player-snapshot-access";
 import {
   buildPlayerSkillObservationSortKey,
-  createSavedLineupScenario,
   type BbConnectionRecord,
   type BbCredentialRecord,
   type ConnectionStatus,
@@ -34,7 +39,6 @@ import {
   deleteBbCredential,
   getBbConnection,
   getBbCredential,
-  getMatchBoxscore,
   getTrackedPlayer as getTrackedPlayerRecord,
   getSharedPlayerCardRecord,
   listConnectedBbConnections,
@@ -55,6 +59,12 @@ import {
   normalizeLeagueTimeZone,
 } from "../../../lib/league-timezones";
 import type { Schema } from "../resource";
+import {
+  buildCompetitiveRecentSample,
+  matchIncludesTeam,
+  normalizeScheduleType,
+  type CompetitiveRecentSample,
+} from "./match-importance";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -73,10 +83,7 @@ type ScoutWorkspaceResult = ResolverResult<"getScoutWorkspace">;
 type LeagueIntelWorkspaceResult = ResolverResult<"getLeagueIntel">;
 type PlayerLabWorkspaceResult = ResolverResult<"getPlayerLab">;
 type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
-type MatchBoxscoreDetailsResult = ResolverResult<"getMatchBoxscoreDetails">;
 type SharedPlayerCardResult = ResolverResult<"generateSharedPlayerCard">;
-type LineupPlanResult = ResolverResult<"getLineupPlan">;
-type LineupScenarioResult = ResolverResult<"saveLineupScenario">;
 type SalaryProjectionResult = ResolverResult<"getSalaryProjection">;
 
 type PlayerSummaryRecord = TeamHubWorkspaceResult["roster"][number];
@@ -89,12 +96,6 @@ type TendenciesSummary = NonNullable<
 type TrendCountEntry = TendenciesSummary["offense"][number];
 type OpponentSummaryRecord = ScoutWorkspaceResult["availableOpponents"][number];
 type SharedPlayerCardPayload = NonNullable<SharedPlayerCardResult["payload"]>;
-type MatchMetricEntry = MatchBoxscoreDetailsResult["teamRatings"][number];
-type MatchContextResult = NonNullable<MatchBoxscoreDetailsResult["context"]>;
-type LineupPlanStarter = LineupPlanResult["recommendedStarters"][number];
-type LineupPlanBenchPlayer = LineupPlanResult["benchOrder"][number];
-type MinuteTargetEntry = LineupPlanResult["minuteTargets"][number];
-type LineupScenarioStarter = LineupScenarioResult["starters"][number];
 type SalaryProjectionSource = PlayerSummaryRecord & {
   profileJson?: unknown;
 };
@@ -132,7 +133,6 @@ type WorkspaceDependencies = {
     userId: string,
     playerId: string,
   ) => Promise<Record<string, unknown>[]>;
-  getMatchBoxscore: typeof getMatchBoxscore;
   updateSharedPlayerCard: typeof updateSharedPlayerCard;
 };
 
@@ -144,7 +144,6 @@ const defaultWorkspaceDependencies: WorkspaceDependencies = {
     ((await getTrackedPlayerRecord(env, userId, playerId)) ??
       (await getCachedWorkspacePlayer(env, userId, playerId))) as SalaryProjectionSource | null,
   listWorkspacePlayerHistory,
-  getMatchBoxscore,
   updateSharedPlayerCard,
 };
 
@@ -158,6 +157,11 @@ const backfillRuntime = {
 export const __testing = {
   backfillRuntime,
   buildConnectionRecord,
+  buildHomeCorePlayers,
+  matchIncludesTeam,
+  selectCompletedMatches,
+  selectNextMatch,
+  selectRecentMatches,
   readCachedWorkspace,
   shouldSyncWorkspace,
 };
@@ -207,6 +211,8 @@ export async function connectAccount(args: {
     const synced = await syncWorkspace({
       env: args.env,
       userId,
+      force: true,
+      syncActiveTrackedTeams: true,
       connectionOverride: buildConnectionRecord(userId, existingConnection, {
         bbLoginName,
         status: "CONNECTED",
@@ -296,6 +302,7 @@ export async function getOrRefreshWorkspace(args: {
   env: GraphqlEnv;
   identity: unknown;
   force?: boolean;
+  syncActiveTrackedTeams?: boolean;
 }): Promise<WorkspaceBundle> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
@@ -306,6 +313,7 @@ export async function getOrRefreshWorkspace(args: {
     env: args.env,
     userId,
     force: args.force ?? false,
+    syncActiveTrackedTeams: args.syncActiveTrackedTeams ?? false,
   });
 }
 
@@ -579,11 +587,6 @@ export async function getScoutWorkspaceForTeam(args: {
     currentWorkspace,
   );
   const fetchedAt = new Date().toISOString();
-  const credentialContext = await loadActiveTrackedTeamCredentialContext(
-    args.env,
-    userId,
-    baseWorkspace.connection.bbLoginName,
-  );
 
   await persistWorkspace(
     args.env,
@@ -593,7 +596,6 @@ export async function getScoutWorkspaceForTeam(args: {
     currentBoxScores,
     opponentWorkspace,
     fetchedAt,
-    credentialContext,
   );
 
   return {
@@ -708,114 +710,6 @@ export async function getPlayerTrend(
   };
 }
 
-export async function getMatchBoxscoreDetails(
-  args: {
-    env: GraphqlEnv;
-    identity: unknown;
-    matchId: string;
-  },
-  dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
-): Promise<MatchBoxscoreDetailsResult> {
-  const userId = resolveUserId(args.identity);
-  if (!userId) {
-    throw new Error("Authenticated user identity is missing.");
-  }
-
-  const matchId = args.matchId.trim();
-  if (!matchId) {
-    throw new Error("A match id is required.");
-  }
-
-  const boxscore = await dependencies.getMatchBoxscore(
-    args.env,
-    userId,
-    matchId,
-  );
-  if (!boxscore) {
-    throw new Error("The requested match boxscore is not available in cache.");
-  }
-
-  return {
-    matchId,
-    opponentTeamName: asString(boxscore.opponentTeamName),
-    offStrategy: asString(boxscore.offStrategy),
-    defStrategy: asString(boxscore.defStrategy),
-    opponentOffStrategy: asString(boxscore.opponentOffStrategy),
-    opponentDefStrategy: asString(boxscore.opponentDefStrategy),
-    teamRatings: toMetricEntries(toRecord(boxscore.teamRatingsJson)),
-    opponentRatings: toMetricEntries(toRecord(boxscore.opponentRatingsJson)),
-    teamEfficiency: toMetricEntries(toRecord(boxscore.teamEfficiencyJson)),
-    opponentEfficiency: toMetricEntries(
-      toRecord(boxscore.opponentEfficiencyJson),
-    ),
-    context: buildMatchContext(toRecord(boxscore.boxscoreJson)),
-    source: "LEGACY_CACHE",
-  };
-}
-
-export async function getLineupPlan(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-}): Promise<LineupPlanResult> {
-  const workspace = await getOrRefreshWorkspace({
-    env: args.env,
-    identity: args.identity,
-  });
-
-  return buildLineupPlanPayload(workspace);
-}
-
-export async function saveLineupScenario(args: {
-  env: GraphqlEnv;
-  identity: unknown;
-  name: string;
-  starters: unknown;
-  minuteTargets: unknown;
-  note?: string | null;
-}): Promise<LineupScenarioResult> {
-  const userId = resolveUserId(args.identity);
-  if (!userId) {
-    throw new Error("Authenticated user identity is missing.");
-  }
-
-  const name = args.name.trim();
-  if (!name) {
-    throw new Error("A lineup scenario name is required.");
-  }
-
-  const scenarioId = randomUUID();
-  const savedAt = new Date().toISOString();
-  const starters = toLineupScenarioStarters(args.starters);
-  const minuteTargets = toMinuteTargetEntries(args.minuteTargets);
-
-  if (!starters.length) {
-    throw new Error("At least one starter must be provided.");
-  }
-
-  if (!minuteTargets.length) {
-    throw new Error("Minute targets must be provided.");
-  }
-
-  await createSavedLineupScenario(args.env, {
-    scenarioId,
-    userId,
-    name,
-    startersJson: starters,
-    minuteTargetsJson: minuteTargets,
-    note: args.note?.trim() || null,
-    savedAt,
-  });
-
-  return {
-    scenarioId,
-    name,
-    savedAt,
-    starters,
-    minuteTargets,
-    note: args.note?.trim() || null,
-  };
-}
-
 export async function getSalaryProjection(
   args: {
     env: GraphqlEnv;
@@ -851,159 +745,6 @@ export async function getSalaryProjection(
     snapshots,
     teamCountryName: connection?.countryName ?? null,
   });
-}
-
-export function buildLineupPlanPayload(
-  workspace: WorkspaceBundle,
-): LineupPlanResult {
-  const roster = workspace.teamHub.roster;
-  if (!roster.length) {
-    throw new Error("No cached roster is available for lineup planning.");
-  }
-
-  const rankedPlayers = roster
-    .map((player) => {
-      const projectedStarterCount = asNumber(player.projectedStarterCount) ?? 0;
-      const ppg = asNumber(player.ppg) ?? 0;
-      const salary = asNumber(player.salary) ?? 0;
-      const dmi = asNumber(player.dmi) ?? 0;
-      const injuryWeeks = asNumber(player.injuryWeeks) ?? 0;
-      const shapeBonus = gameShapeScore(asString(player.gameShape));
-      const position = normalizePosition(asString(player.bestPosition));
-      const score =
-        projectedStarterCount * 12 +
-        ppg * 6 +
-        shapeBonus * 5 +
-        Math.min(18, salary / 1000) +
-        Math.min(10, dmi / 10000) -
-        injuryWeeks * 20;
-
-      return {
-        playerId: asString(player.playerId),
-        fullName: asString(player.fullName) ?? "Unknown player",
-        bestPosition: position ?? asString(player.bestPosition),
-        salary,
-        age: asNumber(player.age),
-        gameShape: asString(player.gameShape),
-        dmi,
-        injuryWeeks,
-        projectedStarterCount,
-        score,
-      };
-    })
-    .sort((left, right) => right.score - left.score);
-
-  const positions = ["PG", "SG", "SF", "PF", "C"] as const;
-  const usedPlayerIds = new Set<string>();
-  const recommendedStarters: LineupPlanStarter[] = positions.flatMap(
-    (position, index) => {
-      const exact = rankedPlayers.find(
-        (player) =>
-          player.playerId &&
-          !usedPlayerIds.has(player.playerId) &&
-          player.bestPosition === position,
-      );
-      const fallback = rankedPlayers.find(
-        (player) => player.playerId && !usedPlayerIds.has(player.playerId),
-      );
-      const selected = exact ?? fallback;
-      if (!selected?.playerId) {
-        return [];
-      }
-
-      usedPlayerIds.add(selected.playerId);
-      return [
-        {
-          playerId: selected.playerId,
-          fullName: selected.fullName,
-          bestPosition: position,
-          projectedStarterCount: selected.projectedStarterCount,
-          salary: selected.salary,
-          gameShape: selected.gameShape,
-          score: Number(selected.score.toFixed(2)),
-          slot: index + 1,
-        },
-      ];
-    },
-  );
-
-  const benchOrder: LineupPlanBenchPlayer[] = rankedPlayers
-    .filter((player) => player.playerId && !usedPlayerIds.has(player.playerId))
-    .map((player, index) => ({
-      playerId: player.playerId as string,
-      fullName: player.fullName,
-      bestPosition: player.bestPosition,
-      projectedStarterCount: player.projectedStarterCount,
-      score: Number(player.score.toFixed(2)),
-      benchSlot: index + 1,
-    }))
-    .slice(0, 7);
-
-  const minuteTargets = recommendedStarters.map((player, index) => ({
-    playerId: player.playerId,
-    minutes: suggestMinutes(player.gameShape ?? null, index),
-  }));
-
-  const homeInjuries = workspace.home.team.injuries;
-  const scoutSummary = workspace.scout.summary;
-  const offenseTendencies = summarizeLeaningTendencies(
-    scoutSummary?.tendencies.offense ?? null,
-  );
-  const defenseTendencies = summarizeLeaningTendencies(
-    scoutSummary?.tendencies.defense ?? null,
-  );
-
-  const rotationNotes = [
-    recommendedStarters.length === 5
-      ? `Locked five-man core built from roster form, box-score starts, and per-game output.`
-      : "Roster depth is thin enough that the starting five is only partially confidence-backed.",
-    benchOrder[0]
-      ? `${benchOrder[0].fullName} is the first bench trigger if the matchup turns volatile.`
-      : "No reliable bench stabilizer is available yet.",
-    offenseTendencies
-      ? `Scout offense leans ${offenseTendencies}; prioritize guards with stable shape and DMI.`
-      : "Opponent offense trends are still sparse, so the plan leans on your internal form data.",
-    defenseTendencies
-      ? `Scout defense leans ${defenseTendencies}; keep your best shot creators in the opening unit.`
-      : "Opponent defensive trend data is limited, so lineup confidence is moderate.",
-  ].filter((note): note is string => Boolean(note));
-
-  const matchupRationale = [
-    homeInjuries.length
-      ? `${homeInjuries.length} active injury alert${homeInjuries.length === 1 ? "" : "s"} are reducing lineup flexibility.`
-      : "Healthy core available for a standard rotation.",
-    recommendedStarters[0]
-      ? `${recommendedStarters[0].fullName} grades as the lineup anchor on current form and usage.`
-      : null,
-    scoutSummary?.teamName
-      ? `Plan tuned for ${asString(scoutSummary.teamName)} using the cached scout workspace.`
-      : "Plan is based on your current roster without an explicit opponent scout target.",
-  ].filter((note): note is string => Boolean(note));
-
-  const confidenceInputs = recommendedStarters.reduce(
-    (total, player) =>
-      total + ((player.projectedStarterCount ?? 0) > 0 ? 1 : 0),
-    0,
-  );
-  const confidence = Math.max(
-    0.35,
-    Math.min(0.92, Number(((confidenceInputs + 2) / 8).toFixed(2))),
-  );
-
-  return {
-    generatedAt: new Date().toISOString(),
-    recommendedStarters,
-    benchOrder,
-    minuteTargets,
-    rotationNotes,
-    matchupRationale,
-    injuryAlerts: homeInjuries.map((injury) => ({
-      playerId: asString(injury.playerId),
-      fullName: asString(injury.fullName) ?? "Unknown player",
-      injuryWeeks: asNumber(injury.injuryWeeks),
-    })),
-    confidence,
-  };
 }
 
 export function buildSalaryProjectionPayload(args: {
@@ -1100,6 +841,7 @@ async function syncWorkspace(args: {
   env: GraphqlEnv;
   userId: string;
   force?: boolean;
+  syncActiveTrackedTeams?: boolean;
   connectionOverride?: BbConnectionRecord;
   credentialsOverride?: { bbLoginName: string; accessKey: string };
   credentialOverride?: BbCredentialRecord;
@@ -1152,7 +894,13 @@ async function syncWorkspace(args: {
       currentWorkspace.schedule.matches,
       currentWorkspace.teamInfo.teamId,
     );
+    const homeCoreMatches = selectCompletedMatches(
+      currentWorkspace.schedule.matches,
+      currentWorkspace.teamInfo.teamId,
+      12,
+    );
     const currentBoxScores = await fetchRecentBoxScores(client, recentMatches);
+    const homeCoreBoxScores = await fetchRecentBoxScores(client, homeCoreMatches);
     const nextOpponentTeamId = nextMatch
       ? deriveOpponentTeamId(nextMatch, currentWorkspace.teamInfo.teamId)
       : null;
@@ -1194,6 +942,8 @@ async function syncWorkspace(args: {
       nextMatch,
       recentMatches,
       currentBoxScores,
+      homeCoreMatches,
+      homeCoreBoxScores,
       opponentWorkspace,
       connectionForViews,
     );
@@ -1229,13 +979,6 @@ async function syncWorkspace(args: {
         },
       },
     );
-    const credentialContext = await loadActiveTrackedTeamCredentialContext(
-      args.env,
-      args.userId,
-      bbLoginName,
-      args.credentialOverride,
-    );
-
     await upsertBbConnection(args.env, updatedConnection);
     await persistWorkspace(
       args.env,
@@ -1245,8 +988,22 @@ async function syncWorkspace(args: {
       currentBoxScores,
       opponentWorkspace,
       now,
-      credentialContext,
     );
+    if (args.syncActiveTrackedTeams) {
+      const credentialContext = await loadActiveTrackedTeamCredentialContext(
+        args.env,
+        args.userId,
+        bbLoginName,
+        args.credentialOverride,
+      );
+      await syncOwnedActiveTrackedTeams(
+        args.env,
+        args.userId,
+        currentWorkspace,
+        now,
+        credentialContext,
+      );
+    }
 
     await updateSyncRun(args.env, {
       id: syncRun.id,
@@ -1293,7 +1050,6 @@ async function persistWorkspace(
   currentBoxScores: BBApiBoxScore[],
   opponentWorkspace: OpponentWorkspace | null,
   fetchedAt: string,
-  connectionCredential: ActiveTrackedTeamCredentialContext,
 ): Promise<void> {
   const primaryTeamId = workspace.teamInfo.teamId;
   if (!primaryTeamId) {
@@ -1314,20 +1070,6 @@ async function persistWorkspace(
     summaryJson: workspace.teamInfo,
     fetchedAt,
   });
-  await upsertActiveTrackedTeam(env, {
-    userId,
-    teamId: primaryTeamId,
-    teamName: workspace.teamInfo.teamName ?? "Unknown team",
-    bbLoginName: connectionCredential.bbLoginName,
-    credentialCipherText: connectionCredential.credentialCipherText,
-    credentialIv: connectionCredential.credentialIv,
-    credentialAuthTag: connectionCredential.credentialAuthTag,
-    credentialAlgorithm: connectionCredential.credentialAlgorithm,
-    active: true,
-    isPrimary: true,
-    fetchedAt,
-    updatedAt: fetchedAt,
-  });
 
   if (opponentWorkspace?.teamInfo.teamId) {
     await upsertTrackedTeam(env, {
@@ -1343,20 +1085,6 @@ async function persistWorkspace(
       isPrimary: false,
       summaryJson: opponentWorkspace.teamInfo,
       fetchedAt,
-    });
-    await upsertActiveTrackedTeam(env, {
-      userId,
-      teamId: opponentWorkspace.teamInfo.teamId,
-      teamName: opponentWorkspace.teamInfo.teamName ?? "Unknown opponent",
-      bbLoginName: connectionCredential.bbLoginName,
-      credentialCipherText: connectionCredential.credentialCipherText,
-      credentialIv: connectionCredential.credentialIv,
-      credentialAuthTag: connectionCredential.credentialAuthTag,
-      credentialAlgorithm: connectionCredential.credentialAlgorithm,
-      active: true,
-      isPrimary: false,
-      fetchedAt,
-      updatedAt: fetchedAt,
     });
   }
 
@@ -1393,27 +1121,60 @@ async function persistWorkspace(
     ...currentBoxScores,
     ...(opponentWorkspace?.recentBoxScores ?? []),
   ]) {
-    const perspective = determinePerspective(
-      boxScore,
-      workspace.teamInfo.teamId,
-      opponentWorkspace?.teamInfo.teamId ?? null,
-    );
     await upsertMatchBoxscore(env, {
       userId,
       matchId: boxScore.matchId,
-      teamId: perspective.teamId,
-      opponentTeamId: perspective.opponentTeamId,
-      opponentTeamName: perspective.opponentTeamName,
-      offStrategy: perspective.team.offStrategy ?? null,
-      defStrategy: perspective.team.defStrategy ?? null,
-      opponentOffStrategy: perspective.opponent.offStrategy ?? null,
-      opponentDefStrategy: perspective.opponent.defStrategy ?? null,
-      teamRatingsJson: perspective.team.ratings,
-      opponentRatingsJson: perspective.opponent.ratings,
-      teamEfficiencyJson: perspective.team.efficiency,
-      opponentEfficiencyJson: perspective.opponent.efficiency,
       boxscoreJson: boxScore,
       fetchedAt,
+    });
+  }
+}
+
+async function syncOwnedActiveTrackedTeams(
+  env: GraphqlEnv,
+  userId: string,
+  workspace: BBApiCurrentWorkspace,
+  fetchedAt: string,
+  connectionCredential: ActiveTrackedTeamCredentialContext,
+): Promise<void> {
+  const primaryTeamId = workspace.teamInfo.teamId;
+  if (!primaryTeamId) {
+    throw new Error("Workspace team info did not include a primary teamId.");
+  }
+
+  const existingTeams = await listActiveTrackedTeamsForUser(env, userId);
+  const activePrimaryRecord = {
+    userId,
+    teamId: primaryTeamId,
+    teamName: workspace.teamInfo.teamName ?? "Unknown team",
+    bbLoginName: connectionCredential.bbLoginName,
+    credentialCipherText: connectionCredential.credentialCipherText,
+    credentialIv: connectionCredential.credentialIv,
+    credentialAuthTag: connectionCredential.credentialAuthTag,
+    credentialAlgorithm: connectionCredential.credentialAlgorithm,
+    active: true,
+    isPrimary: true,
+    fetchedAt,
+    updatedAt: fetchedAt,
+  };
+
+  await upsertActiveTrackedTeam(env, activePrimaryRecord);
+
+  for (const trackedTeam of existingTeams) {
+    if (trackedTeam.teamId === primaryTeamId) {
+      continue;
+    }
+
+    await upsertActiveTrackedTeam(env, {
+      ...trackedTeam,
+      active: false,
+      bbLoginName: null,
+      credentialCipherText: null,
+      credentialIv: null,
+      credentialAuthTag: null,
+      credentialAlgorithm: null,
+      isPrimary: false,
+      updatedAt: fetchedAt,
     });
   }
 }
@@ -1465,9 +1226,8 @@ async function fetchRecentBoxScores(
   client: BBXmlApiClient,
   matches: BBApiScheduleMatch[],
 ): Promise<BBApiBoxScore[]> {
-  const selected = matches.slice(0, 5);
   const boxScores = await Promise.all(
-    selected.map(async (match) => {
+    matches.map(async (match) => {
       try {
         return await client.getBoxScore(match.id ?? undefined);
       } catch {
@@ -1486,12 +1246,21 @@ function buildHomeWorkspace(
   nextMatch: BBApiScheduleMatch | null,
   recentMatches: BBApiScheduleMatch[],
   currentBoxScores: BBApiBoxScore[],
+  homeCoreMatches: BBApiScheduleMatch[],
+  homeCoreBoxScores: BBApiBoxScore[],
   opponentWorkspace: OpponentWorkspace | null,
   connection: BbConnectionRecord,
 ): HomeWorkspaceResult {
   const cachedMatchIds = new Set(
     currentBoxScores.map((boxScore) => boxScore.matchId),
   );
+  const competitiveSample = buildCompetitiveRecentSample({
+    matches: homeCoreMatches,
+    boxScores: homeCoreBoxScores,
+    teamId: workspace.teamInfo.teamId,
+    rawLookback: 12,
+    maxIncludedGames: 5,
+  });
   return {
     syncedAt: connection.lastSyncAt ?? null,
     connection,
@@ -1507,10 +1276,12 @@ function buildHomeWorkspace(
           fullName: player.fullName,
           injuryWeeks: player.injuryWeeks,
         })),
-      topPlayers: buildTopPlayers(
-        workspace.roster.players,
-        workspace.teamStats,
-      ),
+      topPlayers: buildHomeCorePlayers({
+        rosterPlayers: workspace.roster.players,
+        teamStats: workspace.teamStats,
+        competitiveSample,
+        teamId: workspace.teamInfo.teamId,
+      }),
     },
     nextMatch: nextMatch
       ? buildHomeNextMatch(nextMatch, workspace.teamInfo.teamId)
@@ -1751,6 +1522,7 @@ function buildRecentMatchups(
   cachedMatchIds: Set<string>,
 ): MatchSummaryRecord[] {
   return matches
+    .filter((match) => isClubMatchForTeam(match, currentTeamId))
     .filter(
       (match) => deriveOpponentTeamId(match, currentTeamId) === opponentTeamId,
     )
@@ -1764,6 +1536,27 @@ function buildRecentMatchups(
         Boolean(match.id && cachedMatchIds.has(match.id)),
       ),
     );
+}
+
+function isClubMatchForTeam(
+  match: BBApiScheduleMatch,
+  teamId: string | null,
+): boolean {
+  return matchIncludesTeam(match, teamId) && !isNonClubScheduleType(match.type);
+}
+
+function isNonClubScheduleType(type: string | null | undefined): boolean {
+  const normalized = normalizeScheduleType(type);
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.includes("allstar") ||
+    normalized.includes("all-star") ||
+    normalized.startsWith("nationalteam") ||
+    normalized.startsWith("nt.")
+  );
 }
 
 function buildHomeNextMatch(
@@ -1944,71 +1737,13 @@ function playerToTrackedPlayerRecord(
   };
 }
 
-function determinePerspective(
-  boxScore: BBApiBoxScore,
-  primaryTeamId: string | null,
-  secondaryTeamId: string | null,
-): {
-  teamId: string | null;
-  opponentTeamId: string | null;
-  opponentTeamName: string | null;
-  team: BBApiBoxScoreTeam;
-  opponent: BBApiBoxScoreTeam;
-} {
-  if (
-    boxScore.homeTeam.id === primaryTeamId ||
-    boxScore.awayTeam.id === primaryTeamId
-  ) {
-    const team =
-      boxScore.homeTeam.id === primaryTeamId
-        ? boxScore.homeTeam
-        : boxScore.awayTeam;
-    const opponent =
-      team === boxScore.homeTeam ? boxScore.awayTeam : boxScore.homeTeam;
-    return {
-      teamId: primaryTeamId,
-      opponentTeamId: opponent.id,
-      opponentTeamName: opponent.teamName,
-      team,
-      opponent,
-    };
-  }
-
-  if (
-    secondaryTeamId &&
-    (boxScore.homeTeam.id === secondaryTeamId ||
-      boxScore.awayTeam.id === secondaryTeamId)
-  ) {
-    const team =
-      boxScore.homeTeam.id === secondaryTeamId
-        ? boxScore.homeTeam
-        : boxScore.awayTeam;
-    const opponent =
-      team === boxScore.homeTeam ? boxScore.awayTeam : boxScore.homeTeam;
-    return {
-      teamId: secondaryTeamId,
-      opponentTeamId: opponent.id,
-      opponentTeamName: opponent.teamName,
-      team,
-      opponent,
-    };
-  }
-
-  return {
-    teamId: boxScore.homeTeam.id,
-    opponentTeamId: boxScore.awayTeam.id,
-    opponentTeamName: boxScore.awayTeam.teamName,
-    team: boxScore.homeTeam,
-    opponent: boxScore.awayTeam,
-  };
-}
-
 function selectNextMatch(
   matches: BBApiScheduleMatch[],
   teamId: string | null,
 ): BBApiScheduleMatch | null {
   return (
     [...matches]
+      .filter((match) => isClubMatchForTeam(match, teamId))
       .filter(
         (match) =>
           deriveTeamScore(match, teamId) === null ||
@@ -2018,18 +1753,27 @@ function selectNextMatch(
   );
 }
 
-function selectRecentMatches(
+function selectCompletedMatches(
   matches: BBApiScheduleMatch[],
   teamId: string | null,
+  limit: number,
 ): BBApiScheduleMatch[] {
   return [...matches]
+    .filter((match) => isClubMatchForTeam(match, teamId))
     .filter(
       (match) =>
         deriveTeamScore(match, teamId) !== null &&
         deriveOpponentScore(match, teamId) !== null,
     )
     .sort(byStartTimeDescending)
-    .slice(0, 5);
+    .slice(0, limit);
+}
+
+function selectRecentMatches(
+  matches: BBApiScheduleMatch[],
+  teamId: string | null,
+): BBApiScheduleMatch[] {
+  return selectCompletedMatches(matches, teamId, 5);
 }
 
 function countStarters(
@@ -2037,8 +1781,10 @@ function countStarters(
   teamId: string | null,
 ): Record<string, number> {
   return boxScores.reduce<Record<string, number>>((accumulator, boxScore) => {
-    const team =
-      boxScore.homeTeam.id === teamId ? boxScore.homeTeam : boxScore.awayTeam;
+    const team = resolveBoxScoreTeamForTeam(boxScore, teamId);
+    if (!team) {
+      return accumulator;
+    }
     for (const player of team.players) {
       const started = asBoolean(player.details.isStarter) ?? false;
       if (started && player.id) {
@@ -2057,8 +1803,10 @@ function summarizeTendencies(
   const defense = new Map<string, number>();
 
   for (const boxScore of boxScores) {
-    const team =
-      boxScore.homeTeam.id === teamId ? boxScore.homeTeam : boxScore.awayTeam;
+    const team = resolveBoxScoreTeamForTeam(boxScore, teamId);
+    if (!team) {
+      continue;
+    }
     if (team.offStrategy) {
       offense.set(team.offStrategy, (offense.get(team.offStrategy) ?? 0) + 1);
     }
@@ -2080,43 +1828,6 @@ function toTrendEntries(values: Map<string, number>): TrendCountEntry[] {
       count,
     }))
     .sort((left, right) => String(left.key).localeCompare(String(right.key)));
-}
-
-function toMetricEntries(
-  values: Record<string, unknown> | null,
-): MatchMetricEntry[] {
-  if (!values) {
-    return [];
-  }
-
-  return Object.entries(values)
-    .filter(([key]) => !key.startsWith("__"))
-    .map(([key, rawValue]) => {
-      const numberValue = asNumber(rawValue);
-      return {
-        key,
-        numberValue,
-        textValue: numberValue === null ? asString(rawValue) : null,
-      };
-    })
-    .sort((left, right) => String(left.key).localeCompare(String(right.key)));
-}
-
-function buildMatchContext(
-  boxscore: Record<string, unknown> | null,
-): MatchContextResult | null {
-  if (!boxscore) {
-    return null;
-  }
-
-  const homeTeam = toRecord(boxscore.homeTeam);
-  const awayTeam = toRecord(boxscore.awayTeam);
-  return {
-    homeTeamName: asString(homeTeam?.teamName),
-    awayTeamName: asString(awayTeam?.teamName),
-    effortDelta: asNumber(boxscore.effortDelta),
-    neutral: asBoolean(boxscore.neutral),
-  };
 }
 
 function projectTeamInfo(teamInfo: BBApiTeamInfo): TeamInfoSummary {
@@ -2147,48 +1858,9 @@ function projectPlayerSummary(
     injuryWeeks: asNumber(player.injuryWeeks),
     projectedStarterCount: asNumber(player.projectedStarterCount),
     ppg: asNumber(player.ppg),
+    recentAvgMinutes: asNumber(player.recentAvgMinutes),
+    recentStartCount: asNumber(player.recentStartCount),
   };
-}
-
-function toLineupScenarioStarters(value: unknown): LineupScenarioStarter[] {
-  return toRecordArray(value)
-    .map((player) => ({
-      playerId: asString(player.playerId) ?? "",
-      fullName: asString(player.fullName) ?? "Unknown player",
-      bestPosition: asString(player.bestPosition),
-      projectedStarterCount: asNumber(player.projectedStarterCount),
-      salary: asNumber(player.salary),
-      gameShape: asString(player.gameShape),
-      score: asNumber(player.score),
-      slot: asNumber(player.slot),
-      benchSlot: asNumber(player.benchSlot),
-    }))
-    .filter((player) => Boolean(player.playerId));
-}
-
-function toMinuteTargetEntries(value: unknown): MinuteTargetEntry[] {
-  const source = toRecord(value);
-  if (source) {
-    return Object.entries(source)
-      .map(([playerId, minutes]) => ({
-        playerId,
-        minutes: asNumber(minutes),
-      }))
-      .filter(
-        (entry): entry is { playerId: string; minutes: number } =>
-          Boolean(entry.playerId) && entry.minutes !== null,
-      );
-  }
-
-  return toRecordArray(value)
-    .map((entry) => ({
-      playerId: asString(entry.playerId) ?? "",
-      minutes: asNumber(entry.minutes),
-    }))
-    .filter(
-      (entry): entry is { playerId: string; minutes: number } =>
-        Boolean(entry.playerId) && entry.minutes !== null,
-    );
 }
 
 function buildTopPlayers(
@@ -2209,6 +1881,413 @@ function buildTopPlayers(
       return (rightPpg ?? 0) - (leftPpg ?? 0);
     })
     .slice(0, 5);
+}
+
+function buildHomeCorePlayers(args: {
+  rosterPlayers: BBApiRosterPlayer[];
+  teamStats: BBApiTeamStats | null;
+  competitiveSample: CompetitiveRecentSample;
+  teamId: string | null;
+}): PlayerSummaryRecord[] {
+  const usageByPlayerId = summarizeRecentUsage(
+    args.competitiveSample,
+    args.teamId,
+  );
+  const useUsageSignals = args.competitiveSample.includedGames.length >= 2;
+  const playerKeys = args.rosterPlayers.map((player) => ({
+    key: getPlayerKey(player),
+    player,
+  }));
+  const salaryNorm = buildNormalizedValueMap(
+    playerKeys.map(({ key, player }) => ({
+      key,
+      value: player.salary,
+    })),
+  );
+  const dmiNorm = buildNormalizedValueMap(
+    playerKeys.map(({ key, player }) => ({
+      key,
+      value: player.dmi,
+    })),
+  );
+  const gameShapeNorm = buildNormalizedValueMap(
+    playerKeys.map(({ key, player }) => ({
+      key,
+      value: player.skills.gameShape && typeof player.skills.gameShape === "string" ? gameShapeScore(player.skills.gameShape) : null,
+    })),
+  );
+  const scoredPlayers = playerKeys.map(({ key, player }) => {
+    const rawSkills = buildRawPlayerSkills({
+      playerId: key,
+      name: player.fullName,
+      age: player.age,
+      salary: player.salary,
+      skills: player.skills,
+    });
+    return {
+      key,
+      player,
+      rawSkills,
+      recognizedSkillCount: countRecognizedSkillValues(rawSkills),
+    };
+  });
+  const skillEligiblePlayers = scoredPlayers.filter(
+    (entry) => entry.recognizedSkillCount >= 8,
+  );
+  const skillOutputs = skillEligiblePlayers.length
+    ? rankRoster({
+        roster: {
+          players: skillEligiblePlayers.map((entry) => entry.rawSkills),
+        },
+        context: {
+          offense: "Base Offense",
+          defense: "Man to man",
+          enthusiasm: 5,
+          homeCourt: "Away or Neutral",
+        },
+      }).playerOutputs
+    : {};
+  const skillTalentNorm = buildNormalizedValueMap(
+    skillEligiblePlayers.map((entry) => ({
+      key: entry.key,
+      value: averageTopTwoOutputs(skillOutputs[entry.key] ?? null),
+    })),
+  );
+  const minuteNorm = buildNormalizedValueMap(
+    playerKeys.map(({ key }) => ({
+      key,
+      value: useUsageSignals
+        ? (usageByPlayerId.get(key)?.recentAvgMinutes ?? 0)
+        : null,
+    })),
+  );
+  const startNorm = buildNormalizedValueMap(
+    playerKeys.map(({ key }) => ({
+      key,
+      value: useUsageSignals
+        ? (usageByPlayerId.get(key)?.recentStartCount ?? 0)
+        : null,
+    })),
+  );
+  const activityNorm = buildNormalizedValueMap(
+    playerKeys.map(({ key }) => ({
+      key,
+      value: useUsageSignals
+        ? (usageByPlayerId.get(key)?.recentActivityScore ?? 0)
+        : null,
+    })),
+  );
+  const gamesPlayedNorm = buildNormalizedValueMap(
+    playerKeys.map(({ key }) => ({
+      key,
+      value: useUsageSignals
+        ? (usageByPlayerId.get(key)?.recentGamesPlayed ?? 0)
+        : null,
+    })),
+  );
+
+  return scoredPlayers
+    .map(({ key, player }) => {
+      const usage = usageByPlayerId.get(key) ?? {
+        recentActivityScore: 0,
+        recentAvgMinutes: 0,
+        recentGamesPlayed: 0,
+        recentStartCount: 0,
+      };
+      const talentScore = skillTalentNorm.get(key) ?? salaryNorm.get(key) ?? null;
+      const formScore = averageAvailable([
+        gameShapeNorm.get(key) ?? null,
+        dmiNorm.get(key) ?? null,
+      ]);
+      const usageScore = useUsageSignals
+        ? computeWeightedAverage([
+            { value: minuteNorm.get(key) ?? null, weight: 40 },
+            { value: startNorm.get(key) ?? null, weight: 25 },
+            { value: activityNorm.get(key) ?? null, weight: 20 },
+            { value: gamesPlayedNorm.get(key) ?? null, weight: 15 },
+          ])
+        : null;
+      const fallbackCoreScore = computeWeightedAverage([
+        { value: talentScore, weight: 60 },
+        { value: formScore, weight: 25 },
+        { value: salaryNorm.get(key) ?? null, weight: 15 },
+      ]);
+      const sparseUsagePenalty = useUsageSignals
+        ? usage.recentGamesPlayed === 0
+          ? 0.5
+          : usage.recentAvgMinutes < 10
+            ? 0.3
+            : usage.recentAvgMinutes < 20
+              ? 0.12
+              : 0
+        : 0;
+      const entrenchedStarterBoost = useUsageSignals
+        ? Math.min(0.08, usage.recentStartCount * 0.02)
+        : 0;
+      const coreScore =
+        (useUsageSignals
+          ? computeWeightedAverage([
+              { value: usageScore, weight: 80 },
+              { value: talentScore, weight: 10 },
+              { value: formScore, weight: 10 },
+            ])
+          : fallbackCoreScore) +
+        entrenchedStarterBoost -
+        sparseUsagePenalty -
+        injuryPenalty(player.injuryWeeks);
+
+      return {
+        summary: {
+          playerId: player.id,
+          fullName: player.fullName,
+          bestPosition: player.bestPosition,
+          nationalityName: player.nationality?.name ?? null,
+          salary: player.salary,
+          age: player.age,
+          gameShape: asString(player.skills.gameShape),
+          dmi: player.dmi,
+          injuryWeeks: player.injuryWeeks,
+          projectedStarterCount: null,
+          ppg: extractPpg(args.teamStats, player),
+          recentAvgMinutes: useUsageSignals
+            ? roundToOneDecimal(usage.recentAvgMinutes)
+            : null,
+          recentStartCount: useUsageSignals ? usage.recentStartCount : null,
+        },
+        coreScore,
+      };
+    })
+    .sort((left, right) => {
+      if (right.coreScore !== left.coreScore) {
+        return right.coreScore - left.coreScore;
+      }
+      return (
+        (right.summary.recentAvgMinutes ?? 0) -
+          (left.summary.recentAvgMinutes ?? 0) ||
+        (right.summary.salary ?? 0) - (left.summary.salary ?? 0) ||
+        left.summary.fullName.localeCompare(right.summary.fullName)
+      );
+    })
+    .slice(0, 5)
+    .map((entry) => entry.summary);
+}
+
+function summarizeRecentUsage(
+  competitiveSample: CompetitiveRecentSample,
+  teamId: string | null,
+): Map<
+  string,
+  {
+    recentAvgMinutes: number;
+    recentStartCount: number;
+    recentGamesPlayed: number;
+    recentActivityScore: number;
+  }
+> {
+  const usageByPlayerId = new Map<
+    string,
+    {
+      totalMinutes: number;
+      totalActivityScore: number;
+      recentStartCount: number;
+      recentGamesPlayed: number;
+    }
+  >();
+  const gamesConsidered = competitiveSample.includedGames.length;
+  if (!gamesConsidered || !teamId) {
+    return new Map();
+  }
+
+  for (const includedGame of competitiveSample.includedGames) {
+    const team = resolveBoxScoreTeamForTeam(includedGame.boxScore, teamId);
+    if (!team) {
+      continue;
+    }
+
+    for (const player of team.players) {
+      if (!player.id) {
+        continue;
+      }
+
+      const minutes = totalMinutesPlayed(player);
+      const current = usageByPlayerId.get(player.id) ?? {
+        totalMinutes: 0,
+        totalActivityScore: 0,
+        recentStartCount: 0,
+        recentGamesPlayed: 0,
+      };
+      current.totalMinutes += minutes;
+      current.totalActivityScore += calculateRecentActivityScore(player);
+      current.recentStartCount += asBoolean(player.details.isStarter) ? 1 : 0;
+      current.recentGamesPlayed += minutes > 0 ? 1 : 0;
+      usageByPlayerId.set(player.id, current);
+    }
+  }
+
+  return new Map(
+    Array.from(usageByPlayerId.entries()).map(([playerId, summary]) => [
+      playerId,
+      {
+        recentAvgMinutes: summary.totalMinutes / gamesConsidered,
+        recentStartCount: summary.recentStartCount,
+        recentGamesPlayed: summary.recentGamesPlayed,
+        recentActivityScore: summary.totalActivityScore / gamesConsidered,
+      },
+    ]),
+  );
+}
+
+function resolveBoxScoreTeamForTeam(
+  boxScore: BBApiBoxScore,
+  teamId: string | null,
+): BBApiBoxScoreTeam | null {
+  if (!teamId) {
+    return null;
+  }
+
+  if (boxScore.homeTeam.id === teamId) {
+    return boxScore.homeTeam;
+  }
+  if (boxScore.awayTeam.id === teamId) {
+    return boxScore.awayTeam;
+  }
+
+  return null;
+}
+
+function totalMinutesPlayed(player: BBApiBoxScorePlayer): number {
+  let total = 0;
+  for (const minutes of Object.values(player.minutesByPosition)) {
+    if (typeof minutes === "number" && Number.isFinite(minutes)) {
+      total += minutes;
+    }
+  }
+  return total;
+}
+
+function calculateRecentActivityScore(player: BBApiBoxScorePlayer): number {
+  const pts = asNumber(player.performance.pts) ?? 0;
+  const reb = asNumber(player.performance.reb) ?? 0;
+  const ast = asNumber(player.performance.ast) ?? 0;
+  const stl = asNumber(player.performance.stl) ?? 0;
+  const blk = asNumber(player.performance.blk) ?? 0;
+  const turnovers = asNumber(player.performance.to) ?? 0;
+
+  return pts + 0.7 * reb + 0.7 * ast + 1.5 * (stl + blk) - turnovers;
+}
+
+function averageTopTwoOutputs(
+  outputs: Record<string, number> | null,
+): number | null {
+  if (!outputs) {
+    return null;
+  }
+
+  const ordered = Object.values(outputs).sort((left, right) => right - left);
+  if (!ordered.length) {
+    return null;
+  }
+  if (ordered.length === 1) {
+    return ordered[0] ?? null;
+  }
+
+  return ((ordered[0] ?? 0) + (ordered[1] ?? 0)) / 2;
+}
+
+function countRecognizedSkillValues(player: RawPlayerSkills): number {
+  return [
+    player.js,
+    player.jr,
+    player.od,
+    player.ha,
+    player.dr,
+    player.pa,
+    player.is,
+    player.id,
+    player.rb,
+    player.sb,
+    player.st,
+    player.ft,
+    player.ex,
+    player.gs,
+  ].filter((value) => value > 0).length;
+}
+
+function buildNormalizedValueMap(
+  entries: Array<{ key: string; value: number | null | undefined }>,
+): Map<string, number> {
+  const availableEntries = entries.filter(
+    (entry): entry is { key: string; value: number } =>
+      typeof entry.value === "number" && Number.isFinite(entry.value),
+  );
+  if (!availableEntries.length) {
+    return new Map();
+  }
+
+  const values = availableEntries.map((entry) => entry.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+
+  return new Map(
+    availableEntries.map((entry) => [
+      entry.key,
+      max === min ? 0.5 : (entry.value - min) / (max - min),
+    ]),
+  );
+}
+
+function averageAvailable(values: Array<number | null | undefined>): number | null {
+  const availableValues = values.filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
+  if (!availableValues.length) {
+    return null;
+  }
+
+  return (
+    availableValues.reduce((sum, value) => sum + value, 0) /
+    availableValues.length
+  );
+}
+
+function computeWeightedAverage(
+  buckets: Array<{ value: number | null; weight: number }>,
+): number {
+  const availableBuckets = buckets.filter(
+    (bucket): bucket is { value: number; weight: number } =>
+      bucket.value !== null && Number.isFinite(bucket.value),
+  );
+  if (!availableBuckets.length) {
+    return 0;
+  }
+
+  const weightedTotal = availableBuckets.reduce(
+    (sum, bucket) => sum + bucket.value * bucket.weight,
+    0,
+  );
+  const totalWeight = availableBuckets.reduce(
+    (sum, bucket) => sum + bucket.weight,
+    0,
+  );
+  return totalWeight > 0 ? weightedTotal / totalWeight : 0;
+}
+
+function injuryPenalty(injuryWeeks: number | null): number {
+  if ((injuryWeeks ?? 0) >= 2) {
+    return 0.6;
+  }
+  if (injuryWeeks === 1) {
+    return 0.35;
+  }
+  return 0;
+}
+
+function roundToOneDecimal(value: number): number {
+  return Number(value.toFixed(1));
+}
+
+function getPlayerKey(player: BBApiRosterPlayer): string {
+  return player.id ?? `player:${player.fullName}`;
 }
 
 function extractPpg(
@@ -2239,8 +2318,8 @@ function deriveOpponentTeamId(
   match: BBApiScheduleMatch,
   teamId: string | null,
 ): string | null {
-  if (!teamId) {
-    return match.homeTeam.id;
+  if (!matchIncludesTeam(match, teamId)) {
+    return null;
   }
   return match.homeTeam.id === teamId ? match.awayTeam.id : match.homeTeam.id;
 }
@@ -2249,8 +2328,8 @@ function deriveOpponentTeamName(
   match: BBApiScheduleMatch,
   teamId: string | null,
 ): string | null {
-  if (!teamId) {
-    return match.homeTeam.teamName;
+  if (!matchIncludesTeam(match, teamId)) {
+    return null;
   }
   return match.homeTeam.id === teamId
     ? match.awayTeam.teamName
@@ -2261,7 +2340,7 @@ function deriveTeamScore(
   match: BBApiScheduleMatch,
   teamId: string | null,
 ): number | null {
-  if (!teamId) {
+  if (!matchIncludesTeam(match, teamId)) {
     return null;
   }
   return match.homeTeam.id === teamId
@@ -2273,7 +2352,7 @@ function deriveOpponentScore(
   match: BBApiScheduleMatch,
   teamId: string | null,
 ): number | null {
-  if (!teamId) {
+  if (!matchIncludesTeam(match, teamId)) {
     return null;
   }
   return match.homeTeam.id === teamId
@@ -2297,7 +2376,7 @@ function isTeamHome(
   match: BBApiScheduleMatch,
   teamId: string | null,
 ): boolean | null {
-  if (!teamId) {
+  if (!matchIncludesTeam(match, teamId)) {
     return null;
   }
   return match.homeTeam.id === teamId;
@@ -2673,40 +2752,6 @@ function toRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function toRecordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value)
-    ? value.filter(
-        (entry): entry is Record<string, unknown> =>
-          Boolean(entry) && typeof entry === "object" && !Array.isArray(entry),
-      )
-    : [];
-}
-
-function normalizePosition(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.trim().toUpperCase();
-  if (normalized.startsWith("PG")) {
-    return "PG";
-  }
-  if (normalized.startsWith("SG")) {
-    return "SG";
-  }
-  if (normalized.startsWith("SF")) {
-    return "SF";
-  }
-  if (normalized.startsWith("PF")) {
-    return "PF";
-  }
-  if (normalized === "C" || normalized.startsWith("CENTER")) {
-    return "C";
-  }
-
-  return null;
-}
-
 function gameShapeScore(value: string | null): number {
   switch ((value ?? "").toLowerCase()) {
     case "proficient":
@@ -2722,35 +2767,6 @@ function gameShapeScore(value: string | null): number {
     default:
       return 2.5;
   }
-}
-
-function suggestMinutes(gameShape: string | null, slotIndex: number): number {
-  const baseBySlot = [36, 34, 32, 30, 28][slotIndex] ?? 24;
-  const shapeModifier = Math.round((gameShapeScore(gameShape) - 2.5) * 2);
-  return Math.max(18, Math.min(40, baseBySlot + shapeModifier));
-}
-
-function summarizeLeaningTendencies(
-  tendencies: readonly TrendCountEntry[] | null,
-): string | null {
-  if (!tendencies) {
-    return null;
-  }
-
-  const ordered = tendencies
-    .map((entry) => ({
-      name: entry.key ?? "",
-      count: entry.count ?? 0,
-    }))
-    .filter((entry) => entry.count > 0)
-    .sort((left, right) => right.count - left.count)
-    .slice(0, 2);
-
-  if (!ordered.length) {
-    return null;
-  }
-
-  return ordered.map((entry) => `${entry.name} x${entry.count}`).join(", ");
 }
 
 function classifySalaryTrend(

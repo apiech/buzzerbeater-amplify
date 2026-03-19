@@ -3,28 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  confirmResetPassword,
-  confirmSignUp,
-  getCurrentUser,
-  resetPassword,
-  resendSignUpCode,
-  signIn,
-  signOut,
-  signUp,
-} from "aws-amplify/auth";
 
 import { client } from "@/app/amplify-client";
-import {
-  createAuthUiState,
-  resolveConfirmResetPasswordSuccess,
-  resolveConfirmSignUpStep,
-  resolveResetPasswordStep,
-  resolveSignInStep,
-  resolveSignUpStep,
-  type AuthNotice,
-  type AuthUiState,
-} from "@/app/auth-flow";
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import { fetchBillingSummary } from "@/app/billing-client";
 import { HighlightsPanel } from "@/app/highlights-panel";
@@ -41,15 +21,13 @@ import {
 import { PredictionPanel } from "@/app/prediction-panel";
 import { RecapPanel } from "@/app/recap-panel";
 import { RivalsPanel } from "@/app/rivals-panel";
-import { LineupPlanner } from "@/app/team-tools";
 import type {
   BillingSummary,
   BbConnectionRecord,
   ConnectBbAccountInput,
   ConnectBbAccountResult,
   DashboardWorkspace,
-  MatchBoxscorePayload,
-  MatchMetricEntry,
+  LineupHelperRosterPlayer,
   OpponentForecastSnapshot,
   PredictionDraftState,
   PlayerSummary,
@@ -61,6 +39,7 @@ import type {
 import { Alert } from "@/app/ui/primitives/alert";
 import { BuzzerBeaterRatingText } from "@/app/ui/primitives/buzzerbeater-rating-text";
 import { Button } from "@/app/ui/primitives/button";
+import { cn } from "@/app/ui/primitives/cn";
 import { Field, Input, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
@@ -81,29 +60,16 @@ import { formatConnectionStatus } from "@/app/ui/presentation";
 import { hasFeature } from "@/lib/billing/plans";
 import { type WorkspaceSection } from "@/app/workspace-sections";
 
-type AuthenticatedUser = Awaited<ReturnType<typeof getCurrentUser>>;
-
 type ConnectionFormState = ConnectBbAccountInput;
-type SignInFormState = {
-  email: string;
-  password: string;
-};
-type SignUpFormState = {
-  confirmPassword: string;
-  email: string;
-  password: string;
-};
-type ConfirmSignUpFormState = {
-  confirmationCode: string;
-};
-type RequestResetFormState = {
-  email: string;
-};
-type ConfirmResetFormState = {
-  confirmationCode: string;
-  confirmPassword: string;
-  newPassword: string;
-};
+type OwnerRosterSkillKey = keyof LineupHelperRosterPlayer["skills"];
+type OwnerRosterSortKey =
+  | "player"
+  | "pos"
+  | "age"
+  | "salary"
+  | "shape"
+  | "dmi"
+  | OwnerRosterSkillKey;
 
 const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-4";
@@ -115,929 +81,47 @@ const listRowClassName =
   "flex flex-wrap items-start justify-between gap-3 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
 const listCopyClassName = "grid gap-1";
 const mutedMetaClassName = "text-xs font-semibold text-ink-muted";
-const ratingGridClassName =
-  "grid min-w-[30rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-2";
-const minimumPasswordLength = 6;
-const passwordLengthHint = "Use at least 6 characters.";
 const terminalOpponentForecastStatuses = new Set(["SUCCEEDED", "FAILED"]);
+const boxscoreLinkClassName =
+  "inline-flex min-h-9 items-center justify-center rounded-full border border-border-soft bg-white/70 px-3.5 text-xs font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90";
+const numericTableCellClassName = "text-right tabular-nums";
+const numericTableHeadClassName = "text-right";
+const ownerRosterSkillColumns = [
+  { key: "js", label: "JS" },
+  { key: "jr", label: "JR" },
+  { key: "od", label: "OD" },
+  { key: "ha", label: "HA" },
+  { key: "dr", label: "DR" },
+  { key: "pa", label: "PA" },
+  { key: "is", label: "IS" },
+  { key: "id", label: "ID" },
+  { key: "rb", label: "RB" },
+  { key: "sb", label: "SB" },
+  { key: "st", label: "ST" },
+  { key: "ft", label: "FT" },
+  { key: "ex", label: "EX" },
+  { key: "gs", label: "GS" },
+] as const satisfies ReadonlyArray<{
+  key: OwnerRosterSkillKey;
+  label: string;
+}>;
 
 export default function DashboardHomePage() {
-  return <DashboardApp activeSection="home" viewerEmail={null} />;
-}
-
-export function LegacyLocalAuthShell({
-  activeSection,
-}: {
-  activeSection: WorkspaceSection;
-}) {
-  const [authState, setAuthState] = useState<AuthUiState>(() =>
-    createAuthUiState(),
-  );
-  const [user, setUser] = useState<AuthenticatedUser | null>(null);
-  const [signInForm, setSignInForm] = useState<SignInFormState>({
-    email: "",
-    password: "",
-  });
-  const [signUpForm, setSignUpForm] = useState<SignUpFormState>({
-    confirmPassword: "",
-    email: "",
-    password: "",
-  });
-  const [confirmSignUpForm, setConfirmSignUpForm] =
-    useState<ConfirmSignUpFormState>({
-      confirmationCode: "",
-    });
-  const [requestResetForm, setRequestResetForm] =
-    useState<RequestResetFormState>({
-      email: "",
-    });
-  const [confirmResetForm, setConfirmResetForm] =
-    useState<ConfirmResetFormState>({
-      confirmationCode: "",
-      confirmPassword: "",
-      newPassword: "",
-    });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialize() {
-      try {
-        const currentUser = await getCurrentUser();
-        if (cancelled) {
-          return;
-        }
-
-        const email =
-          currentUser.signInDetails?.loginId ?? currentUser.username;
-        setUser(currentUser);
-        setSignInForm({ email, password: "" });
-        setRequestResetForm({ email });
-        setAuthState(createAuthUiState({ email, screen: "signedIn" }));
-      } catch {
-        if (cancelled) {
-          return;
-        }
-
-        setUser(null);
-        setAuthState(createAuthUiState({ screen: "signIn" }));
-      }
-    }
-
-    void initialize();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  function beginAuthRequest() {
-    setAuthState((current) => ({
-      ...current,
-      isBusy: true,
-      notice: null,
-    }));
-  }
-
-  function completeAuthRequest(nextState: Omit<AuthUiState, "isBusy">) {
-    setAuthState(createAuthUiState(nextState));
-  }
-
-  function failAuthRequest(
-    notice: AuthNotice,
-    overrides: Partial<Omit<AuthUiState, "isBusy">> = {},
-  ) {
-    setAuthState((current) => ({
-      ...current,
-      ...overrides,
-      isBusy: false,
-      notice,
-    }));
-  }
-
-  function openSignIn(
-    email = authState.email,
-    notice: AuthNotice | null = null,
-  ) {
-    setSignInForm({ email, password: "" });
-    completeAuthRequest({
-      email,
-      notice,
-      pendingUsername: null,
-      screen: "signIn",
-    });
-  }
-
-  function openSignUp() {
-    const email = signInForm.email.trim() || authState.email;
-    setSignUpForm({
-      confirmPassword: "",
-      email,
-      password: "",
-    });
-    completeAuthRequest({
-      email,
-      notice: null,
-      pendingUsername: null,
-      screen: "signUp",
-    });
-  }
-
-  function openRequestReset(
-    email = signInForm.email.trim() || authState.email,
-  ) {
-    setRequestResetForm({ email });
-    completeAuthRequest({
-      email,
-      notice: null,
-      pendingUsername: email || null,
-      screen: "requestReset",
-    });
-  }
-
-  async function handleSignInSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const email = signInForm.email.trim();
-    const password = signInForm.password;
-    beginAuthRequest();
-
-    try {
-      const result = await signIn({
-        password,
-        username: email,
-      });
-      const nextState = resolveSignInStep(result.nextStep.signInStep, email);
-
-      setSignInForm({ email, password: "" });
-      if (nextState.screen === "confirmSignUp") {
-        setConfirmSignUpForm({ confirmationCode: "" });
-      }
-      if (nextState.screen === "requestReset") {
-        setRequestResetForm({ email });
-        setConfirmResetForm({
-          confirmationCode: "",
-          confirmPassword: "",
-          newPassword: "",
-        });
-      }
-
-      if (nextState.screen === "signedIn") {
-        const currentUser = await getCurrentUser();
-        const signedInEmail =
-          currentUser.signInDetails?.loginId ?? currentUser.username;
-        setUser(currentUser);
-        setRequestResetForm({ email: signedInEmail });
-        completeAuthRequest({
-          email: signedInEmail,
-          notice: null,
-          pendingUsername: null,
-          screen: "signedIn",
-        });
-        return;
-      }
-
-      setUser(null);
-      completeAuthRequest(nextState);
-    } catch (error) {
-      setUser(null);
-      failAuthRequest(
-        {
-          message: formatAuthError(error),
-          tone: "danger",
-        },
-        {
-          email,
-          pendingUsername: null,
-          screen: "signIn",
-        },
-      );
-    }
-  }
-
-  async function handleSignUpSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const email = signUpForm.email.trim();
-    if (signUpForm.password !== signUpForm.confirmPassword) {
-      failAuthRequest(
-        {
-          message: "Passwords must match before creating the account.",
-          tone: "danger",
-        },
-        {
-          email,
-          screen: "signUp",
-        },
-      );
-      return;
-    }
-    if (signUpForm.password.length < minimumPasswordLength) {
-      failAuthRequest(
-        {
-          message: "Use at least 6 characters before creating the account.",
-          tone: "danger",
-        },
-        {
-          email,
-          screen: "signUp",
-        },
-      );
-      return;
-    }
-
-    beginAuthRequest();
-
-    try {
-      const result = await signUp({
-        options: {
-          userAttributes: {
-            email,
-          },
-        },
-        password: signUpForm.password,
-        username: email,
-      });
-      const nextState = resolveSignUpStep(result.nextStep.signUpStep, email);
-
-      setSignUpForm({
-        confirmPassword: "",
-        email,
-        password: "",
-      });
-      if (nextState.screen === "confirmSignUp") {
-        setConfirmSignUpForm({ confirmationCode: "" });
-      }
-      if (nextState.screen === "signIn") {
-        setSignInForm({ email, password: "" });
-      }
-
-      completeAuthRequest(nextState);
-    } catch (error) {
-      failAuthRequest(
-        {
-          message: formatAuthError(error),
-          tone: "danger",
-        },
-        {
-          email,
-          pendingUsername: null,
-          screen: "signUp",
-        },
-      );
-    }
-  }
-
-  async function handleConfirmSignUpSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const username = authState.pendingUsername ?? authState.email;
-    if (!username) {
-      failAuthRequest(
-        {
-          message: "The confirmation flow is missing the account email.",
-          tone: "danger",
-        },
-        {
-          screen: "signIn",
-        },
-      );
-      return;
-    }
-
-    beginAuthRequest();
-
-    try {
-      const result = await confirmSignUp({
-        confirmationCode: confirmSignUpForm.confirmationCode.trim(),
-        username,
-      });
-      const nextState = resolveConfirmSignUpStep(
-        result.nextStep.signUpStep,
-        username,
-      );
-
-      setConfirmSignUpForm({ confirmationCode: "" });
-      setSignInForm({ email: username, password: "" });
-      completeAuthRequest(nextState);
-    } catch (error) {
-      failAuthRequest(
-        {
-          message: formatAuthError(error),
-          tone: "danger",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmSignUp",
-        },
-      );
-    }
-  }
-
-  async function handleResendSignUpCode() {
-    const username = authState.pendingUsername ?? authState.email;
-    if (!username) {
-      return;
-    }
-
-    beginAuthRequest();
-
-    try {
-      const result = await resendSignUpCode({ username });
-      const destination = result.destination?.trim();
-      failAuthRequest(
-        {
-          message: destination
-            ? `A new confirmation code was sent to ${destination}.`
-            : "A new confirmation code was sent.",
-          tone: "note",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmSignUp",
-        },
-      );
-    } catch (error) {
-      failAuthRequest(
-        {
-          message: formatAuthError(error),
-          tone: "danger",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmSignUp",
-        },
-      );
-    }
-  }
-
-  async function handleRequestResetSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const email = requestResetForm.email.trim();
-    beginAuthRequest();
-
-    try {
-      const result = await resetPassword({ username: email });
-      const nextState = resolveResetPasswordStep(
-        result.nextStep.resetPasswordStep,
-        email,
-      );
-      const destination =
-        result.nextStep.codeDeliveryDetails.destination?.trim();
-
-      setConfirmResetForm({
-        confirmationCode: "",
-        confirmPassword: "",
-        newPassword: "",
-      });
-      completeAuthRequest({
-        ...nextState,
-        notice:
-          nextState.screen === "confirmReset"
-            ? {
-                message: destination
-                  ? `A password reset code was sent to ${destination}.`
-                  : "A password reset code was sent.",
-                tone: "note",
-              }
-            : nextState.notice,
-      });
-    } catch (error) {
-      failAuthRequest(
-        {
-          message: formatAuthError(error),
-          tone: "danger",
-        },
-        {
-          email,
-          pendingUsername: email,
-          screen: "requestReset",
-        },
-      );
-    }
-  }
-
-  async function handleResendResetCode() {
-    const username = authState.pendingUsername ?? authState.email;
-    if (!username) {
-      return;
-    }
-
-    beginAuthRequest();
-
-    try {
-      const result = await resetPassword({ username });
-      const destination =
-        result.nextStep.codeDeliveryDetails.destination?.trim();
-      failAuthRequest(
-        {
-          message: destination
-            ? `A fresh password reset code was sent to ${destination}.`
-            : "A fresh password reset code was sent.",
-          tone: "note",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmReset",
-        },
-      );
-    } catch (error) {
-      failAuthRequest(
-        {
-          message: formatAuthError(error),
-          tone: "danger",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmReset",
-        },
-      );
-    }
-  }
-
-  async function handleConfirmResetSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const username = authState.pendingUsername ?? authState.email;
-    if (!username) {
-      failAuthRequest(
-        {
-          message: "The password reset flow is missing the account email.",
-          tone: "danger",
-        },
-        {
-          screen: "signIn",
-        },
-      );
-      return;
-    }
-
-    if (confirmResetForm.newPassword !== confirmResetForm.confirmPassword) {
-      failAuthRequest(
-        {
-          message: "Passwords must match before updating the account password.",
-          tone: "danger",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmReset",
-        },
-      );
-      return;
-    }
-    if (confirmResetForm.newPassword.length < minimumPasswordLength) {
-      failAuthRequest(
-        {
-          message:
-            "Use at least 6 characters before updating the account password.",
-          tone: "danger",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmReset",
-        },
-      );
-      return;
-    }
-
-    beginAuthRequest();
-
-    try {
-      await confirmResetPassword({
-        confirmationCode: confirmResetForm.confirmationCode.trim(),
-        newPassword: confirmResetForm.newPassword,
-        username,
-      });
-      setConfirmResetForm({
-        confirmationCode: "",
-        confirmPassword: "",
-        newPassword: "",
-      });
-      setSignInForm({ email: username, password: "" });
-      completeAuthRequest(resolveConfirmResetPasswordSuccess(username));
-    } catch (error) {
-      failAuthRequest(
-        {
-          message: formatAuthError(error),
-          tone: "danger",
-        },
-        {
-          email: username,
-          pendingUsername: username,
-          screen: "confirmReset",
-        },
-      );
-    }
-  }
-
-  async function _handleSignOut() {
-    await signOut();
-    setUser(null);
-    openSignIn(authState.email, {
-      message: "Signed out.",
-      tone: "note",
-    });
-  }
-
-  function renderAuthForm() {
-    switch (authState.screen) {
-      case "loading":
-        return (
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading eyebrow="Sign in" title="Checking your session." />
-            <p className={statusCopyClassName}>
-              Loading your account session before the app opens.
-            </p>
-          </Panel>
-        );
-      case "signIn":
-        return (
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading
-              description="Use your companion-app email and password to open your club view."
-              eyebrow="Sign In"
-              title="Sign in to your account."
-            />
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => void handleSignInSubmit(event)}
-            >
-              <Field label="Email">
-                <Input
-                  autoComplete="email"
-                  onChange={(event) =>
-                    setSignInForm((current) => ({
-                      ...current,
-                      email: event.target.value,
-                    }))
-                  }
-                  placeholder="coach@example.com"
-                  required
-                  type="email"
-                  value={signInForm.email}
-                />
-              </Field>
-              <Field label="Password">
-                <Input
-                  autoComplete="current-password"
-                  onChange={(event) =>
-                    setSignInForm((current) => ({
-                      ...current,
-                      password: event.target.value,
-                    }))
-                  }
-                  placeholder="Enter your password"
-                  required
-                  type="password"
-                  value={signInForm.password}
-                />
-              </Field>
-              <div className="flex flex-wrap gap-3">
-                <Button loading={authState.isBusy} type="submit">
-                  Sign in
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() => openSignUp()}
-                  type="button"
-                  variant="secondary"
-                >
-                  Create account
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() => openRequestReset()}
-                  type="button"
-                  variant="ghost"
-                >
-                  Forgot password
-                </Button>
-              </div>
-            </form>
-          </Panel>
-        );
-      case "signUp":
-        return (
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading
-              description="Create the email/password account that stores your private club tools and settings."
-              eyebrow="Sign Up"
-              title="Create your account."
-            />
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => void handleSignUpSubmit(event)}
-            >
-              <Field label="Email">
-                <Input
-                  autoComplete="email"
-                  onChange={(event) =>
-                    setSignUpForm((current) => ({
-                      ...current,
-                      email: event.target.value,
-                    }))
-                  }
-                  placeholder="coach@example.com"
-                  required
-                  type="email"
-                  value={signUpForm.email}
-                />
-              </Field>
-              <Field hint={passwordLengthHint} label="Password">
-                <Input
-                  autoComplete="new-password"
-                  onChange={(event) =>
-                    setSignUpForm((current) => ({
-                      ...current,
-                      password: event.target.value,
-                    }))
-                  }
-                  placeholder="Create a password"
-                  required
-                  type="password"
-                  value={signUpForm.password}
-                />
-              </Field>
-              <Field label="Confirm password">
-                <Input
-                  autoComplete="new-password"
-                  onChange={(event) =>
-                    setSignUpForm((current) => ({
-                      ...current,
-                      confirmPassword: event.target.value,
-                    }))
-                  }
-                  placeholder="Confirm your password"
-                  required
-                  type="password"
-                  value={signUpForm.confirmPassword}
-                />
-              </Field>
-              <div className="flex flex-wrap gap-3">
-                <Button loading={authState.isBusy} type="submit">
-                  Create account
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() => openSignIn(signUpForm.email.trim())}
-                  type="button"
-                  variant="secondary"
-                >
-                  Back to sign in
-                </Button>
-              </div>
-            </form>
-          </Panel>
-        );
-      case "confirmSignUp":
-        return (
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading
-              description={`Enter the code sent to ${
-                authState.pendingUsername ?? authState.email
-              } to activate your account.`}
-              eyebrow="Confirm Email"
-              title="Confirm your account."
-            />
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => void handleConfirmSignUpSubmit(event)}
-            >
-              <Field label="Confirmation code">
-                <Input
-                  autoComplete="one-time-code"
-                  inputMode="numeric"
-                  onChange={(event) =>
-                    setConfirmSignUpForm({
-                      confirmationCode: event.target.value,
-                    })
-                  }
-                  placeholder="123456"
-                  required
-                  value={confirmSignUpForm.confirmationCode}
-                />
-              </Field>
-              <div className="flex flex-wrap gap-3">
-                <Button loading={authState.isBusy} type="submit">
-                  Confirm account
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() => void handleResendSignUpCode()}
-                  type="button"
-                  variant="secondary"
-                >
-                  Resend code
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() =>
-                    openSignIn(authState.pendingUsername ?? authState.email)
-                  }
-                  type="button"
-                  variant="ghost"
-                >
-                  Back to sign in
-                </Button>
-              </div>
-            </form>
-          </Panel>
-        );
-      case "requestReset":
-        return (
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading
-              description="Request a reset code, then enter it with your new password."
-              eyebrow="Reset Password"
-              title="Send a password reset code."
-            />
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => void handleRequestResetSubmit(event)}
-            >
-              <Field label="Email">
-                <Input
-                  autoComplete="email"
-                  onChange={(event) =>
-                    setRequestResetForm({
-                      email: event.target.value,
-                    })
-                  }
-                  placeholder="coach@example.com"
-                  required
-                  type="email"
-                  value={requestResetForm.email}
-                />
-              </Field>
-              <div className="flex flex-wrap gap-3">
-                <Button loading={authState.isBusy} type="submit">
-                  Send reset code
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() => openSignIn(requestResetForm.email.trim())}
-                  type="button"
-                  variant="secondary"
-                >
-                  Back to sign in
-                </Button>
-              </div>
-            </form>
-          </Panel>
-        );
-      case "confirmReset":
-        return (
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading
-              description={`Complete the password reset for ${
-                authState.pendingUsername ?? authState.email
-              }.`}
-              eyebrow="Reset Password"
-              title="Set a new password."
-            />
-            <form
-              className="grid gap-4"
-              onSubmit={(event) => void handleConfirmResetSubmit(event)}
-            >
-              <Field label="Confirmation code">
-                <Input
-                  autoComplete="one-time-code"
-                  inputMode="numeric"
-                  onChange={(event) =>
-                    setConfirmResetForm((current) => ({
-                      ...current,
-                      confirmationCode: event.target.value,
-                    }))
-                  }
-                  placeholder="123456"
-                  required
-                  value={confirmResetForm.confirmationCode}
-                />
-              </Field>
-              <Field hint={passwordLengthHint} label="New password">
-                <Input
-                  autoComplete="new-password"
-                  onChange={(event) =>
-                    setConfirmResetForm((current) => ({
-                      ...current,
-                      newPassword: event.target.value,
-                    }))
-                  }
-                  placeholder="Create a new password"
-                  required
-                  type="password"
-                  value={confirmResetForm.newPassword}
-                />
-              </Field>
-              <Field label="Confirm new password">
-                <Input
-                  autoComplete="new-password"
-                  onChange={(event) =>
-                    setConfirmResetForm((current) => ({
-                      ...current,
-                      confirmPassword: event.target.value,
-                    }))
-                  }
-                  placeholder="Confirm the new password"
-                  required
-                  type="password"
-                  value={confirmResetForm.confirmPassword}
-                />
-              </Field>
-              <div className="flex flex-wrap gap-3">
-                <Button loading={authState.isBusy} type="submit">
-                  Update password
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() => void handleResendResetCode()}
-                  type="button"
-                  variant="secondary"
-                >
-                  Resend code
-                </Button>
-                <Button
-                  disabled={authState.isBusy}
-                  onClick={() =>
-                    openSignIn(authState.pendingUsername ?? authState.email)
-                  }
-                  type="button"
-                  variant="ghost"
-                >
-                  Back to sign in
-                </Button>
-              </div>
-            </form>
-          </Panel>
-        );
-      case "signedIn":
-        return user ? (
-          <AuthenticatedWorkspace
-            activeSection={activeSection}
-            viewerEmail={user.signInDetails?.loginId ?? user.username}
-          />
-        ) : (
-          <Panel as="article" padding="sm" variant="solid">
-            <SectionHeading eyebrow="Sign in" title="Finishing your session." />
-            <p className={statusCopyClassName}>
-              Your session is active, but your club data is still loading.
-            </p>
-          </Panel>
-        );
-      default:
-        return null;
-    }
-  }
-
-  return (
-    <div className="grid gap-4">
-      {authState.screen !== "signedIn" ? (
-        <>
-          <div className="grid gap-3">
-            <p className="text-accent text-[0.76rem] font-bold tracking-[0.18em] uppercase">
-              BuzzerBeater Assistant Coach
-            </p>
-            <h2 className="text-ink text-2xl font-semibold tracking-[-0.04em]">
-              Sign in, then connect your BuzzerBeater account.
-            </h2>
-            <p className={statusCopyClassName}>
-              Your app login stays separate from your BuzzerBeater access key.
-              Once connected, this companion keeps your club view, opponent
-              reads, and league context ready for quick game prep.
-            </p>
-          </div>
-          {authState.notice ? (
-            <Alert tone={authState.notice.tone}>
-              {authState.notice.message}
-            </Alert>
-          ) : null}
-        </>
-      ) : null}
-      {renderAuthForm()}
-    </div>
-  );
+  return <DashboardApp activeSection="home" viewerLabel={null} />;
 }
 
 export function DashboardApp({
   activeSection,
-  viewerEmail,
+  viewerLabel,
 }: {
   activeSection: WorkspaceSection;
-  viewerEmail: string | null;
+  viewerLabel: string | null;
 }) {
   return (
     <main className="grid min-h-screen gap-6 p-4 sm:p-6">
       <AuthenticatedWorkspace
         activeSection={activeSection}
-        viewerEmail={viewerEmail}
+        viewerLabel={viewerLabel}
       />
     </main>
   );
@@ -1045,10 +129,10 @@ export function DashboardApp({
 
 function AuthenticatedWorkspace({
   activeSection,
-  viewerEmail,
+  viewerLabel,
 }: {
   activeSection: WorkspaceSection;
-  viewerEmail: string | null;
+  viewerLabel: string | null;
 }) {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(
     null,
@@ -1116,19 +200,19 @@ function AuthenticatedWorkspace({
     }
 
     const [
-      teamHubResponse,
+      lineupHelperResponse,
       scoutResponse,
       leagueIntelResponse,
       playerLabResponse,
     ] = await Promise.all([
-      client.queries.getTeamHub(),
+      client.queries.getLineupHelperWorkspace(),
       client.queries.getScoutWorkspace({}),
       client.queries.getLeagueIntel(),
       client.queries.getPlayerLab(),
     ]);
 
     const allErrors = [
-      ...(teamHubResponse.errors ?? []),
+      ...(lineupHelperResponse.errors ?? []),
       ...(scoutResponse.errors ?? []),
       ...(leagueIntelResponse.errors ?? []),
       ...(playerLabResponse.errors ?? []),
@@ -1136,7 +220,7 @@ function AuthenticatedWorkspace({
 
     if (
       allErrors.length ||
-      !teamHubResponse.data ||
+      !lineupHelperResponse.data ||
       !scoutResponse.data ||
       !leagueIntelResponse.data ||
       !playerLabResponse.data
@@ -1149,7 +233,7 @@ function AuthenticatedWorkspace({
 
     setWorkspace({
       home: homeResponse.data,
-      teamHub: teamHubResponse.data,
+      lineupHelper: lineupHelperResponse.data,
       scout: scoutResponse.data,
       leagueIntel: leagueIntelResponse.data,
       playerLab: playerLabResponse.data,
@@ -1182,7 +266,7 @@ function AuthenticatedWorkspace({
   }, []);
 
   const connected = connection?.status === "CONNECTED";
-  const loginEmail = viewerEmail ?? "Signed in";
+  const viewerLabelText = viewerLabel ?? "Signed in";
 
   async function handleRefresh(): Promise<void> {
     await loadWorkspace(true);
@@ -1215,7 +299,7 @@ function AuthenticatedWorkspace({
               <p className="text-ink-muted m-0 text-[0.72rem] font-bold tracking-[0.16em] uppercase">
                 Signed in
               </p>
-              <strong className="text-ink text-sm">{loginEmail}</strong>
+              <strong className="text-ink text-sm">{viewerLabelText}</strong>
             </div>
             <Link
               className="border-border-soft bg-surface-strong text-ink hover:border-accent/25 hover:text-accent inline-flex min-h-11 items-center justify-center rounded-full border px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px"
@@ -1521,10 +605,6 @@ function WorkspaceDashboard({
   );
   const [scoutError, setScoutError] = useState<string | null>(null);
   const [isLoadingScout, setIsLoadingScout] = useState(false);
-  const [boxscoreDetails, setBoxscoreDetails] =
-    useState<MatchBoxscorePayload | null>(null);
-  const [boxscoreError, setBoxscoreError] = useState<string | null>(null);
-  const [loadingMatchId, setLoadingMatchId] = useState<string | null>(null);
   const [playerTrend, setPlayerTrend] = useState<PlayerTrendPayload | null>(
     null,
   );
@@ -1752,22 +832,6 @@ function WorkspaceDashboard({
     }
   }
 
-  async function handleLoadBoxscore(matchId: string) {
-    setLoadingMatchId(matchId);
-    setBoxscoreError(null);
-
-    const response = await client.queries.getMatchBoxscoreDetails({ matchId });
-    if (response.errors?.length || !response.data) {
-      setBoxscoreDetails(null);
-      setBoxscoreError(formatAmplifyErrors(response.errors));
-      setLoadingMatchId(null);
-      return;
-    }
-
-    setBoxscoreDetails(response.data);
-    setLoadingMatchId(null);
-  }
-
   async function handleLoadPlayerTrend(player: PlayerSummary) {
     if (!player.playerId) {
       return;
@@ -1905,16 +969,7 @@ function WorkspaceDashboard({
                         </span>
                       </div>
                       {match.matchId && match.hasBoxscore ? (
-                        <Button
-                          loading={loadingMatchId === match.matchId}
-                          onClick={() =>
-                            void handleLoadBoxscore(match.matchId ?? "")
-                          }
-                          size="sm"
-                          variant="secondary"
-                        >
-                          Boxscore
-                        </Button>
+                        <BoxscoreLink matchId={match.matchId} />
                       ) : (
                         <span className={mutedMetaClassName}>
                           Box score not ready
@@ -1934,64 +989,13 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "home" ? (
-        <>
-          <Panel>
-            <SectionHeading
-              eyebrow="Roster"
-              title="Availability and lineup context"
-            />
-            <TableShell>
-              <thead>
-                <tr>
-                  <TableHeadCell>Player</TableHeadCell>
-                  <TableHeadCell>Role</TableHeadCell>
-                  <TableHeadCell>Age</TableHeadCell>
-                  <TableHeadCell>Salary</TableHeadCell>
-                  <TableHeadCell>Shape</TableHeadCell>
-                  <TableHeadCell>DMI</TableHeadCell>
-                  <TableHeadCell>Injury</TableHeadCell>
-                  <TableHeadCell>Starts</TableHeadCell>
-                </tr>
-              </thead>
-              <tbody>
-                {workspace.teamHub.roster.length ? (
-                  workspace.teamHub.roster.map((player) => (
-                    <tr key={player.playerId ?? player.fullName}>
-                      <TableCell>{player.fullName}</TableCell>
-                      <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
-                      <TableCell>{player.age ?? "N/A"}</TableCell>
-                      <TableCell>{formatCurrency(player.salary)}</TableCell>
-                      <TableCell>
-                        <BuzzerBeaterRatingText
-                          label={player.gameShape}
-                          scale="game_shape"
-                        >
-                          {player.gameShape ?? "N/A"}
-                        </BuzzerBeaterRatingText>
-                      </TableCell>
-                      <TableCell>{player.dmi ?? "N/A"}</TableCell>
-                      <TableCell>{formatInjury(player.injuryWeeks)}</TableCell>
-                      <TableCell>{player.projectedStarterCount ?? 0}</TableCell>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <TableCell className="text-ink-muted" colSpan={8}>
-                      No roster data is ready yet.
-                    </TableCell>
-                  </tr>
-                )}
-              </tbody>
-            </TableShell>
-          </Panel>
-          <Panel>
-            <SectionHeading
-              eyebrow="Lineup Planning"
-              title="Starter planning and saved setups"
-            />
-            <LineupPlanner />
-          </Panel>
-        </>
+        <Panel>
+          <SectionHeading
+            eyebrow="Roster"
+            title="Owner roster and lineup context"
+          />
+          <HomeOwnerRosterTable roster={workspace.lineupHelper.roster} />
+        </Panel>
       ) : null}
 
       {activeSection === "lineups" ? (
@@ -2418,16 +1422,7 @@ function WorkspaceDashboard({
                             </span>
                           </div>
                           {match.matchId && match.hasBoxscore ? (
-                            <Button
-                              loading={loadingMatchId === match.matchId}
-                              onClick={() =>
-                                void handleLoadBoxscore(match.matchId ?? "")
-                              }
-                              size="sm"
-                              variant="secondary"
-                            >
-                              Boxscore
-                            </Button>
+                            <BoxscoreLink matchId={match.matchId} />
                           ) : (
                             <span className={mutedMetaClassName}>
                               Box score not ready
@@ -2516,16 +1511,7 @@ function WorkspaceDashboard({
                           </span>
                         </div>
                         {match.matchId && match.hasBoxscore ? (
-                          <Button
-                            loading={loadingMatchId === match.matchId}
-                            onClick={() =>
-                              void handleLoadBoxscore(match.matchId ?? "")
-                            }
-                            size="sm"
-                            variant="secondary"
-                          >
-                            Boxscore
-                          </Button>
+                          <BoxscoreLink matchId={match.matchId} />
                         ) : (
                           <span className={mutedMetaClassName}>
                             Box score not ready
@@ -2546,114 +1532,6 @@ function WorkspaceDashboard({
               {scout.message ?? "No opponent view is available yet."}
             </p>
           )}
-        </Panel>
-      ) : null}
-
-      {activeSection === "scout" && (boxscoreDetails || boxscoreError) ? (
-        <Panel>
-          <SectionHeading
-            eyebrow="Box Score"
-            title={
-              boxscoreDetails?.opponentTeamName
-                ? `${boxscoreDetails.opponentTeamName} game details`
-                : "Saved game details"
-            }
-          />
-          {boxscoreError ? <Alert>{boxscoreError}</Alert> : null}
-          {boxscoreDetails ? (
-            <div className={twoColumnGridClassName}>
-              <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Tactics" titleAs="h4" />
-                <dl className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1">
-                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Your offense
-                    </dt>
-                    <dd className="text-ink m-0 font-semibold">
-                      {boxscoreDetails.offStrategy ?? "N/A"}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1">
-                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Your defense
-                    </dt>
-                    <dd className="text-ink m-0 font-semibold">
-                      {boxscoreDetails.defStrategy ?? "N/A"}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1">
-                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Opponent offense
-                    </dt>
-                    <dd className="text-ink m-0 font-semibold">
-                      {boxscoreDetails.opponentOffStrategy ?? "N/A"}
-                    </dd>
-                  </div>
-                  <div className="grid gap-1">
-                    <dt className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Opponent defense
-                    </dt>
-                    <dd className="text-ink m-0 font-semibold">
-                      {boxscoreDetails.opponentDefStrategy ?? "N/A"}
-                    </dd>
-                  </div>
-                </dl>
-              </Panel>
-
-              <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Ratings" titleAs="h4" />
-                <div className="overflow-x-auto">
-                  <div className={ratingGridClassName}>
-                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Metric
-                    </div>
-                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      You
-                    </div>
-                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Opponent
-                    </div>
-                    {renderBoxscoreMetricRows(
-                      boxscoreDetails.teamRatings,
-                      boxscoreDetails.opponentRatings,
-                    )}
-                  </div>
-                </div>
-              </Panel>
-
-              <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Efficiency" titleAs="h4" />
-                <div className="overflow-x-auto">
-                  <div className={ratingGridClassName}>
-                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Metric
-                    </div>
-                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      You
-                    </div>
-                    <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                      Opponent
-                    </div>
-                    {renderBoxscoreMetricRows(
-                      boxscoreDetails.teamEfficiency,
-                      boxscoreDetails.opponentEfficiency,
-                    )}
-                  </div>
-                </div>
-              </Panel>
-
-              <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Game context" titleAs="h4" />
-                <p className={statusCopyClassName}>
-                  This saved game view keeps tactics and effort clues available
-                  for later comparison.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {renderBoxscoreContext(boxscoreDetails.context)}
-                </div>
-              </Panel>
-            </div>
-          ) : null}
         </Panel>
       ) : null}
 
@@ -3020,79 +1898,200 @@ function formatForecastPlayerProjection(player: {
   return parts.join(" • ") || "No projection detail";
 }
 
-function renderBoxscoreMetricRows(
-  left: MatchMetricEntry[],
-  right: MatchMetricEntry[],
-) {
-  const leftMap = new Map(left.map((entry) => [entry.key, entry]));
-  const rightMap = new Map(right.map((entry) => [entry.key, entry]));
-  const keys = Array.from(
-    new Set([...Array.from(leftMap.keys()), ...Array.from(rightMap.keys())]),
-  ).sort((leftKey, rightKey) => leftKey.localeCompare(rightKey));
-
-  if (!keys.length) {
-    return (
-      <div className="contents" key="empty-metrics">
-        <span className="text-ink font-semibold">No ratings available</span>
-        <span className="text-ink-muted">-</span>
-        <span className="text-ink-muted">-</span>
-      </div>
-    );
-  }
-
-  return keys.slice(0, 8).map((key) => (
-    <div className="contents" key={key}>
-      <span className="text-ink font-semibold">{humanizeKey(key)}</span>
-      <span className="text-ink text-sm">
-        {formatMetricValue(readMetricValue(leftMap.get(key)))}
-      </span>
-      <span className="text-ink text-sm">
-        {formatMetricValue(readMetricValue(rightMap.get(key)))}
-      </span>
-    </div>
-  ));
+function BoxscoreLink({ matchId }: { matchId: string }) {
+  return (
+    <Link
+      className={boxscoreLinkClassName}
+      href={`/workspace/boxscores/${encodeURIComponent(matchId)}`}
+      prefetch={false}
+    >
+      Boxscore
+    </Link>
+  );
 }
 
-function renderBoxscoreContext(
-  context: MatchBoxscorePayload["context"] | null | undefined,
-) {
-  if (!context) {
-    return (
-      <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
-        No game context available
-      </span>
-    );
+function HomeOwnerRosterTable({
+  roster,
+}: {
+  roster: DashboardWorkspace["lineupHelper"]["roster"];
+}) {
+  const [sortKey, setSortKey] = useState<OwnerRosterSortKey>("player");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const sortedRoster = sortLineupHelperRoster(roster, sortKey, sortDirection);
+
+  function handleSort(nextKey: OwnerRosterSortKey) {
+    if (nextKey === sortKey) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortKey(nextKey);
+    setSortDirection(isOwnerRosterNumericKey(nextKey) ? "desc" : "asc");
   }
 
-  const tags = [
-    context.homeTeamName ? `Home: ${String(context.homeTeamName)}` : null,
-    context.awayTeamName ? `Away: ${String(context.awayTeamName)}` : null,
-    context.effortDelta !== null && context.effortDelta !== undefined
-      ? formatEffortDelta(context.effortDelta)
-      : null,
-    context.neutral === null || context.neutral === undefined
-      ? null
-      : context.neutral
-        ? "Neutral site"
-        : "Home court",
-  ].filter((value): value is string => Boolean(value));
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <SortableHeadCell
+            currentDirection={sortDirection}
+            currentKey={sortKey}
+            label="Player"
+            onSort={handleSort}
+            sortKey="player"
+          />
+          <SortableHeadCell
+            currentDirection={sortDirection}
+            currentKey={sortKey}
+            label="Pos"
+            onSort={handleSort}
+            sortKey="pos"
+          />
+          <SortableHeadCell
+            className={numericTableHeadClassName}
+            currentDirection={sortDirection}
+            currentKey={sortKey}
+            label="Age"
+            onSort={handleSort}
+            sortKey="age"
+          />
+          <SortableHeadCell
+            className={numericTableHeadClassName}
+            currentDirection={sortDirection}
+            currentKey={sortKey}
+            label="Salary"
+            onSort={handleSort}
+            sortKey="salary"
+          />
+          <SortableHeadCell
+            className={numericTableHeadClassName}
+            currentDirection={sortDirection}
+            currentKey={sortKey}
+            label="Shape"
+            onSort={handleSort}
+            sortKey="shape"
+          />
+          <SortableHeadCell
+            className={numericTableHeadClassName}
+            currentDirection={sortDirection}
+            currentKey={sortKey}
+            label="DMI"
+            onSort={handleSort}
+            sortKey="dmi"
+          />
+          {ownerRosterSkillColumns.map((column) => (
+            <SortableHeadCell
+              className={numericTableHeadClassName}
+              currentDirection={sortDirection}
+              currentKey={sortKey}
+              key={column.key}
+              label={column.label}
+              onSort={handleSort}
+              sortKey={column.key}
+            />
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {sortedRoster.length ? (
+          sortedRoster.map((player) => (
+            <tr
+              className={cn(
+                player.injuryWeeks
+                  ? "bg-[rgba(193,90,47,0.08)]"
+                  : undefined,
+              )}
+              key={player.playerId}
+            >
+              <TableCell>
+                <div className="grid gap-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">{player.fullName}</span>
+                    {player.injuryWeeks ? (
+                      <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[0.7rem] font-semibold text-accent-strong">
+                        {player.injuryWeeks}w
+                      </span>
+                    ) : null}
+                  </div>
+                  {!player.available && player.snapshotWarning ? (
+                    <span className="text-xs text-ink-muted">
+                      {player.snapshotWarning}
+                    </span>
+                  ) : null}
+                </div>
+              </TableCell>
+              <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
+              <TableCell className={numericTableCellClassName}>
+                {formatNumericTableValue(player.age)}
+              </TableCell>
+              <TableCell className={numericTableCellClassName}>
+                {formatCurrency(player.salary)}
+              </TableCell>
+              <TableCell className={numericTableCellClassName}>
+                <BuzzerBeaterRatingText
+                  label={player.gameShape}
+                  scale="game_shape"
+                >
+                  {player.gameShape ?? "N/A"}
+                </BuzzerBeaterRatingText>
+              </TableCell>
+              <TableCell className={numericTableCellClassName}>
+                {formatNumericTableValue(player.dmi)}
+              </TableCell>
+              {ownerRosterSkillColumns.map((column) => (
+                <TableCell
+                  className={numericTableCellClassName}
+                  key={`${player.playerId}-${column.key}`}
+                >
+                  {formatLineupHelperSkillValue(player, column.key)}
+                </TableCell>
+              ))}
+            </tr>
+          ))
+        ) : (
+          <tr>
+            <TableCell className="text-ink-muted" colSpan={20}>
+              No owner roster data is ready yet.
+            </TableCell>
+          </tr>
+        )}
+      </tbody>
+    </TableShell>
+  );
+}
 
-  if (!tags.length) {
-    return (
-      <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
-        No game context available
-      </span>
-    );
-  }
+function SortableHeadCell({
+  className,
+  currentDirection,
+  currentKey,
+  label,
+  onSort,
+  sortKey,
+}: {
+  className?: string;
+  currentDirection: "asc" | "desc";
+  currentKey: OwnerRosterSortKey;
+  label: string;
+  onSort: (sortKey: OwnerRosterSortKey) => void;
+  sortKey: OwnerRosterSortKey;
+}) {
+  const active = currentKey === sortKey;
 
-  return tags.map((tag) => (
-    <span
-      className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
-      key={tag}
-    >
-      {tag}
-    </span>
-  ));
+  return (
+    <TableHeadCell className={className}>
+      <button
+        className={cn(
+          "inline-flex w-full items-center gap-1 font-inherit uppercase tracking-inherit",
+          className?.includes("text-right") ? "justify-end" : "justify-start",
+        )}
+        onClick={() => onSort(sortKey)}
+        type="button"
+      >
+        <span>{label}</span>
+        <span aria-hidden="true">{active ? (currentDirection === "asc" ? "↑" : "↓") : "↕"}</span>
+      </button>
+    </TableHeadCell>
+  );
 }
 
 function formatAmplifyErrors(
@@ -3110,24 +2109,6 @@ function formatAmplifyErrors(
 
 function formatClientError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function formatAuthError(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message.trim();
-  }
-
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string" &&
-    error.message.trim()
-  ) {
-    return error.message.trim();
-  }
-
-  return "Authentication failed without a detailed error message.";
 }
 
 function formatTimestamp(value: string | null | undefined): string {
@@ -3230,29 +2211,133 @@ function formatMetricValue(value: unknown): string {
   return "N/A";
 }
 
-function humanizeKey(value: string): string {
-  return value
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (match) => match.toUpperCase());
+function formatNumericTableValue(value: number | null | undefined): string {
+  return value === null || value === undefined ? "--" : String(value);
+}
+
+function formatLineupHelperSkillValue(
+  player: DashboardWorkspace["lineupHelper"]["roster"][number],
+  key: OwnerRosterSkillKey,
+): string {
+  return player.available ? String(player.skills[key]) : "--";
+}
+
+function sortLineupHelperRoster(
+  roster: DashboardWorkspace["lineupHelper"]["roster"],
+  sortKey: OwnerRosterSortKey,
+  sortDirection: "asc" | "desc",
+) {
+  return [...roster].sort((left, right) => {
+    const leftValue = readOwnerRosterSortValue(left, sortKey);
+    const rightValue = readOwnerRosterSortValue(right, sortKey);
+
+    if (leftValue === null && rightValue !== null) {
+      return 1;
+    }
+    if (rightValue === null && leftValue !== null) {
+      return -1;
+    }
+
+    const comparison = compareOwnerRosterValues(leftValue, rightValue);
+    if (comparison !== 0) {
+      return sortDirection === "asc" ? comparison : -comparison;
+    }
+
+    return left.fullName.localeCompare(right.fullName);
+  });
+}
+
+function compareOwnerRosterValues(
+  left: number | string | null,
+  right: number | string | null,
+): number {
+  if (left === null && right === null) {
+    return 0;
+  }
+  if (left === null) {
+    return 1;
+  }
+  if (right === null) {
+    return -1;
+  }
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+
+  return String(left).localeCompare(String(right));
+}
+
+function readOwnerRosterSortValue(
+  player: DashboardWorkspace["lineupHelper"]["roster"][number],
+  sortKey: OwnerRosterSortKey,
+): number | string | null {
+  switch (sortKey) {
+    case "player":
+      return player.fullName;
+    case "pos":
+      return player.bestPosition ?? null;
+    case "age":
+      return player.age ?? null;
+    case "salary":
+      return player.salary ?? null;
+    case "shape":
+      return readGameShapeSortValue(player.gameShape);
+    case "dmi":
+      return player.dmi ?? null;
+    case "js":
+    case "jr":
+    case "od":
+    case "ha":
+    case "dr":
+    case "pa":
+    case "is":
+    case "id":
+    case "rb":
+    case "sb":
+    case "st":
+    case "ft":
+    case "ex":
+    case "gs":
+      return player.available ? player.skills[sortKey] : null;
+  }
+}
+
+function readGameShapeSortValue(value: string | null | undefined): number | null {
+  switch ((value ?? "").toLowerCase()) {
+    case "proficient":
+      return 5;
+    case "strong":
+      return 4;
+    case "respectable":
+      return 3;
+    case "mediocre":
+      return 2;
+    case "inept":
+      return 1;
+    default:
+      return null;
+  }
+}
+
+function isOwnerRosterNumericKey(value: OwnerRosterSortKey): boolean {
+  return value !== "player" && value !== "pos";
 }
 
 function formatPlayerMeta(player: PlayerSummary): string {
   const parts = [
     player.bestPosition,
     player.salary !== null ? formatCurrency(player.salary) : null,
-    typeof player.ppg === "number" ? `${player.ppg} PPG` : null,
+    typeof player.recentStartCount === "number" && player.recentStartCount > 0
+      ? `${player.recentStartCount} GS`
+      : null,
+    typeof player.recentAvgMinutes === "number"
+      ? `${formatMetricValue(player.recentAvgMinutes)} MPG`
+      : typeof player.ppg === "number"
+        ? `${player.ppg} PPG`
+        : null,
   ];
 
   return parts.filter(Boolean).join(" • ") || "No profile details yet.";
-}
-
-function readMetricValue(entry: MatchMetricEntry | undefined): unknown {
-  if (!entry) {
-    return null;
-  }
-
-  return entry.numberValue ?? entry.textValue ?? null;
 }
 
 function readPayload<T>(response: { payload: T | string }): T {
@@ -3262,5 +2347,10 @@ function readPayload<T>(response: { payload: T | string }): T {
 }
 
 export const __testing = {
+  compareOwnerRosterValues,
+  formatPlayerMeta,
+  readGameShapeSortValue,
+  readOwnerRosterSortValue,
   readPayload,
+  sortLineupHelperRoster,
 };

@@ -44,7 +44,6 @@ const queryOperations = {
     ),
   getLineupHelperWorkspace: () =>
     serverDataClient.queries.getLineupHelperWorkspace(),
-  getLineupPlan: () => serverDataClient.queries.getLineupPlan(),
   getMatchBoxscoreDetails: (input) =>
     serverDataClient.queries.getMatchBoxscoreDetails(
       requiredInput<
@@ -113,12 +112,6 @@ const mutationOperations = {
     ),
   disconnectBbAccount: () => serverDataClient.mutations.disconnectBbAccount(),
   refreshWorkspace: () => serverDataClient.mutations.refreshWorkspace(),
-  saveLineupScenario: (input) =>
-    serverDataClient.mutations.saveLineupScenario(
-      requiredInput<
-        Parameters<typeof serverDataClient.mutations.saveLineupScenario>[0]
-      >(input),
-    ),
   setBbLeagueTimeZone: (input) =>
     serverDataClient.mutations.setBbLeagueTimeZone(
       requiredInput<

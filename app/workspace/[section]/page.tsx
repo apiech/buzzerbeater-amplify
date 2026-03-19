@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { DashboardApp } from "@/app/dashboard-app";
 import {
   getServerCurrentUser,
-  resolveViewerEmail,
+  resolveServerViewerLabel,
 } from "@/app/server/amplify-server";
 import {
   normalizeWorkspaceSection,
@@ -45,7 +45,7 @@ export default async function WorkspaceSectionPage({
   return (
     <DashboardApp
       activeSection={normalizeWorkspaceSection(section)}
-      viewerEmail={resolveViewerEmail(currentUser)}
+      viewerLabel={await resolveServerViewerLabel(currentUser)}
     />
   );
 }

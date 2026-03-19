@@ -1,4 +1,5 @@
 import { Duration, Stack, type RemovalPolicy } from "aws-cdk-lib";
+import { Table } from "aws-cdk-lib/aws-dynamodb";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import type { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
@@ -21,7 +22,10 @@ type OpponentForecastBackend = {
 
 export function configureOpponentForecastJobs(
   backend: OpponentForecastBackend,
-  bindings: Pick<SharedInfraBindings, "opponentForecastEndpointName">,
+  bindings: Pick<
+    SharedInfraBindings,
+    "opponentForecastEndpointName" | "playerSkillSnapshotTableName"
+  >,
   removalPolicy: RemovalPolicy,
 ): void {
   if (!bindings.opponentForecastEndpointName) {
@@ -35,6 +39,11 @@ export function configureOpponentForecastJobs(
   }
 
   const queueStack = backend.createStack("opponent-forecast-jobs");
+  const playerSkillSnapshotTable = Table.fromTableName(
+    queueStack,
+    "ImportedPlayerSkillSnapshotTableForOpponentForecast",
+    bindings.playerSkillSnapshotTableName,
+  );
   const deadLetterQueue = new Queue(queueStack, "OpponentForecastJobDlq", {
     removalPolicy,
     retentionPeriod: Duration.days(14),
@@ -61,11 +70,18 @@ export function configureOpponentForecastJobs(
     "OPPONENT_FORECAST_ENDPOINT_NAME",
     bindings.opponentForecastEndpointName,
   );
+  backend.opponentForecastWorker.addEnvironment(
+    "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
+    bindings.playerSkillSnapshotTableName,
+  );
 
   opponentForecastJobQueue.grantSendMessages(
     backend.opponentForecastSubmit.resources.lambda,
   );
   opponentForecastJobQueue.grantConsumeMessages(
+    backend.opponentForecastWorker.resources.lambda,
+  );
+  playerSkillSnapshotTable.grantReadWriteData(
     backend.opponentForecastWorker.resources.lambda,
   );
 

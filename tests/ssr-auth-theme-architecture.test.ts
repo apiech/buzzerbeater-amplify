@@ -80,7 +80,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
   assert.match(workspacePageSource, /redirect\("\/login"\)/);
   assert.match(
     workspacePageSource,
-    /viewerEmail=\{resolveViewerEmail\(currentUser\)\}/,
+    /viewerLabel=\{await resolveServerViewerLabel\(currentUser\)\}/,
   );
   assert.match(loginPageSource, /href="\/api\/auth\/sign-in"/);
   assert.match(loginPageSource, /href="\/api\/auth\/sign-up"/);
@@ -93,7 +93,6 @@ test("workspace requests are routed through server-authenticated Next entry poin
   );
   assert.match(authRouteSource, /redirectOnSignOutComplete:\s*"\/login"/);
   assert.match(dashboardSource, /href="\/api\/auth\/sign-out"/);
-  assert.doesNotMatch(dashboardSource, /<LegacyLocalAuthShell/);
 });
 
 test("client theme updates and data access go through internal app routes", () => {

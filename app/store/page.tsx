@@ -4,7 +4,7 @@ import { createPageMetadata } from "@/app/site-config";
 import { Storefront } from "@/app/store/storefront";
 import {
   getServerCurrentUser,
-  resolveViewerEmail,
+  resolveServerViewerLabel,
 } from "@/app/server/amplify-server";
 
 type StorePageProps = {
@@ -32,7 +32,9 @@ export default async function StorePage({ searchParams }: StorePageProps) {
     <Storefront
       billingNotice={billingNotice}
       isSignedIn={Boolean(currentUser)}
-      viewerEmail={currentUser ? resolveViewerEmail(currentUser) : null}
+      viewerLabel={
+        currentUser ? await resolveServerViewerLabel(currentUser) : null
+      }
     />
   );
 }

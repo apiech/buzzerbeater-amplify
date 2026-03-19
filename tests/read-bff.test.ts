@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 
 import {
   __testing as readTesting,
+  isReadName,
   runReadOperation,
 } from "../app/server/read-bff";
 
@@ -273,56 +274,6 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
   assert.equal(typeof data.nextToken, "string");
 });
 
-test("getSavedLineupScenarios uses the owner index with pagination", async (t) => {
-  const queryCalls: Array<{
-    input: Record<string, unknown>;
-    options?: Record<string, unknown>;
-  }> = [];
-
-  installServerDataClient(t, {
-    models: {
-      SavedLineupScenario: {
-        list: async () => {
-          throw new Error("SavedLineupScenario.list must not be used");
-        },
-        listSavedLineupScenariosByUserAndSavedAt: async (
-          input: Record<string, unknown>,
-          options?: Record<string, unknown>,
-        ) => {
-          queryCalls.push({ input, options });
-          return {
-            data: [{ scenarioId: "scenario-1", userId: "user-1", name: "Crunch time", savedAt: "2026-03-15T12:00:00.000Z" }],
-            nextToken: "scenarios-page-2",
-          };
-        },
-      },
-    },
-  });
-
-  const result = await runReadOperation("getSavedLineupScenarios", "user-1", {
-    limit: 8,
-    nextToken: "scenarios-page-1",
-  });
-
-  assert.deepStrictEqual(queryCalls, [
-    {
-      input: { userId: "user-1" },
-      options: {
-        limit: 8,
-        nextToken: "scenarios-page-1",
-        sortDirection: "DESC",
-      },
-    },
-  ]);
-  assert.deepStrictEqual(result.data, {
-    items: [
-      {
-        scenarioId: "scenario-1",
-        userId: "user-1",
-        name: "Crunch time",
-        savedAt: "2026-03-15T12:00:00.000Z",
-      },
-    ],
-    nextToken: "scenarios-page-2",
-  });
+test("removed lineup scenario reads are no longer exposed from the read surface", () => {
+  assert.equal(isReadName("getSavedLineupScenarios"), false);
 });

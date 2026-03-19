@@ -1,10 +1,14 @@
 import { cookies } from "next/headers";
 import { createServerRunner } from "@aws-amplify/adapter-nextjs";
 import { generateServerClientUsingCookies } from "@aws-amplify/adapter-nextjs/data";
-import { getCurrentUser } from "aws-amplify/auth/server";
+import {
+  fetchUserAttributes,
+  getCurrentUser,
+} from "aws-amplify/auth/server";
 
 import type { Schema } from "@/amplify/data/resource";
 import outputs from "@/amplify_outputs.json";
+import { resolveViewerLabel } from "@/app/viewer-identity";
 
 export const { createAuthRouteHandlers, runWithAmplifyServerContext } =
   createServerRunner({
@@ -38,8 +42,28 @@ export async function requireServerCurrentUser(): Promise<ServerCurrentUser> {
   return currentUser;
 }
 
-export function resolveViewerEmail(
-  currentUser: Pick<ServerCurrentUser, "signInDetails" | "username">,
-): string {
-  return currentUser.signInDetails?.loginId ?? currentUser.username;
+export async function resolveServerViewerLabel(
+  currentUser: Pick<ServerCurrentUser, "username">,
+): Promise<string | null> {
+  try {
+    const attributes = await runWithAmplifyServerContext({
+      nextServerContext: { cookies },
+      operation: (contextSpec) => fetchUserAttributes(contextSpec),
+    });
+    const attributeIdentity = resolveViewerLabel({
+      email: attributes.email,
+      name: attributes.name,
+      preferredUsername: attributes.preferred_username,
+      username: currentUser.username,
+    });
+    if (attributeIdentity) {
+      return attributeIdentity;
+    }
+  } catch {
+    // Fall back to a safe username-only resolution path when attributes are unavailable.
+  }
+
+  return resolveViewerLabel({
+    username: currentUser.username,
+  });
 }

@@ -1,10 +1,24 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   normalizeOpponentForecastResult,
   submitOpponentForecastJob,
 } from "../amplify/data/_backend/opponent-forecast";
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(currentDir, "..");
+const opponentForecastJobsSource = readFileSync(
+  join(repoRoot, "amplify", "_backend", "opponent-forecast-jobs.ts"),
+  "utf8",
+);
+const opponentForecastWorkerResourceSource = readFileSync(
+  join(repoRoot, "amplify", "opponent-forecast-worker", "resource.ts"),
+  "utf8",
+);
 
 function expectPresent<T>(value: T | null | undefined, message: string): T {
   assert.ok(value, message);
@@ -150,4 +164,23 @@ test("submitOpponentForecastJob queues work for premium users", async () => {
     jobId: result.jobId,
     userId: "user-1",
   });
+});
+
+test("opponent forecast worker keeps workspace-refresh prerequisites without active tracked team wiring", () => {
+  assert.match(
+    opponentForecastWorkerResourceSource,
+    /BB_CONNECTION_ENCRYPTION_SECRET/,
+  );
+  assert.match(
+    opponentForecastJobsSource,
+    /PLAYER_SKILL_SNAPSHOT_TABLE_NAME/,
+  );
+  assert.match(
+    opponentForecastJobsSource,
+    /playerSkillSnapshotTable\.grantReadWriteData/,
+  );
+  assert.doesNotMatch(
+    opponentForecastJobsSource,
+    /ACTIVE_TRACKED_TEAMS_TABLE_NAME/,
+  );
 });

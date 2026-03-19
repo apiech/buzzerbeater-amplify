@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   __testing as lineupHelperTesting,
@@ -13,6 +16,21 @@ import {
   lookupSharedPlayerCardByToken,
   revokePlayerCard,
 } from "../amplify/data/_backend/workspace";
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(currentDir, "..");
+const workspaceSource = readFileSync(
+  join(repoRoot, "amplify", "data", "_backend", "workspace.ts"),
+  "utf8",
+);
+const refreshWorkspaceHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "refresh-workspace", "handler.ts"),
+  "utf8",
+);
+const refreshWorkerHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "refresh-bb-workspace-worker", "handler.ts"),
+  "utf8",
+);
 
 test("buildScoutWorkspace includes arbitrary scout targets, league options, and matchup history", () => {
   const currentWorkspace = {
@@ -170,6 +188,21 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
       cachedWorkspace: null,
     }),
     true,
+  );
+});
+
+test("browse-time workspace refresh defaults to app-only persistence while explicit refresh paths sync owned active tracked teams", () => {
+  assert.match(
+    workspaceSource,
+    /syncActiveTrackedTeams:\s*args\.syncActiveTrackedTeams \?\? false/,
+  );
+  assert.match(
+    refreshWorkspaceHandlerSource,
+    /syncActiveTrackedTeams:\s*true/,
+  );
+  assert.match(
+    refreshWorkerHandlerSource,
+    /syncActiveTrackedTeams:\s*true/,
   );
 });
 

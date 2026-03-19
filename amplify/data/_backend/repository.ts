@@ -129,6 +129,22 @@ export type BbCredentialRecord = {
   algorithm: CipherGCMTypes;
 };
 
+export type TrackedTeamRecord = {
+  userId: string;
+  teamId: string;
+  name: string;
+  shortName?: string | null;
+  leagueId?: string | null;
+  leagueName?: string | null;
+  countryId?: string | null;
+  countryName?: string | null;
+  arenaName?: string | null;
+  rivalId?: string | null;
+  isPrimary?: boolean | null;
+  summaryJson?: unknown;
+  fetchedAt?: string | null;
+};
+
 export type SyncRunRecord = {
   id: string;
   userId: string;
@@ -252,16 +268,6 @@ export type SharedPlayerCardRecord = {
   expiresAt?: string | null;
   revokedAt?: string | null;
   payloadJson?: unknown;
-};
-
-export type SavedLineupScenarioRecord = {
-  scenarioId: string;
-  userId: string;
-  name: string;
-  startersJson: unknown;
-  minuteTargetsJson: unknown;
-  note?: string | null;
-  savedAt: string;
 };
 
 export type LeagueHistoryStandingCacheRecord = {
@@ -990,6 +996,38 @@ export async function getMatchBoxscore(
   return decodeAwsJsonFields("MatchBoxscore", record);
 }
 
+export async function listTrackedTeamsForUser(
+  env: RepositoryEnv,
+  userId: string,
+): Promise<TrackedTeamRecord[]> {
+  const records: TrackedTeamRecord[] = [];
+  let nextToken: string | null = null;
+
+  do {
+    const page: PagedRecords<TrackedTeamRecord> =
+      await queryModelIndexPage<TrackedTeamRecord>(
+      env,
+      "TrackedTeam",
+      "listTrackedTeamsByUserIdAndTeamId",
+      { userId },
+      {
+        limit: 100,
+        nextToken,
+        sortDirection: "ASC",
+      },
+      "list tracked teams",
+    );
+    const decodedPageRecords = decodeAwsJsonList(
+      "TrackedTeam",
+      page.records,
+    );
+    records.push(...decodedPageRecords);
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  return records;
+}
+
 export async function upsertTrackedTeam(
   env: RepositoryEnv,
   input: Record<string, unknown>,
@@ -1181,25 +1219,6 @@ export async function updateSharedPlayerCard(
     model.update(prepareModelInput("SharedPlayerCard", input)),
     "update shared player card",
   );
-}
-
-export async function createSavedLineupScenario(
-  env: RepositoryEnv,
-  input: SavedLineupScenarioRecord,
-): Promise<SavedLineupScenarioRecord> {
-  const model = await getModel<SavedLineupScenarioRecord>(
-    env,
-    "SavedLineupScenario",
-  );
-  const record = assertPresent(
-    await assertSuccessful(
-      model.create(prepareModelInput("SavedLineupScenario", input)),
-      "create saved lineup scenario",
-    ),
-    "create saved lineup scenario",
-  );
-
-  return decodeAwsJsonFields("SavedLineupScenario", record);
 }
 
 export async function getSharedPlayerCardRecord(

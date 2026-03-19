@@ -18,7 +18,7 @@ import { SectionHeading } from "@/app/ui/primitives/section-heading";
 type StorefrontProps = {
   billingNotice: string | null;
   isSignedIn: boolean;
-  viewerEmail: string | null;
+  viewerLabel: string | null;
 };
 
 const cardGridClassName = "grid gap-4 lg:grid-cols-2";
@@ -29,7 +29,7 @@ const bodyCopyClassName = "text-sm leading-7 text-ink-muted";
 export function Storefront({
   billingNotice,
   isSignedIn,
-  viewerEmail,
+  viewerLabel,
 }: StorefrontProps) {
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -147,9 +147,9 @@ export function Storefront({
             one-time Stripe Checkout flow where the amount is configured in
             Stripe and permanent premium access is granted after payment.
           </p>
-          {viewerEmail ? (
+          {viewerLabel ? (
             <p className={bodyCopyClassName}>
-              Signed in as <span className="font-semibold text-ink">{viewerEmail}</span>.
+              Signed in as <span className="font-semibold text-ink">{viewerLabel}</span>.
             </p>
           ) : (
             <p className={bodyCopyClassName}>

@@ -11,10 +11,10 @@ import type { Schema } from "../resource";
 import { TeamHighlightsPerspective } from "../schema-enums";
 import { requireFeatureAccess } from "./billing";
 import {
-  listActiveTrackedTeamsForUser,
-  type ActiveTrackedTeamRecord,
-} from "./active-tracked-teams";
-import { getBbConnection } from "./repository";
+  getBbConnection,
+  listTrackedTeamsForUser,
+  type TrackedTeamRecord,
+} from "./repository";
 
 type GraphqlEnv = Record<string, string | undefined>;
 type TeamMomentsEnv = {
@@ -39,7 +39,7 @@ type TeamHighlightsSummary = TeamHighlightsResult["summary"];
 type SubmitDependencies = {
   getBbConnection: typeof getBbConnection;
   getTeamHighlightsStatus: typeof getTeamHighlightsStatus;
-  listActiveTrackedTeamsForUser: typeof listActiveTrackedTeamsForUser;
+  listTrackedTeamsForUser: typeof listTrackedTeamsForUser;
   now: () => Date;
   putTeamHighlightsStatus: typeof putTeamHighlightsStatus;
   requireFeatureAccess: typeof requireFeatureAccess;
@@ -52,7 +52,7 @@ type SubmitDependencies = {
 type GetDependencies = {
   getBbConnection: typeof getBbConnection;
   getTeamHighlightsStatus: typeof getTeamHighlightsStatus;
-  listActiveTrackedTeamsForUser: typeof listActiveTrackedTeamsForUser;
+  listTrackedTeamsForUser: typeof listTrackedTeamsForUser;
   queryTeamMoments: typeof queryTeamMoments;
 };
 
@@ -139,7 +139,7 @@ const ddbDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 const defaultSubmitDependencies: SubmitDependencies = {
   getBbConnection,
   getTeamHighlightsStatus,
-  listActiveTrackedTeamsForUser,
+  listTrackedTeamsForUser,
   now: () => new Date(),
   putTeamHighlightsStatus,
   requireFeatureAccess,
@@ -157,7 +157,7 @@ const defaultSubmitDependencies: SubmitDependencies = {
 const defaultGetDependencies: GetDependencies = {
   getBbConnection,
   getTeamHighlightsStatus,
-  listActiveTrackedTeamsForUser,
+  listTrackedTeamsForUser,
   queryTeamMoments,
 };
 
@@ -201,7 +201,7 @@ export async function submitMyTeamHighlightsScan(
     args.env,
     userId,
     dependencies.getBbConnection,
-    dependencies.listActiveTrackedTeamsForUser,
+    dependencies.listTrackedTeamsForUser,
   );
   const existingStatus = await dependencies.getTeamHighlightsStatus(
     args.env,
@@ -276,7 +276,7 @@ export async function getMyTeamHighlights(
     args.env,
     userId,
     dependencies.getBbConnection,
-    dependencies.listActiveTrackedTeamsForUser,
+    dependencies.listTrackedTeamsForUser,
   );
   const [scanStatus, allMoments] = await Promise.all([
     dependencies.getTeamHighlightsStatus(args.env, userId, team.teamId),
@@ -382,27 +382,24 @@ async function resolvePrimaryTeam(
   env: GraphqlEnv,
   userId: string,
   getBbConnectionDependency: typeof getBbConnection,
-  listActiveTrackedTeamsForUserDependency: typeof listActiveTrackedTeamsForUser,
+  listTrackedTeamsForUserDependency: typeof listTrackedTeamsForUser,
 ): Promise<PrimaryTeam> {
   const [connection, trackedTeams] = await Promise.all([
     getBbConnectionDependency(env, userId),
-    listActiveTrackedTeamsForUserDependency(env, userId),
+    listTrackedTeamsForUserDependency(env, userId),
   ]);
 
   const primaryTrackedTeam =
     trackedTeams.find(
-      (team: ActiveTrackedTeamRecord) =>
-        team.active !== false &&
-        asBoolean(team.isPrimary) &&
-        Boolean(asOptionalString(team.teamId)),
+      (team: TrackedTeamRecord) =>
+        asBoolean(team.isPrimary) && Boolean(asOptionalString(team.teamId)),
     ) ??
     trackedTeams.find(
-      (team: ActiveTrackedTeamRecord) =>
-        team.active !== false && asOptionalString(team.teamId) === connection?.teamId,
+      (team: TrackedTeamRecord) =>
+        asOptionalString(team.teamId) === connection?.teamId,
     ) ??
     trackedTeams.find(
-      (team: ActiveTrackedTeamRecord) =>
-        team.active !== false && Boolean(asOptionalString(team.teamId)),
+      (team: TrackedTeamRecord) => Boolean(asOptionalString(team.teamId)),
     ) ??
     null;
 
@@ -415,7 +412,7 @@ async function resolvePrimaryTeam(
   return {
     teamId,
     teamName:
-      asOptionalString(primaryTrackedTeam?.teamName) ??
+      asOptionalString(primaryTrackedTeam?.name) ??
       connection?.teamName ??
       null,
   };

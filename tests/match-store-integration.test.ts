@@ -29,10 +29,33 @@ test("team highlights submitter derives queue access from the imported shared in
   assert.match(source, /arn:\$\{stack\.partition\}:sqs:/);
 });
 
-test("team highlights handlers receive active tracked team table wiring", () => {
-  assert.match(source, /const teamHighlightsFunctions = \[/);
+test("active tracked team wiring is limited to explicit enrollment and refresh paths", () => {
+  assert.match(source, /const activeTrackedTeamSyncFunctions = \[/);
+  assert.match(source, /backend\.connectBbAccount/);
+  assert.match(source, /backend\.disconnectBbAccount/);
+  assert.match(source, /backend\.refreshWorkspace/);
+  assert.match(source, /backend\.refreshBbWorkspaceWorker/);
+  const start = source.indexOf("const activeTrackedTeamSyncFunctions");
+  const end = source.indexOf("const workspaceSnapshotWriteFunctions");
+  const activeTrackedSection = source.slice(start, end);
+  assert.doesNotMatch(activeTrackedSection, /backend\.getHomeWorkspace/);
+  assert.doesNotMatch(activeTrackedSection, /backend\.getMyTeamHighlights/);
+});
+
+test("browse-time workspace writers keep player snapshot access without active tracked team wiring", () => {
+  assert.match(source, /const workspaceSnapshotWriteFunctions = \[/);
+  assert.match(source, /backend\.getHomeWorkspace/);
+  assert.match(source, /backend\.getTeamHub/);
+  assert.match(source, /backend\.getScoutWorkspace/);
+  assert.match(source, /backend\.getLeagueIntel/);
+  assert.match(source, /backend\.getPlayerLab/);
+  assert.match(source, /backend\.getRivalsWorkspace/);
+  assert.match(source, /PLAYER_SKILL_SNAPSHOT_TABLE_NAME/);
+});
+
+test("team highlights handlers no longer receive active tracked team table wiring", () => {
   assert.match(source, /backend\.getMyTeamHighlights/);
   assert.match(source, /backend\.submitMyTeamHighlightsScan/);
-  assert.match(source, /ACTIVE_TRACKED_TEAMS_TABLE_NAME/);
-  assert.match(source, /activeTrackedTeamsTable\.grantReadData/);
+  assert.doesNotMatch(source, /const teamHighlightsFunctions = \[/);
+  assert.doesNotMatch(source, /activeTrackedTeamsTable\.grantReadData/);
 });

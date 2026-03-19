@@ -2,7 +2,7 @@ export const workspaceSections = [
   {
     id: "home",
     label: "My Team",
-    description: "Club overview, roster health, and lineup planning.",
+    description: "Club overview, roster health, and owner skill snapshots.",
     group: "Club",
   },
   {

@@ -35,7 +35,6 @@ test("read-only dashboard surfaces avoid credential fingerprints and raw model m
 test("user-facing copy no longer exposes pipeline or internal helper jargon", () => {
   const highlightsSource = readAppFile(["app", "highlights-panel.tsx"]);
   const lineupSource = readAppFile(["app", "lineup-helper.tsx"]);
-  const teamToolsSource = readAppFile(["app", "team-tools.tsx"]);
   const sectionsSource = readAppFile(["app", "workspace-sections.ts"]);
 
   assert.doesNotMatch(
@@ -46,28 +45,39 @@ test("user-facing copy no longer exposes pipeline or internal helper jargon", ()
     lineupSource,
     /CoachParrot|Refresh cache|canonical skill snapshots|Engine status/,
   );
-  assert.doesNotMatch(teamToolsSource, /Open CoachParrot helper/);
   assert.doesNotMatch(sectionsSource, /CoachParrot lineup helper/);
 });
 
-test("auth copy advertises and enforces the relaxed password minimum", () => {
+test("home dashboard uses dedicated boxscore routes and owner roster copy", () => {
   const dashboardSource = readAppFile(["app", "dashboard-app.tsx"]);
+  const boxscoreRouteSource = readAppFile([
+    "app",
+    "workspace",
+    "boxscores",
+    "[matchId]",
+    "boxscore-page-client.tsx",
+  ]);
 
+  assert.match(dashboardSource, /\/workspace\/boxscores\/\$\{encodeURIComponent\(matchId\)\}/);
+  assert.doesNotMatch(dashboardSource, /handleLoadBoxscore/);
+  assert.match(dashboardSource, /Owner roster and lineup context/);
+  assert.match(dashboardSource, /label="Pos"/);
+  assert.match(dashboardSource, /label="DMI"/);
+  assert.doesNotMatch(dashboardSource, /label="Starts"/);
+  assert.doesNotMatch(dashboardSource, /title="Lineup Planner"/);
+  assert.match(boxscoreRouteSource, /client\.queries\.getMatchBoxscoreDetails/);
+  assert.doesNotMatch(boxscoreRouteSource, /Your tactics|Opponent tactics/);
+});
+
+test("auth copy routes users through managed login instead of local password forms", () => {
+  const dashboardSource = readAppFile(["app", "dashboard-app.tsx"]);
+  const loginSource = readAppFile(["app", "login", "page.tsx"]);
+
+  assert.doesNotMatch(dashboardSource, /placeholder="Create a password"/);
+  assert.doesNotMatch(dashboardSource, /placeholder="Confirm your password"/);
+  assert.match(loginSource, /managed login/);
   assert.match(
-    dashboardSource,
-    /const passwordLengthHint = "Use at least 6 characters\."/,
-  );
-  assert.match(dashboardSource, /hint=\{passwordLengthHint\} label="Password"/);
-  assert.match(
-    dashboardSource,
-    /hint=\{passwordLengthHint\} label="New password"/,
-  );
-  assert.match(
-    dashboardSource,
-    /message:\s*"Use at least 6 characters before creating the account\."/,
-  );
-  assert.match(
-    dashboardSource,
-    /message:\s*"Use at least 6 characters before updating the account password\."/,
+    loginSource,
+    /Sign-in, sign-up, password reset, and account confirmation all\s+continue in Cognito managed login\./,
   );
 });

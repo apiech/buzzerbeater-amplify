@@ -393,8 +393,6 @@ test("typed handlers no longer cast GraphQL return payloads", () => {
       "handler.ts",
     ),
     join(repoRoot, "amplify", "data", "evaluate-lineup-helper", "handler.ts"),
-    join(repoRoot, "amplify", "data", "get-lineup-plan", "handler.ts"),
-    join(repoRoot, "amplify", "data", "save-lineup-scenario", "handler.ts"),
     join(repoRoot, "amplify", "data", "get-salary-projection", "handler.ts"),
   ];
 

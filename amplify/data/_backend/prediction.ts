@@ -13,6 +13,7 @@ import {
   updatePredictionJob,
 } from "./repository";
 import { requireFeatureAccess } from "./billing";
+import { selectBoxscorePerspective } from "./neutral-boxscore";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -237,6 +238,18 @@ export async function resolveConnectedInput(
   };
   const canFallback = Boolean(connectedInput.manualFallback);
 
+  if (connectedInput.homeSourceMatchId && !connectedInput.homeTeamId?.trim()) {
+    throw new Error(
+      "homeTeamId is required when homeSourceMatchId is provided.",
+    );
+  }
+
+  if (connectedInput.awaySourceMatchId && !connectedInput.awayTeamId?.trim()) {
+    throw new Error(
+      "awayTeamId is required when awaySourceMatchId is provided.",
+    );
+  }
+
   if (connectedInput.homeSourceMatchId) {
     const homeBoxscore = await dependencies.getMatchBoxscore(
       env,
@@ -325,57 +338,29 @@ function resolveBoxscorePerspective(
   gdpFocus: string | null;
   gdpPace: string | null;
 } {
-  const selectedTeamId =
-    requestedTeamId ?? asOptionalString(matchBoxscore.teamId) ?? undefined;
-  const teamId = asOptionalString(matchBoxscore.teamId);
-  const opponentTeamId = asOptionalString(matchBoxscore.opponentTeamId);
-  const usingTrackedPerspective =
-    !selectedTeamId || selectedTeamId === teamId || selectedTeamId !== opponentTeamId;
   const boxscore = requireRecord(matchBoxscore.boxscoreJson, "boxscoreJson");
-  const homeTeam = asOptionalRecord(boxscore.homeTeam);
-  const awayTeam = asOptionalRecord(boxscore.awayTeam);
-  const selectedSide =
-    usingTrackedPerspective
-      ? resolveBoxscoreSide(selectedTeamId ?? teamId, homeTeam, awayTeam) ?? homeTeam
-      : resolveBoxscoreSide(opponentTeamId, homeTeam, awayTeam) ?? awayTeam;
-  const gdp = asOptionalRecord(selectedSide?.gdp);
+  const selectedTeamId = requestedTeamId?.trim() || null;
+  if (!selectedTeamId) {
+    throw new Error("A team id is required to resolve a source match.");
+  }
 
-  const ratings = requireRecord(
-    usingTrackedPerspective
-      ? matchBoxscore.teamRatingsJson
-      : matchBoxscore.opponentRatingsJson,
-    "ratings",
-  );
+  const { team: selectedSide } = selectBoxscorePerspective(boxscore, selectedTeamId);
+  if (!selectedSide) {
+    throw new Error(
+      `The requested team ${selectedTeamId} was not found in the stored boxscore.`,
+    );
+  }
+
+  const gdp = asOptionalRecord(selectedSide?.gdp);
+  const ratings = requireRecord(selectedSide.ratings, "ratings");
 
   return {
     ratings,
-    offStrategy: asOptionalString(
-      usingTrackedPerspective
-        ? matchBoxscore.offStrategy
-        : matchBoxscore.opponentOffStrategy,
-    ),
-    defStrategy: asOptionalString(
-      usingTrackedPerspective
-        ? matchBoxscore.defStrategy
-        : matchBoxscore.opponentDefStrategy,
-    ),
+    offStrategy: asOptionalString(selectedSide.offStrategy),
+    defStrategy: asOptionalString(selectedSide.defStrategy),
     gdpFocus: asOptionalString(gdp?.focus),
     gdpPace: asOptionalString(gdp?.pace),
   };
-}
-
-function resolveBoxscoreSide(
-  teamId: string | undefined | null,
-  homeTeam: JsonRecord | null,
-  awayTeam: JsonRecord | null,
-): JsonRecord | null {
-  if (teamId && asOptionalString(homeTeam?.id) === teamId) {
-    return homeTeam;
-  }
-  if (teamId && asOptionalString(awayTeam?.id) === teamId) {
-    return awayTeam;
-  }
-  return null;
 }
 
 async function invokePredictionEndpoint(

@@ -8,6 +8,7 @@ import {
 
 import type { Schema } from "../resource";
 import { requireFeatureAccess } from "./billing";
+import { selectBoxscorePerspective } from "./neutral-boxscore";
 import {
   createOpponentForecastJob,
   getMatchBoxscore,
@@ -230,6 +231,7 @@ async function buildOpponentForecastContext(args: {
       .map((match) => match.matchId)
       .filter((matchId): matchId is string => Boolean(matchId))
       .slice(0, 8),
+    args.scout.teamId ?? null,
   );
   const headToHeadBoxscores = await loadStoredBoxscores(
     args.env,
@@ -238,6 +240,7 @@ async function buildOpponentForecastContext(args: {
       .map((match) => match.matchId)
       .filter((matchId): matchId is string => Boolean(matchId))
       .slice(0, 5),
+    args.scout.teamId ?? null,
   );
 
   return {
@@ -274,11 +277,12 @@ async function loadStoredBoxscores(
   env: GraphqlEnv,
   userId: string,
   matchIds: string[],
+  teamId: string | null,
 ): Promise<JsonRecord[]> {
   const results = await Promise.all(
     Array.from(new Set(matchIds)).map(async (matchId) => {
       const record = await getMatchBoxscore(env, userId, matchId);
-      return record ? adaptStoredBoxscoreForForecast(record) : null;
+      return record ? adaptStoredBoxscoreForForecast(record, teamId) : null;
     }),
   );
 
@@ -434,18 +438,12 @@ function normalizeFeatureSignal(
 
 function adaptStoredBoxscoreForForecast(
   matchBoxscore: Record<string, unknown>,
+  teamId: string | null,
 ): JsonRecord | null {
   const boxscore = requireRecord(matchBoxscore.boxscoreJson, "stored boxscore payload");
-  const selectedTeamId = asOptionalString(matchBoxscore.teamId);
-  const homeTeam = asOptionalRecord(boxscore.homeTeam);
-  const awayTeam = asOptionalRecord(boxscore.awayTeam);
-  const teamSide =
-    selectedTeamId && asOptionalString(homeTeam?.id) === selectedTeamId
-      ? homeTeam
-      : selectedTeamId && asOptionalString(awayTeam?.id) === selectedTeamId
-        ? awayTeam
-        : homeTeam;
-  const opponentSide = teamSide === homeTeam ? awayTeam : homeTeam;
+  const perspective = selectBoxscorePerspective(boxscore, teamId);
+  const teamSide = perspective.team;
+  const opponentSide = perspective.opponent;
 
   if (!teamSide || !opponentSide) {
     return null;
@@ -456,26 +454,26 @@ function adaptStoredBoxscoreForForecast(
     matchId: asOptionalString(matchBoxscore.matchId),
     neutral: asOptionalBoolean(boxscore.neutral),
     opponent: {
-      defStrategy: asOptionalString(matchBoxscore.opponentDefStrategy),
-      efficiency: asOptionalRecord(matchBoxscore.opponentEfficiencyJson) ?? {},
+      defStrategy: asOptionalString(opponentSide.defStrategy),
+      efficiency: asOptionalRecord(opponentSide.efficiency) ?? {},
       gdp: asOptionalRecord(opponentSide.gdp) ?? {},
-      offStrategy: asOptionalString(matchBoxscore.opponentOffStrategy),
+      offStrategy: asOptionalString(opponentSide.offStrategy),
       players: toPlayerSummaries(opponentSide.players),
-      ratings: asOptionalRecord(matchBoxscore.opponentRatingsJson) ?? {},
+      ratings: asOptionalRecord(opponentSide.ratings) ?? {},
       score: asFiniteInteger(opponentSide.score),
-      teamId: asOptionalString(matchBoxscore.opponentTeamId),
-      teamName: asOptionalString(matchBoxscore.opponentTeamName),
+      teamId: asOptionalString(opponentSide.id),
+      teamName: asOptionalString(opponentSide.teamName),
     },
     startTime: asOptionalString(boxscore.startTime),
     team: {
-      defStrategy: asOptionalString(matchBoxscore.defStrategy),
-      efficiency: asOptionalRecord(matchBoxscore.teamEfficiencyJson) ?? {},
+      defStrategy: asOptionalString(teamSide.defStrategy),
+      efficiency: asOptionalRecord(teamSide.efficiency) ?? {},
       gdp: asOptionalRecord(teamSide.gdp) ?? {},
-      offStrategy: asOptionalString(matchBoxscore.offStrategy),
+      offStrategy: asOptionalString(teamSide.offStrategy),
       players: toPlayerSummaries(teamSide.players),
-      ratings: asOptionalRecord(matchBoxscore.teamRatingsJson) ?? {},
+      ratings: asOptionalRecord(teamSide.ratings) ?? {},
       score: asFiniteInteger(teamSide.score),
-      teamId: asOptionalString(matchBoxscore.teamId),
+      teamId: asOptionalString(teamSide.id),
       teamName: asOptionalString(teamSide.teamName),
     },
     type: asOptionalString(boxscore.type),

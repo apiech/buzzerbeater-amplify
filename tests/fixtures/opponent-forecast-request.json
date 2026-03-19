@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-03-19T00:00:00.000Z",
+  "headToHead": {
+    "boxscores": [],
+    "recentMatchups": []
+  },
+  "ourTeam": {
+    "record": {
+      "wins": 18,
+      "losses": 4
+    },
+    "roster": [],
+    "team": {
+      "teamId": "home-1"
+    },
+    "topPlayers": []
+  },
+  "targetTeam": {
+    "matchupPerspective": {
+      "opponentTeamId": "team-1",
+      "ourTeamId": "home-1"
+    },
+    "nextMatch": {
+      "isHome": false,
+      "type": "League"
+    },
+    "publicRoster": [],
+    "recentGameBoxscores": [
+      {
+        "effortDelta": 0,
+        "team": {
+          "defStrategy": "23Zone",
+          "gdp": {
+            "focus": "Balanced.hit",
+            "pace": "Normal.hit"
+          },
+          "offStrategy": "Motion",
+          "players": [
+            {
+              "fullName": "Lead Guard",
+              "minutesByPosition": {
+                "PG": 36
+              },
+              "playerId": "p-1",
+              "totalMinutes": 36
+            },
+            {
+              "fullName": "Wing",
+              "minutesByPosition": {
+                "SG": 34
+              },
+              "playerId": "p-2",
+              "totalMinutes": 34
+            }
+          ]
+        }
+      }
+    ],
+    "recentGames": [],
+    "record": {
+      "wins": 15,
+      "losses": 7
+    },
+    "teamId": "team-1",
+    "teamName": "Forecast Club",
+    "topPlayers": []
+  }
+}

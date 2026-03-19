@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import {
   getServerCurrentUser,
-  resolveViewerEmail,
+  resolveServerViewerLabel,
 } from "@/app/server/amplify-server";
 import { createPageMetadata, siteDescription } from "@/app/site-config";
 import { Panel } from "@/app/ui/primitives/panel";
@@ -50,7 +50,9 @@ export default async function HomePage() {
   const primaryLabel = currentUser ? "Open workspace" : "Sign in";
   const secondaryHref = currentUser ? "/workspace/ops" : "/api/auth/sign-up";
   const secondaryLabel = currentUser ? "Account settings" : "Create account";
-  const viewerEmail = currentUser ? resolveViewerEmail(currentUser) : null;
+  const viewerLabel = currentUser
+    ? await resolveServerViewerLabel(currentUser)
+    : null;
 
   return (
     <main className="grid gap-6 p-4 sm:p-6">
@@ -63,11 +65,11 @@ export default async function HomePage() {
                 BuzzerBeater Assistant Coach
               </p>
               <p className="text-ink-muted m-0 text-sm leading-6">
-                {viewerEmail ? (
+                {viewerLabel ? (
                   <>
                     Signed in as{" "}
                     <span className="text-ink font-semibold">
-                      {viewerEmail}
+                      {viewerLabel}
                     </span>
                     .
                   </>

@@ -16,6 +16,7 @@ export const handler = async (
         env,
         identity: { sub: message.userId },
         force: true,
+        syncActiveTrackedTeams: true,
       });
     } catch (error) {
       console.error("Queued BB workspace refresh failed", {

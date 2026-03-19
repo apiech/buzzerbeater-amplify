@@ -17,6 +17,7 @@ export const sandboxSecretName = "BB_CONNECTION_ENCRYPTION_SECRET";
 export const expectedAwsAccount = "427377913956";
 export const defaultAwsRegion = "us-east-1";
 export const predictorTargetNames = ["sandbox", "dev"] as const;
+export const opponentForecastTargetNames = ["sandbox", "dev"] as const;
 export const requiredSandboxAppEnvNames = [
   "APP_BASE_URL",
   "STRIPE_PREMIUM_PRICE_ID",
@@ -24,9 +25,17 @@ export const requiredSandboxAppEnvNames = [
 ] as const;
 
 export type PredictorTargetName = (typeof predictorTargetNames)[number];
+export type OpponentForecastTargetName =
+  (typeof opponentForecastTargetNames)[number];
 
 export type PredictorTargetPin = {
   artifactPrefix: string;
+  releaseId: string;
+  updatedAt: string;
+};
+
+export type OpponentForecastTargetPin = {
+  datasetRoot: string;
   releaseId: string;
   updatedAt: string;
 };
@@ -57,6 +66,18 @@ export type PredictorTargetInspection =
       status: "ready";
     };
 
+export type OpponentForecastTargetInspection =
+  | {
+      message: string;
+      status: "invalid" | "missing";
+    }
+  | {
+      labelsPath: string;
+      pin: OpponentForecastTargetPin;
+      prestatePath: string;
+      status: "ready";
+    };
+
 export function resolveDeployEnvFilePath(
   rootPath: string = workspaceRoot,
 ): string {
@@ -76,6 +97,17 @@ export function resolvePredictorTargetsFilePath(
     machineLearningRootPath,
     "dist",
     "matchup-predictor",
+    "targets.local.json",
+  );
+}
+
+export function resolveOpponentForecastTargetsFilePath(
+  machineLearningRootPath: string = machineLearningRoot,
+): string {
+  return join(
+    machineLearningRootPath,
+    "dist",
+    "opponent-forecast",
     "targets.local.json",
   );
 }
@@ -122,6 +154,18 @@ export function createPredictorTargetPin(
   };
 }
 
+export function createOpponentForecastTargetPin(
+  releaseId: string,
+  datasetRoot: string,
+  runtime: Pick<PinRuntime, "nowIso"> = createDefaultPinRuntime(),
+): OpponentForecastTargetPin {
+  return {
+    datasetRoot: datasetRoot.trim(),
+    releaseId: releaseId.trim(),
+    updatedAt: runtime.nowIso(),
+  };
+}
+
 export function readPredictorTargetPins(
   filePath: string = resolvePredictorTargetsFilePath(),
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
@@ -158,6 +202,55 @@ export function writePredictorTargetPin(
   > = createDefaultPinRuntime(),
 ): Partial<Record<PredictorTargetName, PredictorTargetPin>> {
   const currentPins = readPredictorTargetPins(filePath, runtime);
+  const nextPins = {
+    ...currentPins,
+    [targetName]: pin,
+  };
+  runtime.mkdirp(dirname(filePath));
+  runtime.writeFile(filePath, `${JSON.stringify(nextPins, null, 2)}\n`);
+  return nextPins;
+}
+
+export function readOpponentForecastTargetPins(
+  filePath: string = resolveOpponentForecastTargetsFilePath(),
+  runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
+): Partial<Record<OpponentForecastTargetName, OpponentForecastTargetPin>> {
+  if (!runtime.fileExists(filePath)) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(runtime.readFile(filePath));
+  } catch (error) {
+    throw new Error(
+      `Opponent forecast target pin file is not valid JSON: ${filePath}. ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `Opponent forecast target pin file must contain an object: ${filePath}.`,
+    );
+  }
+
+  return parsed as Partial<
+    Record<OpponentForecastTargetName, OpponentForecastTargetPin>
+  >;
+}
+
+export function writeOpponentForecastTargetPin(
+  targetName: OpponentForecastTargetName,
+  pin: OpponentForecastTargetPin,
+  filePath: string = resolveOpponentForecastTargetsFilePath(),
+  runtime: Pick<
+    PinRuntime,
+    "fileExists" | "mkdirp" | "readFile" | "writeFile"
+  > = createDefaultPinRuntime(),
+): Partial<Record<OpponentForecastTargetName, OpponentForecastTargetPin>> {
+  const currentPins = readOpponentForecastTargetPins(filePath, runtime);
   const nextPins = {
     ...currentPins,
     [targetName]: pin,
@@ -261,6 +354,114 @@ export function resolvePredictorTargetPin(
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
 ): PredictorTargetPin {
   const inspection = inspectPredictorTargetPin(targetName, filePath, runtime);
+  if (inspection.status !== "ready") {
+    throw new Error(inspection.message);
+  }
+
+  return inspection.pin;
+}
+
+export function inspectOpponentForecastTargetPin(
+  targetName: OpponentForecastTargetName,
+  filePath: string = resolveOpponentForecastTargetsFilePath(),
+  runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
+): OpponentForecastTargetInspection {
+  if (!runtime.fileExists(filePath)) {
+    return {
+      message: `Opponent forecast pin file is missing: ${filePath}`,
+      status: "missing",
+    };
+  }
+
+  let pins: Partial<Record<OpponentForecastTargetName, OpponentForecastTargetPin>>;
+  try {
+    pins = readOpponentForecastTargetPins(filePath, runtime);
+  } catch (error) {
+    return {
+      message: error instanceof Error ? error.message : String(error),
+      status: "invalid",
+    };
+  }
+
+  const pin = pins[targetName];
+  if (!pin) {
+    return {
+      message: `Opponent forecast pin '${targetName}' is not defined in ${filePath}.`,
+      status: "missing",
+    };
+  }
+
+  const releaseId = normalizeOptionalString(pin.releaseId);
+  if (!releaseId) {
+    return {
+      message: `Opponent forecast pin '${targetName}' is missing releaseId.`,
+      status: "invalid",
+    };
+  }
+
+  const datasetRoot = normalizeOptionalString(pin.datasetRoot);
+  if (!datasetRoot) {
+    return {
+      message: `Opponent forecast pin '${targetName}' is missing datasetRoot.`,
+      status: "invalid",
+    };
+  }
+
+  if (!isAbsolute(datasetRoot)) {
+    return {
+      message: `Opponent forecast pin '${targetName}' must use an absolute datasetRoot: ${datasetRoot}`,
+      status: "invalid",
+    };
+  }
+
+  if (!runtime.fileExists(datasetRoot)) {
+    return {
+      message: `Opponent forecast pin '${targetName}' points to a missing dataset root: ${datasetRoot}`,
+      status: "invalid",
+    };
+  }
+
+  const updatedAt = normalizeOptionalString(pin.updatedAt);
+  if (!updatedAt) {
+    return {
+      message: `Opponent forecast pin '${targetName}' is missing updatedAt.`,
+      status: "invalid",
+    };
+  }
+
+  const prestatePath = join(datasetRoot, "team_match_prestate.parquet");
+  const labelsPath = join(datasetRoot, "team_match_labels.parquet");
+  if (!runtime.fileExists(prestatePath)) {
+    return {
+      message: `Opponent forecast pin '${targetName}' points to a missing prestate file: ${prestatePath}`,
+      status: "invalid",
+    };
+  }
+  if (!runtime.fileExists(labelsPath)) {
+    return {
+      message: `Opponent forecast pin '${targetName}' points to a missing labels file: ${labelsPath}`,
+      status: "invalid",
+    };
+  }
+
+  return {
+    labelsPath,
+    pin: {
+      datasetRoot,
+      releaseId,
+      updatedAt,
+    },
+    prestatePath,
+    status: "ready",
+  };
+}
+
+export function resolveOpponentForecastTargetPin(
+  targetName: OpponentForecastTargetName,
+  filePath: string = resolveOpponentForecastTargetsFilePath(),
+  runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
+): OpponentForecastTargetPin {
+  const inspection = inspectOpponentForecastTargetPin(targetName, filePath, runtime);
   if (inspection.status !== "ready") {
     throw new Error(inspection.message);
   }

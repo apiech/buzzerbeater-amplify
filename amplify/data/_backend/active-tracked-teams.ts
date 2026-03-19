@@ -133,7 +133,13 @@ export function buildActiveTrackedTeamCredentialProjection(
 function resolveActiveTrackedTeamsTableName(env: ActiveTrackedTeamsEnv): string {
   const tableName = env.ACTIVE_TRACKED_TEAMS_TABLE_NAME;
   if (!tableName) {
-    throw new Error("ACTIVE_TRACKED_TEAMS_TABLE_NAME is not configured.");
+    throw new Error(
+      [
+        "ACTIVE_TRACKED_TEAMS_TABLE_NAME is not configured.",
+        "This is backend wiring for owned-team background enrollment, not normal browse-time workspace reads.",
+        "Redeploy the affected backend function after shared-infra environment wiring changes.",
+      ].join(" "),
+    );
   }
   return tableName;
 }

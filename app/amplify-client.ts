@@ -7,7 +7,6 @@ import type {
   PaginatedResult,
   PredictionJobRecord,
   RecapHistoryRecord,
-  SavedLineupScenarioRecord,
 } from "@/app/types";
 
 type AmplifyLikeError = {
@@ -25,8 +24,7 @@ type ReadOperationName =
   | "getCurrentBbConnection"
   | "getOperationsActivity"
   | "getPredictionHistory"
-  | "getRecapHistory"
-  | "getSavedLineupScenarios";
+  | "getRecapHistory";
 type QueryOperationName =
   | "evaluateLineupHelper"
   | "getBillingSummary"
@@ -35,7 +33,6 @@ type QueryOperationName =
   | "getLeagueIntel"
   | "getLatestOpponentForecast"
   | "getLineupHelperWorkspace"
-  | "getLineupPlan"
   | "getMatchBoxscoreDetails"
   | "getMyTeamHighlights"
   | "getPlayerLab"
@@ -52,7 +49,6 @@ type MutationOperationName =
   | "createBillingPortalSession"
   | "disconnectBbAccount"
   | "refreshWorkspace"
-  | "saveLineupScenario"
   | "setBbLeagueTimeZone"
   | "submitGameDayRecap"
   | "submitLeagueHistoryBackfill"
@@ -72,9 +68,7 @@ type ReadResult<TName extends ReadOperationName> =
         ? PaginatedResult<PredictionJobRecord>
         : TName extends "getRecapHistory"
           ? PaginatedResult<RecapHistoryRecord>
-          : TName extends "getSavedLineupScenarios"
-            ? PaginatedResult<SavedLineupScenarioRecord>
-            : never;
+          : never;
 
 async function requestOperation<TData>(
   input: RequestInfo | URL,
@@ -186,10 +180,6 @@ export const client = {
     }) => requestRead("getPredictionHistory", input),
     getRecapHistory: (input?: { limit?: number; nextToken?: string | null }) =>
       requestRead("getRecapHistory", input),
-    getSavedLineupScenarios: (input?: {
-      limit?: number;
-      nextToken?: string | null;
-    }) => requestRead("getSavedLineupScenarios", input),
   },
   mutations: {
     connectBbAccount: (input: JsonObject) =>
@@ -202,8 +192,6 @@ export const client = {
       requestMutation("createBillingPortalSession", input),
     disconnectBbAccount: () => requestMutation("disconnectBbAccount"),
     refreshWorkspace: () => requestMutation("refreshWorkspace"),
-    saveLineupScenario: (input: JsonObject) =>
-      requestMutation("saveLineupScenario", input),
     setBbLeagueTimeZone: (input: JsonObject) =>
       requestMutation("setBbLeagueTimeZone", input),
     submitGameDayRecap: (input: JsonObject) =>
@@ -232,7 +220,6 @@ export const client = {
     getLatestOpponentForecast: (input: JsonObject) =>
       requestQuery("getLatestOpponentForecast", input),
     getLineupHelperWorkspace: () => requestQuery("getLineupHelperWorkspace"),
-    getLineupPlan: () => requestQuery("getLineupPlan"),
     getMatchBoxscoreDetails: (input: JsonObject) =>
       requestQuery("getMatchBoxscoreDetails", input),
     getMyTeamHighlights: (input: JsonObject) =>

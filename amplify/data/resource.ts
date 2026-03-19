@@ -264,24 +264,6 @@ export const listMyBillingPayments = defineFunction({
   memoryMB: 512,
 });
 
-const getLineupPlan = defineFunction({
-  resourceGroupName: "data",
-  name: "get-lineup-plan",
-  entry: "./get-lineup-plan/handler.ts",
-  timeoutSeconds: 30,
-  memoryMB: 512,
-  environment: secureFunctionEnvironment,
-});
-
-const saveLineupScenario = defineFunction({
-  resourceGroupName: "data",
-  name: "save-lineup-scenario",
-  entry: "./save-lineup-scenario/handler.ts",
-  timeoutSeconds: 30,
-  memoryMB: 512,
-  environment: secureFunctionEnvironment,
-});
-
 export const getSalaryProjection = defineFunction({
   resourceGroupName: "data",
   name: "get-salary-projection",
@@ -392,8 +374,6 @@ const dataFunctions = [
   createBillingLifetimeCheckoutSession,
   createBillingPortalSession,
   listMyBillingPayments,
-  getLineupPlan,
-  saveLineupScenario,
   getSalaryProjection,
   submitLeagueGameDayRecap,
   submitSingleGameSummary,
@@ -569,6 +549,8 @@ const schema = a
       injuryWeeks: a.integer(),
       projectedStarterCount: a.integer(),
       ppg: a.float(),
+      recentAvgMinutes: a.float(),
+      recentStartCount: a.integer(),
     }),
 
     MatchSummary: a.customType({
@@ -964,47 +946,6 @@ const schema = a
       teamName: a.string(),
     }),
 
-    LineupPlanPlayer: a.customType({
-      playerId: a.string().required(),
-      fullName: a.string().required(),
-      bestPosition: a.string(),
-      projectedStarterCount: a.integer(),
-      salary: a.integer(),
-      gameShape: a.string(),
-      score: a.float(),
-      slot: a.integer(),
-      benchSlot: a.integer(),
-    }),
-
-    MinuteTargetEntry: a.customType({
-      playerId: a.string().required(),
-      minutes: a.integer().required(),
-    }),
-
-    LineupPlan: a.customType({
-      generatedAt: a.datetime().required(),
-      recommendedStarters: a
-        .ref("LineupPlanPlayer")
-        .required()
-        .array()
-        .required(),
-      benchOrder: a.ref("LineupPlanPlayer").required().array().required(),
-      minuteTargets: a.ref("MinuteTargetEntry").required().array().required(),
-      rotationNotes: a.string().required().array().required(),
-      matchupRationale: a.string().required().array().required(),
-      injuryAlerts: a.ref("InjurySummary").required().array().required(),
-      confidence: a.float().required(),
-    }),
-
-    LineupScenario: a.customType({
-      scenarioId: a.string().required(),
-      name: a.string().required(),
-      savedAt: a.datetime().required(),
-      starters: a.ref("LineupPlanPlayer").required().array().required(),
-      minuteTargets: a.ref("MinuteTargetEntry").required().array().required(),
-      note: a.string(),
-    }),
-
     LineupHelperContext: a.customType({
       offense: a.string().required(),
       defense: a.string().required(),
@@ -1042,6 +983,8 @@ const schema = a
       salary: a.integer(),
       age: a.integer(),
       gameShape: a.string(),
+      dmi: a.integer(),
+      injuryWeeks: a.integer(),
       snapshotWeekKey: a.string(),
       snapshotCapturedAt: a.datetime(),
       available: a.boolean().required(),
@@ -1154,21 +1097,38 @@ const schema = a
       totalOutput: a.float().required(),
     }),
 
-    MatchBoxscoreDetails: a.customType({
-      matchId: a.string().required(),
-      opponentTeamName: a.string(),
+    MatchBoxscorePlayerLine: a.customType({
+      playerId: a.string(),
+      firstName: a.string(),
+      lastName: a.string(),
+      fullName: a.string().required(),
+      isStarter: a.boolean().required(),
+      minutes: a.float(),
+      performance: a.ref("MatchMetricEntry").required().array().required(),
+      minutesByPosition: a.ref("MatchMetricEntry").required().array().required(),
+    }),
+
+    MatchBoxscoreTeam: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      shortName: a.string(),
       offStrategy: a.string(),
       defStrategy: a.string(),
-      opponentOffStrategy: a.string(),
-      opponentDefStrategy: a.string(),
-      teamRatings: a.ref("MatchMetricEntry").required().array().required(),
-      opponentRatings: a.ref("MatchMetricEntry").required().array().required(),
-      teamEfficiency: a.ref("MatchMetricEntry").required().array().required(),
-      opponentEfficiency: a
-        .ref("MatchMetricEntry")
-        .required()
-        .array()
-        .required(),
+      score: a.integer(),
+      partialScores: a.integer().required().array().required(),
+      teamTotals: a.ref("MatchMetricEntry").required().array().required(),
+      ratings: a.ref("MatchMetricEntry").required().array().required(),
+      efficiency: a.ref("MatchMetricEntry").required().array().required(),
+      players: a.ref("MatchBoxscorePlayerLine").required().array().required(),
+    }),
+
+    MatchBoxscoreDetails: a.customType({
+      matchId: a.string().required(),
+      matchType: a.string(),
+      startTime: a.datetime(),
+      endTime: a.datetime(),
+      homeTeam: a.ref("MatchBoxscoreTeam"),
+      awayTeam: a.ref("MatchBoxscoreTeam"),
       context: a.ref("MatchContext"),
       source: a.string().required(),
     }),
@@ -1468,6 +1428,11 @@ const schema = a
         fetchedAt: a.datetime(),
       })
       .identifier(["userId", "teamId"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["teamId"])
+          .queryField("listTrackedTeamsByUserIdAndTeamId"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     TrackedPlayer: a
@@ -1544,17 +1509,6 @@ const schema = a
       .model({
         userId: a.string().required(),
         matchId: a.string().required(),
-        teamId: a.string().required(),
-        opponentTeamId: a.string(),
-        opponentTeamName: a.string(),
-        offStrategy: a.string(),
-        defStrategy: a.string(),
-        opponentOffStrategy: a.string(),
-        opponentDefStrategy: a.string(),
-        teamRatingsJson: a.json(),
-        opponentRatingsJson: a.json(),
-        teamEfficiencyJson: a.json(),
-        opponentEfficiencyJson: a.json(),
         boxscoreJson: a.json(),
         fetchedAt: a.datetime(),
       })
@@ -1655,24 +1609,6 @@ const schema = a
         payloadJson: a.json(),
       })
       .identifier(["shareToken"])
-      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
-
-    SavedLineupScenario: a
-      .model({
-        scenarioId: a.string().required(),
-        userId: a.string().required(),
-        name: a.string().required(),
-        startersJson: a.json().required(),
-        minuteTargetsJson: a.json().required(),
-        note: a.string(),
-        savedAt: a.datetime().required(),
-      })
-      .identifier(["scenarioId"])
-      .secondaryIndexes((index) => [
-        index("userId")
-          .sortKeys(["savedAt"])
-          .queryField("listSavedLineupScenariosByUserAndSavedAt"),
-      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     PredictionJob: a
@@ -1972,24 +1908,6 @@ const schema = a
       .returns(a.ref("BillingPaymentsPage"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(listMyBillingPayments)),
-
-    getLineupPlan: a
-      .query()
-      .returns(a.ref("LineupPlan"))
-      .authorization((allow) => [allow.authenticated()])
-      .handler(a.handler.function(getLineupPlan)),
-
-    saveLineupScenario: a
-      .mutation()
-      .arguments({
-        name: a.string().required(),
-        starters: a.ref("LineupPlanPlayer").required().array().required(),
-        minuteTargets: a.ref("MinuteTargetEntry").required().array().required(),
-        note: a.string(),
-      })
-      .returns(a.ref("LineupScenario"))
-      .authorization((allow) => [allow.authenticated()])
-      .handler(a.handler.function(saveLineupScenario)),
 
     getSalaryProjection: a
       .query()

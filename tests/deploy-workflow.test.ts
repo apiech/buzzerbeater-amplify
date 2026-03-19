@@ -450,6 +450,99 @@ test("dev prepare runs deploy verification before shared infra deploy side effec
   assert.match(calls[1].args.join(" "), /deploy:ml-data-infra/);
 });
 
+test("sandbox opponent forecast deploy shells out through the workspace release wrapper", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  workflowTesting.runSandboxOpponentForecast(
+    [
+      "--release-id",
+      "opponent-forecast-v1-2026-03-19",
+      "--dataset-root",
+      "/tmp/opponent-forecast-dataset",
+    ],
+    createRuntime({
+      env: {},
+      spawnSync(command, args, options) {
+        calls.push({ args, command, options });
+        return {
+          status: 0,
+          stderr: "",
+          stdout: "",
+        };
+      },
+    }),
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "./scripts/opponent-forecast-release");
+  assert.deepEqual(calls[0].args, [
+    "sandbox",
+    "--release-id",
+    "opponent-forecast-v1-2026-03-19",
+    "--dataset-root",
+    "/tmp/opponent-forecast-dataset",
+  ]);
+});
+
+test("dev doctor warns when the optional opponent forecast endpoint contract is missing", () => {
+  const report = workflowTesting.collectDevDoctorReport(
+    createRuntime({
+      env: {
+        AWS_REGION: "us-east-1",
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "sts") {
+          return {
+            Account: "427377913956",
+          };
+        }
+        if (args[0] === "ssm" && args.includes("prediction-endpoint-name")) {
+          return {
+            Parameters: [
+              {
+                Name: "/buzzerbeater/ml-data-infra/dev/prediction-endpoint-name",
+                Value: "predictor-endpoint",
+              },
+            ],
+          };
+        }
+        if (args[0] === "ssm") {
+          return {
+            InvalidParameters: [
+              "/buzzerbeater/ml-data-infra/dev/opponent-forecast-endpoint-name",
+            ],
+          };
+        }
+        if (args[0] === "sagemaker") {
+          return {
+            EndpointStatus: "InService",
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      spawnSync(command, args, _options) {
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  const sharedInfraCheck = report.checks.find(
+    (check) => check.label === "Shared infra SSM contract",
+  );
+  assert.ok(sharedInfraCheck);
+  assert.equal(sharedInfraCheck.status, "warn");
+  assert.match(
+    sharedInfraCheck.remediation,
+    /npm run dev:opponent-forecast -- --release-id <release-id> --dataset-root <absolute-dataset-root>/,
+  );
+});
+
 function createRuntime({
   env = {},
   execAwsJson,

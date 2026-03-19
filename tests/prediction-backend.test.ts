@@ -51,28 +51,26 @@ function createMatchBoxscoreRecord(args: {
 }) {
   return {
     matchId: args.matchId,
-    teamId: args.teamId,
-    opponentTeamId: args.opponentTeamId,
-    offStrategy: args.offStrategy,
-    defStrategy: args.defStrategy,
-    opponentOffStrategy: "Base",
-    opponentDefStrategy: "ManToMan",
-    teamRatingsJson: args.teamRatings,
-    opponentRatingsJson: args.opponentRatings,
     boxscoreJson: {
       homeTeam: {
+        defStrategy: args.defStrategy,
         gdp: {
           focus: args.gdpFocus ?? "Balanced.hit",
           pace: args.gdpPace ?? "Normal.hit",
         },
         id: args.teamId,
+        offStrategy: args.offStrategy,
+        ratings: args.teamRatings,
       },
       awayTeam: {
+        defStrategy: "ManToMan",
         gdp: {
           focus: "Inside.hit",
           pace: "Slow.hit",
         },
         id: args.opponentTeamId,
+        offStrategy: "Base",
+        ratings: args.opponentRatings,
       },
     },
   };
@@ -168,6 +166,8 @@ test("resolveConnectedInput falls back to manual values when cache misses occur"
     {
       homeSourceMatchId: "missing-home",
       awaySourceMatchId: "missing-away",
+      homeTeamId: "HOME",
+      awayTeamId: "AWAY",
       manualFallback,
     },
     {
@@ -176,6 +176,24 @@ test("resolveConnectedInput falls back to manual values when cache misses occur"
   );
 
   assert.deepStrictEqual(resolved, manualFallback);
+});
+
+test("resolveConnectedInput requires explicit team ids for cached source matches", async () => {
+  await assert.rejects(
+    () =>
+      resolveConnectedInput(
+        {},
+        "user-1",
+        {
+          homeSourceMatchId: "home-1",
+          manualFallback,
+        },
+        {
+          getMatchBoxscore: async () => null,
+        },
+      ),
+    /homeTeamId is required/i,
+  );
 });
 
 test("normalizePredictionRequest tolerates historical GDP keys in stored jobs", () => {
@@ -237,6 +255,7 @@ test("resolveConnectedInput still fails without any usable source data", async (
         "user-1",
         {
           homeSourceMatchId: "missing-home",
+          homeTeamId: "HOME",
         },
         {
           getMatchBoxscore: async () => null,

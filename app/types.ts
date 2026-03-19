@@ -25,7 +25,6 @@ export type OpponentForecastJobRecord = Schema["OpponentForecastJob"]["type"];
 export type PredictionJobRecord = Schema["PredictionJob"]["type"];
 export type PredictionJobStatus = PredictionJobRecord["status"];
 export type SyncRunRecord = Schema["SyncRun"]["type"];
-export type SavedLineupScenarioRecord = Schema["SavedLineupScenario"]["type"];
 export type SingleGameSummaryRecord = Schema["SingleGameSummary"]["type"];
 export type SharedPlayerCardRecord = Schema["SharedPlayerCard"]["type"];
 export type UserPreferenceRecord = Schema["UserPreference"]["type"];
@@ -103,10 +102,6 @@ export type SubmitMyTeamHighlightsScanResult = NonNullable<
 >;
 export type SharedPlayerCardResult = NonNullable<
   Schema["generateSharedPlayerCard"]["returnType"]
->;
-export type LineupPlan = NonNullable<Schema["getLineupPlan"]["returnType"]>;
-export type LineupScenario = NonNullable<
-  Schema["saveLineupScenario"]["returnType"]
 >;
 export type LineupHelperWorkspaceRecord = NonNullable<
   Schema["getLineupHelperWorkspace"]["returnType"]
@@ -209,6 +204,8 @@ export type LineupHelperRosterPlayer = {
   salary: number | null;
   age: number | null;
   gameShape: string | null;
+  dmi: number | null;
+  injuryWeeks: number | null;
   snapshotWeekKey: string | null;
   snapshotCapturedAt: string | null;
   available: boolean;
@@ -261,7 +258,9 @@ export type OpponentForecastAnalogGame =
 export type OpponentForecastSignal =
   OpponentForecastResult["featureSignals"][number];
 export type PlayerTrendPoint = PlayerTrendPayload["history"][number];
-export type MatchMetricEntry = MatchBoxscorePayload["teamRatings"][number];
+export type MatchBoxscoreTeam = NonNullable<MatchBoxscorePayload["homeTeam"]>;
+export type MatchMetricEntry = MatchBoxscoreTeam["ratings"][number];
+export type MatchBoxscorePlayerLine = MatchBoxscoreTeam["players"][number];
 
 export type GameDayRecapCoveragePayload = {
   availableGames: number;
@@ -298,7 +297,7 @@ export type LeagueHistoryRow = LeagueHistoryPayload["rows"][number];
 
 export type DashboardWorkspace = {
   home: HomeWorkspacePayload;
-  teamHub: TeamHubPayload;
+  lineupHelper: LineupHelperWorkspaceRecord;
   scout: ScoutWorkspacePayload;
   leagueIntel: LeagueIntelPayload;
   playerLab: PlayerLabPayload;

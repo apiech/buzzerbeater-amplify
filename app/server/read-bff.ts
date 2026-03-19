@@ -7,7 +7,6 @@ import type {
   PredictionJobRecord,
   RecapHistoryKind,
   RecapHistoryRecord,
-  SavedLineupScenarioRecord,
   SingleGameSummaryRecord,
 } from "@/app/types";
 
@@ -71,7 +70,6 @@ const readOperations = {
   getOperationsActivity: (userId, input) => getOperationsActivity(userId, input),
   getPredictionHistory: (userId, input) => getPredictionHistory(userId, input),
   getRecapHistory: (userId, input) => getRecapHistory(userId, input),
-  getSavedLineupScenarios: (userId, input) => getSavedLineupScenarios(userId, input),
 } satisfies Record<string, ReadOperation>;
 
 export function isReadName(value: string): value is ReadName {
@@ -162,30 +160,6 @@ async function getPredictionHistory(
   const limit = readLimit(input, 12);
   const result =
     await runtime.serverDataClient.models.PredictionJob.listPredictionJobsByUserAndRequestedAt(
-      { userId },
-      {
-        limit,
-        nextToken: readToken(input),
-        sortDirection: "DESC",
-      },
-    );
-
-  return {
-    data: {
-      items: toArray(result.data),
-      nextToken: result.nextToken ?? null,
-    },
-    errors: result.errors,
-  };
-}
-
-async function getSavedLineupScenarios(
-  userId: string,
-  input?: Record<string, unknown>,
-): Promise<OperationResult<PaginatedResult<SavedLineupScenarioRecord>>> {
-  const limit = readLimit(input, 8);
-  const result =
-    await runtime.serverDataClient.models.SavedLineupScenario.listSavedLineupScenariosByUserAndSavedAt(
       { userId },
       {
         limit,

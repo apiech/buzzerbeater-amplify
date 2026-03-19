@@ -19,6 +19,7 @@ import {
   listWorkspacePlayerHistory,
   type WorkspacePlayerHistoryRecord,
 } from "./player-snapshot-access";
+import { selectBoxscorePerspective } from "./neutral-boxscore";
 import { getBbConnection, getMatchBoxscore } from "./repository";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -54,6 +55,8 @@ type HelperRosterPlayer = {
   salary: number | null;
   age: number | null;
   gameShape: string | null;
+  dmi: number | null;
+  injuryWeeks: number | null;
   snapshotWeekKey: string | null;
   snapshotCapturedAt: string | null;
   available: boolean;
@@ -246,6 +249,8 @@ async function buildHelperRosterPlayer(
       salary: asNumber(player.salary),
       age: asNumber(player.age),
       gameShape: asString(player.gameShape),
+      dmi: asNumber(player.dmi),
+      injuryWeeks: asNumber(player.injuryWeeks),
       snapshotWeekKey: asString(snapshot?.weekKey),
       snapshotCapturedAt: asString(snapshot?.capturedAt),
       available: false,
@@ -275,6 +280,9 @@ async function buildHelperRosterPlayer(
     salary: asNumber(player.salary) ?? asNumber(snapshot.salary),
     age: asNumber(player.age) ?? asNumber(profile?.age),
     gameShape: asString(player.gameShape) ?? asString(snapshot.gameShape),
+    dmi: asNumber(player.dmi) ?? asNumber(snapshot.dmi),
+    injuryWeeks:
+      asNumber(player.injuryWeeks) ?? asNumber(snapshot.injuryWeeks),
     snapshotWeekKey: asString(snapshot.weekKey),
     snapshotCapturedAt: asString(snapshot.capturedAt),
     available: true,
@@ -317,17 +325,17 @@ async function resolveDefaultContext(
     }
 
     const boxscorePayload = toRecord(boxscore.boxscoreJson);
-    const homeTeam = toRecord(boxscorePayload?.homeTeam);
-    const defaultLocation =
-      teamId && asString(homeTeam?.id) === teamId
-        ? "Home Court"
-        : "Away or Neutral";
+    const perspective = selectBoxscorePerspective(boxscorePayload, teamId);
+    if (!perspective.team) {
+      continue;
+    }
 
     return normalizeContext({
-      offense: asString(boxscore.offStrategy) ?? "Base Offense",
-      defense: asString(boxscore.defStrategy) ?? "Man to man",
+      offense: asString(perspective.team.offStrategy) ?? "Base Offense",
+      defense: asString(perspective.team.defStrategy) ?? "Man to man",
       enthusiasm: 5,
-      homeCourt: defaultLocation,
+      homeCourt:
+        perspective.teamLocation === "HOME" ? "Home Court" : "Away or Neutral",
     });
   }
 
@@ -461,6 +469,8 @@ function parseHelperRoster(value: unknown): HelperRosterPlayer[] {
     salary: asNumber(player.salary),
     age: asNumber(player.age),
     gameShape: asString(player.gameShape),
+    dmi: asNumber(player.dmi),
+    injuryWeeks: asNumber(player.injuryWeeks),
     snapshotWeekKey: asString(player.snapshotWeekKey),
     snapshotCapturedAt: asString(player.snapshotCapturedAt),
     available: Boolean(player.available),

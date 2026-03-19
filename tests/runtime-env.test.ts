@@ -57,7 +57,7 @@ test("runtime env resolvers throw when required values are missing", () => {
   );
   assert.throws(
     () => activeTrackedTeamsTesting.resolveActiveTrackedTeamsTableName({}),
-    /ACTIVE_TRACKED_TEAMS_TABLE_NAME is not configured/,
+    /ACTIVE_TRACKED_TEAMS_TABLE_NAME is not configured[\s\S]*owned-team background enrollment/i,
   );
   assert.throws(
     () => canonicalPlayerSnapshotsTesting.resolvePlayerSkillSnapshotTableName({}),

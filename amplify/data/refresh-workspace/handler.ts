@@ -10,6 +10,7 @@ export const handler: Handler = async (event) => {
     env,
     identity: event.identity,
     force: true,
+    syncActiveTrackedTeams: true,
   });
 
   return workspace.home;

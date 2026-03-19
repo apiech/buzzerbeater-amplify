@@ -1,70 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  buildLineupPlanPayload,
-  buildSalaryProjectionPayload,
-} from "../amplify/data/_backend/workspace";
-
-test("buildLineupPlanPayload ranks a five-man starter group and minute targets", () => {
-  const plan = buildLineupPlanPayload({
-    connection: {} as any,
-    home: {
-      team: {
-        injuries: [
-          {
-            playerId: "p6",
-            fullName: "Rotation Big",
-            injuryWeeks: 1,
-          },
-        ],
-      },
-    },
-    teamHub: {
-      roster: [
-        createPlayer("p1", "Lead Guard", "PG", 2, 14, 55000, "strong"),
-        createPlayer("p2", "Shooter", "SG", 3, 12, 48000, "proficient"),
-        createPlayer("p3", "Wing Stopper", "SF", 2, 11, 51000, "respectable"),
-        createPlayer("p4", "Stretch Big", "PF", 1, 10, 52000, "strong"),
-        createPlayer("p5", "Anchor", "C", 4, 13, 60000, "proficient"),
-        createPlayer("p6", "Bench Big", "C", 0, 7, 28000, "mediocre", 1),
-      ],
-    },
-    scout: {
-      summary: {
-        teamName: "Opponent",
-        tendencies: {
-          offense: [
-            { key: "Push", count: 3 },
-            { key: "Motion", count: 1 },
-          ],
-          defense: [
-            { key: "ManToMan", count: 2 },
-            { key: "Press", count: 1 },
-          ],
-        },
-      },
-    },
-    leagueIntel: {},
-    playerLab: {},
-  } as any);
-
-  assert.equal(Array.isArray(plan.recommendedStarters), true);
-  assert.equal((plan.recommendedStarters as Array<unknown>).length, 5);
-  const firstStarter = (plan.recommendedStarters as Array<{ bestPosition: string }>)[0];
-  assert.ok(firstStarter);
-  assert.equal(
-    firstStarter.bestPosition,
-    "PG",
-  );
-  assert.ok(
-    (plan.minuteTargets as Array<{ playerId: string }>).some(
-      (entry) => entry.playerId === "p1",
-    ),
-  );
-  assert.equal(Array.isArray(plan.rotationNotes), true);
-  assert.equal(Array.isArray(plan.matchupRationale), true);
-});
+import { buildSalaryProjectionPayload } from "../amplify/data/_backend/workspace";
 
 test("buildSalaryProjectionPayload computes trend and flag fit", () => {
   const projection = buildSalaryProjectionPayload({
@@ -93,26 +30,3 @@ test("buildSalaryProjectionPayload computes trend and flag fit", () => {
   assert.equal(projection.trend, "UP");
   assert.equal(projection.isFlagTarget, true);
 });
-
-function createPlayer(
-  playerId: string,
-  fullName: string,
-  bestPosition: string,
-  projectedStarterCount: number,
-  ppg: number,
-  salary: number,
-  gameShape: string,
-  injuryWeeks = 0,
-) {
-  return {
-    playerId,
-    fullName,
-    bestPosition,
-    projectedStarterCount,
-    salary,
-    gameShape,
-    dmi: 120000,
-    injuryWeeks,
-    ppg,
-  };
-}

@@ -27,6 +27,7 @@ type MatchStoreBackend = {
   getMyTeamHighlights: FunctionResource;
   getPlayerLab: FunctionResource;
   getPlayerTrend: FunctionResource;
+  getRivalsWorkspace: FunctionResource;
   getSalaryProjection: FunctionResource;
   getScoutWorkspace: FunctionResource;
   getTeamHub: FunctionResource;
@@ -84,16 +85,21 @@ export function configureMatchStoreIntegration(
     backend.getAccessiblePlayByPlay,
     backend.getMatchBoxscoreDetails,
   ];
-  const workspaceSyncFunctions = [
+  const activeTrackedTeamSyncFunctions = [
     backend.connectBbAccount,
     backend.disconnectBbAccount,
     backend.refreshWorkspace,
+    backend.refreshBbWorkspaceWorker,
+  ];
+  const workspaceSnapshotWriteFunctions = [
+    backend.connectBbAccount,
     backend.getHomeWorkspace,
     backend.getTeamHub,
     backend.getScoutWorkspace,
     backend.getLeagueIntel,
     backend.getPlayerLab,
-    backend.refreshBbWorkspaces,
+    backend.getRivalsWorkspace,
+    backend.refreshWorkspace,
     backend.refreshBbWorkspaceWorker,
   ];
   const playerSnapshotReadFunctions = [
@@ -101,10 +107,6 @@ export function configureMatchStoreIntegration(
     backend.getPlayerTrend,
     backend.getSalaryProjection,
     backend.generateSharedPlayerCard,
-  ];
-  const teamHighlightsFunctions = [
-    backend.getMyTeamHighlights,
-    backend.submitMyTeamHighlightsScan,
   ];
   const teamHighlightsReadFunctions = [backend.getMyTeamHighlights];
 
@@ -125,16 +127,19 @@ export function configureMatchStoreIntegration(
     backend.listAccessibleMatches.resources.lambda,
   );
 
-  for (const resource of workspaceSyncFunctions) {
+  for (const resource of activeTrackedTeamSyncFunctions) {
     resource.addEnvironment(
       "ACTIVE_TRACKED_TEAMS_TABLE_NAME",
       bindings.activeTrackedTeamsTableName,
     );
+    activeTrackedTeamsTable.grantReadWriteData(resource.resources.lambda);
+  }
+
+  for (const resource of workspaceSnapshotWriteFunctions) {
     resource.addEnvironment(
       "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
       bindings.playerSkillSnapshotTableName,
     );
-    activeTrackedTeamsTable.grantReadWriteData(resource.resources.lambda);
     playerSkillSnapshotTable.grantReadWriteData(resource.resources.lambda);
   }
 
@@ -144,14 +149,6 @@ export function configureMatchStoreIntegration(
       bindings.playerSkillSnapshotTableName,
     );
     playerSkillSnapshotTable.grantReadData(resource.resources.lambda);
-  }
-
-  for (const resource of teamHighlightsFunctions) {
-    resource.addEnvironment(
-      "ACTIVE_TRACKED_TEAMS_TABLE_NAME",
-      bindings.activeTrackedTeamsTableName,
-    );
-    activeTrackedTeamsTable.grantReadData(resource.resources.lambda);
   }
 
   for (const resource of teamHighlightsReadFunctions) {

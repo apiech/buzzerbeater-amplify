@@ -9,11 +9,14 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 
 import {
-  listActiveTrackedTeamsForUser,
-} from "./active-tracked-teams";
+  BBXmlApiClient,
+  type BBXmlApiClientOptions,
+} from "../../../lib/bbapi";
+import { resolveBbAccessKey } from "./credentials";
 import {
   getBbConnection,
   getMatchBoxscore,
+  listTrackedTeamsForUser,
 } from "./repository";
 import type { Schema } from "../resource";
 
@@ -34,8 +37,14 @@ type MatchBoxscoreDetailsResult = NonNullable<
     ? TReturn
     : never
 >;
-type MatchMetricEntry = MatchBoxscoreDetailsResult["teamRatings"][number];
+type MatchMetricEntry = NonNullable<
+  NonNullable<MatchBoxscoreDetailsResult["homeTeam"]>["ratings"]
+>[number];
 type MatchContextResult = NonNullable<MatchBoxscoreDetailsResult["context"]>;
+type MatchBoxscoreTeamResult = NonNullable<
+  MatchBoxscoreDetailsResult["homeTeam"]
+>;
+type MatchBoxscorePlayerLineResult = MatchBoxscoreTeamResult["players"][number];
 
 export type MatchIngestStatus = "PENDING" | "PARTIAL" | "SUCCEEDED" | "FAILED";
 
@@ -89,12 +98,13 @@ type MatchStoreEnv = {
 };
 
 type MatchStoreDependencies = {
-  listActiveTrackedTeamsForUser: typeof listActiveTrackedTeamsForUser;
   getBbConnection: typeof getBbConnection;
   getLegacyMatchBoxscore: typeof getMatchBoxscore;
-  createBbClient: () => {
-    getBoxScoreXml(matchId: string): Promise<string>;
-  };
+  listTrackedTeamsForUser: typeof listTrackedTeamsForUser;
+  createBbClient: (
+    options?: BBXmlApiClientOptions,
+  ) => Pick<BBXmlApiClient, "getBoxScore" | "getBoxScoreXml">;
+  resolveBbAccessKey: typeof resolveBbAccessKey;
   fetchMatchReport: (matchId: string) => Promise<string>;
   buildMatchPackage: (input: {
     boxscoreXml: string;
@@ -104,7 +114,10 @@ type MatchStoreDependencies = {
     teamId: string;
     userId: string;
   }) => Promise<Record<string, unknown>>;
-  getCatalog: (env: MatchStoreEnv, matchId: string) => Promise<MatchCatalogRecord | null>;
+  getCatalog: (
+    env: MatchStoreEnv,
+    matchId: string,
+  ) => Promise<MatchCatalogRecord | null>;
   putCatalog: (env: MatchStoreEnv, record: MatchCatalogRecord) => Promise<void>;
   putTeamProjection: (
     env: MatchStoreEnv,
@@ -141,12 +154,16 @@ const ddbDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 });
 
 const defaultDependencies: MatchStoreDependencies = {
-  listActiveTrackedTeamsForUser,
   getBbConnection,
   getLegacyMatchBoxscore: getMatchBoxscore,
-  createBbClient: () => {
-    throw new Error("createBbClient is not implemented for match-store ingestion.");
+  listTrackedTeamsForUser,
+  createBbClient: (options) => {
+    if (!options) {
+      throw new Error("createBbClient requires BB API credentials.");
+    }
+    return new BBXmlApiClient(options);
   },
+  resolveBbAccessKey,
   fetchMatchReport: async () => {
     throw new Error("fetchMatchReport is not implemented for match-store ingestion.");
   },
@@ -328,35 +345,63 @@ export async function getMatchBoxscoreDetails(
     throw new Error("A match id is required.");
   }
 
-  const accessibleTeamIds = await resolveAccessibleTeamIds(args.env, userId, dependencies);
-  const catalog = await dependencies.getCatalog(resolveMatchStoreEnv(args.env), matchId);
-  if (catalog && isMatchAccessible(catalog, accessibleTeamIds) && catalog.canonicalKey) {
+  const matchStoreEnv = resolveMatchStoreEnv(args.env);
+  const catalog = await dependencies.getCatalog(matchStoreEnv, matchId);
+  if (catalog?.canonicalKey) {
     const matchPackage = await dependencies.getJsonObject(
-      resolveMatchStoreEnv(args.env),
+      matchStoreEnv,
       catalog.canonicalKey,
     );
-    return buildMatchStoreBoxscorePayload(matchPackage, accessibleTeamIds);
+    return buildMatchStoreBoxscorePayload(matchPackage);
   }
 
   const boxscore = await dependencies.getLegacyMatchBoxscore(args.env, userId, matchId);
-  if (!boxscore) {
-    throw new Error("The requested match boxscore is not available in cache.");
+  if (boxscore) {
+    const boxscorePayload = asRecord(boxscore.boxscoreJson);
+    return buildNormalizedBoxscorePayload({
+      matchId,
+      matchType: asOptionalString(boxscorePayload?.type),
+      startTime: asOptionalString(boxscorePayload?.startTime),
+      endTime: asOptionalString(boxscorePayload?.endTime),
+      boxscore: boxscorePayload,
+      source: "MATCH_BOXSCORE_CACHE",
+    });
   }
 
-  return {
-    matchId,
-    opponentTeamName: asOptionalString(boxscore.opponentTeamName),
-    offStrategy: asOptionalString(boxscore.offStrategy),
-    defStrategy: asOptionalString(boxscore.defStrategy),
-    opponentOffStrategy: asOptionalString(boxscore.opponentOffStrategy),
-    opponentDefStrategy: asOptionalString(boxscore.opponentDefStrategy),
-    teamRatings: toMetricEntries(asRecord(boxscore.teamRatingsJson)),
-    opponentRatings: toMetricEntries(asRecord(boxscore.opponentRatingsJson)),
-    teamEfficiency: toMetricEntries(asRecord(boxscore.teamEfficiencyJson)),
-    opponentEfficiency: toMetricEntries(asRecord(boxscore.opponentEfficiencyJson)),
-    context: buildMatchContext(asRecord(boxscore.boxscoreJson)),
-    source: "LEGACY_CACHE",
-  };
+  return fetchLiveMatchBoxscoreDetails(args.env, userId, matchId, dependencies);
+}
+
+async function fetchLiveMatchBoxscoreDetails(
+  env: GraphqlEnv,
+  userId: string,
+  matchId: string,
+  dependencies: MatchStoreDependencies,
+): Promise<MatchBoxscoreDetailsResult> {
+  const connection = await dependencies.getBbConnection(env, userId);
+  const bbLoginName = asOptionalString(connection?.bbLoginName);
+  if (!bbLoginName) {
+    throw new Error(
+      "A saved BuzzerBeater login is required to fetch live boxscores.",
+    );
+  }
+
+  const accessKey = await dependencies.resolveBbAccessKey(env, userId);
+  const liveBoxscore = await dependencies
+    .createBbClient({
+      username: bbLoginName,
+      securityCode: accessKey,
+    })
+    .getBoxScore(matchId);
+  const boxscore = asRecord(liveBoxscore);
+
+  return buildNormalizedBoxscorePayload({
+    matchId: asOptionalString(boxscore?.matchId) ?? matchId,
+    matchType: asOptionalString(boxscore?.type),
+    startTime: asOptionalString(boxscore?.startTime),
+    endTime: asOptionalString(boxscore?.endTime),
+    boxscore,
+    source: "LIVE_BB_API",
+  });
 }
 
 export async function ingestDiscoveredMatch(
@@ -575,34 +620,83 @@ function buildCanonicalMatchPayload(
 
 function buildMatchStoreBoxscorePayload(
   matchPackage: Record<string, unknown>,
-  accessibleTeamIds: Set<string>,
 ): MatchBoxscoreDetailsResult {
-  const boxscore = asRecord(matchPackage.boxscore) ?? {};
-  const homeTeam = asRecord(boxscore.homeTeam) ?? {};
-  const awayTeam = asRecord(boxscore.awayTeam) ?? {};
-  const homeTeamId = asOptionalString(homeTeam.id);
-  const awayTeamId = asOptionalString(awayTeam.id);
-  const perspective =
-    homeTeamId && accessibleTeamIds.has(homeTeamId)
-      ? { team: homeTeam, opponent: awayTeam }
-      : awayTeamId && accessibleTeamIds.has(awayTeamId)
-        ? { team: awayTeam, opponent: homeTeam }
-        : { team: homeTeam, opponent: awayTeam };
+  const match = getMatchSummary(matchPackage);
+
+  return buildNormalizedBoxscorePayload({
+    matchId: asOptionalString(matchPackage.matchId) ?? "",
+    matchType: asOptionalString(match.type) ?? asOptionalString(matchPackage.type),
+    startTime: asOptionalString(match.startTime),
+    endTime: asOptionalString(match.endTime),
+    boxscore: asRecord(matchPackage.boxscore),
+    source: "CANONICAL_MATCH_STORE",
+  });
+}
+
+function buildNormalizedBoxscorePayload(input: {
+  matchId: string;
+  matchType: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  boxscore: Record<string, unknown> | null;
+  source: MatchBoxscoreDetailsResult["source"];
+}): MatchBoxscoreDetailsResult {
+  const homeTeam = serializeBoxscoreTeam(asRecord(input.boxscore?.homeTeam));
+  const awayTeam = serializeBoxscoreTeam(asRecord(input.boxscore?.awayTeam));
 
   return {
-    matchId: asOptionalString(matchPackage.matchId) ?? "",
-    opponentTeamName: asOptionalString(perspective.opponent.teamName),
-    offStrategy: asOptionalString(perspective.team.offStrategy),
-    defStrategy: asOptionalString(perspective.team.defStrategy),
-    opponentOffStrategy: asOptionalString(perspective.opponent.offStrategy),
-    opponentDefStrategy: asOptionalString(perspective.opponent.defStrategy),
-    teamRatings: toMetricEntries(asRecord(perspective.team.ratings)),
-    opponentRatings: toMetricEntries(asRecord(perspective.opponent.ratings)),
-    teamEfficiency: toMetricEntries(asRecord(perspective.team.efficiency)),
-    opponentEfficiency: toMetricEntries(asRecord(perspective.opponent.efficiency)),
-    context: buildMatchContext(boxscore),
-    source: "CANONICAL_MATCH_STORE",
+    matchId: input.matchId,
+    matchType: input.matchType,
+    startTime: input.startTime,
+    endTime: input.endTime,
+    homeTeam,
+    awayTeam,
+    context: buildMatchContext(input.boxscore),
+    source: input.source,
   };
+}
+
+function serializeBoxscoreTeam(
+  team: Record<string, unknown> | null,
+): MatchBoxscoreTeamResult | null {
+  if (!team) {
+    return null;
+  }
+
+  return {
+    teamId: asOptionalString(team.id),
+    teamName: asOptionalString(team.teamName),
+    shortName: asOptionalString(team.shortName),
+    offStrategy: asOptionalString(team.offStrategy),
+    defStrategy: asOptionalString(team.defStrategy),
+    score: asOptionalNumber(team.score),
+    partialScores: toIntegerList(team.partialScores),
+    teamTotals: toMetricEntries(
+      asRecord(team.teamTotals) ?? asRecord(team.totals),
+    ),
+    ratings: toMetricEntries(asRecord(team.ratings)),
+    efficiency: toMetricEntries(asRecord(team.efficiency)),
+    players: toBoxscorePlayerLines(team.players),
+  };
+}
+
+function toBoxscorePlayerLines(
+  value: unknown,
+): MatchBoxscorePlayerLineResult[] {
+  return toRecordArray(value).map((player) => {
+    const minutesByPosition = toMetricEntries(asRecord(player.minutesByPosition));
+
+    return {
+      playerId: asOptionalString(player.id),
+      firstName: asOptionalString(player.firstName),
+      lastName: asOptionalString(player.lastName),
+      fullName: asOptionalString(player.fullName) ?? "Unknown player",
+      isStarter: asOptionalBoolean(asRecord(player.details)?.isStarter) ?? false,
+      minutes: sumMetricEntries(minutesByPosition),
+      performance: toMetricEntries(asRecord(player.performance)),
+      minutesByPosition,
+    };
+  });
 }
 
 function toMetricEntries(
@@ -623,6 +717,20 @@ function toMetricEntries(
       };
     })
     .sort((left, right) => String(left.key).localeCompare(String(right.key)));
+}
+
+function toIntegerList(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => asOptionalNumber(entry))
+    .filter((entry): entry is number => entry !== null);
+}
+
+function sumMetricEntries(entries: MatchMetricEntry[]): number {
+  return entries.reduce((total, entry) => total + (entry.numberValue ?? 0), 0);
 }
 
 function buildMatchContext(
@@ -647,7 +755,7 @@ async function resolveAccessibleTeamIds(
   userId: string,
   dependencies: MatchStoreDependencies,
 ): Promise<Set<string>> {
-  const trackedTeams = await dependencies.listActiveTrackedTeamsForUser(env, userId);
+  const trackedTeams = await dependencies.listTrackedTeamsForUser(env, userId);
   const connection = await dependencies.getBbConnection(env, userId);
   const teamIds = new Set<string>();
   for (const team of trackedTeams) {
@@ -840,6 +948,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function toRecordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value
+        .filter(
+          (entry): entry is Record<string, unknown> =>
+            Boolean(entry) && typeof entry === "object" && !Array.isArray(entry),
+        )
+    : [];
 }
 
 function asOptionalString(value: unknown): string | null {

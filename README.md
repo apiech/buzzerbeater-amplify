@@ -8,7 +8,7 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 - Root route `/` redirects into the authenticated workspace shell
 - Route-based workspace sections at `/workspace/home`, `/workspace/scout`, `/workspace/lineups`, `/workspace/league`, `/workspace/players`, `/workspace/predictions`, `/workspace/recaps`, and `/workspace/ops`
 - Encrypted BuzzerBeater account connection and cached workspace sync
-- Opponent scouting, league standings, player trends, salary projections, lineup planning, and saved lineup scenarios
+- Opponent scouting, league standings, player trends, salary projections, lineup planning, and dedicated saved boxscore review
 - Async SageMaker-backed matchup predictions
 - Stripe-backed premium gating for predictions, league writeups, and store-managed paid offers
 

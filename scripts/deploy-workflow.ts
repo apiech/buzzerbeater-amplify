@@ -20,17 +20,22 @@ import {
   skipSandboxSharedInfraBootstrapEnvName,
 } from "./shared-infra-bootstrap.mjs";
 import {
+  createOpponentForecastTargetPin,
   createPredictorTargetPin,
   defaultAwsRegion,
   expectedAwsAccount,
   inspectPredictorTargetPin,
   loadDeployWorkflowEnv,
+  resolveOpponentForecastTargetPin,
+  resolveOpponentForecastTargetsFilePath,
   projectRoot,
   requiredSandboxAppEnvNames,
   resolvePredictorTargetPin,
   resolvePredictorTargetsFilePath,
   sandboxSecretName,
+  type OpponentForecastTargetName,
   type PredictorTargetName,
+  writeOpponentForecastTargetPin,
   writePredictorTargetPin,
   workspaceRoot,
 } from "./deploy-runtime.js";
@@ -43,10 +48,12 @@ type SharedInfraRuntime = Parameters<typeof resolveSandboxEnvironmentName>[1];
 type WorkflowCommand =
   | "dev:data"
   | "dev:doctor"
+  | "dev:opponent-forecast"
   | "dev:predictor"
   | "dev:prepare"
   | "sandbox:data"
   | "sandbox:doctor"
+  | "sandbox:opponent-forecast"
   | "sandbox:predictor"
   | "sandbox:secret:sync"
   | "sandbox:up";
@@ -105,6 +112,13 @@ type PredictorCommandOptions = {
   usePin: boolean;
 };
 
+type OpponentForecastCommandOptions = {
+  datasetRoot: string | null;
+  identifier: string | null;
+  releaseId: string | null;
+  usePin: boolean;
+};
+
 function asSharedInfraRuntime(runtime: WorkflowRuntime): SharedInfraRuntime {
   return runtime as unknown as SharedInfraRuntime;
 }
@@ -113,9 +127,12 @@ export const __testing = {
   collectDevDoctorReport,
   collectSandboxDoctorReport,
   parseWorkflowArgs,
+  parseOpponentForecastCommandOptions,
   parsePredictorCommandOptions,
   printDoctorReport,
+  runDevOpponentForecast,
   runDevPrepare,
+  runSandboxOpponentForecast,
   runCommandCapture,
   runSandboxSecretSync,
   runSandboxUp,
@@ -126,7 +143,7 @@ export function parseWorkflowArgs(argv: string[]): ParsedWorkflowArgs {
 
   if (!command) {
     throw new Error(
-      "Pass one of: sandbox:doctor, sandbox:secret:sync, sandbox:data, sandbox:predictor, sandbox:up, dev:doctor, dev:data, dev:predictor, dev:prepare.",
+      "Pass one of: sandbox:doctor, sandbox:secret:sync, sandbox:data, sandbox:predictor, sandbox:opponent-forecast, sandbox:up, dev:doctor, dev:data, dev:predictor, dev:opponent-forecast, dev:prepare.",
     );
   }
 
@@ -135,10 +152,12 @@ export function parseWorkflowArgs(argv: string[]): ParsedWorkflowArgs {
     "sandbox:secret:sync",
     "sandbox:data",
     "sandbox:predictor",
+    "sandbox:opponent-forecast",
     "sandbox:up",
     "dev:doctor",
     "dev:data",
     "dev:predictor",
+    "dev:opponent-forecast",
     "dev:prepare",
   ]);
   if (!supportedCommands.has(command as WorkflowCommand)) {
@@ -353,6 +372,9 @@ export function main(argv = process.argv.slice(2)): void {
     case "sandbox:predictor":
       runSandboxPredictor(parsed.args);
       break;
+    case "sandbox:opponent-forecast":
+      runSandboxOpponentForecast(parsed.args);
+      break;
     case "sandbox:up":
       process.exit(runSandboxUp(parsed.args));
       break;
@@ -367,6 +389,9 @@ export function main(argv = process.argv.slice(2)): void {
       break;
     case "dev:predictor":
       runDevPredictor(parsed.args);
+      break;
+    case "dev:opponent-forecast":
+      runDevOpponentForecast(parsed.args);
       break;
     case "dev:prepare":
       process.exit(runDevPrepare(parsed.args));
@@ -483,6 +508,45 @@ function runSandboxPredictor(
   const pin = resolveWrittenPin("sandbox", options, runtime);
   writePredictorTargetPin("sandbox", pin, resolvePredictorTargetsFilePath(), runtime);
   runtime.write(`Updated sandbox predictor pin '${pin.releaseId}'.`);
+}
+
+function runSandboxOpponentForecast(
+  args: string[],
+  runtime: WorkflowRuntime = createDefaultRuntime(),
+): void {
+  const options = parseOpponentForecastCommandOptions(args, true);
+  const sandboxArgs = buildSandboxArgsFromIdentifier(options.identifier);
+  const sandboxIdentifier = resolveSandboxIdentifier(
+    ["sandbox", ...sandboxArgs],
+    asSharedInfraRuntime(runtime),
+  );
+  const environmentName = resolveSandboxEnvironmentName(
+    ["sandbox", ...sandboxArgs],
+    asSharedInfraRuntime(runtime),
+  );
+  const runMode = options.usePin ? "pinned" : "explicit";
+
+  runtime.write(
+    `Deploying opponent forecast for ${environmentName} using ${runMode} inputs.`,
+  );
+  runOpponentForecastRelease({
+    args: buildOpponentForecastReleaseArgs(
+      "sandbox",
+      options,
+      sandboxIdentifier,
+      runtime,
+    ),
+    runtime,
+  });
+
+  const pin = resolveWrittenOpponentForecastPin("sandbox", options, runtime);
+  writeOpponentForecastTargetPin(
+    "sandbox",
+    pin,
+    resolveOpponentForecastTargetsFilePath(),
+    runtime,
+  );
+  runtime.write(`Updated sandbox opponent forecast pin '${pin.releaseId}'.`);
 }
 
 function runVerifyDeploy(
@@ -617,6 +681,28 @@ function runDevPredictor(
   runtime.write(`Updated dev predictor pin '${pin.releaseId}'.`);
 }
 
+function runDevOpponentForecast(
+  args: string[],
+  runtime: WorkflowRuntime = createDefaultRuntime(),
+): void {
+  const options = parseOpponentForecastCommandOptions(args, false);
+  runtime.write(
+    `Deploying opponent forecast for dev using ${options.usePin ? "pinned" : "explicit"} inputs.`,
+  );
+  runOpponentForecastRelease({
+    args: buildOpponentForecastReleaseArgs("dev", options, null, runtime),
+    runtime,
+  });
+  const pin = resolveWrittenOpponentForecastPin("dev", options, runtime);
+  writeOpponentForecastTargetPin(
+    "dev",
+    pin,
+    resolveOpponentForecastTargetsFilePath(),
+    runtime,
+  );
+  runtime.write(`Updated dev opponent forecast pin '${pin.releaseId}'.`);
+}
+
 function runDevPrepare(
   args: string[],
   runtime: WorkflowRuntime = createDefaultRuntime(),
@@ -731,6 +817,9 @@ function checkSharedInfraParameters(
   region: string,
   runtime: WorkflowRuntime,
 ): DoctorCheck {
+  const parameterPaths = buildSharedInfraParameterPaths(environmentName);
+  const optionalPaths = new Set([parameterPaths.opponentForecastEndpointName]);
+
   try {
     const contract = runtime.execAwsJson([
       "ssm",
@@ -741,22 +830,38 @@ function checkSharedInfraParameters(
       "--output",
       "json",
       "--names",
-      ...Object.values(buildSharedInfraParameterPaths(environmentName)),
+      ...Object.values(parameterPaths),
     ]) as {
       InvalidParameters?: string[];
     };
     const missing = (contract.InvalidParameters ?? [])
       .map((value) => normalizeOptionalString(value))
       .filter((value): value is string => Boolean(value));
-    if (missing.length > 0) {
+    const missingRequired = missing.filter((value) => !optionalPaths.has(value));
+    const missingOptional = missing.filter((value) => optionalPaths.has(value));
+
+    if (missingRequired.length > 0) {
       return {
-        detail: `Missing shared infra contract parameters: ${missing.join(", ")}.`,
+        detail: `Missing shared infra contract parameters: ${missingRequired.join(", ")}.`,
         label: "Shared infra SSM contract",
         remediation:
           environmentName === "dev"
             ? `From ${projectRoot} run: npm run dev:data`
             : `From ${projectRoot} run: npm run sandbox:data`,
         status: "fail",
+      };
+    }
+
+    if (missingOptional.length > 0) {
+      const remediation =
+        environmentName === "dev"
+          ? `From ${projectRoot} run: ${buildDevOpponentForecastNpmCommand(false)}`
+          : `From ${projectRoot} run: ${buildSandboxOpponentForecastCommandForEnvironment(environmentName, false)}`;
+      return {
+        detail: `Optional shared infra parameters are missing: ${missingOptional.join(", ")}. Opponent forecast jobs remain disabled until the endpoint is deployed.`,
+        label: "Shared infra SSM contract",
+        remediation,
+        status: "warn",
       };
     }
 
@@ -921,6 +1026,23 @@ function runPredictorRelease({
   }
 }
 
+function runOpponentForecastRelease({
+  args,
+  runtime,
+}: {
+  args: string[];
+  runtime: WorkflowRuntime;
+}): void {
+  const result = runtime.spawnSync("./scripts/opponent-forecast-release", args, {
+    cwd: workspaceRoot,
+    env: runtime.env,
+    stdio: "inherit",
+  });
+  if ((result.status ?? 1) !== 0) {
+    throw new Error("Opponent forecast deployment failed.");
+  }
+}
+
 function resolveWrittenPin(
   targetName: PredictorTargetName,
   options: PredictorCommandOptions,
@@ -942,6 +1064,31 @@ function resolveWrittenPin(
   return createPredictorTargetPin(
     normalizeOptionalString(options.releaseId) ?? "",
     normalizeOptionalString(options.artifactPrefix) ?? "",
+    runtime,
+  );
+}
+
+function resolveWrittenOpponentForecastPin(
+  targetName: OpponentForecastTargetName,
+  options: OpponentForecastCommandOptions,
+  runtime: WorkflowRuntime,
+) {
+  if (options.usePin) {
+    const existing = resolveOpponentForecastTargetPin(
+      targetName,
+      resolveOpponentForecastTargetsFilePath(),
+      runtime,
+    );
+    return createOpponentForecastTargetPin(
+      existing.releaseId,
+      existing.datasetRoot,
+      runtime,
+    );
+  }
+
+  return createOpponentForecastTargetPin(
+    normalizeOptionalString(options.releaseId) ?? "",
+    normalizeOptionalString(options.datasetRoot) ?? "",
     runtime,
   );
 }
@@ -999,6 +1146,59 @@ function buildPredictorReleaseArgs(
   return args;
 }
 
+function buildOpponentForecastReleaseArgs(
+  stage: "dev" | "sandbox",
+  options: OpponentForecastCommandOptions,
+  sandboxIdentifier: string | null,
+  runtime: WorkflowRuntime,
+): string[] {
+  const args: string[] = [stage];
+
+  if (stage === "sandbox") {
+    const explicitIdentifier = normalizeOptionalString(options.identifier);
+    if (explicitIdentifier) {
+      args.push("--identifier", explicitIdentifier);
+    } else if (sandboxIdentifier) {
+      const defaultIdentifier = resolveSandboxIdentifier(
+        ["sandbox"],
+        asSharedInfraRuntime(runtime),
+      );
+      if (sandboxIdentifier !== defaultIdentifier) {
+        args.push("--identifier", sandboxIdentifier);
+      }
+    }
+  }
+
+  const releaseId = normalizeOptionalString(options.releaseId);
+  const datasetRoot = normalizeOptionalString(options.datasetRoot);
+  if (releaseId && datasetRoot) {
+    args.push("--release-id", releaseId, "--dataset-root", datasetRoot);
+    return args;
+  }
+
+  if (releaseId || datasetRoot) {
+    throw new Error(
+      "Provide both --release-id and --dataset-root together, or use --use-pin.",
+    );
+  }
+
+  if (!options.usePin) {
+    const command =
+      stage === "sandbox"
+        ? buildSandboxOpponentForecastNpmCommand(
+            buildSandboxArgsFromIdentifier(sandboxIdentifier),
+            false,
+          )
+        : buildDevOpponentForecastNpmCommand(false);
+    throw new Error(
+      `Opponent forecast deployment requires --release-id and --dataset-root, or --use-pin. From ${projectRoot} run: ${command}`,
+    );
+  }
+
+  args.push("--use-pin", stage);
+  return args;
+}
+
 function parsePredictorCommandOptions(
   argv: string[],
   allowIdentifier: boolean,
@@ -1047,6 +1247,60 @@ function parsePredictorCommandOptions(
 
   return {
     artifactPrefix,
+    identifier,
+    releaseId,
+    usePin,
+  };
+}
+
+function parseOpponentForecastCommandOptions(
+  argv: string[],
+  allowIdentifier: boolean,
+): OpponentForecastCommandOptions {
+  let datasetRoot: string | null = null;
+  let identifier: string | null = null;
+  let releaseId: string | null = null;
+  let usePin = false;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--use-pin") {
+      usePin = true;
+      continue;
+    }
+    if (argument === "--release-id") {
+      releaseId = argv[index + 1] ?? null;
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--release-id=")) {
+      releaseId = argument.slice("--release-id=".length);
+      continue;
+    }
+    if (argument === "--dataset-root") {
+      datasetRoot = argv[index + 1] ?? null;
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--dataset-root=")) {
+      datasetRoot = argument.slice("--dataset-root=".length);
+      continue;
+    }
+    if (allowIdentifier && argument === "--identifier") {
+      identifier = argv[index + 1] ?? null;
+      index += 1;
+      continue;
+    }
+    if (allowIdentifier && argument?.startsWith("--identifier=")) {
+      identifier = argument.slice("--identifier=".length);
+      continue;
+    }
+
+    throw new Error(`Unsupported option '${argument}'.`);
+  }
+
+  return {
+    datasetRoot,
     identifier,
     releaseId,
     usePin,
@@ -1123,6 +1377,55 @@ function buildDevPredictorNpmCommand(usePin: boolean): string {
   return usePin
     ? "npm run dev:predictor -- --use-pin"
     : "npm run dev:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>";
+}
+
+function buildSandboxOpponentForecastNpmCommand(
+  sandboxArgs: string[],
+  usePin: boolean,
+): string {
+  const commandParts = ["npm run sandbox:opponent-forecast --"];
+  const explicitArgs = buildSandboxPredictorReleaseCommand(["sandbox", ...sandboxArgs]);
+  const sandboxIdentifier = normalizeOptionalString(explicitArgs.sandboxIdentifier);
+  if (
+    sandboxIdentifier &&
+    sandboxArgs.some(
+      (argument) =>
+        argument === "--identifier" || argument.startsWith("--identifier="),
+    )
+  ) {
+    commandParts.push("--identifier", sandboxIdentifier);
+  }
+  if (usePin) {
+    commandParts.push("--use-pin");
+  } else {
+    commandParts.push(
+      "--release-id",
+      "<release-id>",
+      "--dataset-root",
+      "<absolute-dataset-root>",
+    );
+  }
+
+  return commandParts.join(" ");
+}
+
+function buildDevOpponentForecastNpmCommand(usePin: boolean): string {
+  return usePin
+    ? "npm run dev:opponent-forecast -- --use-pin"
+    : "npm run dev:opponent-forecast -- --release-id <release-id> --dataset-root <absolute-dataset-root>";
+}
+
+function buildSandboxOpponentForecastCommandForEnvironment(
+  environmentName: string,
+  usePin: boolean,
+): string {
+  const identifier = environmentName.startsWith("sandbox-")
+    ? environmentName.slice("sandbox-".length)
+    : null;
+  return buildSandboxOpponentForecastNpmCommand(
+    buildSandboxArgsFromIdentifier(identifier),
+    usePin,
+  );
 }
 
 function removeFlag(argv: string[], flagName: string): string[] {

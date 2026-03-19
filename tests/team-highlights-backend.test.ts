@@ -23,11 +23,10 @@ function createMoment(index: number, overrides: Record<string, unknown> = {}) {
 
 function createTrackedTeam() {
   return {
-    active: true,
     isPrimary: true,
     teamId: "team-1",
-    teamName: "Alpha",
-    updatedAt: "2026-03-15T00:00:00.000Z",
+    name: "Alpha",
+    fetchedAt: "2026-03-15T00:00:00.000Z",
     userId: "user-1",
   };
 }
@@ -47,7 +46,7 @@ test("submitMyTeamHighlightsScan rejects free-plan users before queueing work", 
             teamName: "Alpha",
           }) as any,
           getTeamHighlightsStatus: async () => null,
-          listActiveTrackedTeamsForUser: async () => [createTrackedTeam()],
+          listTrackedTeamsForUser: async () => [createTrackedTeam()],
           now: () => new Date("2026-03-15T00:00:00.000Z"),
           putTeamHighlightsStatus: async () => {},
           requireFeatureAccess: async () => {
@@ -80,7 +79,7 @@ test("submitMyTeamHighlightsScan writes queued status and enqueues work", async 
         teamName: "Alpha",
       }) as any,
       getTeamHighlightsStatus: async () => null,
-      listActiveTrackedTeamsForUser: async () => [createTrackedTeam()],
+      listTrackedTeamsForUser: async () => [createTrackedTeam()],
       now: () => new Date("2026-03-15T12:00:00.000Z"),
       putTeamHighlightsStatus: async (_env, record) => {
         writtenStatuses.push(record as unknown as Record<string, unknown>);
@@ -133,7 +132,7 @@ test("submitMyTeamHighlightsScan reuses an active scan instead of duplicating it
         teamName: "Alpha",
         userId: "user-1",
       }),
-      listActiveTrackedTeamsForUser: async () => [createTrackedTeam()],
+      listTrackedTeamsForUser: async () => [createTrackedTeam()],
       now: () => new Date("2026-03-15T12:00:00.000Z"),
       putTeamHighlightsStatus: async () => {
         throw new Error("putTeamHighlightsStatus should not be called");
@@ -177,7 +176,7 @@ test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async
         teamName: "Alpha",
         userId: "user-1",
       }),
-      listActiveTrackedTeamsForUser: async () => [createTrackedTeam()],
+      listTrackedTeamsForUser: async () => [createTrackedTeam()],
       queryTeamMoments: async () => allMoments as any,
     },
   )) as {
@@ -209,7 +208,7 @@ test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async
         teamName: "Alpha",
       }) as any,
       getTeamHighlightsStatus: async () => null,
-      listActiveTrackedTeamsForUser: async () => [createTrackedTeam()],
+      listTrackedTeamsForUser: async () => [createTrackedTeam()],
       queryTeamMoments: async () => allMoments as any,
     },
   )) as {
