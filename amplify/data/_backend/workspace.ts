@@ -18,11 +18,11 @@ import {
   type ActiveTrackedTeamCredentialProjection,
   upsertActiveTrackedTeam,
 } from "./active-tracked-teams";
-import {
-  listCanonicalPlayerSkillSnapshots,
-  upsertCanonicalPlayerSkillSnapshot,
-} from "./canonical-player-snapshots";
 import { encryptValue, getEncryptionSecret } from "./encryption";
+import {
+  listWorkspacePlayerHistory,
+  storeCanonicalPlayerSkillSnapshot,
+} from "./player-snapshot-access";
 import {
   buildPlayerSkillObservationSortKey,
   createSavedLineupScenario,
@@ -35,8 +35,8 @@ import {
   getBbConnection,
   getBbCredential,
   getMatchBoxscore,
+  getTrackedPlayer as getTrackedPlayerRecord,
   getSharedPlayerCardRecord,
-  listPlayerSkillObservations,
   listConnectedBbConnections,
   listStaleConnectedBbConnections,
   type PlayerSkillObservationRecord,
@@ -46,6 +46,7 @@ import {
   updateSyncRun,
   upsertMatchBoxscore,
   upsertPlayerSkillObservation,
+  upsertTrackedPlayer,
   upsertTrackedTeam,
 } from "./repository";
 import { resolveBbAccessKey } from "./credentials";
@@ -126,7 +127,7 @@ type WorkspaceDependencies = {
     userId: string,
     playerId: string,
   ) => Promise<SalaryProjectionSource | null>;
-  listWeeklyPlayerSnapshots: (
+  listWorkspacePlayerHistory: (
     env: GraphqlEnv,
     userId: string,
     playerId: string,
@@ -139,14 +140,10 @@ const SHARED_PLAYER_CARD_TTL_DAYS = 30;
 
 const defaultWorkspaceDependencies: WorkspaceDependencies = {
   getSharedPlayerCardRecord,
-  getTrackedPlayer: getCachedWorkspacePlayer,
-  listWeeklyPlayerSnapshots: async (env, userId, playerId) => {
-    const [observations, canonicalSnapshots] = await Promise.all([
-      listPlayerSkillObservations(env, userId, playerId),
-      listCanonicalPlayerSkillSnapshots(env, playerId, 104),
-    ]);
-    return mergePlayerSkillSnapshotHistory(observations, canonicalSnapshots);
-  },
+  getTrackedPlayer: async (env, userId, playerId) =>
+    ((await getTrackedPlayerRecord(env, userId, playerId)) ??
+      (await getCachedWorkspacePlayer(env, userId, playerId))) as SalaryProjectionSource | null,
+  listWorkspacePlayerHistory,
   getMatchBoxscore,
   updateSharedPlayerCard,
 };
@@ -676,7 +673,7 @@ export async function getPlayerTrend(
 
   const [player, snapshots] = await Promise.all([
     dependencies.getTrackedPlayer(args.env, userId, playerId),
-    dependencies.listWeeklyPlayerSnapshots(args.env, userId, playerId),
+    dependencies.listWorkspacePlayerHistory(args.env, userId, playerId),
   ]);
 
   if (!player) {
@@ -839,7 +836,7 @@ export async function getSalaryProjection(
 
   const [player, snapshots, connection] = await Promise.all([
     dependencies.getTrackedPlayer(args.env, userId, playerId),
-    dependencies.listWeeklyPlayerSnapshots(args.env, userId, playerId),
+    dependencies.listWorkspacePlayerHistory(args.env, userId, playerId),
     getBbConnection(args.env, userId),
   ]);
 
@@ -1066,38 +1063,6 @@ export function buildSalaryProjectionPayload(args: {
         ? `${nationalityName} does not match ${args.teamCountryName}.`
         : "Country matching is unavailable until both roster nationality and club country are known.",
   };
-}
-
-function mergePlayerSkillSnapshotHistory(
-  observations: PlayerSkillObservationRecord[],
-  canonicalSnapshots: ReadonlyArray<Record<string, unknown>>,
-): Record<string, unknown>[] {
-  const merged = new Map<string, Record<string, unknown>>();
-
-  for (const snapshot of canonicalSnapshots) {
-    const key = buildPlayerSnapshotHistoryKey(snapshot);
-    if (key) {
-      merged.set(key, snapshot);
-    }
-  }
-
-  for (const observation of observations) {
-    const key = buildPlayerSnapshotHistoryKey(observation);
-    if (key) {
-      merged.set(key, observation);
-    }
-  }
-
-  return Array.from(merged.values());
-}
-
-function buildPlayerSnapshotHistoryKey(
-  snapshot: Record<string, unknown>,
-): string | null {
-  return (
-    asString(snapshot.capturedAt ?? snapshot.fetchedAt) ??
-    asString(snapshot.weekKey)
-  );
 }
 
 function collapseSnapshotsToLatestPeriod(
@@ -1396,6 +1361,13 @@ async function persistWorkspace(
   }
 
   for (const player of workspace.roster.players) {
+    const trackedPlayer = playerToTrackedPlayerRecord(
+      userId,
+      workspace.teamInfo.teamId,
+      workspace.teamInfo.teamName,
+      player,
+      fetchedAt,
+    );
     const snapshot = playerToCanonicalPlayerSnapshot(
       userId,
       workspace.teamInfo.teamId,
@@ -1411,8 +1383,9 @@ async function persistWorkspace(
       fetchedAt,
     );
     await Promise.all([
-      upsertCanonicalPlayerSkillSnapshot(env, snapshot),
+      storeCanonicalPlayerSkillSnapshot(env, snapshot),
       upsertPlayerSkillObservation(env, observation),
+      upsertTrackedPlayer(env, trackedPlayer),
     ]);
   }
 
@@ -1936,6 +1909,38 @@ function playerToHistoricalPlayerObservation(
     gameShape: asString(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
+  };
+}
+
+function playerToTrackedPlayerRecord(
+  userId: string,
+  teamId: string | null,
+  teamName: string | null,
+  player: BBApiRosterPlayer,
+  fetchedAt: string,
+): Record<string, unknown> {
+  if (!player.id || !teamId) {
+    throw new Error("Tracked player records require both a player id and team id.");
+  }
+
+  return {
+    userId,
+    playerId: player.id,
+    teamId,
+    teamName,
+    firstName: player.firstName,
+    lastName: player.lastName,
+    fullName: player.fullName,
+    bestPosition: player.bestPosition,
+    salary: player.salary,
+    age: player.age,
+    height: player.height,
+    nationalityName: player.nationality?.name ?? null,
+    gameShape: asString(player.skills.gameShape),
+    dmi: player.dmi,
+    injuryWeeks: player.injuryWeeks,
+    profileJson: player,
+    fetchedAt,
   };
 }
 

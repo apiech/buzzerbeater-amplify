@@ -14,7 +14,11 @@ import {
 } from "../../../lib/coach-parrot";
 import type { Schema } from "../resource";
 import { PositionCode } from "../schema-enums";
-import { listCanonicalPlayerSkillSnapshots } from "./canonical-player-snapshots";
+import {
+  getOwnerTrackedPlayerProfile,
+  listWorkspacePlayerHistory,
+  type WorkspacePlayerHistoryRecord,
+} from "./player-snapshot-access";
 import { getBbConnection, getMatchBoxscore } from "./repository";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -57,6 +61,13 @@ type HelperRosterPlayer = {
   skills: HelperRosterSkills;
 };
 
+type LineupHelperDependencies = {
+  getBbConnection: typeof getBbConnection;
+  getMatchBoxscore: typeof getMatchBoxscore;
+  getOwnerTrackedPlayerProfile: typeof getOwnerTrackedPlayerProfile;
+  listWorkspacePlayerHistory: typeof listWorkspacePlayerHistory;
+};
+
 const EMPTY_HELPER_SKILLS: HelperRosterSkills = {
   js: 0,
   jr: 0,
@@ -74,21 +85,32 @@ const EMPTY_HELPER_SKILLS: HelperRosterSkills = {
   gs: 0,
 };
 
+const defaultLineupHelperDependencies: LineupHelperDependencies = {
+  getBbConnection,
+  getMatchBoxscore,
+  getOwnerTrackedPlayerProfile,
+  listWorkspacePlayerHistory,
+};
+
 export const __testing = {
+  buildHelperRosterPlayer,
   buildLineupHelperWorkspacePayload,
   buildLineupHelperEvaluationPayload,
+  selectLatestHistory,
 };
 
 export async function getLineupHelperWorkspace(args: {
   env: GraphqlEnv;
   identity: unknown;
-}): Promise<LineupHelperWorkspaceResult> {
+},
+dependencies: LineupHelperDependencies = defaultLineupHelperDependencies,
+): Promise<LineupHelperWorkspaceResult> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
 
-  const connection = await getBbConnection(args.env, userId);
+  const connection = await dependencies.getBbConnection(args.env, userId);
   const cachedWorkspace = readCachedWorkspace(connection);
   if (!connection || !cachedWorkspace) {
     throw new Error(
@@ -102,13 +124,16 @@ export async function getLineupHelperWorkspace(args: {
   }
 
   const helperRoster = await Promise.all(
-    roster.map((player) => buildHelperRosterPlayer(args.env, player)),
+    roster.map((player) =>
+      buildHelperRosterPlayer(args.env, userId, player, dependencies),
+    ),
   );
   const defaultContext = await resolveDefaultContext(
     args.env,
     userId,
     asString(connection.teamId),
     toRecord(cachedWorkspace.home),
+    dependencies,
   );
 
   return buildLineupHelperWorkspacePayload({
@@ -198,14 +223,19 @@ export function buildLineupHelperEvaluationPayload(input: {
 
 async function buildHelperRosterPlayer(
   env: GraphqlEnv,
+  userId: string,
   player: Record<string, unknown>,
+  dependencies: LineupHelperDependencies = defaultLineupHelperDependencies,
 ): Promise<HelperRosterPlayer> {
   const playerId = asString(player.playerId);
   const fullName = asString(player.fullName) ?? "Unknown player";
-  const snapshot = playerId
-    ? ((await listCanonicalPlayerSkillSnapshots(env, playerId, 1))[0] ?? null)
-    : null;
-  const profile = toRecord(toRecord(snapshot?.payload)?.profile);
+  const [history, profile] = playerId
+    ? await Promise.all([
+        dependencies.listWorkspacePlayerHistory(env, userId, playerId),
+        dependencies.getOwnerTrackedPlayerProfile(env, userId, playerId),
+      ])
+    : [[], null];
+  const snapshot = selectLatestHistory(history);
   const skills = toRecord(profile?.skills);
 
   if (!playerId || !snapshot || !skills) {
@@ -229,10 +259,11 @@ async function buildHelperRosterPlayer(
     playerId,
     name: fullName,
     age: player.age ?? profile?.age,
-    salary: player.salary ?? snapshot.salary,
+    salary: player.salary ?? snapshot.salary ?? profile?.salary,
     skills: {
       ...skills,
-      gameShape: snapshot.gameShape ?? skills.gameShape,
+      gameShape:
+        snapshot.gameShape ?? asString(player.gameShape) ?? skills.gameShape,
     },
   });
 
@@ -272,6 +303,7 @@ async function resolveDefaultContext(
   userId: string,
   teamId: string | null,
   home: Record<string, unknown> | null,
+  dependencies: LineupHelperDependencies = defaultLineupHelperDependencies,
 ): Promise<CoachParrotContext> {
   const recentMatches = toRecordArray(home?.recentMatches);
   for (const match of recentMatches) {
@@ -279,7 +311,7 @@ async function resolveDefaultContext(
     if (!matchId) {
       continue;
     }
-    const boxscore = await getMatchBoxscore(env, userId, matchId);
+    const boxscore = await dependencies.getMatchBoxscore(env, userId, matchId);
     if (!boxscore) {
       continue;
     }
@@ -305,6 +337,18 @@ async function resolveDefaultContext(
     enthusiasm: 5,
     homeCourt: "Away or Neutral",
   });
+}
+
+function selectLatestHistory(
+  history: readonly WorkspacePlayerHistoryRecord[],
+): WorkspacePlayerHistoryRecord | null {
+  return (
+    [...history].sort((left, right) =>
+      String(left.capturedAt ?? left.weekKey ?? "").localeCompare(
+        String(right.capturedAt ?? right.weekKey ?? ""),
+      ),
+    )[history.length - 1] ?? null
+  );
 }
 
 function serializeEvaluation(

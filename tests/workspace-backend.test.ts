@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __testing as lineupHelperTesting } from "../amplify/data/_backend/lineup-helper";
+import {
+  __testing as lineupHelperTesting,
+  getLineupHelperWorkspace,
+} from "../amplify/data/_backend/lineup-helper";
 import {
   __testing as workspaceTesting,
   buildSalaryProjectionPayload,
@@ -185,7 +188,7 @@ test("getPlayerTrend preserves multiple observations captured in the same week",
           bestPosition: "PG",
           salary: 120000,
         }) as any,
-      listWeeklyPlayerSnapshots: async () => [
+      listWorkspacePlayerHistory: async () => [
         {
           weekKey: "2026-W11",
           capturedAt: "2026-03-10T10:00:00.000Z",
@@ -228,6 +231,88 @@ test("getPlayerTrend preserves multiple observations captured in the same week",
   );
 });
 
+test("getPlayerTrend strips raw snapshot payload fields from the history response", async () => {
+  const trend = await getPlayerTrend(
+    {
+      env: {} as any,
+      identity: { sub: "user-1" },
+      playerId: "p1",
+    },
+    {
+      getTrackedPlayer: async () =>
+        ({
+          playerId: "p1",
+          fullName: "Prospect Player",
+          bestPosition: "PG",
+          salary: 120000,
+        }) as any,
+      listWorkspacePlayerHistory: async () => [
+        {
+          weekKey: "2026-W11",
+          capturedAt: "2026-03-10T10:00:00.000Z",
+          salary: 120000,
+          dmi: 1500,
+          gameShape: "proficient",
+          injuryWeeks: 0,
+          payload: {
+            profile: {
+              skills: {
+                jumpShot: 99,
+              },
+            },
+          },
+          profile: {
+            hidden: true,
+          },
+          skills: {
+            jumpShot: 99,
+          },
+        },
+      ],
+    } as any,
+  );
+
+  assert.deepStrictEqual(trend.history, [
+    {
+      weekKey: "2026-W11",
+      fetchedAt: "2026-03-10T10:00:00.000Z",
+      salary: 120000,
+      dmi: 1500,
+      injuryWeeks: 0,
+      gameShape: "proficient",
+    },
+  ]);
+  assert.equal("payload" in (trend.history[0] as Record<string, unknown>), false);
+  assert.equal("profile" in (trend.history[0] as Record<string, unknown>), false);
+  assert.equal("skills" in (trend.history[0] as Record<string, unknown>), false);
+});
+
+test("getPlayerTrend rejects player history requests outside the caller workspace", async () => {
+  await assert.rejects(
+    () =>
+      getPlayerTrend(
+        {
+          env: {} as any,
+          identity: { sub: "user-1" },
+          playerId: "p1",
+        },
+        {
+          getTrackedPlayer: async () =>
+            ({
+              playerId: "p1",
+              fullName: "Prospect Player",
+            }) as any,
+          listWorkspacePlayerHistory: async () => {
+            throw new Error(
+              "The requested player is not available in the current workspace.",
+            );
+          },
+        } as any,
+      ),
+    /The requested player is not available in the current workspace\./,
+  );
+});
+
 test("buildSalaryProjectionPayload uses the latest snapshot from each week", () => {
   const payload = buildSalaryProjectionPayload({
     player: {
@@ -264,6 +349,55 @@ test("buildSalaryProjectionPayload uses the latest snapshot from each week", () 
   assert.equal(payload.currentSalary, 121000);
   assert.equal(payload.weeklyDelta, 10500);
   assert.equal(payload.projectedSalary, 131500);
+});
+
+test("buildSalaryProjectionPayload ignores hidden snapshot payload content", () => {
+  const payload = buildSalaryProjectionPayload({
+    player: {
+      playerId: "p1",
+      fullName: "Prospect Player",
+      salary: 121000,
+      nationalityName: "USA",
+      profileJson: {
+        nationality: {
+          name: "USA",
+        },
+        skills: {
+          jumpShot: 99,
+        },
+      },
+    } as any,
+    snapshots: [
+      {
+        weekKey: "2026-W11",
+        capturedAt: "2026-03-10T10:00:00.000Z",
+        salary: 100000,
+        payload: {
+          profile: {
+            skills: {
+              jumpShot: 99,
+            },
+          },
+        },
+        skills: {
+          jumpShot: 99,
+        },
+      },
+      {
+        weekKey: "2026-W12",
+        capturedAt: "2026-03-17T10:00:00.000Z",
+        salary: 121000,
+      },
+    ],
+    teamCountryName: "USA",
+  });
+
+  assert.equal(payload.currentSalary, 121000);
+  assert.equal(payload.nationalityName, "USA");
+  assert.equal(payload.isFlagTarget, true);
+  assert.equal("payload" in (payload as Record<string, unknown>), false);
+  assert.equal("profile" in (payload as Record<string, unknown>), false);
+  assert.equal("skills" in (payload as Record<string, unknown>), false);
 });
 
 test("lineup helper workspace payload includes defaults, evaluation, and snapshot warnings", () => {
@@ -406,6 +540,110 @@ test("lineup helper workspace payload keeps the roster when no usable snapshots 
   assert.equal((payload.roster as Array<unknown>).length, 2);
   assert.equal(Array.isArray(payload.snapshotWarnings), true);
   assert.equal((payload.snapshotWarnings as Array<unknown>).length, 2);
+});
+
+test("lineup helper uses owner tracked profiles instead of shared snapshot payload skills", async () => {
+  const workspace = await getLineupHelperWorkspace(
+    {
+      env: {} as any,
+      identity: { sub: "user-1" },
+    },
+    {
+      getBbConnection: async () => createLineupHelperConnection(),
+      getMatchBoxscore: async () => null,
+      getOwnerTrackedPlayerProfile: async () =>
+        createOwnerTrackedPlayerProfile({
+          jumpShot: 7,
+          jumpRange: 6,
+          outsideDefense: 5,
+          handling: 8,
+          driving: 7,
+          passing: 9,
+          insideShot: 4,
+          insideDefense: 3,
+          rebounding: 4,
+          shotBlocking: 2,
+          stamina: 8,
+          freeThrow: 7,
+          experience: 6,
+          gameShape: "strong",
+        }),
+      listWorkspacePlayerHistory: async () => [
+        {
+          weekKey: "2026-W11",
+          capturedAt: "2026-03-15T00:00:00.000Z",
+          salary: 50000,
+          bestPosition: "PG",
+          gameShape: "respectable",
+          dmi: 1500,
+          injuryWeeks: 0,
+          payload: {
+            profile: {
+              skills: {
+                jumpShot: 99,
+              },
+            },
+          },
+          skills: {
+            jumpShot: 99,
+          },
+        } as any,
+      ],
+    },
+  );
+
+  const rosterPlayer = workspace.roster[0] as Record<string, unknown>;
+  const rosterSkills = rosterPlayer.skills as Record<string, unknown>;
+  assert.equal(rosterPlayer.available, true);
+  assert.equal(rosterSkills.js, 7);
+  assert.equal(rosterSkills.pa, 9);
+  assert.equal(rosterSkills.gs, 7);
+  assert.deepStrictEqual(workspace.snapshotWarnings, []);
+});
+
+test("lineup helper ignores shared snapshot payload bait when no owner profile exists", async () => {
+  const workspace = await getLineupHelperWorkspace(
+    {
+      env: {} as any,
+      identity: { sub: "user-1" },
+    },
+    {
+      getBbConnection: async () => createLineupHelperConnection(),
+      getMatchBoxscore: async () => null,
+      getOwnerTrackedPlayerProfile: async () => null,
+      listWorkspacePlayerHistory: async () => [
+        {
+          weekKey: "2026-W11",
+          capturedAt: "2026-03-15T00:00:00.000Z",
+          salary: 50000,
+          bestPosition: "PG",
+          gameShape: "respectable",
+          dmi: 1500,
+          injuryWeeks: 0,
+          payload: {
+            profile: {
+              skills: {
+                jumpShot: 99,
+              },
+            },
+          },
+          skills: {
+            jumpShot: 99,
+          },
+        } as any,
+      ],
+    },
+  );
+
+  const rosterPlayer = workspace.roster[0] as Record<string, unknown>;
+  assert.equal(rosterPlayer.available, false);
+  assert.deepStrictEqual(workspace.snapshotWarnings, [
+    {
+      playerId: "p1",
+      fullName: "Lead Guard",
+      warning: "No canonical skill snapshot is available for this player.",
+    },
+  ]);
 });
 
 test("lineup helper evaluation payload preserves warnings for invalid minutes", () => {
@@ -591,7 +829,7 @@ test("lookupSharedPlayerCardByToken unwraps only the sanitized share payload", a
         },
       }),
       getTrackedPlayer: async () => null,
-      listWeeklyPlayerSnapshots: async () => [],
+      listWorkspacePlayerHistory: async () => [],
       getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async () => undefined,
     },
@@ -642,7 +880,7 @@ test("lookupSharedPlayerCardByToken returns null for revoked shares", async () =
         },
       }),
       getTrackedPlayer: async () => null,
-      listWeeklyPlayerSnapshots: async () => [],
+      listWorkspacePlayerHistory: async () => [],
       getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async () => undefined,
     },
@@ -672,6 +910,45 @@ function createHelperPlayer(
   };
 }
 
+function createLineupHelperConnection() {
+  return {
+    userId: "user-1",
+    teamId: "team-1",
+    lastSyncAt: "2026-03-15T00:00:00.000Z",
+    workspaceCacheJson: {
+      connection: {},
+      home: {
+        recentMatches: [],
+      },
+      teamHub: {
+        roster: [
+          {
+            playerId: "p1",
+            fullName: "Lead Guard",
+            bestPosition: "PG",
+            salary: 50000,
+            age: 26,
+            gameShape: "strong",
+          },
+        ],
+      },
+      scout: {},
+      leagueIntel: {},
+      playerLab: {
+        players: [],
+      },
+    },
+  } as any;
+}
+
+function createOwnerTrackedPlayerProfile(skills: Record<string, unknown>) {
+  return {
+    age: 26,
+    salary: 50000,
+    skills,
+  } as Record<string, unknown>;
+}
+
 test("lookupSharedPlayerCardByToken returns null for expired shares", async () => {
   const result = await lookupSharedPlayerCardByToken(
     {
@@ -695,7 +972,7 @@ test("lookupSharedPlayerCardByToken returns null for expired shares", async () =
         },
       }),
       getTrackedPlayer: async () => null,
-      listWeeklyPlayerSnapshots: async () => [],
+      listWorkspacePlayerHistory: async () => [],
       getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async () => undefined,
     },
@@ -730,7 +1007,7 @@ test("revokePlayerCard marks an owned share as revoked", async () => {
         },
       }),
       getTrackedPlayer: async () => null,
-      listWeeklyPlayerSnapshots: async () => [],
+      listWorkspacePlayerHistory: async () => [],
       getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async (_env, input) => {
         updatedInput = input;

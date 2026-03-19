@@ -113,6 +113,31 @@ test("lineup helper workspace receives snapshot-table wiring", () => {
   );
 });
 
+test("user-facing backend snapshot reads stay behind the access boundary", () => {
+  const accessSource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "player-snapshot-access.ts"),
+    "utf8",
+  );
+  const workspaceSource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "workspace.ts"),
+    "utf8",
+  );
+  const lineupHelperSource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "lineup-helper.ts"),
+    "utf8",
+  );
+
+  assert.match(accessSource, /from\s+["']\.\/canonical-player-snapshots["']/);
+  assert.doesNotMatch(
+    workspaceSource,
+    /from\s+["']\.\/canonical-player-snapshots["']/,
+  );
+  assert.doesNotMatch(
+    lineupHelperSource,
+    /from\s+["']\.\/canonical-player-snapshots["']/,
+  );
+});
+
 test("app no longer relies on the generic GraphQL JSON helper", () => {
   assert.equal(existsSync(join(repoRoot, "app", "graphql-json.ts")), false);
 });
@@ -163,8 +188,13 @@ test("public app origin and hosted builds rely on shared synth config without sy
   assert.doesNotMatch(amplifyYamlSource, /MATCH_DATA_PLANE_SOURCE/);
   assert.doesNotMatch(amplifyYamlSource, /sync:match-data-plane/);
   assert.doesNotMatch(amplifyYamlSource, /\.env\.match-data-plane/);
+  assert.match(amplifyYamlSource, /npm run verify:deploy/);
   assert.match(amplifyYamlSource, /npx ampx pipeline-deploy/);
   assert.match(amplifyYamlSource, /npm run build/);
+  assert.ok(
+    amplifyYamlSource.indexOf("npm run verify:deploy") <
+      amplifyYamlSource.indexOf("npx ampx pipeline-deploy"),
+  );
 });
 
 test("backend no longer carries a handwritten $amplify/env shim", () => {

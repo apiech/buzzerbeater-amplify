@@ -16,6 +16,7 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 
 - All scouting, roster, and prediction data requires an authenticated BB Amplify session.
 - Each account owns an isolated private workspace; member sharing and guest access are disabled.
+- Raw canonical player snapshot payloads are internal-only storage. User-facing reads must go through owner-scoped or public-safe accessors and must not expose hidden skill payloads.
 
 ## Local Development
 
@@ -61,7 +62,8 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    npm run sandbox
    ```
 
-   `npm run sandbox` is the primary local workflow. It loads
+   `npm run sandbox` is the primary local workflow. It runs `npm run verify:deploy`
+   before any mutating deploy steps, loads
    `/Users/karey/projects/bb/.env.deploy.local`, syncs the Amplify sandbox
    encryption secret when needed, deploys ML Data Infra, ensures predictor
    readiness, and then starts the existing Amplify sandbox wrapper. By default,
@@ -84,8 +86,7 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 6. Run the verification gate:
 
    ```bash
-   npm test
-   npm run build
+   npm run verify:deploy
    ```
 
 ## Backend Requirements
@@ -157,6 +158,8 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.
   - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
   - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.
+  - Local sandbox/dev deploy wrappers and hosted backend builds now run `npm run verify:deploy` before mutating deploy steps.
+  - Raw player snapshot payloads remain private shared storage and are not a user-facing app data source.
   - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.
   - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.
 - Imported runtime bindings

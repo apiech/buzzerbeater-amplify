@@ -485,6 +485,19 @@ function runSandboxPredictor(
   runtime.write(`Updated sandbox predictor pin '${pin.releaseId}'.`);
 }
 
+function runVerifyDeploy(
+  runtime: WorkflowRuntime = createDefaultRuntime(),
+): void {
+  const result = runtime.spawnSync(resolveNpmCommand(), ["run", "verify:deploy"], {
+    cwd: projectRoot,
+    env: runtime.env,
+    stdio: "inherit",
+  });
+  if ((result.status ?? 1) !== 0) {
+    throw new Error("Deploy verification failed.");
+  }
+}
+
 function runSandboxUp(
   sandboxArgs: string[],
   runtime: WorkflowRuntime = createDefaultRuntime(),
@@ -495,6 +508,7 @@ function runSandboxUp(
   );
   runtime.write(`Preparing ${environmentName}.`);
 
+  runVerifyDeploy(runtime);
   runSandboxSecretSync(sandboxArgs, runtime);
   runSandboxData(sandboxArgs, runtime);
 
@@ -607,6 +621,7 @@ function runDevPrepare(
   args: string[],
   runtime: WorkflowRuntime = createDefaultRuntime(),
 ): number {
+  runVerifyDeploy(runtime);
   runDevData(runtime);
 
   const predictorStatus = inspectPredictorEndpoint({
@@ -1153,6 +1168,10 @@ function normalizeText(value: string | Buffer | null | undefined): string {
 
 function resolveNpxCommand(): string {
   return process.platform === "win32" ? "npx.cmd" : "npx";
+}
+
+function resolveNpmCommand(): string {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
 function createDefaultRuntime(): WorkflowRuntime {

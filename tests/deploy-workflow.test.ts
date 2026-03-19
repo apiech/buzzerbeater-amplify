@@ -140,7 +140,7 @@ test("sandbox doctor reports missing predictor infrastructure with the wrapper r
   assert.equal(pinCheck.status, "warn");
 });
 
-test("sandbox up runs secret sync, ML data infra, pinned predictor, then the sandbox process", () => {
+test("sandbox up runs deploy verification, secret sync, ML data infra, pinned predictor, then the sandbox process", () => {
   const calls: Array<{
     args: string[];
     command: string;
@@ -189,6 +189,13 @@ test("sandbox up runs secret sync, ML data infra, pinned predictor, then the san
       spawnSync(command, args, options) {
         calls.push({ args, command, options });
 
+        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
         if (args.includes("list")) {
           return {
             status: 0,
@@ -224,19 +231,21 @@ test("sandbox up runs secret sync, ML data infra, pinned predictor, then the san
   );
 
   assert.equal(exitCode, 0);
-  assert.equal(calls.length, 4);
-  assert.deepEqual(calls[0]?.args.slice(0, 4), [
+  assert.equal(calls.length, 5);
+  assert.equal(calls[0].command, "npm");
+  assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
+  assert.deepEqual(calls[1]?.args.slice(0, 4), [
     "ampx",
     "sandbox",
     "secret",
     "list",
   ]);
-  assert.equal(calls[1].command, "npm");
-  assert.match(calls[1].args.join(" "), /deploy:ml-data-infra/);
-  assert.equal(calls[2].command, "./scripts/matchup-predictor-release");
-  assert.deepEqual(calls[2].args, ["sandbox", "--use-pin", "sandbox"]);
-  assert.equal(calls[3].command, process.execPath);
-  const sandboxEnv = calls[3].options?.env as Record<string, string> | undefined;
+  assert.equal(calls[2].command, "npm");
+  assert.match(calls[2].args.join(" "), /deploy:ml-data-infra/);
+  assert.equal(calls[3].command, "./scripts/matchup-predictor-release");
+  assert.deepEqual(calls[3].args, ["sandbox", "--use-pin", "sandbox"]);
+  assert.equal(calls[4].command, process.execPath);
+  const sandboxEnv = calls[4].options?.env as Record<string, string> | undefined;
   assert.equal(
     sandboxEnv?.BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP,
     "1",
@@ -279,6 +288,13 @@ test("sandbox up forwards raw sandbox flags to the underlying sandbox process", 
       spawnSync(command, args, options) {
         calls.push({ args, command, options });
 
+        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
         if (args.includes("list")) {
           return {
             status: 0,
@@ -309,8 +325,129 @@ test("sandbox up forwards raw sandbox flags to the underlying sandbox process", 
   );
 
   assert.equal(exitCode, 0);
-  assert.equal(calls.length, 3);
-  assert.deepEqual(calls[2]?.args.slice(-2), ["sandbox", "--once"]);
+  assert.equal(calls.length, 4);
+  assert.equal(calls[0].command, "npm");
+  assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
+  assert.deepEqual(calls[3]?.args.slice(-2), ["sandbox", "--once"]);
+});
+
+test("sandbox up stops before side effects when deploy verification fails", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  assert.throws(
+    () =>
+      workflowTesting.runSandboxUp(
+        [],
+        createRuntime({
+          env: {
+            BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+          },
+          spawnSync(command, args, options) {
+            calls.push({ args, command, options });
+            return {
+              status:
+                command === "npm" &&
+                args[0] === "run" &&
+                args[1] === "verify:deploy"
+                  ? 1
+                  : 0,
+              stderr: "",
+              stdout: "",
+            };
+          },
+        }),
+      ),
+    /Deploy verification failed\./,
+  );
+
+  assert.deepEqual(calls, [
+    {
+      command: "npm",
+      args: ["run", "verify:deploy"],
+      options: {
+        cwd: "/Users/karey/projects/bb/bb-amplify",
+        env: {
+          BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+        },
+        stdio: "inherit",
+      },
+    },
+  ]);
+});
+
+test("dev prepare runs deploy verification before shared infra deploy side effects", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  const exitCode = workflowTesting.runDevPrepare(
+    [],
+    createRuntime({
+      env: {
+        AWS_REGION: "us-east-1",
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "sts") {
+          return {
+            Account: "427377913956",
+          };
+        }
+        if (args[0] === "ssm") {
+          return {
+            InvalidParameters: [],
+            Parameters: [
+              {
+                Name: "/buzzerbeater/ml-data-infra/dev/prediction-endpoint-name",
+                Value: "predictor-endpoint",
+              },
+            ],
+          };
+        }
+        if (args[0] === "sagemaker") {
+          return {
+            EndpointStatus: "InService",
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      spawnSync(command, args, options) {
+        calls.push({ args, command, options });
+
+        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        if (command === "npx" && args.includes("deploy:ml-data-infra")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].command, "npm");
+  assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
+  assert.equal(calls[1].command, "npx");
+  assert.match(calls[1].args.join(" "), /deploy:ml-data-infra/);
 });
 
 function createRuntime({

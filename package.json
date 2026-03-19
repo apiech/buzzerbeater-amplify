@@ -37,6 +37,8 @@
     "typecheck:app": "tsc -p tsconfig.json --noEmit",
     "typecheck:amplify": "node ./scripts/typecheck-amplify.mjs",
     "test": "node --test --import tsx ./tests/*.test.ts",
+    "test:privacy": "node --test --import tsx ./tests/player-snapshot-access.test.ts ./tests/workspace-backend.test.ts ./tests/amplify-architecture.test.ts ./tests/deploy-workflow.test.ts ./tests/private-alpha-auth.test.ts",
+    "verify:deploy": "npm test && npm run test:privacy && npm run lint && npm run typecheck:app",
     "test:bbapi": "node --test --import tsx ./tests/bbapi-parser.test.ts",
     "generate:bbapi-goldens": "node --import tsx ./scripts/generate-bbapi-goldens.ts",
     "billing:override": "node --import tsx ./scripts/set-billing-override.ts"
