@@ -15,6 +15,10 @@
   "home_defStrategy": "ManToMan",
   "away_offStrategy": "Base",
   "away_defStrategy": "ManToMan",
+  "home_gdp_focus": "N/A",
+  "home_gdp_pace": "N/A",
+  "away_gdp_focus": "N/A",
+  "away_gdp_pace": "N/A",
   "neutral": "0",
   "effortDelta": 0
 }

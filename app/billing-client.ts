@@ -1,7 +1,7 @@
 "use client";
 
 import { client } from "@/app/amplify-client";
-import type { BillingSummary } from "@/app/types";
+import type { BillingPaymentsPage, BillingSummary } from "@/app/types";
 
 export async function fetchBillingSummary(): Promise<BillingSummary> {
   const response = await client.queries.getBillingSummary();
@@ -12,8 +12,22 @@ export async function fetchBillingSummary(): Promise<BillingSummary> {
   return response.data;
 }
 
-export async function createBillingCheckoutUrl(): Promise<string> {
-  const response = await client.mutations.createBillingCheckoutSession();
+export async function fetchBillingPayments(input?: {
+  limit?: number;
+  nextToken?: string | null;
+}): Promise<BillingPaymentsPage> {
+  const response = await client.queries.listBillingPayments(input);
+  if (response.errors?.length || !response.data) {
+    throw new Error(formatAmplifyErrors(response.errors));
+  }
+
+  return response.data;
+}
+
+export async function createBillingCheckoutUrl(returnPath?: string): Promise<string> {
+  const response = await client.mutations.createBillingCheckoutSession(
+    returnPath ? { returnPath } : undefined,
+  );
   if (response.errors?.length || !response.data?.url) {
     throw new Error(formatAmplifyErrors(response.errors));
   }
@@ -21,8 +35,23 @@ export async function createBillingCheckoutUrl(): Promise<string> {
   return response.data.url;
 }
 
-export async function createBillingPortalUrl(): Promise<string> {
-  const response = await client.mutations.createBillingPortalSession();
+export async function createBillingLifetimeCheckoutUrl(
+  returnPath?: string,
+): Promise<string> {
+  const response = await client.mutations.createBillingLifetimeCheckoutSession(
+    returnPath ? { returnPath } : undefined,
+  );
+  if (response.errors?.length || !response.data?.url) {
+    throw new Error(formatAmplifyErrors(response.errors));
+  }
+
+  return response.data.url;
+}
+
+export async function createBillingPortalUrl(returnPath?: string): Promise<string> {
+  const response = await client.mutations.createBillingPortalSession(
+    returnPath ? { returnPath } : undefined,
+  );
   if (response.errors?.length || !response.data?.url) {
     throw new Error(formatAmplifyErrors(response.errors));
   }

@@ -7,6 +7,12 @@ export type BillingAccountRecord = Schema["BillingAccount"]["type"];
 export type BillingSummary = NonNullable<
   Schema["getBillingSummary"]["returnType"]
 >;
+export type BillingPaymentEntry = NonNullable<
+  NonNullable<Schema["listBillingPayments"]["returnType"]>["items"]
+>[number];
+export type BillingPaymentsPage = NonNullable<
+  Schema["listBillingPayments"]["returnType"]
+>;
 export type BillingSessionResult = NonNullable<
   Schema["createBillingCheckoutSession"]["returnType"]
 >;
@@ -15,6 +21,7 @@ export type ConnectionStatus = BbConnectionRecord["status"];
 export type GameDayRecapRecord = Schema["GameDayRecap"]["type"];
 export type GameDayRecapStatus = GameDayRecapRecord["status"];
 export type LeagueGameDayRecapRecord = Schema["LeagueGameDayRecap"]["type"];
+export type OpponentForecastJobRecord = Schema["OpponentForecastJob"]["type"];
 export type PredictionJobRecord = Schema["PredictionJob"]["type"];
 export type PredictionJobStatus = PredictionJobRecord["status"];
 export type SyncRunRecord = Schema["SyncRun"]["type"];
@@ -36,7 +43,10 @@ export type PaginatedResult<TItem> = {
   nextToken: string | null;
 };
 
-export type RecapHistoryKind = "LEAGUE_DATE" | "LEAGUE_GAME_DAY" | "SINGLE_GAME";
+export type RecapHistoryKind =
+  | "LEAGUE_DATE"
+  | "LEAGUE_GAME_DAY"
+  | "SINGLE_GAME";
 
 export type RecapHistoryRecord = {
   completedAt: string | null;
@@ -73,11 +83,17 @@ export type DisconnectBbAccountResult = NonNullable<
 export type SubmitGameDayRecapResult = NonNullable<
   Schema["submitGameDayRecap"]["returnType"]
 >;
+export type SubmitLeagueHistoryBackfillResult = NonNullable<
+  Schema["submitLeagueHistoryBackfill"]["returnType"]
+>;
 export type SubmitLeagueGameDayRecapResult = NonNullable<
   Schema["submitLeagueGameDayRecap"]["returnType"]
 >;
 export type SubmitSingleGameSummaryResult = NonNullable<
   Schema["submitSingleGameSummary"]["returnType"]
+>;
+export type SubmitOpponentForecastJobResult = NonNullable<
+  Schema["submitOpponentForecastJob"]["returnType"]
 >;
 export type SubmitPredictionJobResult = NonNullable<
   Schema["submitPredictionJob"]["returnType"]
@@ -111,7 +127,18 @@ export type ScoutWorkspacePayload = NonNullable<
 export type LeagueIntelPayload = NonNullable<
   Schema["getLeagueIntel"]["returnType"]
 >;
-export type PlayerLabPayload = NonNullable<Schema["getPlayerLab"]["returnType"]>;
+export type LeagueHistoryPayload = NonNullable<
+  Schema["getLeagueHistory"]["returnType"]
+>;
+export type OpponentForecastSnapshot = NonNullable<
+  Schema["getLatestOpponentForecast"]["returnType"]
+>;
+export type PlayerLabPayload = NonNullable<
+  Schema["getPlayerLab"]["returnType"]
+>;
+export type RivalsWorkspacePayload = NonNullable<
+  Schema["getRivalsWorkspace"]["returnType"]
+>;
 export type PlayerTrendPayload = NonNullable<
   Schema["getPlayerTrend"]["returnType"]
 >;
@@ -125,7 +152,9 @@ export type SharedPlayerCardLookupPayload = NonNullable<
   Schema["lookupSharedPlayerCard"]["returnType"]
 >;
 export type AppPlanId = PlanId;
-export type TeamRecordSummary = NonNullable<HomeWorkspacePayload["team"]["record"]>;
+export type TeamRecordSummary = NonNullable<
+  HomeWorkspacePayload["team"]["record"]
+>;
 export type InjurySummary = HomeWorkspacePayload["team"]["injuries"][number];
 export type PlayerSummary = TeamHubPayload["roster"][number];
 export type TrendCountEntry = NonNullable<
@@ -218,7 +247,19 @@ export type DecodedLineupHelperWorkspace = {
   availableLocations: string[];
 };
 export type MatchSummary = HomeWorkspacePayload["recentMatches"][number];
-export type OpponentSummary = ScoutWorkspacePayload["availableOpponents"][number];
+export type OpponentSummary =
+  ScoutWorkspacePayload["availableOpponents"][number];
+export type OpponentForecastResult = NonNullable<
+  OpponentForecastSnapshot["result"]
+>;
+export type OpponentForecastScenario =
+  OpponentForecastResult["topScenarios"][number];
+export type OpponentForecastPlayerProjection =
+  OpponentForecastScenario["starters"][number];
+export type OpponentForecastAnalogGame =
+  OpponentForecastResult["analogGames"][number];
+export type OpponentForecastSignal =
+  OpponentForecastResult["featureSignals"][number];
 export type PlayerTrendPoint = PlayerTrendPayload["history"][number];
 export type MatchMetricEntry = MatchBoxscorePayload["teamRatings"][number];
 
@@ -246,8 +287,14 @@ export type GameDayRecapResultPayload = {
     lede: string;
   };
 };
-export type TeamHighlightsScanStatus = NonNullable<TeamHighlightsPayload["scanStatus"]>;
+export type TeamHighlightsScanStatus = NonNullable<
+  TeamHighlightsPayload["scanStatus"]
+>;
 export type TeamHighlightsMoment = TeamHighlightsPayload["items"][number];
+export type LeagueHistoryBackfillStatus = NonNullable<
+  LeagueHistoryPayload["status"]
+>;
+export type LeagueHistoryRow = LeagueHistoryPayload["rows"][number];
 
 export type DashboardWorkspace = {
   home: HomeWorkspacePayload;
@@ -275,8 +322,24 @@ export type ManualPredictionInput = {
   home_defStrategy: string;
   away_offStrategy: string;
   away_defStrategy: string;
+  home_gdp_focus: string;
+  home_gdp_pace: string;
+  away_gdp_focus: string;
+  away_gdp_pace: string;
   neutral: string;
   effortDelta: number;
+};
+
+export type PredictionForecastContext = {
+  forecastJobId: string;
+  forecastModelVersion: string;
+  forecastGeneratedAt: string;
+  scenarioId: string;
+  scenarioLabel: string;
+  scenarioProbability: number;
+  enthusiasmBand?: string | null;
+  evidence: string[];
+  sourceTeamId: string;
 };
 
 export type ConnectedPredictionInput = {
@@ -288,9 +351,52 @@ export type ConnectedPredictionInput = {
   home_defStrategy?: string;
   away_offStrategy?: string;
   away_defStrategy?: string;
+  home_gdp_focus?: string;
+  home_gdp_pace?: string;
+  away_gdp_focus?: string;
+  away_gdp_pace?: string;
   neutral?: string;
   effortDelta?: number;
+  forecastContext?: PredictionForecastContext;
   manualFallback?: ManualPredictionInput;
+};
+
+export type PredictionSubmissionMode = "MANUAL" | "CONNECTED";
+export type PredictionConnectedSelection = {
+  homeSourceMatchId: string;
+  awaySourceMatchId: string;
+};
+
+export type PredictionConnectedOverrides = {
+  home_offStrategy?: string;
+  home_defStrategy?: string;
+  away_offStrategy?: string;
+  away_defStrategy?: string;
+  home_gdp_focus?: string;
+  home_gdp_pace?: string;
+  away_gdp_focus?: string;
+  away_gdp_pace?: string;
+  neutral?: string;
+  effortDelta?: number;
+};
+
+export type PredictionForecastPrefill = {
+  context: PredictionForecastContext;
+  overrides: {
+    away_offStrategy: string;
+    away_defStrategy: string;
+    away_gdp_focus: string;
+    away_gdp_pace: string;
+    effortDelta: number;
+  };
+};
+
+export type PredictionDraftState = {
+  mode: PredictionSubmissionMode;
+  manualInput: ManualPredictionInput;
+  connectedSelection: PredictionConnectedSelection;
+  connectedOverrides: PredictionConnectedOverrides;
+  forecastPrefill: PredictionForecastPrefill | null;
 };
 
 export type PredictionSubmissionRequest =

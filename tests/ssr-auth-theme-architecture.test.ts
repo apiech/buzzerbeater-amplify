@@ -55,6 +55,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
     "page.tsx",
   );
   const loginPageSource = readRepoFile("app", "login", "page.tsx");
+  const storePageSource = readRepoFile("app", "store", "page.tsx");
   const authRouteSource = readRepoFile(
     "app",
     "api",
@@ -75,6 +76,8 @@ test("workspace requests are routed through server-authenticated Next entry poin
   );
   assert.match(loginPageSource, /href="\/api\/auth\/sign-in"/);
   assert.match(loginPageSource, /href="\/api\/auth\/sign-up"/);
+  assert.match(loginPageSource, /href="\/store"/);
+  assert.match(storePageSource, /<Storefront/);
   assert.match(authRouteSource, /createAuthRouteHandlers/);
   assert.match(
     authRouteSource,

@@ -17,11 +17,32 @@ test("dashboard app gates premium sections through the shared feature registry",
   assert.match(source, /<PremiumFeatureGatePanel/);
 });
 
-test("billing panel keeps checkout available for environment-based premium access", () => {
+test("billing panel keeps checkout available for environment-based premium access and exposes store links", () => {
   const source = readFileSync(join(repoRoot, "app", "billing-panel.tsx"), "utf8");
 
   assert.match(source, /summary\.planId !== "premium" \|\| summary\.accessSource === "environment"/);
   assert.match(source, /sandbox or dev environment/);
+  assert.match(source, /href="\/store"/);
+  assert.match(source, /createBillingLifetimeCheckoutUrl/);
+  assert.match(source, /fetchBillingPayments/);
+});
+
+test("store route is public and drives billing through the new store-facing APIs", () => {
+  const pageSource = readFileSync(
+    join(repoRoot, "app", "store", "page.tsx"),
+    "utf8",
+  );
+  const storefrontSource = readFileSync(
+    join(repoRoot, "app", "store", "storefront.tsx"),
+    "utf8",
+  );
+
+  assert.match(pageSource, /getServerCurrentUser/);
+  assert.match(storefrontSource, /createBillingCheckoutUrl\("\/store"\)/);
+  assert.match(storefrontSource, /createBillingLifetimeCheckoutUrl\("\/store"\)/);
+  assert.match(storefrontSource, /createBillingPortalUrl\("\/store"\)/);
+  assert.match(storefrontSource, /href="\/login"/);
+  assert.match(storefrontSource, /href="\/workspace\/ops"/);
 });
 
 test("billing integration wires the environment default into premium-gated lambdas", () => {

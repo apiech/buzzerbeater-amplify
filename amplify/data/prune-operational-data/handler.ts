@@ -1,13 +1,16 @@
 import { env } from "$amplify/env/prune-operational-data";
 
 import {
+  deleteOpponentForecastJob,
   deletePredictionJob,
+  listExpiredOpponentForecastJobs,
   listExpiredPredictionJobs,
   listExpiredSyncRuns,
   deleteSyncRun,
 } from "../_backend/repository";
 
 export const handler = async (): Promise<{
+  deletedOpponentForecastJobs: number;
   deletedPredictionJobs: number;
   deletedSyncRuns: number;
 }> => {
@@ -44,7 +47,24 @@ export const handler = async (): Promise<{
     predictionJobNextToken = page.nextToken;
   } while (predictionJobNextToken);
 
+  let deletedOpponentForecastJobs = 0;
+  let opponentForecastJobNextToken: string | null = null;
+  do {
+    const page = await listExpiredOpponentForecastJobs(env, now, {
+      limit: 100,
+      nextToken: opponentForecastJobNextToken,
+    });
+
+    for (const job of page.records) {
+      await deleteOpponentForecastJob(env, job.id);
+      deletedOpponentForecastJobs += 1;
+    }
+
+    opponentForecastJobNextToken = page.nextToken;
+  } while (opponentForecastJobNextToken);
+
   return {
+    deletedOpponentForecastJobs,
     deletedPredictionJobs,
     deletedSyncRuns,
   };

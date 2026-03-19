@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
 import {
   createBillingCheckoutUrl,
+  createBillingLifetimeCheckoutUrl,
   createBillingPortalUrl,
+  fetchBillingPayments,
 } from "@/app/billing-client";
-import type { BillingSummary } from "@/app/types";
+import type { BillingPaymentEntry, BillingSummary } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
@@ -27,8 +30,14 @@ type PremiumFeatureGatePanelProps = {
   message: string;
 };
 
+const billingReturnPath = "/workspace/ops";
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-4";
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
+const storeLinkClassName =
+  "inline-flex min-h-11 items-center justify-center rounded-full border border-border-soft bg-white/70 px-4 py-2.5 text-sm font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90";
+const paymentListClassName = "grid gap-3";
+const paymentItemClassName =
+  "grid gap-2 rounded-3xl border border-black/8 bg-white/65 p-4";
 
 export function BillingPanel({
   error,
@@ -37,17 +46,77 @@ export function BillingPanel({
 }: BillingPanelProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
+  const [isStartingLifetimeCheckout, setIsStartingLifetimeCheckout] =
+    useState(false);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
+  const [payments, setPayments] = useState<BillingPaymentEntry[]>([]);
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
+  const [isLoadingPayments, setIsLoadingPayments] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!summary) {
+      setPayments([]);
+      setPaymentsError(null);
+      setIsLoadingPayments(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setIsLoadingPayments(true);
+    setPaymentsError(null);
+
+    void fetchBillingPayments({ limit: 5 })
+      .then((page) => {
+        if (cancelled) {
+          return;
+        }
+
+        setPayments(page.items);
+      })
+      .catch((paymentsFetchError) => {
+        if (cancelled) {
+          return;
+        }
+
+        setPaymentsError(formatClientError(paymentsFetchError));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingPayments(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [summary]);
 
   async function handleCheckout(): Promise<void> {
     setActionError(null);
     setIsStartingCheckout(true);
 
     try {
-      window.location.assign(await createBillingCheckoutUrl());
+      window.location.assign(await createBillingCheckoutUrl(billingReturnPath));
     } catch (checkoutError) {
       setActionError(formatClientError(checkoutError));
       setIsStartingCheckout(false);
+    }
+  }
+
+  async function handleLifetimeCheckout(): Promise<void> {
+    setActionError(null);
+    setIsStartingLifetimeCheckout(true);
+
+    try {
+      window.location.assign(
+        await createBillingLifetimeCheckoutUrl(billingReturnPath),
+      );
+    } catch (checkoutError) {
+      setActionError(formatClientError(checkoutError));
+      setIsStartingLifetimeCheckout(false);
     }
   }
 
@@ -56,7 +125,7 @@ export function BillingPanel({
     setIsOpeningPortal(true);
 
     try {
-      window.location.assign(await createBillingPortalUrl());
+      window.location.assign(await createBillingPortalUrl(billingReturnPath));
     } catch (portalError) {
       setActionError(formatClientError(portalError));
       setIsOpeningPortal(false);
@@ -68,26 +137,38 @@ export function BillingPanel({
       <SectionHeading
         actions={
           <>
-            {shouldOfferCheckout(summary) ? (
+            <Link className={storeLinkClassName} href="/store">
+              Visit store
+            </Link>
+            {shouldOfferSubscription(summary) ? (
               <Button
                 loading={isStartingCheckout}
                 onClick={() => void handleCheckout()}
               >
-                Upgrade to Premium
+                Start monthly plan
+              </Button>
+            ) : null}
+            {shouldOfferLifetime(summary) ? (
+              <Button
+                loading={isStartingLifetimeCheckout}
+                onClick={() => void handleLifetimeCheckout()}
+                variant="secondary"
+              >
+                Buy lifetime access
               </Button>
             ) : null}
             {summary?.hasBillingCustomer ? (
               <Button
                 loading={isOpeningPortal}
                 onClick={() => void handlePortal()}
-                variant="secondary"
+                variant="ghost"
               >
                 Manage billing
               </Button>
             ) : null}
           </>
         }
-        description="Subscriptions control premium access. Core free features stay available without a paid plan."
+        description="Use the store to browse offers. This account panel shows the resolved plan, current subscription state, and recent Stripe activity."
         eyebrow="Billing"
         title="Plan and billing"
       />
@@ -98,36 +179,79 @@ export function BillingPanel({
       {isLoading && !summary ? (
         <p className={statusCopyClassName}>Checking your billing status.</p>
       ) : summary ? (
-        <div className={summaryGridClassName}>
-          <StatCard
-            detail={describeAccessSource(summary.accessSource)}
-            label="Current plan"
-            value={humanizePlanId(summary.planId)}
-          />
-          <StatCard
-            detail={describeSubscription(summary)}
-            label="Subscription"
-            value={humanizeSubscriptionStatus(summary.subscriptionStatus)}
-          />
-          <StatCard
-            detail={
-              summary.hasBillingCustomer
-                ? "Portal access is ready for payment updates and cancellation."
-                : "No Stripe customer exists yet for this account."
-            }
-            label="Customer record"
-            value={summary.hasBillingCustomer ? "Available" : "Not created"}
-          />
-          <StatCard
-            detail={
-              summary.planId === "premium"
-                ? describePremiumAccess(summary.accessSource)
-                : "Upgrade when you want predictions and league writeups."
-            }
-            label="Premium access"
-            value={summary.planId === "premium" ? "Enabled" : "Disabled"}
-          />
-        </div>
+        <>
+          <div className={summaryGridClassName}>
+            <StatCard
+              detail={describeAccessSource(summary.accessSource)}
+              label="Current plan"
+              value={humanizePlanId(summary.planId)}
+            />
+            <StatCard
+              detail={describeSubscription(summary)}
+              label="Subscription"
+              value={humanizeSubscriptionStatus(summary.subscriptionStatus)}
+            />
+            <StatCard
+              detail={describeLifetimeAccess(summary)}
+              label="Lifetime access"
+              value={summary.hasLifetimeAccess ? "Owned" : "Not owned"}
+            />
+            <StatCard
+              detail={
+                summary.hasBillingCustomer
+                  ? "Portal access is ready for payment updates and cancellation."
+                  : "No Stripe customer exists yet for this account."
+              }
+              label="Customer record"
+              value={summary.hasBillingCustomer ? "Available" : "Not created"}
+            />
+          </div>
+
+          <div className="mt-6 grid gap-4">
+            <SectionHeading
+              description="Immutable Stripe-backed payment activity recorded for this account."
+              eyebrow="History"
+              title="Recent billing activity"
+            />
+            {paymentsError ? <Alert>{paymentsError}</Alert> : null}
+            {isLoadingPayments ? (
+              <p className={statusCopyClassName}>Loading recent billing activity.</p>
+            ) : payments.length ? (
+              <div className={paymentListClassName}>
+                {payments.map((payment) => (
+                  <article
+                    className={paymentItemClassName}
+                    key={`${payment.providerObjectType}:${payment.providerObjectId}`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="grid gap-1">
+                        <p className="text-sm font-semibold text-ink">
+                          {humanizePaymentKind(payment.paymentKind)}
+                        </p>
+                        <p className={statusCopyClassName}>
+                          {formatTimestamp(payment.occurredAt)}
+                        </p>
+                      </div>
+                      <p className="text-sm font-semibold text-ink">
+                        {formatPaymentAmount(payment)}
+                      </p>
+                    </div>
+                    <p className={statusCopyClassName}>
+                      Status: {humanizeStatus(payment.status)}
+                      {payment.grantedPlanId
+                        ? ` • Granted ${humanizePlanId(payment.grantedPlanId)}`
+                        : ""}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className={statusCopyClassName}>
+                No Stripe payment activity has been recorded yet.
+              </p>
+            )}
+          </div>
+        </>
       ) : (
         <p className={statusCopyClassName}>
           Billing information is not available yet.
@@ -145,27 +269,14 @@ export function PremiumFeatureGatePanel({
   message,
 }: PremiumFeatureGatePanelProps) {
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isStartingCheckout, setIsStartingCheckout] = useState(false);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
-
-  async function handleCheckout(): Promise<void> {
-    setActionError(null);
-    setIsStartingCheckout(true);
-
-    try {
-      window.location.assign(await createBillingCheckoutUrl());
-    } catch (checkoutError) {
-      setActionError(formatClientError(checkoutError));
-      setIsStartingCheckout(false);
-    }
-  }
 
   async function handlePortal(): Promise<void> {
     setActionError(null);
     setIsOpeningPortal(true);
 
     try {
-      window.location.assign(await createBillingPortalUrl());
+      window.location.assign(await createBillingPortalUrl(billingReturnPath));
     } catch (portalError) {
       setActionError(formatClientError(portalError));
       setIsOpeningPortal(false);
@@ -177,12 +288,9 @@ export function PremiumFeatureGatePanel({
       <SectionHeading
         actions={
           <>
-            <Button
-              loading={isStartingCheckout}
-              onClick={() => void handleCheckout()}
-            >
-              Upgrade to Premium
-            </Button>
+            <Link className={storeLinkClassName} href="/store">
+              View plans
+            </Link>
             {billingSummary?.hasBillingCustomer ? (
               <Button
                 loading={isOpeningPortal}
@@ -204,7 +312,7 @@ export function PremiumFeatureGatePanel({
       <p className={statusCopyClassName}>
         {isLoading
           ? "Checking your current plan access."
-          : "Upgrade to unlock this feature on your account."}
+          : "Browse the available billing options in the store to unlock this feature."}
       </p>
     </Panel>
   );
@@ -214,6 +322,8 @@ function describeAccessSource(accessSource: BillingSummary["accessSource"]): str
   switch (accessSource) {
     case "environment":
       return "Premium access is currently granted by the sandbox or dev environment.";
+    case "lifetime":
+      return "Premium access is permanently granted by a completed lifetime purchase.";
     case "override":
       return "Access is currently granted by a manual override.";
     case "subscription":
@@ -236,51 +346,97 @@ function describeSubscription(summary: BillingSummary): string {
   return `Current billing period ends ${formattedDate}.`;
 }
 
-function describePremiumAccess(
-  accessSource: BillingSummary["accessSource"],
-): string {
-  if (accessSource === "environment") {
-    return "Premium features are unlocked by the current sandbox or dev environment.";
+function describeLifetimeAccess(summary: BillingSummary): string {
+  if (!summary.hasLifetimeAccess) {
+    return summary.lifetimePurchaseOfferEnabled
+      ? "Lifetime access is available in the store."
+      : "No lifetime offer is currently available.";
   }
 
-  return "Premium features are unlocked.";
+  if (!summary.lifetimeGrantedAt) {
+    return "Lifetime premium access has been granted.";
+  }
+
+  return `Granted on ${formatTimestamp(summary.lifetimeGrantedAt)}.`;
 }
 
-function humanizePlanId(planId: BillingSummary["planId"]): string {
+function humanizePlanId(planId: BillingSummary["planId"] | string): string {
   return planId === "premium" ? "Premium" : "Free";
 }
 
-function shouldOfferCheckout(summary: BillingSummary | null): boolean {
-  if (!summary) {
+function shouldOfferSubscription(summary: BillingSummary | null): boolean {
+  if (!summary?.premiumSubscriptionOfferEnabled) {
+    return false;
+  }
+
+  if (summary.hasLifetimeAccess) {
     return false;
   }
 
   return summary.planId !== "premium" || summary.accessSource === "environment";
 }
 
-function humanizeSubscriptionStatus(status: string | null | undefined): string {
+function shouldOfferLifetime(summary: BillingSummary | null): boolean {
+  return Boolean(summary?.lifetimePurchaseOfferEnabled && !summary.hasLifetimeAccess);
+}
+
+function humanizePaymentKind(paymentKind: string): string {
+  switch (paymentKind) {
+    case "lifetime_checkout":
+      return "Lifetime access purchase";
+    case "subscription_invoice":
+      return "Premium subscription invoice";
+    default:
+      return paymentKind;
+  }
+}
+
+function formatPaymentAmount(payment: BillingPaymentEntry): string {
+  if (typeof payment.amountTotal !== "number") {
+    return "Amount unavailable";
+  }
+
+  const currency = payment.currency?.toUpperCase() ?? "USD";
+  return new Intl.NumberFormat("en-US", {
+    currency,
+    style: "currency",
+  }).format(payment.amountTotal / 100);
+}
+
+function humanizeStatus(value: string | null | undefined): string {
+  if (!value) {
+    return "Unknown";
+  }
+
+  return value
+    .split(/[_\s]+/)
+    .map((segment) =>
+      segment ? `${segment[0]!.toUpperCase()}${segment.slice(1)}` : segment,
+    )
+    .join(" ");
+}
+
+function humanizeSubscriptionStatus(
+  status: string | null | undefined,
+): string {
   if (!status) {
     return "No subscription";
   }
 
-  return status
-    .split("_")
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+  return humanizeStatus(status);
 }
 
-function formatTimestamp(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
+function formatTimestamp(timestamp: string): string {
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(parsed);
+  }).format(new Date(timestamp));
 }
 
 function formatClientError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  return "The billing action failed without a detailed error message.";
 }

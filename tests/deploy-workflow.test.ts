@@ -1,0 +1,366 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { __testing as workflowTesting } from "../scripts/deploy-workflow.ts";
+
+test("sandbox secret sync sets the secret when it is missing", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  workflowTesting.runSandboxSecretSync([], createRuntime({
+    env: {
+      BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+    },
+    spawnSync(command, args, options) {
+      calls.push({ args, command, options });
+      if (args.includes("list")) {
+        return {
+          status: 0,
+          stderr: "",
+          stdout:
+            "No sandbox secrets found. To create a secret use sandbox secret set <secret-name>.\n",
+        };
+      }
+
+      return {
+        status: 0,
+        stderr: "",
+        stdout: "",
+      };
+    },
+  }));
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0]?.args.slice(0, 5), [
+    "ampx",
+    "sandbox",
+    "secret",
+    "list",
+    "--identifier",
+  ]);
+  assert.deepEqual(calls[1]?.args.slice(0, 5), [
+    "ampx",
+    "sandbox",
+    "secret",
+    "set",
+    "BB_CONNECTION_ENCRYPTION_SECRET",
+  ]);
+  assert.equal(calls[1].options?.input, "shared-secret\n");
+});
+
+test("sandbox secret sync skips writes when the secret already exists", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  workflowTesting.runSandboxSecretSync([], createRuntime({
+    env: {
+      BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+    },
+    spawnSync(command, args, options) {
+      calls.push({ args, command, options });
+      return {
+        status: 0,
+        stderr: "",
+        stdout: "BB_CONNECTION_ENCRYPTION_SECRET\n",
+      };
+    },
+  }));
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.args.slice(0, 5), [
+    "ampx",
+    "sandbox",
+    "secret",
+    "list",
+    "--identifier",
+  ]);
+});
+
+test("sandbox doctor reports missing predictor infrastructure with the wrapper remediation", () => {
+  const report = workflowTesting.collectSandboxDoctorReport(
+    [],
+    createRuntime({
+      env: {
+        APP_BASE_URL: "http://localhost:3000",
+        AWS_REGION: "us-east-1",
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+        GAME_DAY_RECAP_MODEL_ID: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        STRIPE_PREMIUM_PRICE_ID: "price_sandbox_placeholder",
+      },
+      execAwsJson(args) {
+        if (args[0] === "sts") {
+          return {
+            Account: "427377913956",
+          };
+        }
+        if (args[0] === "ssm" && args.includes("prediction-endpoint-name")) {
+          return {
+            Parameters: [],
+          };
+        }
+
+        return {
+          InvalidParameters: [
+            "/buzzerbeater/ml-data-infra/sandbox-karey/prediction-endpoint-name",
+          ],
+        };
+      },
+      spawnSync(_command, args) {
+        if (args.includes("list")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "BB_CONNECTION_ENCRYPTION_SECRET\n",
+          };
+        }
+
+        throw new Error(`Unexpected spawnSync call: ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  const predictorCheck = report.checks.find(
+    (check) => check.label === "Predictor endpoint",
+  );
+  assert.ok(predictorCheck);
+  assert.equal(predictorCheck.status, "fail");
+  assert.match(
+    predictorCheck.remediation,
+    /npm run sandbox:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>/,
+  );
+
+  const pinCheck = report.checks.find((check) => check.label === "Predictor pin");
+  assert.ok(pinCheck);
+  assert.equal(pinCheck.status, "warn");
+});
+
+test("sandbox up runs secret sync, ML data infra, pinned predictor, then the sandbox process", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+  const predictorTargetsPath =
+    "/Users/karey/projects/bb/bb-machine-learning/dist/matchup-predictor/targets.local.json";
+  const artifactPrefix =
+    "/Users/karey/projects/bb/bb-machine-learning/dist/matchup-predictor/ratings_universal_xgb_all";
+
+  const exitCode = workflowTesting.runSandboxUp(
+    [],
+    createRuntime({
+      env: {
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "ssm") {
+          return {
+            Parameters: [],
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      fileExists(path) {
+        return (
+          path === predictorTargetsPath ||
+          path === `${artifactPrefix}_model.pkl` ||
+          path === `${artifactPrefix}_config.pkl`
+        );
+      },
+      readFile(path) {
+        if (path !== predictorTargetsPath) {
+          throw new Error(`Unexpected file read: ${path}`);
+        }
+
+        return JSON.stringify({
+          sandbox: {
+            artifactPrefix,
+            releaseId: "ratings-universal-xgb-2026-03-19",
+            updatedAt: "2026-03-19T12:00:00.000Z",
+          },
+        });
+      },
+      spawnSync(command, args, options) {
+        calls.push({ args, command, options });
+
+        if (args.includes("list")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "BB_CONNECTION_ENCRYPTION_SECRET\n",
+          };
+        }
+        if (command === "npm" && args.includes("deploy:ml-data-infra")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+        if (command === "./scripts/matchup-predictor-release") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+        if (command === process.execPath) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[0]?.args.slice(0, 4), [
+    "ampx",
+    "sandbox",
+    "secret",
+    "list",
+  ]);
+  assert.equal(calls[1].command, "npm");
+  assert.match(calls[1].args.join(" "), /deploy:ml-data-infra/);
+  assert.equal(calls[2].command, "./scripts/matchup-predictor-release");
+  assert.deepEqual(calls[2].args, ["sandbox", "--use-pin", "sandbox"]);
+  assert.equal(calls[3].command, process.execPath);
+  const sandboxEnv = calls[3].options?.env as Record<string, string> | undefined;
+  assert.equal(
+    sandboxEnv?.BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP,
+    "1",
+  );
+});
+
+test("sandbox up forwards raw sandbox flags to the underlying sandbox process", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  const exitCode = workflowTesting.runSandboxUp(
+    ["--once"],
+    createRuntime({
+      env: {
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "ssm") {
+          return {
+            Parameters: [
+              {
+                Name: "/buzzerbeater/ml-data-infra/sandbox-karey/prediction-endpoint-name",
+                Value: "predictor-endpoint",
+              },
+            ],
+          };
+        }
+
+        if (args[0] === "sagemaker") {
+          return {
+            EndpointStatus: "InService",
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      spawnSync(command, args, options) {
+        calls.push({ args, command, options });
+
+        if (args.includes("list")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "BB_CONNECTION_ENCRYPTION_SECRET\n",
+          };
+        }
+
+        if (command === "npm" && args.includes("deploy:ml-data-infra")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        if (command === process.execPath) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[2]?.args.slice(-2), ["sandbox", "--once"]);
+});
+
+function createRuntime({
+  env = {},
+  execAwsJson,
+  fileExists = () => false,
+  readFile = () => "",
+  spawnSync,
+}: {
+  env?: Record<string, string>;
+  execAwsJson?: (args: string[]) => unknown;
+  fileExists?: (path: string) => boolean;
+  readFile?: (path: string) => string;
+  spawnSync: (
+    command: string,
+    args: string[],
+    options?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    stderr?: string;
+    stdout?: string;
+  };
+}) {
+  return {
+    env,
+    execAwsJson:
+      execAwsJson ??
+      (() => {
+        throw new Error("Unexpected AWS CLI call");
+      }),
+    fileExists,
+    mkdirp() {
+      return undefined;
+    },
+    nowIso() {
+      return "2026-03-19T12:00:00.000Z";
+    },
+    readFile,
+    spawnSync,
+    userName() {
+      return "karey";
+    },
+    write() {
+      return undefined;
+    },
+    writeError() {
+      return undefined;
+    },
+    writeFile() {
+      return undefined;
+    },
+  };
+}

@@ -12,6 +12,8 @@ const sharedInfraRoot = join(workspaceRoot, "bb-shared-infra");
 const sandboxManagementSubcommands = new Set(["delete", "secret", "seed"]);
 const predictorEndpointParameterLeafName = "prediction-endpoint-name";
 const defaultAwsRegion = "us-east-1";
+export const skipSandboxSharedInfraBootstrapEnvName =
+  "BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP";
 
 export function shouldBootstrapSandboxSharedInfra(argv) {
   if (argv[0] !== "sandbox") {
@@ -212,6 +214,10 @@ export function bootstrapSandboxSharedInfra(
   runtime = createDefaultRuntime(),
 ) {
   if (!shouldBootstrapSandboxSharedInfra(argv)) {
+    return null;
+  }
+
+  if (normalizeOptionalString(runtime.env?.[skipSandboxSharedInfraBootstrapEnvName])) {
     return null;
   }
 

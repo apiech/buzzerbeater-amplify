@@ -29,7 +29,19 @@ const queryOperations = {
     ),
   getBillingSummary: () => serverDataClient.queries.getBillingSummary(),
   getHomeWorkspace: () => serverDataClient.queries.getHomeWorkspace(),
+  getLeagueHistory: (input) =>
+    serverDataClient.queries.getLeagueHistory(
+      optionalInput<
+        Parameters<typeof serverDataClient.queries.getLeagueHistory>[0]
+      >(input),
+    ),
   getLeagueIntel: () => serverDataClient.queries.getLeagueIntel(),
+  getLatestOpponentForecast: (input) =>
+    serverDataClient.queries.getLatestOpponentForecast(
+      requiredInput<
+        Parameters<typeof serverDataClient.queries.getLatestOpponentForecast>[0]
+      >(input),
+    ),
   getLineupHelperWorkspace: () =>
     serverDataClient.queries.getLineupHelperWorkspace(),
   getLineupPlan: () => serverDataClient.queries.getLineupPlan(),
@@ -52,6 +64,7 @@ const queryOperations = {
         Parameters<typeof serverDataClient.queries.getPlayerTrend>[0]
       >(input),
     ),
+  getRivalsWorkspace: () => serverDataClient.queries.getRivalsWorkspace(),
   getSalaryProjection: (input) =>
     serverDataClient.queries.getSalaryProjection(
       requiredInput<
@@ -64,6 +77,12 @@ const queryOperations = {
         Parameters<typeof serverDataClient.queries.getScoutWorkspace>[0]
       >(input),
     ),
+  listBillingPayments: (input) =>
+    serverDataClient.queries.listBillingPayments(
+      optionalInput<
+        Parameters<typeof serverDataClient.queries.listBillingPayments>[0]
+      >(input),
+    ),
   getTeamHub: () => serverDataClient.queries.getTeamHub(),
 } satisfies Record<string, QueryOperation>;
 
@@ -74,10 +93,24 @@ const mutationOperations = {
         Parameters<typeof serverDataClient.mutations.connectBbAccount>[0]
       >(input),
     ),
-  createBillingCheckoutSession: () =>
-    serverDataClient.mutations.createBillingCheckoutSession(),
-  createBillingPortalSession: () =>
-    serverDataClient.mutations.createBillingPortalSession(),
+  createBillingCheckoutSession: (input) =>
+    serverDataClient.mutations.createBillingCheckoutSession(
+      optionalInput<
+        Parameters<typeof serverDataClient.mutations.createBillingCheckoutSession>[0]
+      >(input),
+    ),
+  createBillingLifetimeCheckoutSession: (input) =>
+    serverDataClient.mutations.createBillingLifetimeCheckoutSession(
+      optionalInput<
+        Parameters<typeof serverDataClient.mutations.createBillingLifetimeCheckoutSession>[0]
+      >(input),
+    ),
+  createBillingPortalSession: (input) =>
+    serverDataClient.mutations.createBillingPortalSession(
+      optionalInput<
+        Parameters<typeof serverDataClient.mutations.createBillingPortalSession>[0]
+      >(input),
+    ),
   disconnectBbAccount: () => serverDataClient.mutations.disconnectBbAccount(),
   refreshWorkspace: () => serverDataClient.mutations.refreshWorkspace(),
   saveLineupScenario: (input) =>
@@ -98,14 +131,30 @@ const mutationOperations = {
         Parameters<typeof serverDataClient.mutations.submitGameDayRecap>[0]
       >(input),
     ),
+  submitLeagueHistoryBackfill: (input) =>
+    serverDataClient.mutations.submitLeagueHistoryBackfill(
+      optionalInput<
+        Parameters<
+          typeof serverDataClient.mutations.submitLeagueHistoryBackfill
+        >[0]
+      >(input),
+    ),
   submitLeagueGameDayRecap: (input) =>
     serverDataClient.mutations.submitLeagueGameDayRecap(
       requiredInput<
-        Parameters<typeof serverDataClient.mutations.submitLeagueGameDayRecap>[0]
+        Parameters<
+          typeof serverDataClient.mutations.submitLeagueGameDayRecap
+        >[0]
       >(input),
     ),
   submitMyTeamHighlightsScan: () =>
     serverDataClient.mutations.submitMyTeamHighlightsScan(),
+  submitOpponentForecastJob: (input) =>
+    serverDataClient.mutations.submitOpponentForecastJob(
+      requiredInput<
+        Parameters<typeof serverDataClient.mutations.submitOpponentForecastJob>[0]
+      >(input),
+    ),
   submitPredictionJob: (input) =>
     serverDataClient.mutations.submitPredictionJob(
       requiredInput<

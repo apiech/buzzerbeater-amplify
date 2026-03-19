@@ -48,6 +48,27 @@ export const envContract = {
         templateValue: "premium",
       },
       {
+        name: "BILLING_ENABLE_PREMIUM_SUBSCRIPTION",
+        purpose:
+          "Feature flag for recurring premium checkout and portal flows.",
+        defaultValue: "true",
+        templateValue: "true",
+      },
+      {
+        name: "BILLING_ENABLE_LIFETIME_PURCHASE",
+        purpose:
+          "Feature flag for the one-time lifetime purchase checkout flow.",
+        defaultValue: "false",
+        templateValue: "false",
+      },
+      {
+        name: "STRIPE_LIFETIME_PRICE_ID",
+        purpose:
+          "Stripe one-time `price_...` identifier used only when lifetime purchases are enabled.",
+        defaultValue: "unset unless BILLING_ENABLE_LIFETIME_PURCHASE=true",
+        templateValue: "price_lifetime_placeholder",
+      },
+      {
         name: "ENABLE_COST_VISIBILITY",
         purpose:
           "Synth-time flag for AWS Budgets and billing alarms. Enable this in exactly one owning environment at a time.",
@@ -220,9 +241,24 @@ export const envContract = {
         "Backend-injected queue URL wired during synth for prediction submit lambdas.",
     },
     {
+      name: "LEAGUE_HISTORY_BACKFILL_QUEUE_URL",
+      purpose:
+        "Backend-injected queue URL wired during synth for league-history backfill submit lambdas.",
+    },
+    {
+      name: "OPPONENT_FORECAST_JOB_QUEUE_URL",
+      purpose:
+        "Backend-injected queue URL wired during synth for opponent forecast submit lambdas.",
+    },
+    {
       name: "PREDICTION_ENDPOINT_NAME",
       purpose:
         "Backend-injected SageMaker endpoint name imported from the shared ML Data Infra SSM contract.",
+    },
+    {
+      name: "OPPONENT_FORECAST_ENDPOINT_NAME",
+      purpose:
+        "Backend-injected SageMaker endpoint name imported from the shared ML Data Infra SSM contract for opponent forecasts.",
     },
   ],
   localScripts: [
@@ -313,7 +349,9 @@ export function renderEnvTemplate() {
     "# published by bb-shared-infra. Do not set imported resource names in .env.",
     "#",
     "# Local sandbox runs:",
-    "# - `npm run sandbox` sets BB_SHARED_ENVIRONMENT_NAME and bootstraps ML Data Infra.",
+    "# - `npm run sandbox` is the primary local workflow. It syncs",
+    "#   BB_CONNECTION_ENCRYPTION_SECRET from /Users/karey/projects/bb/.env.deploy.local",
+    "#   when needed, sets BB_SHARED_ENVIRONMENT_NAME, and bootstraps ML Data Infra.",
     "# - Predictor endpoints are not bootstrapped implicitly. Release one explicitly",
     "#   before the first sandbox or dev deploy that needs predictions.",
     "# - Plain `npx ampx sandbox` expects shared infra and predictor resources for",
@@ -324,16 +362,19 @@ export function renderEnvTemplate() {
     "# BB_SHARED_ENVIRONMENT_NAME=sandbox-karey",
     "",
     "# Amplify secrets are required separately and should not be stored in .env.",
-    "# Local sandbox:",
-    ...envContract.secrets.map(
-      (entry) => `#   npm run ampx -- sandbox secret set ${entry.name}`,
-    ),
+    "# Preferred local operator flow:",
+    "# - Keep deployment-only local values in /Users/karey/projects/bb/.env.deploy.local",
+    "# - `npm run sandbox` auto-syncs BB_CONNECTION_ENCRYPTION_SECRET into the",
+    "#   Amplify sandbox secret store when it is missing.",
+    "# - Run `npm run sandbox:secret:sync` only when you need to repair or force",
+    "#   that sync manually.",
+    "# - Other secrets still use `npm run ampx -- sandbox secret set <NAME>`.",
     "#",
     "# Shared ML Data Infra deploys:",
-    "#   export BB_CONNECTION_ENCRYPTION_SECRET=<same value as the Amplify secret>",
+    "#   Source BB_CONNECTION_ENCRYPTION_SECRET from .env.deploy.local",
     "#   npm run shared-infra:deploy:ml-data-infra -- --environment dev",
     "# Predictor deploys:",
-    "#   ./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>",
+    "#   npm run dev:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>",
     "#",
     "# Amplify Hosting secrets:",
     ...envContract.secrets.map((entry) => `# - ${entry.name}`),
@@ -370,9 +411,10 @@ export function renderReadmeEnvSection() {
     "- Shared infra discovery",
     "  - `bb-amplify` no longer provisions app-local match-store resources and no longer depends on a generated local env bridge file.",
     "  - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.",
-    "  - `npm run sandbox` bootstraps ML Data Infra for the sandbox identifier and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.",
+    "  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.",
     "  - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.",
-    "  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`.",
+    "  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.",
+    "  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.",
     "- Imported runtime bindings",
     ...envContract.generated.map(
       (entry) => `  - \`${entry.name}\`: ${entry.purpose}`,

@@ -133,6 +133,27 @@ test("resolvePlan keeps active subscriptions ahead of an environment default", (
   );
 });
 
+test("resolvePlan grants lifetime access ahead of subscriptions and environment defaults", () => {
+  assert.deepStrictEqual(
+    resolvePlan(
+      {
+        currentPeriodEndAt: "2099-03-15T00:00:00.000Z",
+        lifetimeGrantedAt: "2026-03-19T00:00:00.000Z",
+        lifetimePlanId: "premium",
+        stripeSubscriptionStatus: "active",
+        subscriptionPlanId: "free",
+      },
+      {
+        defaultPlanId: "free",
+      },
+    ),
+    {
+      accessSource: "lifetime",
+      planId: "premium",
+    },
+  );
+});
+
 test("resolvePlan ignores expired manual overrides", () => {
   assert.deepStrictEqual(
     resolvePlan({

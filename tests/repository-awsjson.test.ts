@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   __testing as repositoryTesting,
+  createOpponentForecastJob,
   createSyncRun,
   getBbConnection,
   getUserPreference,
@@ -63,6 +64,68 @@ test("createSyncRun serializes AWSJSON payloads before model.create", async (t) 
     expiresAt: "2026-03-29T00:00:00.000Z",
   });
   assert.deepStrictEqual(record.detailsJson, { teamId: "123" });
+});
+
+test("createOpponentForecastJob serializes AWSJSON payloads before model.create", async (t) => {
+  let createInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          OpponentForecastJob: {
+            create: async (input: Record<string, unknown>) => {
+              createInput = input;
+              return {
+                data: {
+                  id: "forecast-1",
+                  userId: "u1",
+                  teamId: "200",
+                  status: "QUEUED",
+                  requestJson: { teamId: "200" },
+                },
+              };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  const record = await createOpponentForecastJob({} as any, {
+    id: "forecast-1",
+    userId: "u1",
+    teamId: "200",
+    teamName: "Rivals",
+    status: "QUEUED",
+    startedAt: null,
+    completedAt: null,
+    requestJson: { teamId: "200" },
+    resolvedContextJson: { recentGames: 8 },
+    resultJson: null,
+    error: null,
+    modelVersion: null,
+  });
+
+  assert.deepStrictEqual(createInput, {
+    id: "forecast-1",
+    userId: "u1",
+    teamId: "200",
+    teamName: "Rivals",
+    status: "QUEUED",
+    startedAt: null,
+    completedAt: null,
+    requestJson: '{"teamId":"200"}',
+    resolvedContextJson: '{"recentGames":8}',
+    resultJson: null,
+    error: null,
+    modelVersion: null,
+    requestedAt: createInput?.["requestedAt"],
+    expiryKey: "EXPIRABLE",
+    expiresAt: createInput?.["expiresAt"],
+  });
+  assert.deepStrictEqual(record.requestJson, { teamId: "200" });
 });
 
 test("updateSyncRun serializes AWSJSON payloads before model.update", async (t) => {

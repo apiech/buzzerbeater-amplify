@@ -39,6 +39,9 @@ export default function LoginPage() {
           <Link className={secondaryLinkClassName} href="/api/auth/sign-up">
             Create account
           </Link>
+          <Link className={secondaryLinkClassName} href="/store">
+            Browse store
+          </Link>
         </div>
       </Panel>
     </main>

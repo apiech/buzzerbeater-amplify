@@ -30,6 +30,10 @@ const manualFallback = {
   home_defStrategy: "ManToMan",
   away_offStrategy: "Push",
   away_defStrategy: "23Zone",
+  home_gdp_focus: "N/A",
+  home_gdp_pace: "N/A",
+  away_gdp_focus: "N/A",
+  away_gdp_pace: "N/A",
   neutral: "0",
   effortDelta: 0,
 };
@@ -40,6 +44,8 @@ function createMatchBoxscoreRecord(args: {
   opponentTeamId: string;
   offStrategy: string;
   defStrategy: string;
+  gdpFocus?: string;
+  gdpPace?: string;
   teamRatings: Record<string, number>;
   opponentRatings: Record<string, number>;
 }) {
@@ -55,9 +61,17 @@ function createMatchBoxscoreRecord(args: {
     opponentRatingsJson: args.opponentRatings,
     boxscoreJson: {
       homeTeam: {
+        gdp: {
+          focus: args.gdpFocus ?? "Balanced.hit",
+          pace: args.gdpPace ?? "Normal.hit",
+        },
         id: args.teamId,
       },
       awayTeam: {
+        gdp: {
+          focus: "Inside.hit",
+          pace: "Slow.hit",
+        },
         id: args.opponentTeamId,
       },
     },
@@ -139,10 +153,10 @@ test("resolveConnectedInput prefers cached boxscores and merges direct overrides
 
   assert.equal(resolved.home_outsideScoring, 12.1);
   assert.equal(resolved.home_offStrategy, "Motion");
+  assert.equal(resolved.home_gdp_focus, "Balanced.hit");
   assert.equal(resolved.away_outsideScoring, 10.2);
   assert.equal(resolved.away_defStrategy, "23Zone");
-  assert.equal("home_gdp_focus" in resolved, false);
-  assert.equal("away_gdp_pace" in resolved, false);
+  assert.equal(resolved.away_gdp_pace, "Normal.hit");
   assert.equal(resolved.neutral, "1");
   assert.equal(resolved.effortDelta, 1);
 });
@@ -178,6 +192,41 @@ test("normalizePredictionRequest tolerates historical GDP keys in stored jobs", 
   const manualInput = (normalized as { manualInput: Record<string, unknown> }).manualInput;
   assert.equal(manualInput.home_gdp_focus, "Balanced.hit");
   assert.equal(manualInput.home_gdp_pace, "Normal.hit");
+});
+
+test("normalizePredictionRequest preserves connected forecast provenance", () => {
+  const normalized = normalizePredictionRequest({
+    mode: "CONNECTED",
+    connectedInput: {
+      awaySourceMatchId: "away-1",
+      forecastContext: {
+        evidence: ["Analog consensus"],
+        forecastGeneratedAt: "2026-03-19T00:00:00.000Z",
+        forecastJobId: "job-1",
+        forecastModelVersion: "forecast-v1",
+        scenarioId: "scenario-1",
+        scenarioLabel: "Primary",
+        scenarioProbability: 0.62,
+        sourceTeamId: "team-1",
+      },
+      homeSourceMatchId: "home-1",
+    },
+  });
+
+  assert.equal(normalized.mode, "CONNECTED");
+  const connectedInput = (
+    normalized as { connectedInput: Record<string, unknown> }
+  ).connectedInput;
+  assert.deepStrictEqual(connectedInput.forecastContext, {
+    evidence: ["Analog consensus"],
+    forecastGeneratedAt: "2026-03-19T00:00:00.000Z",
+    forecastJobId: "job-1",
+    forecastModelVersion: "forecast-v1",
+    scenarioId: "scenario-1",
+    scenarioLabel: "Primary",
+    scenarioProbability: 0.62,
+    sourceTeamId: "team-1",
+  });
 });
 
 test("resolveConnectedInput still fails without any usable source data", async () => {

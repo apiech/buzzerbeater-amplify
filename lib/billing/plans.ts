@@ -9,11 +9,14 @@ export type BillingAccessSource =
   | "default"
   | "subscription"
   | "override"
-  | "environment";
+  | "environment"
+  | "lifetime";
 
 export type BillingPlanLike = {
   currentPeriodEndAt?: string | null;
   grantedPlanId?: string | null;
+  lifetimeGrantedAt?: string | null;
+  lifetimePlanId?: string | null;
   overrideExpiresAt?: string | null;
   stripeSubscriptionStatus?: string | null;
   subscriptionPlanId?: string | null;
@@ -60,6 +63,14 @@ export function resolvePlan(
   const subscriptionStatus = normalizeSubscriptionStatus(
     account?.stripeSubscriptionStatus ?? null,
   );
+  const lifetimePlanId = account?.lifetimePlanId;
+  if (isPlanId(lifetimePlanId)) {
+    return {
+      accessSource: "lifetime",
+      planId: lifetimePlanId,
+    };
+  }
+
   if (
     isPlanId(subscriptionPlanId) &&
     ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus) &&

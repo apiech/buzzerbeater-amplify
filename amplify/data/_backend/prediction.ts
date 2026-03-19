@@ -37,8 +37,13 @@ type ConnectedPredictionInput = {
   home_defStrategy?: string;
   away_offStrategy?: string;
   away_defStrategy?: string;
+  home_gdp_focus?: string;
+  home_gdp_pace?: string;
+  away_gdp_focus?: string;
+  away_gdp_pace?: string;
   neutral?: string | number | boolean;
   effortDelta?: number;
+  forecastContext?: JsonRecord;
   manualFallback?: JsonRecord;
 };
 
@@ -76,6 +81,10 @@ const DIRECT_CONNECTED_FIELDS = [
   "home_defStrategy",
   "away_offStrategy",
   "away_defStrategy",
+  "home_gdp_focus",
+  "home_gdp_pace",
+  "away_gdp_focus",
+  "away_gdp_pace",
   "neutral",
   "effortDelta",
 ] as const;
@@ -297,6 +306,12 @@ function buildSideFromBoxscore(
 
   output[`${side}_offStrategy`] = perspective.offStrategy ?? "Base";
   output[`${side}_defStrategy`] = perspective.defStrategy ?? "ManToMan";
+  if (perspective.gdpFocus) {
+    output[`${side}_gdp_focus`] = perspective.gdpFocus;
+  }
+  if (perspective.gdpPace) {
+    output[`${side}_gdp_pace`] = perspective.gdpPace;
+  }
   return output;
 }
 
@@ -307,6 +322,8 @@ function resolveBoxscorePerspective(
   ratings: JsonRecord;
   offStrategy: string | null;
   defStrategy: string | null;
+  gdpFocus: string | null;
+  gdpPace: string | null;
 } {
   const selectedTeamId =
     requestedTeamId ?? asOptionalString(matchBoxscore.teamId) ?? undefined;
@@ -314,6 +331,14 @@ function resolveBoxscorePerspective(
   const opponentTeamId = asOptionalString(matchBoxscore.opponentTeamId);
   const usingTrackedPerspective =
     !selectedTeamId || selectedTeamId === teamId || selectedTeamId !== opponentTeamId;
+  const boxscore = requireRecord(matchBoxscore.boxscoreJson, "boxscoreJson");
+  const homeTeam = asOptionalRecord(boxscore.homeTeam);
+  const awayTeam = asOptionalRecord(boxscore.awayTeam);
+  const selectedSide =
+    usingTrackedPerspective
+      ? resolveBoxscoreSide(selectedTeamId ?? teamId, homeTeam, awayTeam) ?? homeTeam
+      : resolveBoxscoreSide(opponentTeamId, homeTeam, awayTeam) ?? awayTeam;
+  const gdp = asOptionalRecord(selectedSide?.gdp);
 
   const ratings = requireRecord(
     usingTrackedPerspective
@@ -334,7 +359,23 @@ function resolveBoxscorePerspective(
         ? matchBoxscore.defStrategy
         : matchBoxscore.opponentDefStrategy,
     ),
+    gdpFocus: asOptionalString(gdp?.focus),
+    gdpPace: asOptionalString(gdp?.pace),
   };
+}
+
+function resolveBoxscoreSide(
+  teamId: string | undefined | null,
+  homeTeam: JsonRecord | null,
+  awayTeam: JsonRecord | null,
+): JsonRecord | null {
+  if (teamId && asOptionalString(homeTeam?.id) === teamId) {
+    return homeTeam;
+  }
+  if (teamId && asOptionalString(awayTeam?.id) === teamId) {
+    return awayTeam;
+  }
+  return null;
 }
 
 async function invokePredictionEndpoint(
@@ -399,6 +440,12 @@ function requireNumber(value: unknown, label: string): number {
 
 function asOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function asOptionalRecord(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
 }
 
 function resolveUserId(identity: unknown): string | null {

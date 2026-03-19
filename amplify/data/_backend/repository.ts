@@ -24,11 +24,25 @@ export type PredictionJobStatus =
   | "SUCCEEDED"
   | "FAILED";
 
+export type OpponentForecastJobStatus =
+  | "QUEUED"
+  | "RESOLVING_CONTEXT"
+  | "INVOKING_MODEL"
+  | "SUCCEEDED"
+  | "FAILED";
+
 export type GameDayRecapStatus =
   | "QUEUED"
   | "RESOLVING_SLATE"
   | "BUILDING_CONTEXT"
   | "INVOKING_MODEL"
+  | "SUCCEEDED"
+  | "FAILED";
+
+export type LeagueHistoryBackfillState =
+  | "QUEUED"
+  | "RESOLVING_SEASONS"
+  | "FETCHING_STANDINGS"
   | "SUCCEEDED"
   | "FAILED";
 
@@ -73,6 +87,29 @@ export type BillingAccountRecord = {
   grantedPlanId?: string | null;
   overrideExpiresAt?: string | null;
   overrideReason?: string | null;
+  lifetimePlanId?: string | null;
+  lifetimeGrantedAt?: string | null;
+  lifetimeSourceObjectId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type BillingPaymentRecord = {
+  providerObjectType: string;
+  providerObjectId: string;
+  userId: string;
+  paymentKind: string;
+  status: string;
+  amountTotal?: number | null;
+  currency?: string | null;
+  occurredAt: string;
+  grantedPlanId?: string | null;
+  stripeCheckoutSessionId?: string | null;
+  stripeCustomerId?: string | null;
+  stripeInvoiceId?: string | null;
+  stripePaymentIntentId?: string | null;
+  stripePriceId?: string | null;
+  stripeSubscriptionId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -114,6 +151,26 @@ export type PredictionJobRecord = {
   request: unknown;
   resolvedInputSnapshot?: unknown;
   result?: unknown;
+  error?: string | null;
+  modelVersion?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  expiryKey: string;
+  expiresAt: string;
+};
+
+export type OpponentForecastJobRecord = {
+  id: string;
+  userId: string;
+  teamId: string;
+  teamName?: string | null;
+  status: OpponentForecastJobStatus;
+  requestedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  requestJson: unknown;
+  resolvedContextJson?: unknown;
+  resultJson?: unknown;
   error?: string | null;
   modelVersion?: string | null;
   createdAt?: string;
@@ -205,6 +262,35 @@ export type SavedLineupScenarioRecord = {
   minuteTargetsJson: unknown;
   note?: string | null;
   savedAt: string;
+};
+
+export type LeagueHistoryStandingCacheRecord = {
+  leagueId: string;
+  season: number;
+  teamId: string;
+  leagueName?: string | null;
+  teamName?: string | null;
+  wins?: number | null;
+  losses?: number | null;
+  pf?: number | null;
+  pa?: number | null;
+  conferenceIndex?: number | null;
+  isBot?: boolean | null;
+  fetchedAt?: string | null;
+};
+
+export type LeagueHistoryBackfillRecord = {
+  leagueId: string;
+  leagueName?: string | null;
+  status: LeagueHistoryBackfillState;
+  requestedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  error?: string | null;
+  historicalSeasonsExpected?: number | null;
+  historicalSeasonsStored?: number | null;
+  lastCompletedSeason?: number | null;
+  updatedAt: string;
 };
 
 export type PlayerSkillObservationRecord = {
@@ -300,6 +386,45 @@ export async function upsertBillingAccount(
   record: BillingAccountRecord,
 ): Promise<void> {
   await upsertModelRecord(env, "BillingAccount", ["userId"], record);
+}
+
+export async function upsertBillingPayment(
+  env: RepositoryEnv,
+  record: BillingPaymentRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "BillingPayment",
+    ["providerObjectType", "providerObjectId"],
+    record,
+  );
+}
+
+export async function listBillingPaymentsByUserId(
+  env: RepositoryEnv,
+  userId: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<BillingPaymentRecord>> {
+  const page = await queryModelIndexPage<BillingPaymentRecord>(
+    env,
+    "BillingPayment",
+    "listBillingPaymentsByUserIdAndOccurredAt",
+    { userId },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "DESC",
+    },
+    "list billing payments",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("BillingPayment", page.records),
+  };
 }
 
 export async function getUserPreference(
@@ -601,6 +726,137 @@ export async function deletePredictionJob(
   await assertSuccessful(model.delete({ id }), "delete prediction job");
 }
 
+export async function createOpponentForecastJob(
+  env: RepositoryEnv,
+  input: Omit<
+    OpponentForecastJobRecord,
+    "createdAt" | "updatedAt" | "requestedAt" | "expiryKey" | "expiresAt"
+  > & {
+    requestedAt?: string | null;
+    expiryKey?: string | null;
+    expiresAt?: string | null;
+  },
+): Promise<OpponentForecastJobRecord> {
+  const model = await getModel<OpponentForecastJobRecord>(
+    env,
+    "OpponentForecastJob",
+  );
+  const now = new Date().toISOString();
+  const record = assertPresent(
+    await assertSuccessful(
+      model.create(
+        prepareModelInput("OpponentForecastJob", {
+          ...input,
+          requestedAt: input.requestedAt ?? now,
+          expiryKey: input.expiryKey ?? "EXPIRABLE",
+          expiresAt: input.expiresAt ?? addDays(now, 30),
+        }),
+      ),
+      "create opponent forecast job",
+    ),
+    "create opponent forecast job",
+  );
+
+  return decodeAwsJsonFields("OpponentForecastJob", record);
+}
+
+export async function getOpponentForecastJob(
+  env: RepositoryEnv,
+  id: string,
+): Promise<OpponentForecastJobRecord | null> {
+  const record = await getModelRecord<OpponentForecastJobRecord>(
+    env,
+    "OpponentForecastJob",
+    { id },
+    "load opponent forecast job",
+  );
+
+  return decodeAwsJsonFields("OpponentForecastJob", record);
+}
+
+export async function updateOpponentForecastJob(
+  env: RepositoryEnv,
+  input: Partial<OpponentForecastJobRecord> &
+    Pick<OpponentForecastJobRecord, "id">,
+): Promise<void> {
+  const model = await getModel<OpponentForecastJobRecord>(
+    env,
+    "OpponentForecastJob",
+  );
+  await assertSuccessful(
+    model.update(prepareModelInput("OpponentForecastJob", input)),
+    "update opponent forecast job",
+  );
+}
+
+export async function listOpponentForecastJobsByUser(
+  env: RepositoryEnv,
+  userId: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<OpponentForecastJobRecord>> {
+  const page = await queryModelIndexPage<OpponentForecastJobRecord>(
+    env,
+    "OpponentForecastJob",
+    "listOpponentForecastJobsByUserAndRequestedAt",
+    { userId },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "DESC",
+    },
+    "list opponent forecast jobs by user",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("OpponentForecastJob", page.records),
+  };
+}
+
+export async function listExpiredOpponentForecastJobs(
+  env: RepositoryEnv,
+  expiresBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<OpponentForecastJobRecord>> {
+  const page = await queryModelIndexPage<OpponentForecastJobRecord>(
+    env,
+    "OpponentForecastJob",
+    "listOpponentForecastJobsByExpiryKeyAndExpiresAt",
+    {
+      expiryKey: "EXPIRABLE",
+      expiresAt: { lt: expiresBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list expired opponent forecast jobs",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("OpponentForecastJob", page.records),
+  };
+}
+
+export async function deleteOpponentForecastJob(
+  env: RepositoryEnv,
+  id: string,
+): Promise<void> {
+  const model = await getModel<OpponentForecastJobRecord>(
+    env,
+    "OpponentForecastJob",
+  );
+  await assertSuccessful(model.delete({ id }), "delete opponent forecast job");
+}
+
 export async function getGameDayRecap(
   env: RepositoryEnv,
   userId: string,
@@ -841,6 +1097,64 @@ export async function upsertLeagueStanding(
     ["userId", "season", "teamId"],
     input,
   );
+}
+
+export async function getLeagueHistoryBackfill(
+  env: RepositoryEnv,
+  leagueId: string,
+): Promise<LeagueHistoryBackfillRecord | null> {
+  return getModelRecord<LeagueHistoryBackfillRecord>(
+    env,
+    "LeagueHistoryBackfill",
+    { leagueId },
+    "load league history backfill",
+  );
+}
+
+export async function upsertLeagueHistoryBackfill(
+  env: RepositoryEnv,
+  input: LeagueHistoryBackfillRecord,
+): Promise<void> {
+  await upsertModelRecord(env, "LeagueHistoryBackfill", ["leagueId"], input);
+}
+
+export async function upsertLeagueHistoryStandingCache(
+  env: RepositoryEnv,
+  input: LeagueHistoryStandingCacheRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "LeagueHistoryStandingCache",
+    ["leagueId", "season", "teamId"],
+    input,
+  );
+}
+
+export async function listLeagueHistoryStandingCachesByLeagueId(
+  env: RepositoryEnv,
+  leagueId: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<LeagueHistoryStandingCacheRecord>> {
+  const page = await queryModelIndexPage<LeagueHistoryStandingCacheRecord>(
+    env,
+    "LeagueHistoryStandingCache",
+    "listLeagueHistoryStandingCachesByLeagueIdAndSeason",
+    { leagueId },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list league history standing caches",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("LeagueHistoryStandingCache", page.records),
+  };
 }
 
 export async function createSharedPlayerCard(

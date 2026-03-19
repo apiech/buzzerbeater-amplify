@@ -4,7 +4,9 @@ import { configureAuthControls } from "./_backend/auth-controls.js";
 import { configureBillingIntegration } from "./_backend/billing-integration.js";
 import { configureCostVisibility } from "./_backend/cost-visibility.js";
 import { configureGameDayRecapJobs } from "./_backend/game-day-recap-jobs.js";
+import { configureLeagueHistoryJobs } from "./_backend/league-history-jobs.js";
 import { configureMatchStoreIntegration } from "./_backend/match-store-integration.js";
+import { configureOpponentForecastJobs } from "./_backend/opponent-forecast-jobs.js";
 import { configureOperationalRetention } from "./_backend/operational-retention.js";
 import { configurePredictionJobs } from "./_backend/prediction-jobs.js";
 import { configureRefreshJobs } from "./_backend/refresh-jobs.js";
@@ -22,6 +24,7 @@ import { billingAdminOverride } from "./billing-admin-override/resource.js";
 import { billingWebhook } from "./billing-webhook/resource.js";
 import {
   createBillingCheckoutSession,
+  createBillingLifetimeCheckoutSession,
   createBillingPortalSession,
   connectBbAccount,
   data,
@@ -31,6 +34,8 @@ import {
   getBillingSummary,
   getHomeWorkspace,
   getLeagueIntel,
+  getLeagueHistory,
+  getLatestOpponentForecast,
   getLineupHelperWorkspace,
   getMyTeamHighlights,
   getPlayerLab,
@@ -38,11 +43,14 @@ import {
   getSalaryProjection,
   getScoutWorkspace,
   getTeamHub,
+  leagueHistoryWorker,
+  listBillingPayments,
   pruneOperationalData,
   refreshBbWorkspaces,
   refreshBbWorkspaceWorker,
   refreshWorkspace,
   setBbLeagueTimeZone,
+  submitLeagueHistoryBackfill,
   submitLeagueGameDayRecap,
   submitMyTeamHighlightsScan,
   submitSingleGameSummary,
@@ -53,6 +61,8 @@ import { gameDayRecapSubmit } from "./game-day-recap-submit/resource.js";
 import { gameDayRecapWorker } from "./game-day-recap-worker/resource.js";
 import { getMatchBoxscoreDetails } from "./get-match-boxscore-details/resource.js";
 import { listAccessibleMatches } from "./list-accessible-matches/resource.js";
+import { opponentForecastSubmit } from "./opponent-forecast-submit/resource.js";
+import { opponentForecastWorker } from "./opponent-forecast-worker/resource.js";
 import { predictionSubmit } from "./prediction-submit/resource.js";
 import { predictionWorker } from "./prediction-worker/resource.js";
 
@@ -60,6 +70,7 @@ const backend = defineBackend({
   auth,
   data,
   createBillingCheckoutSession,
+  createBillingLifetimeCheckoutSession,
   createBillingPortalSession,
   connectBbAccount,
   disconnectBbAccount,
@@ -68,13 +79,17 @@ const backend = defineBackend({
   getTeamHub,
   getScoutWorkspace,
   getLeagueIntel,
+  getLeagueHistory,
+  getLatestOpponentForecast,
   getPlayerLab,
   getLineupHelperWorkspace,
   evaluateLineupHelper,
   getPlayerTrend,
   getBillingSummary,
+  listBillingPayments,
   getMyTeamHighlights,
   getSalaryProjection,
+  leagueHistoryWorker,
   generateSharedPlayerCard,
   refreshBbWorkspaces,
   refreshBbWorkspaceWorker,
@@ -86,9 +101,12 @@ const backend = defineBackend({
   listAccessibleMatches,
   gameDayRecapSubmit,
   gameDayRecapWorker,
+  opponentForecastSubmit,
+  opponentForecastWorker,
   predictionSubmit,
   predictionWorker,
   submitLeagueGameDayRecap,
+  submitLeagueHistoryBackfill,
   submitMyTeamHighlightsScan,
   submitSingleGameSummary,
   billingWebhook,
@@ -108,6 +126,12 @@ configureCostVisibility(
 configureGameDayRecapJobs(
   backend,
   resolveGameDayRecapConfig(),
+  appResourceRemovalPolicy,
+);
+configureLeagueHistoryJobs(backend, appResourceRemovalPolicy);
+configureOpponentForecastJobs(
+  backend,
+  sharedInfraBindings,
   appResourceRemovalPolicy,
 );
 configurePredictionJobs(backend, sharedInfraBindings, appResourceRemovalPolicy);

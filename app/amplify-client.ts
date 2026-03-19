@@ -31,39 +31,50 @@ type QueryOperationName =
   | "evaluateLineupHelper"
   | "getBillingSummary"
   | "getHomeWorkspace"
+  | "getLeagueHistory"
   | "getLeagueIntel"
+  | "getLatestOpponentForecast"
   | "getLineupHelperWorkspace"
   | "getLineupPlan"
   | "getMatchBoxscoreDetails"
   | "getMyTeamHighlights"
   | "getPlayerLab"
   | "getPlayerTrend"
+  | "getRivalsWorkspace"
   | "getSalaryProjection"
   | "getScoutWorkspace"
+  | "listBillingPayments"
   | "getTeamHub";
 type MutationOperationName =
   | "connectBbAccount"
   | "createBillingCheckoutSession"
+  | "createBillingLifetimeCheckoutSession"
   | "createBillingPortalSession"
   | "disconnectBbAccount"
   | "refreshWorkspace"
   | "saveLineupScenario"
   | "setBbLeagueTimeZone"
   | "submitGameDayRecap"
+  | "submitLeagueHistoryBackfill"
   | "submitLeagueGameDayRecap"
   | "submitMyTeamHighlightsScan"
+  | "submitOpponentForecastJob"
   | "submitPredictionJob"
   | "submitSingleGameSummary";
 type OperationResult<TName extends QueryOperationName | MutationOperationName> =
   NonNullable<Schema[TName]["returnType"]>;
 type ReadResult<TName extends ReadOperationName> =
-  TName extends "getCurrentBbConnection" ? BbConnectionRecord | null
-  : TName extends "getOperationsActivity" ? OperationsActivity
-  : TName extends "getPredictionHistory" ? PaginatedResult<PredictionJobRecord>
-  : TName extends "getRecapHistory" ? PaginatedResult<RecapHistoryRecord>
-  : TName extends "getSavedLineupScenarios"
-    ? PaginatedResult<SavedLineupScenarioRecord>
-    : never;
+  TName extends "getCurrentBbConnection"
+    ? BbConnectionRecord | null
+    : TName extends "getOperationsActivity"
+      ? OperationsActivity
+      : TName extends "getPredictionHistory"
+        ? PaginatedResult<PredictionJobRecord>
+        : TName extends "getRecapHistory"
+          ? PaginatedResult<RecapHistoryRecord>
+          : TName extends "getSavedLineupScenarios"
+            ? PaginatedResult<SavedLineupScenarioRecord>
+            : never;
 
 async function requestOperation<TData>(
   input: RequestInfo | URL,
@@ -173,10 +184,8 @@ export const client = {
       limit?: number;
       nextToken?: string | null;
     }) => requestRead("getPredictionHistory", input),
-    getRecapHistory: (input?: {
-      limit?: number;
-      nextToken?: string | null;
-    }) => requestRead("getRecapHistory", input),
+    getRecapHistory: (input?: { limit?: number; nextToken?: string | null }) =>
+      requestRead("getRecapHistory", input),
     getSavedLineupScenarios: (input?: {
       limit?: number;
       nextToken?: string | null;
@@ -185,10 +194,12 @@ export const client = {
   mutations: {
     connectBbAccount: (input: JsonObject) =>
       requestMutation("connectBbAccount", input),
-    createBillingCheckoutSession: () =>
-      requestMutation("createBillingCheckoutSession"),
-    createBillingPortalSession: () =>
-      requestMutation("createBillingPortalSession"),
+    createBillingCheckoutSession: (input?: JsonObject) =>
+      requestMutation("createBillingCheckoutSession", input),
+    createBillingLifetimeCheckoutSession: (input?: JsonObject) =>
+      requestMutation("createBillingLifetimeCheckoutSession", input),
+    createBillingPortalSession: (input?: JsonObject) =>
+      requestMutation("createBillingPortalSession", input),
     disconnectBbAccount: () => requestMutation("disconnectBbAccount"),
     refreshWorkspace: () => requestMutation("refreshWorkspace"),
     saveLineupScenario: (input: JsonObject) =>
@@ -197,10 +208,14 @@ export const client = {
       requestMutation("setBbLeagueTimeZone", input),
     submitGameDayRecap: (input: JsonObject) =>
       requestMutation("submitGameDayRecap", input),
+    submitLeagueHistoryBackfill: (input?: JsonObject) =>
+      requestMutation("submitLeagueHistoryBackfill", input),
     submitLeagueGameDayRecap: (input: JsonObject) =>
       requestMutation("submitLeagueGameDayRecap", input),
     submitMyTeamHighlightsScan: () =>
       requestMutation("submitMyTeamHighlightsScan"),
+    submitOpponentForecastJob: (input: JsonObject) =>
+      requestMutation("submitOpponentForecastJob", input),
     submitPredictionJob: (input: JsonObject) =>
       requestMutation("submitPredictionJob", input),
     submitSingleGameSummary: (input: JsonObject) =>
@@ -211,7 +226,11 @@ export const client = {
       requestQuery("evaluateLineupHelper", input),
     getBillingSummary: () => requestQuery("getBillingSummary"),
     getHomeWorkspace: () => requestQuery("getHomeWorkspace"),
+    getLeagueHistory: (input?: JsonObject) =>
+      requestQuery("getLeagueHistory", input),
     getLeagueIntel: () => requestQuery("getLeagueIntel"),
+    getLatestOpponentForecast: (input: JsonObject) =>
+      requestQuery("getLatestOpponentForecast", input),
     getLineupHelperWorkspace: () => requestQuery("getLineupHelperWorkspace"),
     getLineupPlan: () => requestQuery("getLineupPlan"),
     getMatchBoxscoreDetails: (input: JsonObject) =>
@@ -221,10 +240,13 @@ export const client = {
     getPlayerLab: () => requestQuery("getPlayerLab"),
     getPlayerTrend: (input: JsonObject) =>
       requestQuery("getPlayerTrend", input),
+    getRivalsWorkspace: () => requestQuery("getRivalsWorkspace"),
     getSalaryProjection: (input: JsonObject) =>
       requestQuery("getSalaryProjection", input),
     getScoutWorkspace: (input?: JsonObject) =>
       requestQuery("getScoutWorkspace", input),
+    listBillingPayments: (input?: JsonObject) =>
+      requestQuery("listBillingPayments", input),
     getTeamHub: () => requestQuery("getTeamHub"),
   },
 };

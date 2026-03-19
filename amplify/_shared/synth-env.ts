@@ -20,6 +20,9 @@ import {
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const amplifyRoot = join(currentDir, "..", "..");
 const localEnvFilePath = join(amplifyRoot, ".env");
+const optionalSharedInfraBindingKeys = new Set<keyof SharedInfraBindings>([
+  "opponentForecastEndpointName",
+]);
 
 let localEnvLoaded = false;
 let cachedSharedInfraBindings:
@@ -36,7 +39,10 @@ type AwsCliRuntime = {
 export type BillingSynthConfig = {
   appBaseUrl: string;
   defaultPlanId: string | null;
-  premiumPriceId: string;
+  lifetimePriceId: string | null;
+  lifetimePurchaseOfferEnabled: boolean;
+  premiumPriceId: string | null;
+  premiumSubscriptionOfferEnabled: boolean;
 };
 
 export type CostVisibilitySynthConfig = {
@@ -96,16 +102,38 @@ export function resolveAuthAppOrigin(
 export function resolveBillingConfig(): BillingSynthConfig {
   loadLocalSynthEnv();
 
+  const premiumSubscriptionOfferEnabled = resolveBillingOfferEnabled(
+    process.env,
+    "BILLING_ENABLE_PREMIUM_SUBSCRIPTION",
+    true,
+  );
+  const lifetimePurchaseOfferEnabled = resolveBillingOfferEnabled(
+    process.env,
+    "BILLING_ENABLE_LIFETIME_PURCHASE",
+    false,
+  );
+
   return {
     appBaseUrl: resolvePublicAppOrigin(process.env, {
       errorMessage: "APP_BASE_URL must be configured for Stripe billing.",
     }),
     defaultPlanId: resolveBillingDefaultPlan(process.env),
-    premiumPriceId: resolveRequiredEnv(
-      process.env,
-      "STRIPE_PREMIUM_PRICE_ID",
-      "STRIPE_PREMIUM_PRICE_ID must be set for Stripe billing.",
-    ),
+    lifetimePriceId: lifetimePurchaseOfferEnabled
+      ? resolveRequiredEnv(
+          process.env,
+          "STRIPE_LIFETIME_PRICE_ID",
+          "STRIPE_LIFETIME_PRICE_ID must be set when lifetime purchases are enabled.",
+        )
+      : normalizeOptionalString(process.env.STRIPE_LIFETIME_PRICE_ID),
+    lifetimePurchaseOfferEnabled,
+    premiumPriceId: premiumSubscriptionOfferEnabled
+      ? resolveRequiredEnv(
+          process.env,
+          "STRIPE_PREMIUM_PRICE_ID",
+          "STRIPE_PREMIUM_PRICE_ID must be set when premium subscriptions are enabled.",
+        )
+      : normalizeOptionalString(process.env.STRIPE_PREMIUM_PRICE_ID),
+    premiumSubscriptionOfferEnabled,
   };
 }
 
@@ -214,19 +242,29 @@ function readSharedInfraBindingsFromRuntime(
   runtime: AwsCliRuntime,
 ): SharedInfraBindings {
   const parameterPaths = buildSharedInfraParameterPaths(environmentName);
-  const parametersResponse = runtime.execAwsJson([
-    "ssm",
-    "get-parameters",
-    "--with-decryption",
-    "--region",
-    region,
-    "--output",
-    "json",
-    "--names",
-    ...Object.values(parameterPaths),
-  ]) as {
+  const parameterEntries = Object.entries(parameterPaths) as Array<
+    [keyof SharedInfraBindings, string]
+  >;
+  let parametersResponse: {
     Parameters?: Array<{ Name?: string; Value?: string }>;
   };
+  try {
+    parametersResponse = runtime.execAwsJson([
+      "ssm",
+      "get-parameters",
+      "--with-decryption",
+      "--region",
+      region,
+      "--output",
+      "json",
+      "--names",
+      ...Object.values(parameterPaths),
+    ]) as {
+      Parameters?: Array<{ Name?: string; Value?: string }>;
+    };
+  } catch (error) {
+    throw buildSharedInfraLookupError(environmentName, region, error);
+  }
 
   const valuesByPath = new Map(
     (parametersResponse.Parameters ?? []).map((parameter) => [
@@ -234,9 +272,29 @@ function readSharedInfraBindingsFromRuntime(
       parameter.Value,
     ]),
   );
-  const missingParameterPaths = Object.values(parameterPaths).filter(
-    (parameterPath) => !valuesByPath.get(parameterPath),
-  );
+  const missingParameterPaths = parameterEntries
+    .filter(
+      ([bindingKey, parameterPath]) =>
+        !optionalSharedInfraBindingKeys.has(bindingKey) &&
+        !valuesByPath.get(parameterPath),
+    )
+    .map(([, parameterPath]) => parameterPath);
+  const missingOptionalParameterPaths = parameterEntries
+    .filter(
+      ([bindingKey, parameterPath]) =>
+        optionalSharedInfraBindingKeys.has(bindingKey) &&
+        !valuesByPath.get(parameterPath),
+    )
+    .map(([, parameterPath]) => parameterPath);
+  if (missingOptionalParameterPaths.length > 0) {
+    console.warn(
+      [
+        `Optional shared ML infra parameters are missing for environment '${environmentName}'.`,
+        "Opponent forecast jobs will stay disabled until these parameters are published.",
+        `Missing optional parameters: ${missingOptionalParameterPaths.join(", ")}`,
+      ].join(" "),
+    );
+  }
   if (missingParameterPaths.length > 0) {
     throw new Error(
       [
@@ -253,6 +311,8 @@ function readSharedInfraBindingsFromRuntime(
       valuesByPath.get(parameterPaths.activeTrackedTeamsTableName)!,
     matchCatalogTableName: valuesByPath.get(parameterPaths.matchCatalogTableName)!,
     matchStoreBucketName: valuesByPath.get(parameterPaths.matchStoreBucketName)!,
+    opponentForecastEndpointName:
+      valuesByPath.get(parameterPaths.opponentForecastEndpointName) ?? null,
     playerSkillSnapshotTableName:
       valuesByPath.get(parameterPaths.playerSkillSnapshotTableName)!,
     predictionEndpointName: valuesByPath.get(parameterPaths.predictionEndpointName)!,
@@ -281,6 +341,60 @@ function createDefaultRuntime(): AwsCliRuntime {
     },
     userName: () => os.userInfo().username || "local",
   };
+}
+
+function buildSharedInfraLookupError(
+  environmentName: string,
+  region: string,
+  error: unknown,
+): Error {
+  const cliError = extractAwsCliErrorMessage(error);
+  const policyResource =
+    `arn:aws:ssm:${region}:427377913956:parameter/buzzerbeater/ml-data-infra/*`;
+
+  if (isSharedInfraAccessDenied(cliError)) {
+    return new Error(
+      [
+        `Unable to read shared ML infra parameters for environment '${environmentName}' from SSM in ${region}.`,
+        "The AWS principal running Amplify synth is missing shared-infra SSM read access.",
+        "Hosted Amplify builds should grant ssm:GetParameter, ssm:GetParameters, and ssm:GetParametersByPath",
+        `on ${policyResource}.`,
+        `Original AWS CLI error: ${cliError}`,
+      ].join(" "),
+    );
+  }
+
+  return new Error(
+    [
+      `Unable to read shared ML infra parameters for environment '${environmentName}' from SSM in ${region}.`,
+      `Original AWS CLI error: ${cliError}`,
+    ].join(" "),
+  );
+}
+
+function extractAwsCliErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const stderr =
+      "stderr" in error && typeof error.stderr === "string"
+        ? error.stderr
+        : "stderr" in error && Buffer.isBuffer(error.stderr)
+          ? error.stderr.toString("utf8")
+          : null;
+    const message = stderr?.trim() || error.message.trim();
+    return message || "Unknown AWS CLI failure.";
+  }
+
+  return typeof error === "string" && error.trim()
+    ? error.trim()
+    : "Unknown AWS CLI failure.";
+}
+
+function isSharedInfraAccessDenied(errorMessage: string): boolean {
+  const normalized = errorMessage.toLowerCase();
+  return (
+    normalized.includes("accessdenied") &&
+    normalized.includes("getparameters")
+  );
 }
 
 function resetCachedState(): void {
@@ -314,6 +428,18 @@ function resolveBillingDefaultPlan(
   }
 
   return resolveSharedEnvironmentName(env) === "prod" ? null : "premium";
+}
+
+function resolveBillingOfferEnabled(
+  env: Record<string, string | undefined>,
+  name: string,
+  defaultValue: boolean,
+): boolean {
+  if (!Object.hasOwn(env, name)) {
+    return defaultValue;
+  }
+
+  return parseBooleanEnv(env[name]);
 }
 
 function resolveRequiredEnv(

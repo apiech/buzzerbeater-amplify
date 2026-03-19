@@ -4,12 +4,13 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 
 ## Current Product Surface
 
-- Public marketing + self-serve email sign-up/sign-in at `/`
+- Public store at `/store` plus self-serve email sign-up/sign-in at `/login`
+- Root route `/` redirects into the authenticated workspace shell
 - Route-based workspace sections at `/workspace/home`, `/workspace/scout`, `/workspace/lineups`, `/workspace/league`, `/workspace/players`, `/workspace/predictions`, `/workspace/recaps`, and `/workspace/ops`
 - Encrypted BuzzerBeater account connection and cached workspace sync
 - Opponent scouting, league standings, player trends, salary projections, lineup planning, and saved lineup scenarios
 - Async SageMaker-backed matchup predictions
-- Stripe-backed premium gating for predictions and league writeups
+- Stripe-backed premium gating for predictions, league writeups, and store-managed paid offers
 
 ## Private Alpha Constraints
 
@@ -24,42 +25,63 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    npm install
    ```
 
-2. Configure required backend secrets for your local sandbox:
+2. Create `/Users/karey/projects/bb/.env.deploy.local` from the workspace
+   example file and set:
 
    ```bash
-   npm run ampx -- sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET
+   BB_CONNECTION_ENCRYPTION_SECRET=<raw-secret>
+   AWS_REGION=us-east-1
    ```
 
 3. Add local non-secret sandbox env vars to `.env`.
 
    ```bash
    APP_BASE_URL=http://localhost:3000
+   BILLING_ENABLE_LIFETIME_PURCHASE=false
+   BILLING_ENABLE_PREMIUM_SUBSCRIPTION=true
    STRIPE_PREMIUM_PRICE_ID=price_sandbox_placeholder
+   # Optional until you enable the lifetime offer:
+   # STRIPE_LIFETIME_PRICE_ID=price_lifetime_placeholder
    GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
    ```
 
    Use [`env-template`](/Users/karey/projects/bb/bb-amplify/env-template) as the source of truth for required, optional, and conditional build-time variables.
-   The repo-local `npm run ampx -- ...` and `npm run sandbox` wrappers load `.env` automatically before running `ampx`, so local sandbox deploys pick up synth-time values like `APP_BASE_URL` without extra shell setup.
+   The repo-local `npm run ampx -- ...` wrapper and `npm run sandbox` workflow both pick up `.env` automatically for local sandbox deploys, so synth-time values like `APP_BASE_URL` do not need extra shell setup.
    The repo-local Next.js launcher derives `AMPLIFY_APP_ORIGIN` from `APP_BASE_URL`, so `npm run dev`, `npm run build`, and `npm run start` do not need a second origin variable.
-   `npm run sandbox` also bootstraps ML Data Infra for the sandbox identifier, but the first shared-infra deploy still needs `BB_CONNECTION_ENCRYPTION_SECRET` in your shell so it can match the Amplify secret:
+4. Run the local doctor and release the sandbox predictor once:
 
    ```bash
-   export BB_CONNECTION_ENCRYPTION_SECRET="<same value you set in Amplify sandbox secrets>"
+   npm run sandbox:doctor
+   npm run sandbox:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>
    ```
 
-4. Start the backend sandbox and Next.js app:
+5. Start the backend sandbox and Next.js app:
 
    ```bash
    npm run sandbox
    ```
 
-   By default, the wrapper starts sandbox with Lambda log streaming enabled. After a successful local sandbox deploy, it also prints the deployed Stripe webhook URL as `Stripe webhook URL: https://...` so you can paste it into Stripe without opening CloudFormation outputs.
+   `npm run sandbox` is the primary local workflow. It loads
+   `/Users/karey/projects/bb/.env.deploy.local`, syncs the Amplify sandbox
+   encryption secret when needed, deploys ML Data Infra, ensures predictor
+   readiness, and then starts the existing Amplify sandbox wrapper. By default,
+   the wrapper starts sandbox with Lambda log streaming enabled. After a
+   successful local sandbox deploy, it also prints the deployed Stripe webhook
+   URL as `Stripe webhook URL: https://...` so you can paste it into Stripe
+   without opening CloudFormation outputs.
+
+   For advanced/manual cases where shared infra and secrets are already
+   prepared, use:
+
+   ```bash
+   npm run sandbox:raw
+   ```
 
    ```bash
    npm run dev
    ```
 
-5. Run the verification gate:
+6. Run the verification gate:
 
    ```bash
    npm test
@@ -94,6 +116,15 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `BILLING_DEFAULT_PLAN`
   - Optional override for the environment-wide default plan. When unset, non-prod environments default to premium and prod leaves the default unset.
   - Default or recommended value: Unset by default; non-prod environments fall back to premium while prod stays unset.
+- `BILLING_ENABLE_PREMIUM_SUBSCRIPTION`
+  - Feature flag for recurring premium checkout and portal flows.
+  - Default or recommended value: `true`.
+- `BILLING_ENABLE_LIFETIME_PURCHASE`
+  - Feature flag for the one-time lifetime purchase checkout flow.
+  - Default or recommended value: `false`.
+- `STRIPE_LIFETIME_PRICE_ID`
+  - Stripe one-time `price_...` identifier used only when lifetime purchases are enabled.
+  - Default or recommended value: unset unless BILLING_ENABLE_LIFETIME_PURCHASE=true.
 - `ENABLE_COST_VISIBILITY`
   - Synth-time flag for AWS Budgets and billing alarms. Enable this in exactly one owning environment at a time.
   - Default or recommended value: `false`.
@@ -124,9 +155,10 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - Shared infra discovery
   - `bb-amplify` no longer provisions app-local match-store resources and no longer depends on a generated local env bridge file.
   - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.
-  - `npm run sandbox` bootstraps ML Data Infra for the sandbox identifier and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
+  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
   - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.
-  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`.
+  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.
+  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.
 - Imported runtime bindings
   - `MATCH_STORE_BUCKET_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
   - `MATCH_CATALOG_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
@@ -214,22 +246,27 @@ These resources are already wired in [`amplify/backend.ts`](/Users/karey/project
    - Stripe can onboard a US hobby project as an `individual` or `sole proprietorship`; an LLC is not required if that matches your situation.
 2. In Stripe Dashboard, create one recurring `Premium` product with one monthly price.
    - Set price metadata `app_plan_id=premium`.
-3. Configure the Stripe customer portal.
+3. If you want the one-time store offer, create one `Lifetime Access` product with a one-time price.
+   - Use Stripe's customer-chosen pricing configuration for the amount if you want a pay-what-you-want lifetime purchase.
+   - Set price metadata `app_grant_plan_id=premium`.
+   - Set price metadata `app_purchase_kind=lifetime`.
+4. Configure the Stripe customer portal.
    - Enable payment method updates.
    - Enable cancel-at-period-end.
-4. Configure customer-facing Stripe account details before launch.
+5. Configure customer-facing Stripe account details before launch.
    - Display name
    - Website URL
    - Support email or support page
    - Statement descriptor
-5. Store the Stripe values this app expects.
+6. Store the Stripe values this app expects.
    - `STRIPE_SECRET_KEY`: Stripe secret API key
    - `STRIPE_WEBHOOK_SECRET`: signing secret for the webhook endpoint
    - `STRIPE_PREMIUM_PRICE_ID`: the recurring `price_...` id for the premium subscription
-6. Deploy the backend and copy the billing endpoints from the stack outputs created by [`amplify/_backend/billing-integration.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/billing-integration.ts).
+   - `STRIPE_LIFETIME_PRICE_ID`: the one-time `price_...` id for the lifetime offer when that offer is enabled
+7. Deploy the backend and copy the billing endpoints from the stack outputs created by [`amplify/_backend/billing-integration.ts`](/Users/karey/projects/bb/bb-amplify/amplify/_backend/billing-integration.ts).
    - `BillingWebhookUrl`
    - `BillingAdminOverrideUrl`
-7. In Stripe Workbench, create a webhook destination that points to `BillingWebhookUrl`.
+8. In Stripe Workbench, create a webhook destination that points to `BillingWebhookUrl`.
    - Subscribe to `checkout.session.completed`
    - Subscribe to `customer.subscription.updated`
    - Subscribe to `customer.subscription.deleted`
@@ -237,6 +274,7 @@ These resources are already wired in [`amplify/backend.ts`](/Users/karey/project
    - Subscribe to `invoice.payment_failed`
 
 Premium feature access is resolved centrally from [`lib/billing/plans.ts`](/Users/karey/projects/bb/bb-amplify/lib/billing/plans.ts), so adding another paid tier later is a matter of adding a new `PlanId`, mapping features in `PLAN_FEATURES`, and assigning Stripe price metadata for the new plan.
+The public commerce surface lives at [`app/store/page.tsx`](/Users/karey/projects/bb/bb-amplify/app/store/page.tsx) and [`app/store/storefront.tsx`](/Users/karey/projects/bb/bb-amplify/app/store/storefront.tsx), while `/workspace/ops` remains the authenticated billing/status panel.
 
 ## Complimentary Access
 
@@ -256,8 +294,13 @@ Use `npm run billing:override -- --help` for the full CLI options.
 ## Deploy Notes
 
 - Bring up shared ML infra before expecting `/workspace/predictions` to work. For local sandboxes, `npm run sandbox` bootstraps ML Data Infra automatically and then fails fast if the predictor endpoint is missing; for hosted `dev` and `prod`, deploy shared infra separately first.
+- Use `npm run check:hosted:shared-infra -- --app-id d2ckw6mf5kdema` before hosted rebuilds to verify the Amplify service role, SSM contract, and SageMaker quota posture.
+- Hosted deploy order is shared ML data infra, then predictor endpoint, then the Amplify branch rebuild.
 - Deploy or update the predictor with `./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>` before testing hosted `dev` predictions.
 - Promote with `./scripts/matchup-predictor-release prod --release-id <release-id>` only after the same release passes in `dev`.
+- The intended SageMaker serverless split is `sandbox=2`, `dev=3`, `prod=5`; an oversized sandbox endpoint can block hosted releases even when `dev` and `prod` are otherwise ready.
+- The opponent forecast endpoint binding is currently optional.
+  When `/buzzerbeater/ml-data-infra/<env>/opponent-forecast-endpoint-name` is absent, hosted builds still proceed but opponent forecast jobs stay unwired until that endpoint is deployed and published.
 - The workspace sync path stores encrypted BB credentials server-side and refreshes cached data only on initial connect plus explicit manual refresh.
 - The ops section surfaces recent `SyncRun` and `PredictionJob` records so failures are visible inside the product.
 - The BB XML client now retries transient upstream failures with bounded exponential backoff.
@@ -265,17 +308,22 @@ Use `npm run billing:override -- --help` for the full CLI options.
 
 ## Launch Verification Checklist
 
-- Sign up or sign in with email auth at `/`.
+- Sign up or sign in with email auth at `/login`.
+- Open `/store` while signed out and confirm the public offer cards render without exposing any private workspace data.
 - Connect a BuzzerBeater account and confirm the initial sync completes.
 - Open each authenticated workspace route and verify cached data loads without GraphQL auth errors.
 - Submit both manual and connected predictions, then confirm the Ops section shows job progress plus `modelVersion`.
+- Open `/store` while signed in and confirm the current access panel, monthly CTA, and optional lifetime CTA behave correctly for the current environment flags.
 - Upgrade in Stripe test mode, return to `/workspace/ops`, and confirm the premium surfaces unlock.
+- If lifetime access is enabled, complete a one-time lifetime purchase in Stripe test mode, return to `/store`, and confirm the account reflects permanent premium access.
 - Cancel in the Stripe customer portal and confirm the billing panel reflects the renewal state correctly.
 - Verify unauthenticated sessions cannot read any workspace or data API surface.
 
 ## Core Files
 
-- [`app/page.tsx`](/Users/karey/projects/bb/bb-amplify/app/page.tsx): route entry for the landing page
+- [`app/page.tsx`](/Users/karey/projects/bb/bb-amplify/app/page.tsx): root redirect into the authenticated workspace
+- [`app/store/page.tsx`](/Users/karey/projects/bb/bb-amplify/app/store/page.tsx): public store route
+- [`app/store/storefront.tsx`](/Users/karey/projects/bb/bb-amplify/app/store/storefront.tsx): public store UI and offer CTAs
 - [`app/dashboard-app.tsx`](/Users/karey/projects/bb/bb-amplify/app/dashboard-app.tsx): landing page plus authenticated workspace shell
 - [`app/workspace/[section]/page.tsx`](/Users/karey/projects/bb/bb-amplify/app/workspace/[section]/page.tsx): route entry for product sections
 - [`amplify/data/resource.ts`](/Users/karey/projects/bb/bb-amplify/amplify/data/resource.ts): GraphQL schema and custom operations

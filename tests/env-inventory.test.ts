@@ -108,6 +108,9 @@ test("externally configurable and injected env names are all classified", () => 
   assert.deepEqual(unexpectedNames, []);
   assert.deepEqual([...runtimeInjectedNames].sort(), [
     "GAME_DAY_RECAP_QUEUE_URL",
+    "LEAGUE_HISTORY_BACKFILL_QUEUE_URL",
+    "OPPONENT_FORECAST_ENDPOINT_NAME",
+    "OPPONENT_FORECAST_JOB_QUEUE_URL",
     "PREDICTION_ENDPOINT_NAME",
     "PREDICTION_JOB_QUEUE_URL",
     "REFRESH_WORKSPACE_JOB_QUEUE_URL",
@@ -116,5 +119,6 @@ test("externally configurable and injected env names are all classified", () => 
   assert.equal(documentedNames.has("MATCH_STORE_BUCKET_NAME"), true);
   assert.equal(documentedNames.has("MATCH_DATA_PLANE_SOURCE"), false);
   assert.equal(documentedNames.has("MATCH_DATA_PLANE_STACK_NAME"), false);
+  assert.equal(documentedNames.has("OPPONENT_FORECAST_ENDPOINT_NAME"), false);
   assert.equal(documentedNames.has("PREDICTION_ENDPOINT_NAME"), false);
 });

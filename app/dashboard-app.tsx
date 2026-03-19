@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   confirmResetPassword,
@@ -27,10 +28,19 @@ import {
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import { fetchBillingSummary } from "@/app/billing-client";
 import { HighlightsPanel } from "@/app/highlights-panel";
+import { LeagueHistoryPanel } from "@/app/league-history-panel";
 import { LineupHelper } from "@/app/lineup-helper";
 import { OperationsPanel } from "@/app/operations-panel";
+import {
+  applyForecastScenarioToDraft,
+  createDefaultPredictionDraft,
+  readPredictionDraftFromStorage,
+  reconcilePredictionDraft,
+  writePredictionDraftToStorage,
+} from "@/app/prediction-panel-state";
 import { PredictionPanel } from "@/app/prediction-panel";
 import { RecapPanel } from "@/app/recap-panel";
+import { RivalsPanel } from "@/app/rivals-panel";
 import { LineupPlanner } from "@/app/team-tools";
 import type {
   BillingSummary,
@@ -40,9 +50,12 @@ import type {
   DashboardWorkspace,
   MatchBoxscorePayload,
   MatchMetricEntry,
+  OpponentForecastSnapshot,
+  PredictionDraftState,
   PlayerSummary,
   PlayerTrendPayload,
   SalaryProjection,
+  ScoutWorkspacePayload,
   TrendCountEntry,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
@@ -106,6 +119,7 @@ const ratingGridClassName =
   "grid min-w-[30rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-2";
 const minimumPasswordLength = 6;
 const passwordLengthHint = "Use at least 6 characters.";
+const terminalOpponentForecastStatuses = new Set(["SUCCEEDED", "FAILED"]);
 
 export default function DashboardHomePage() {
   return <DashboardApp activeSection="home" viewerEmail={null} />;
@@ -1499,6 +1513,7 @@ function WorkspaceDashboard({
   isLoadingBilling: boolean;
   workspace: DashboardWorkspace;
 }) {
+  const router = useRouter();
   const home = workspace.home;
   const [scout, setScout] = useState(workspace.scout);
   const [selectedScoutTeamId, setSelectedScoutTeamId] = useState(
@@ -1525,6 +1540,18 @@ function WorkspaceDashboard({
   const [loadingSalaryPlayerId, setLoadingSalaryPlayerId] = useState<
     string | null
   >(null);
+  const [opponentForecast, setOpponentForecast] =
+    useState<OpponentForecastSnapshot | null>(null);
+  const [opponentForecastError, setOpponentForecastError] = useState<
+    string | null
+  >(null);
+  const [isLoadingOpponentForecast, setIsLoadingOpponentForecast] =
+    useState(false);
+  const [isRefreshingOpponentForecast, setIsRefreshingOpponentForecast] =
+    useState(false);
+  const [predictionDraft, setPredictionDraft] = useState<PredictionDraftState>(
+    () => createDefaultPredictionDraft(workspace),
+  );
 
   useEffect(() => {
     setScout(workspace.scout);
@@ -1532,7 +1559,70 @@ function WorkspaceDashboard({
       workspace.scout.requestedTeamId ?? workspace.scout.teamId ?? "",
     );
     setScoutError(null);
+    setOpponentForecast(null);
+    setOpponentForecastError(null);
   }, [workspace.scout]);
+
+  useEffect(() => {
+    const storedDraft = readPredictionDraftFromStorage(
+      typeof window === "undefined" ? null : window.sessionStorage,
+      {
+        ...workspace,
+        scout,
+      },
+    );
+    if (!storedDraft) {
+      return;
+    }
+    setPredictionDraft(storedDraft);
+  }, []);
+
+  useEffect(() => {
+    const teamId = resolveForecastTeamId(scout);
+    if (!teamId) {
+      setOpponentForecast(null);
+      setOpponentForecastError(null);
+      return;
+    }
+
+    void loadLatestOpponentForecast(teamId);
+  }, [scout]);
+
+  useEffect(() => {
+    const teamId = resolveForecastTeamId(scout);
+    if (
+      !teamId ||
+      !opponentForecast ||
+      terminalOpponentForecastStatuses.has(opponentForecast.status)
+    ) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void loadLatestOpponentForecast(teamId);
+    }, 5000);
+
+    return () => window.clearInterval(interval);
+  }, [opponentForecast, scout]);
+
+  useEffect(() => {
+    setPredictionDraft((current) =>
+      reconcilePredictionDraft(
+        {
+          ...workspace,
+          scout,
+        },
+        current,
+      ),
+    );
+  }, [scout, workspace]);
+
+  useEffect(() => {
+    writePredictionDraftToStorage(
+      typeof window === "undefined" ? null : window.sessionStorage,
+      predictionDraft,
+    );
+  }, [predictionDraft]);
 
   const displayWorkspace = {
     ...workspace,
@@ -1549,6 +1639,31 @@ function WorkspaceDashboard({
   const canUseTeamHighlights = billingSummary
     ? hasFeature(billingPlanId, "teamHighlights")
     : false;
+
+  function handleUseScenarioInPreview(
+    scenario: NonNullable<
+      NonNullable<OpponentForecastSnapshot["result"]>
+    >["topScenarios"][number],
+  ) {
+    const sourceTeamId = resolveForecastTeamId(scout);
+    if (!sourceTeamId || !opponentForecast) {
+      return;
+    }
+
+    const nextDraft = applyForecastScenarioToDraft({
+      draft: predictionDraft,
+      scenario,
+      snapshot: opponentForecast,
+      sourceTeamId,
+      workspace: displayWorkspace,
+    });
+    writePredictionDraftToStorage(
+      typeof window === "undefined" ? null : window.sessionStorage,
+      nextDraft,
+    );
+    setPredictionDraft(nextDraft);
+    router.push("/workspace/predictions");
+  }
 
   async function handleScoutLoad() {
     if (!selectedScoutTeamId) {
@@ -1569,7 +1684,66 @@ function WorkspaceDashboard({
     }
 
     setScout(response.data);
+    const teamId = resolveForecastTeamId(response.data);
+    if (teamId) {
+      void loadLatestOpponentForecast(teamId);
+    } else {
+      setOpponentForecast(null);
+      setOpponentForecastError(null);
+    }
     setIsLoadingScout(false);
+  }
+
+  async function loadLatestOpponentForecast(teamId: string) {
+    setIsLoadingOpponentForecast(true);
+    setOpponentForecastError(null);
+
+    try {
+      const response = await client.queries.getLatestOpponentForecast({
+        teamId,
+      });
+
+      if (response.errors?.length) {
+        setOpponentForecast(null);
+        setOpponentForecastError(formatAmplifyErrors(response.errors));
+        setIsLoadingOpponentForecast(false);
+        return;
+      }
+
+      setOpponentForecast(response.data ?? null);
+      setIsLoadingOpponentForecast(false);
+    } catch (error) {
+      setOpponentForecast(null);
+      setOpponentForecastError(formatClientError(error));
+      setIsLoadingOpponentForecast(false);
+    }
+  }
+
+  async function handleRefreshOpponentForecast() {
+    const teamId = resolveForecastTeamId(scout);
+    if (!teamId) {
+      return;
+    }
+
+    setIsRefreshingOpponentForecast(true);
+    setOpponentForecastError(null);
+
+    try {
+      const response = await client.mutations.submitOpponentForecastJob({
+        teamId,
+      });
+      if (response.errors?.length) {
+        setOpponentForecastError(formatAmplifyErrors(response.errors));
+        setIsRefreshingOpponentForecast(false);
+        return;
+      }
+
+      await loadLatestOpponentForecast(teamId);
+    } catch (error) {
+      setOpponentForecastError(formatClientError(error));
+    } finally {
+      setIsRefreshingOpponentForecast(false);
+    }
   }
 
   async function handleLoadBoxscore(matchId: string) {
@@ -1887,6 +2061,306 @@ function WorkspaceDashboard({
 
               <div className={twoColumnGridClassName}>
                 <Panel as="article" padding="sm" variant="solid">
+                  <SectionHeading
+                    actions={
+                      <Button
+                        disabled={!canUsePredictions}
+                        loading={
+                          isRefreshingOpponentForecast ||
+                          (isLoadingOpponentForecast &&
+                            opponentForecast?.status !== "SUCCEEDED")
+                        }
+                        onClick={() => void handleRefreshOpponentForecast()}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Refresh forecast
+                      </Button>
+                    }
+                    title="Scout forecast"
+                    titleAs="h4"
+                  />
+                  {opponentForecastError ? (
+                    <Alert>{opponentForecastError}</Alert>
+                  ) : null}
+                  {!canUsePredictions ? (
+                    <p className={statusCopyClassName}>
+                      Premium access is required to generate new opponent
+                      forecasts.
+                    </p>
+                  ) : null}
+                  {opponentForecast ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge
+                          tone={statusToneFromValue(opponentForecast.status)}
+                        >
+                          {formatOpponentForecastStatus(opponentForecast.status)}
+                        </StatusBadge>
+                        <span className={mutedMetaClassName}>
+                          Requested {formatTimestamp(opponentForecast.requestedAt)}
+                        </span>
+                        {opponentForecast.completedAt ? (
+                          <span className={mutedMetaClassName}>
+                            Completed{" "}
+                            {formatTimestamp(opponentForecast.completedAt)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {opponentForecast.error ? (
+                        <p className={statusCopyClassName}>
+                          {opponentForecast.error}
+                        </p>
+                      ) : null}
+                      {opponentForecast.result ? (
+                        <>
+                          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                            <StatCard
+                              detail={
+                                opponentForecast.result.topScenarios[0]
+                                  ? `${opponentForecast.result.topScenarios[0].offense} / ${opponentForecast.result.topScenarios[0].defense}`
+                                  : "No primary scenario yet"
+                              }
+                              label="Top scenario"
+                              value={
+                                opponentForecast.result.topScenarios[0]
+                                  ? formatPercent(
+                                      opponentForecast.result.topScenarios[0]
+                                        .probability,
+                                    )
+                                  : "N/A"
+                              }
+                            />
+                            <StatCard
+                              detail="Model confidence across the full scenario bundle"
+                              label="Confidence"
+                              value={formatPercent(
+                                opponentForecast.result.confidence,
+                              )}
+                            />
+                            <StatCard
+                              detail={`Recent ${opponentForecast.result.coverage.recentGamesConsidered} • H2H ${opponentForecast.result.coverage.headToHeadGamesConsidered}`}
+                              label="Analogs"
+                              value={
+                                opponentForecast.result.coverage
+                                  .analogGamesConsidered
+                              }
+                            />
+                          </div>
+
+                          <div className="mt-4 grid gap-4">
+                            {opponentForecast.result.topScenarios.map(
+                              (scenario) => (
+                                <Panel
+                                  as="article"
+                                  key={scenario.scenarioId}
+                                  padding="sm"
+                                  variant="solid"
+                                >
+                                  <SectionHeading
+                                    actions={
+                                      canUsePredictions ? (
+                                        <Button
+                                          onClick={() =>
+                                            handleUseScenarioInPreview(scenario)
+                                          }
+                                          size="sm"
+                                          variant="secondary"
+                                        >
+                                          Use in preview
+                                        </Button>
+                                      ) : null
+                                    }
+                                    title={`${scenario.label} • ${formatPercent(scenario.probability)}`}
+                                    titleAs="h4"
+                                  />
+                                  <div className="flex flex-wrap gap-2">
+                                    {[
+                                      `Off ${scenario.offense}`,
+                                      `Def ${scenario.defense}`,
+                                      `GDP focus ${scenario.gdpFocus ?? "N/A"}`,
+                                      `GDP pace ${scenario.gdpPace ?? "N/A"}`,
+                                      `Enthusiasm ${scenario.enthusiasmBand ?? "Unknown"}`,
+                                      `Effort ${scenario.effortChoice}`,
+                                    ].map((tag) => (
+                                      <span
+                                        className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
+                                        key={`${scenario.scenarioId}-${tag}`}
+                                      >
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  <div className="mt-3 grid gap-4 xl:grid-cols-2">
+                                    <div>
+                                      <SectionHeading
+                                        title="Likely starters"
+                                        titleAs="h4"
+                                      />
+                                      <ul className={listClassName}>
+                                        {scenario.starters.length ? (
+                                          scenario.starters.map((player) => (
+                                            <li
+                                              className={listItemClassName}
+                                              key={
+                                                player.playerId ??
+                                                `${scenario.scenarioId}-${player.fullName}`
+                                              }
+                                            >
+                                              <strong className="text-ink text-sm">
+                                                {player.fullName}
+                                              </strong>
+                                              <span className={statusCopyClassName}>
+                                                {formatForecastPlayerProjection(
+                                                  player,
+                                                )}
+                                              </span>
+                                            </li>
+                                          ))
+                                        ) : (
+                                          <li className="text-ink-muted text-sm">
+                                            No starter projection available.
+                                          </li>
+                                        )}
+                                      </ul>
+                                    </div>
+                                    <div>
+                                      <SectionHeading
+                                        title="Rotation and evidence"
+                                        titleAs="h4"
+                                      />
+                                      <ul className={listClassName}>
+                                        {scenario.rotation.length ? (
+                                          scenario.rotation.map((player) => (
+                                            <li
+                                              className={listItemClassName}
+                                              key={
+                                                player.playerId ??
+                                                `${scenario.scenarioId}-rotation-${player.fullName}`
+                                              }
+                                            >
+                                              <strong className="text-ink text-sm">
+                                                {player.fullName}
+                                              </strong>
+                                              <span className={statusCopyClassName}>
+                                                {formatForecastPlayerProjection(
+                                                  player,
+                                                )}
+                                              </span>
+                                            </li>
+                                          ))
+                                        ) : (
+                                          <li className="text-ink-muted text-sm">
+                                            No rotation projection available.
+                                          </li>
+                                        )}
+                                      </ul>
+                                      {scenario.evidence.length ? (
+                                        <p className={`${statusCopyClassName} mt-3`}>
+                                          {scenario.evidence.join(" • ")}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </Panel>
+                              ),
+                            )}
+                          </div>
+
+                          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                            <Panel as="article" padding="sm" variant="solid">
+                              <SectionHeading
+                                title="Model signals"
+                                titleAs="h4"
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                {opponentForecast.result.featureSignals.length ? (
+                                  opponentForecast.result.featureSignals.map(
+                                    (signal) => (
+                                      <span
+                                        className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
+                                        key={signal.key}
+                                      >
+                                        {signal.label}: {signal.value}
+                                      </span>
+                                    ),
+                                  )
+                                ) : (
+                                  <span className="text-ink-muted text-sm">
+                                    No model signals were returned.
+                                  </span>
+                                )}
+                              </div>
+                            </Panel>
+
+                            <Panel as="article" padding="sm" variant="solid">
+                              <SectionHeading
+                                title="Closest analog games"
+                                titleAs="h4"
+                              />
+                              <ul className={listClassName}>
+                                {opponentForecast.result.analogGames.length ? (
+                                  opponentForecast.result.analogGames.map(
+                                    (game) => (
+                                      <li
+                                        className={listItemClassName}
+                                        key={game.matchId}
+                                      >
+                                        <strong className="text-ink text-sm">
+                                          {game.opponentTeamName ??
+                                            game.matchId}
+                                        </strong>
+                                        <span className={statusCopyClassName}>
+                                          {[
+                                            `Similarity ${formatPercent(
+                                              game.similarity,
+                                            )}`,
+                                            game.startTime
+                                              ? formatTimestamp(game.startTime)
+                                              : null,
+                                            game.offense
+                                              ? `Off ${game.offense}`
+                                              : null,
+                                            game.defense
+                                              ? `Def ${game.defense}`
+                                              : null,
+                                          ]
+                                            .filter(
+                                              (value): value is string =>
+                                                Boolean(value),
+                                            )
+                                            .join(" • ")}
+                                        </span>
+                                      </li>
+                                    ),
+                                  )
+                                ) : (
+                                  <li className="text-ink-muted text-sm">
+                                    No analog games were returned.
+                                  </li>
+                                )}
+                              </ul>
+                            </Panel>
+                          </div>
+                        </>
+                      ) : (
+                        <p className={statusCopyClassName}>
+                          {isLoadingOpponentForecast
+                            ? "Loading the latest stored forecast."
+                            : "No stored opponent forecast is available yet."}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className={statusCopyClassName}>
+                      {isLoadingOpponentForecast
+                        ? "Loading the latest stored forecast."
+                        : "No stored opponent forecast is available yet."}
+                    </p>
+                  )}
+                </Panel>
+
+                <Panel as="article" padding="sm" variant="solid">
                   <SectionHeading title="Team tendencies" titleAs="h4" />
                   <div className="flex flex-wrap gap-2">
                     {renderTrendChips("Off", scout.summary.tendencies.offense)}
@@ -2179,7 +2653,11 @@ function WorkspaceDashboard({
 
       {activeSection === "predictions" ? (
         canUsePredictions ? (
-          <PredictionPanel workspace={displayWorkspace} />
+          <PredictionPanel
+            draft={predictionDraft}
+            onDraftChange={setPredictionDraft}
+            workspace={displayWorkspace}
+          />
         ) : (
           <PremiumFeatureGatePanel
             billingSummary={billingSummary}
@@ -2273,6 +2751,14 @@ function WorkspaceDashboard({
             )}
           </div>
         </Panel>
+      ) : null}
+
+      {activeSection === "league-history" ? (
+        <LeagueHistoryPanel workspace={displayWorkspace} />
+      ) : null}
+
+      {activeSection === "rivals" ? (
+        <RivalsPanel workspace={displayWorkspace} />
       ) : null}
 
       {activeSection === "players" ? (
@@ -2469,6 +2955,63 @@ function renderTrendChips(prefix: string, values: TrendCountEntry[]) {
       {prefix}: {label} ({count})
     </span>
   ));
+}
+
+function resolveForecastTeamId(
+  scout: ScoutWorkspacePayload,
+): string | null {
+  return (
+    scout.summary?.matchupPerspective.opponentTeamId ??
+    scout.requestedTeamId ??
+    scout.teamId ??
+    null
+  );
+}
+
+function formatOpponentForecastStatus(value: string): string {
+  return value
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "N/A";
+  }
+
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatForecastPlayerProjection(player: {
+  bestPosition?: string | null;
+  expectedMinutes?: number | null;
+  gameShape?: string | null;
+  injuryWeeks?: number | null;
+  minuteBandHigh?: number | null;
+  minuteBandLow?: number | null;
+  starterProbability?: number | null;
+}): string {
+  const parts = [
+    player.bestPosition ?? null,
+    player.expectedMinutes !== null && player.expectedMinutes !== undefined
+      ? `Exp ${player.expectedMinutes}m`
+      : null,
+    player.minuteBandLow !== null &&
+    player.minuteBandLow !== undefined &&
+    player.minuteBandHigh !== null &&
+    player.minuteBandHigh !== undefined
+      ? `Band ${player.minuteBandLow}-${player.minuteBandHigh}m`
+      : null,
+    player.starterProbability !== null &&
+    player.starterProbability !== undefined
+      ? `Start ${formatPercent(player.starterProbability)}`
+      : null,
+    player.gameShape ? `Shape ${player.gameShape}` : null,
+    player.injuryWeeks ? `Injury ${player.injuryWeeks}w` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return parts.join(" • ") || "No projection detail";
 }
 
 function renderBoxscoreMetricRows(

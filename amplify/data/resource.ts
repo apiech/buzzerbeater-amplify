@@ -15,6 +15,8 @@ import { billingWebhook } from "../billing-webhook/resource";
 import { gameDayRecapSubmit } from "../game-day-recap-submit/resource";
 import { gameDayRecapWorker } from "../game-day-recap-worker/resource";
 import { listAccessibleMatches } from "../list-accessible-matches/resource";
+import { opponentForecastSubmit } from "../opponent-forecast-submit/resource";
+import { opponentForecastWorker } from "../opponent-forecast-worker/resource";
 import { predictionSubmit } from "../prediction-submit/resource";
 import { predictionWorker } from "../prediction-worker/resource";
 import { resolveBillingConfig } from "../_shared/synth-env";
@@ -28,13 +30,34 @@ const stripeSecretFunctionEnvironment = {
 };
 
 const billingSynthConfig = resolveBillingConfig();
+const billingOfferFunctionEnvironment = {
+  BILLING_ENABLE_LIFETIME_PURCHASE: String(
+    billingSynthConfig.lifetimePurchaseOfferEnabled,
+  ),
+  BILLING_ENABLE_PREMIUM_SUBSCRIPTION: String(
+    billingSynthConfig.premiumSubscriptionOfferEnabled,
+  ),
+};
 const billingPortalFunctionEnvironment = {
   ...stripeSecretFunctionEnvironment,
+  ...billingOfferFunctionEnvironment,
   APP_BASE_URL: billingSynthConfig.appBaseUrl,
 };
 const billingCheckoutFunctionEnvironment = {
   ...billingPortalFunctionEnvironment,
-  STRIPE_PREMIUM_PRICE_ID: billingSynthConfig.premiumPriceId,
+  ...(billingSynthConfig.premiumPriceId
+    ? {
+        STRIPE_PREMIUM_PRICE_ID: billingSynthConfig.premiumPriceId,
+      }
+    : {}),
+};
+const billingLifetimeCheckoutFunctionEnvironment = {
+  ...billingPortalFunctionEnvironment,
+  ...(billingSynthConfig.lifetimePriceId
+    ? {
+        STRIPE_LIFETIME_PRICE_ID: billingSynthConfig.lifetimePriceId,
+      }
+    : {}),
 };
 
 export const connectBbAccount = defineFunction({
@@ -91,10 +114,28 @@ export const getScoutWorkspace = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const getLatestOpponentForecast = defineFunction({
+  resourceGroupName: "data",
+  name: "get-latest-opponent-forecast",
+  entry: "./get-latest-opponent-forecast/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
 export const getLeagueIntel = defineFunction({
   resourceGroupName: "data",
   name: "get-league-intel",
   entry: "./get-league-intel/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
+export const getLeagueHistory = defineFunction({
+  resourceGroupName: "data",
+  name: "get-league-history",
+  entry: "./get-league-history/handler.ts",
   timeoutSeconds: 60,
   memoryMB: 1024,
   environment: secureFunctionEnvironment,
@@ -105,6 +146,15 @@ export const getPlayerLab = defineFunction({
   name: "get-player-lab",
   entry: "./get-player-lab/handler.ts",
   timeoutSeconds: 60,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
+export const getRivalsWorkspace = defineFunction({
+  resourceGroupName: "data",
+  name: "get-rivals-workspace",
+  entry: "./get-rivals-workspace/handler.ts",
+  timeoutSeconds: 120,
   memoryMB: 1024,
   environment: secureFunctionEnvironment,
 });
@@ -144,6 +194,15 @@ export const submitMyTeamHighlightsScan = defineFunction({
   memoryMB: 512,
 });
 
+export const submitLeagueHistoryBackfill = defineFunction({
+  resourceGroupName: "data",
+  name: "submit-league-history-backfill",
+  entry: "./submit-league-history-backfill/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: secureFunctionEnvironment,
+});
+
 export const getMyTeamHighlights = defineFunction({
   resourceGroupName: "data",
   name: "get-my-team-highlights",
@@ -152,12 +211,22 @@ export const getMyTeamHighlights = defineFunction({
   memoryMB: 512,
 });
 
+export const leagueHistoryWorker = defineFunction({
+  resourceGroupName: "data",
+  name: "league-history-worker",
+  entry: "./league-history-worker/handler.ts",
+  timeoutSeconds: 300,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
 export const getBillingSummary = defineFunction({
   resourceGroupName: "data",
   name: "get-billing-summary",
   entry: "./get-billing-summary/handler.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
+  environment: billingOfferFunctionEnvironment,
 });
 
 export const createBillingCheckoutSession = defineFunction({
@@ -169,6 +238,15 @@ export const createBillingCheckoutSession = defineFunction({
   environment: billingCheckoutFunctionEnvironment,
 });
 
+export const createBillingLifetimeCheckoutSession = defineFunction({
+  resourceGroupName: "data",
+  name: "create-billing-lifetime-checkout-session",
+  entry: "./create-billing-lifetime-checkout-session/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: billingLifetimeCheckoutFunctionEnvironment,
+});
+
 export const createBillingPortalSession = defineFunction({
   resourceGroupName: "data",
   name: "create-billing-portal-session",
@@ -176,6 +254,14 @@ export const createBillingPortalSession = defineFunction({
   timeoutSeconds: 30,
   memoryMB: 512,
   environment: billingPortalFunctionEnvironment,
+});
+
+export const listBillingPayments = defineFunction({
+  resourceGroupName: "data",
+  name: "list-billing-payments",
+  entry: "./list-billing-payments/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
 });
 
 const getLineupPlan = defineFunction({
@@ -290,16 +376,22 @@ const dataFunctions = [
   getHomeWorkspace,
   getTeamHub,
   getScoutWorkspace,
+  getLatestOpponentForecast,
   getLeagueIntel,
+  getLeagueHistory,
   getPlayerLab,
+  getRivalsWorkspace,
   getLineupHelperWorkspace,
   evaluateLineupHelper,
   getPlayerTrend,
   submitMyTeamHighlightsScan,
+  submitLeagueHistoryBackfill,
   getMyTeamHighlights,
   getBillingSummary,
   createBillingCheckoutSession,
+  createBillingLifetimeCheckoutSession,
   createBillingPortalSession,
+  listBillingPayments,
   getLineupPlan,
   saveLineupScenario,
   getSalaryProjection,
@@ -316,8 +408,11 @@ const dataFunctions = [
   refreshBbWorkspaces,
   refreshBbWorkspaceWorker,
   pruneOperationalData,
+  leagueHistoryWorker,
   gameDayRecapSubmit,
   gameDayRecapWorker,
+  opponentForecastSubmit,
+  opponentForecastWorker,
   predictionSubmit,
   predictionWorker,
   billingWebhook,
@@ -344,6 +439,14 @@ const schema = a
       "FAILED",
     ]),
 
+    OpponentForecastJobStatus: a.enum([
+      "QUEUED",
+      "RESOLVING_CONTEXT",
+      "INVOKING_MODEL",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
+
     GameDayRecapStatus: a.enum([
       "QUEUED",
       "RESOLVING_SLATE",
@@ -363,6 +466,14 @@ const schema = a
 
     TeamHighlightsPerspective: a.enum(Object.values(TeamHighlightsPerspective)),
 
+    LeagueHistoryBackfillState: a.enum([
+      "QUEUED",
+      "RESOLVING_SEASONS",
+      "FETCHING_STANDINGS",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
+
     BillingSummary: a.customType({
       planId: a.string().required(),
       accessSource: a.string().required(),
@@ -370,10 +481,37 @@ const schema = a
       currentPeriodEndAt: a.datetime(),
       cancelAtPeriodEnd: a.boolean().required(),
       hasBillingCustomer: a.boolean().required(),
+      hasLifetimeAccess: a.boolean().required(),
+      lifetimeGrantedAt: a.datetime(),
+      premiumSubscriptionOfferEnabled: a.boolean().required(),
+      lifetimePurchaseOfferEnabled: a.boolean().required(),
     }),
 
     BillingSessionResult: a.customType({
       url: a.string().required(),
+    }),
+
+    BillingPaymentEntry: a.customType({
+      providerObjectType: a.string().required(),
+      providerObjectId: a.string().required(),
+      userId: a.string().required(),
+      paymentKind: a.string().required(),
+      status: a.string().required(),
+      amountTotal: a.integer(),
+      currency: a.string(),
+      occurredAt: a.datetime().required(),
+      grantedPlanId: a.string(),
+      stripeCheckoutSessionId: a.string(),
+      stripeCustomerId: a.string(),
+      stripeInvoiceId: a.string(),
+      stripePaymentIntentId: a.string(),
+      stripePriceId: a.string(),
+      stripeSubscriptionId: a.string(),
+    }),
+
+    BillingPaymentsPage: a.customType({
+      items: a.ref("BillingPaymentEntry").required().array().required(),
+      nextToken: a.string(),
     }),
 
     ConnectionResult: a.customType({
@@ -501,6 +639,57 @@ const schema = a
         .required(),
     }),
 
+    LeagueHistoryRow: a.customType({
+      teamId: a.string().required(),
+      teamName: a.string().required(),
+      seasons: a.integer().required(),
+      games: a.integer().required(),
+      wins: a.integer().required(),
+      losses: a.integer().required(),
+      winPct: a.float().required(),
+      pf: a.integer().required(),
+      pa: a.integer().required(),
+      pointMargin: a.integer().required(),
+      averageMargin: a.float().required(),
+    }),
+
+    LeagueHistoryBackfillStatus: a.customType({
+      leagueId: a.string().required(),
+      leagueName: a.string(),
+      status: a.ref("LeagueHistoryBackfillState").required(),
+      requestedAt: a.datetime().required(),
+      startedAt: a.datetime(),
+      completedAt: a.datetime(),
+      error: a.string(),
+      historicalSeasonsExpected: a.integer(),
+      historicalSeasonsStored: a.integer(),
+      lastCompletedSeason: a.integer(),
+      updatedAt: a.datetime().required(),
+    }),
+
+    LeagueHistorySummary: a.customType({
+      currentSeason: a.integer(),
+      historicalSeasonsStored: a.integer().required(),
+      totalTeams: a.integer().required(),
+    }),
+
+    LeagueHistoryBackfillSubmitResult: a.customType({
+      leagueId: a.string().required(),
+      leagueName: a.string(),
+      queued: a.boolean().required(),
+      status: a.ref("LeagueHistoryBackfillState").required(),
+      requestedAt: a.datetime().required(),
+    }),
+
+    LeagueHistory: a.customType({
+      league: a.ref("NamedReference").required(),
+      requestedLeagueId: a.string(),
+      summary: a.ref("LeagueHistorySummary").required(),
+      rows: a.ref("LeagueHistoryRow").required().array().required(),
+      status: a.ref("LeagueHistoryBackfillStatus"),
+      warning: a.string(),
+    }),
+
     HomeWorkspace: a.customType({
       syncedAt: a.datetime(),
       connection: a.ref("ConnectionResult").required(),
@@ -563,6 +752,56 @@ const schema = a
       players: a.ref("PlayerSummary").required().array().required(),
     }),
 
+    RivalsWorkspaceTeam: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      shortName: a.string(),
+    }),
+
+    RivalsWorkspaceSummary: a.customType({
+      failedSeasonCount: a.integer().required(),
+      failedSeasons: a.integer().required().array().required(),
+      firstSeason: a.integer(),
+      lastSeason: a.integer(),
+      losses: a.integer().required(),
+      seasonsScanned: a.integer().required(),
+      seasonsWithGames: a.integer().required(),
+      totalCompletedGames: a.integer().required(),
+      totalOpponents: a.integer().required(),
+      tvGames: a.integer().required(),
+      wins: a.integer().required(),
+    }),
+
+    RivalryMatch: a.customType({
+      competitionKey: a.string().required(),
+      competitionLabel: a.string().required(),
+      gameDate: a.date(),
+      isHome: a.boolean().required(),
+      isTvGame: a.boolean().required(),
+      margin: a.integer().required(),
+      matchId: a.string().required(),
+      opponentScore: a.integer().required(),
+      opponentTeamId: a.string().required(),
+      opponentTeamName: a.string().required(),
+      outcome: a.string().required(),
+      rawType: a.string(),
+      season: a.integer().required(),
+      stageKey: a.string(),
+      stageLabel: a.string(),
+      startTime: a.datetime(),
+      teamScore: a.integer().required(),
+      venue: a.string().required(),
+    }),
+
+    RivalsWorkspace: a.customType({
+      generatedAt: a.datetime().required(),
+      matches: a.ref("RivalryMatch").required().array().required(),
+      summary: a.ref("RivalsWorkspaceSummary").required(),
+      syncedAt: a.datetime(),
+      team: a.ref("RivalsWorkspaceTeam").required(),
+      warning: a.string(),
+    }),
+
     PlayerTrendPoint: a.customType({
       weekKey: a.string(),
       fetchedAt: a.datetime(),
@@ -602,6 +841,109 @@ const schema = a
 
     PredictionJobSubmitResult: a.customType({
       jobId: a.string().required(),
+    }),
+
+    OpponentForecastSubmitResult: a.customType({
+      jobId: a.string().required(),
+    }),
+
+    OpponentForecastCoverage: a.customType({
+      recentGamesConsidered: a.integer().required(),
+      headToHeadGamesConsidered: a.integer().required(),
+      analogGamesConsidered: a.integer().required(),
+      rosterPlayersConsidered: a.integer().required(),
+    }),
+
+    OpponentForecastSignal: a.customType({
+      key: a.string().required(),
+      label: a.string().required(),
+      value: a.string().required(),
+      strength: a.float(),
+    }),
+
+    OpponentForecastPlayerProjection: a.customType({
+      playerId: a.string(),
+      fullName: a.string().required(),
+      bestPosition: a.string(),
+      starterProbability: a.float(),
+      expectedMinutes: a.integer(),
+      minuteBandLow: a.integer(),
+      minuteBandHigh: a.integer(),
+      injuryWeeks: a.integer(),
+      gameShape: a.string(),
+    }),
+
+    OpponentForecastScenario: a.customType({
+      scenarioId: a.string().required(),
+      label: a.string().required(),
+      probability: a.float().required(),
+      offense: a.string().required(),
+      defense: a.string().required(),
+      gdpFocus: a.string(),
+      gdpPace: a.string(),
+      enthusiasmBand: a.string(),
+      effortChoice: a.string().required(),
+      starters: a
+        .ref("OpponentForecastPlayerProjection")
+        .required()
+        .array()
+        .required(),
+      rotation: a
+        .ref("OpponentForecastPlayerProjection")
+        .required()
+        .array()
+        .required(),
+      evidence: a.string().required().array().required(),
+    }),
+
+    OpponentForecastAnalogGame: a.customType({
+      matchId: a.string().required(),
+      startTime: a.datetime(),
+      season: a.integer(),
+      similarity: a.float().required(),
+      opponentTeamName: a.string(),
+      offense: a.string(),
+      defense: a.string(),
+      gdpFocus: a.string(),
+      gdpPace: a.string(),
+      effortDelta: a.integer(),
+      teamScore: a.integer(),
+      opponentScore: a.integer(),
+    }),
+
+    OpponentForecastResult: a.customType({
+      modelVersion: a.string().required(),
+      generatedAt: a.datetime().required(),
+      confidence: a.float().required(),
+      coverage: a.ref("OpponentForecastCoverage").required(),
+      topScenarios: a
+        .ref("OpponentForecastScenario")
+        .required()
+        .array()
+        .required(),
+      analogGames: a
+        .ref("OpponentForecastAnalogGame")
+        .required()
+        .array()
+        .required(),
+      featureSignals: a
+        .ref("OpponentForecastSignal")
+        .required()
+        .array()
+        .required(),
+    }),
+
+    OpponentForecastSnapshot: a.customType({
+      jobId: a.string().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+      status: a.ref("OpponentForecastJobStatus").required(),
+      requestedAt: a.datetime().required(),
+      startedAt: a.datetime(),
+      completedAt: a.datetime(),
+      error: a.string(),
+      modelVersion: a.string(),
+      result: a.ref("OpponentForecastResult"),
     }),
 
     GameDayRecapSubmitResult: a.customType({
@@ -935,8 +1277,24 @@ const schema = a
       home_defStrategy: a.string().required(),
       away_offStrategy: a.string().required(),
       away_defStrategy: a.string().required(),
+      home_gdp_focus: a.string().required(),
+      home_gdp_pace: a.string().required(),
+      away_gdp_focus: a.string().required(),
+      away_gdp_pace: a.string().required(),
       neutral: a.string().required(),
       effortDelta: a.float().required(),
+    }),
+
+    PredictionForecastContext: a.customType({
+      forecastJobId: a.string().required(),
+      forecastModelVersion: a.string().required(),
+      forecastGeneratedAt: a.datetime().required(),
+      scenarioId: a.string().required(),
+      scenarioLabel: a.string().required(),
+      scenarioProbability: a.float().required(),
+      enthusiasmBand: a.string(),
+      evidence: a.string().required().array().required(),
+      sourceTeamId: a.string().required(),
     }),
 
     PredictionConnectedInput: a.customType({
@@ -948,8 +1306,13 @@ const schema = a
       home_defStrategy: a.string(),
       away_offStrategy: a.string(),
       away_defStrategy: a.string(),
+      home_gdp_focus: a.string(),
+      home_gdp_pace: a.string(),
+      away_gdp_focus: a.string(),
+      away_gdp_pace: a.string(),
       neutral: a.string(),
       effortDelta: a.float(),
+      forecastContext: a.ref("PredictionForecastContext"),
       manualFallback: a.ref("PredictionManualInput"),
     }),
 
@@ -1001,8 +1364,37 @@ const schema = a
         grantedPlanId: a.string(),
         overrideExpiresAt: a.datetime(),
         overrideReason: a.string(),
+        lifetimePlanId: a.string(),
+        lifetimeGrantedAt: a.datetime(),
+        lifetimeSourceObjectId: a.string(),
       })
       .identifier(["userId"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    BillingPayment: a
+      .model({
+        providerObjectType: a.string().required(),
+        providerObjectId: a.string().required(),
+        userId: a.string().required(),
+        paymentKind: a.string().required(),
+        status: a.string().required(),
+        amountTotal: a.integer(),
+        currency: a.string(),
+        occurredAt: a.datetime().required(),
+        grantedPlanId: a.string(),
+        stripeCheckoutSessionId: a.string(),
+        stripeCustomerId: a.string(),
+        stripeInvoiceId: a.string(),
+        stripePaymentIntentId: a.string(),
+        stripePriceId: a.string(),
+        stripeSubscriptionId: a.string(),
+      })
+      .identifier(["providerObjectType", "providerObjectId"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["occurredAt"])
+          .queryField("listBillingPaymentsByUserIdAndOccurredAt"),
+      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     UserPreference: a
@@ -1189,6 +1581,46 @@ const schema = a
       .identifier(["userId", "season", "teamId"])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
+    LeagueHistoryStandingCache: a
+      .model({
+        leagueId: a.string().required(),
+        season: a.integer().required(),
+        teamId: a.string().required(),
+        leagueName: a.string(),
+        teamName: a.string(),
+        wins: a.integer(),
+        losses: a.integer(),
+        pf: a.integer(),
+        pa: a.integer(),
+        conferenceIndex: a.integer(),
+        isBot: a.boolean(),
+        fetchedAt: a.datetime(),
+      })
+      .identifier(["leagueId", "season", "teamId"])
+      .secondaryIndexes((index) => [
+        index("leagueId")
+          .sortKeys(["season", "teamId"])
+          .queryField("listLeagueHistoryStandingCachesByLeagueIdAndSeason"),
+      ])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    LeagueHistoryBackfill: a
+      .model({
+        leagueId: a.string().required(),
+        leagueName: a.string(),
+        status: a.ref("LeagueHistoryBackfillState").required(),
+        requestedAt: a.datetime().required(),
+        startedAt: a.datetime(),
+        completedAt: a.datetime(),
+        error: a.string(),
+        historicalSeasonsExpected: a.integer(),
+        historicalSeasonsStored: a.integer(),
+        lastCompletedSeason: a.integer(),
+        updatedAt: a.datetime().required(),
+      })
+      .identifier(["leagueId"])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
     SyncRun: a
       .model({
         userId: a.string().required(),
@@ -1264,6 +1696,33 @@ const schema = a
         index("expiryKey")
           .sortKeys(["expiresAt"])
           .queryField("listPredictionJobsByExpiryKeyAndExpiresAt"),
+      ])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    OpponentForecastJob: a
+      .model({
+        userId: a.string().required(),
+        teamId: a.string().required(),
+        teamName: a.string(),
+        status: a.ref("OpponentForecastJobStatus").required(),
+        requestedAt: a.datetime().required(),
+        startedAt: a.datetime(),
+        completedAt: a.datetime(),
+        requestJson: a.json().required(),
+        resolvedContextJson: a.json(),
+        resultJson: a.json(),
+        error: a.string(),
+        modelVersion: a.string(),
+        expiryKey: a.string().required(),
+        expiresAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listOpponentForecastJobsByUserAndRequestedAt"),
+        index("expiryKey")
+          .sortKeys(["expiresAt"])
+          .queryField("listOpponentForecastJobsByExpiryKeyAndExpiresAt"),
       ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
@@ -1392,17 +1851,41 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getScoutWorkspace)),
 
+    getLatestOpponentForecast: a
+      .query()
+      .arguments({
+        teamId: a.string().required(),
+      })
+      .returns(a.ref("OpponentForecastSnapshot"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getLatestOpponentForecast)),
+
     getLeagueIntel: a
       .query()
       .returns(a.ref("LeagueIntelWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLeagueIntel)),
 
+    getLeagueHistory: a
+      .query()
+      .arguments({
+        leagueId: a.string(),
+      })
+      .returns(a.ref("LeagueHistory"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getLeagueHistory)),
+
     getPlayerLab: a
       .query()
       .returns(a.ref("PlayerLabWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getPlayerLab)),
+
+    getRivalsWorkspace: a
+      .query()
+      .returns(a.ref("RivalsWorkspace"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getRivalsWorkspace)),
 
     getLineupHelperWorkspace: a
       .query()
@@ -1453,15 +1936,40 @@ const schema = a
 
     createBillingCheckoutSession: a
       .mutation()
+      .arguments({
+        returnPath: a.string(),
+      })
       .returns(a.ref("BillingSessionResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(createBillingCheckoutSession)),
 
+    createBillingLifetimeCheckoutSession: a
+      .mutation()
+      .arguments({
+        returnPath: a.string(),
+      })
+      .returns(a.ref("BillingSessionResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(createBillingLifetimeCheckoutSession)),
+
     createBillingPortalSession: a
       .mutation()
+      .arguments({
+        returnPath: a.string(),
+      })
       .returns(a.ref("BillingSessionResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(createBillingPortalSession)),
+
+    listBillingPayments: a
+      .query()
+      .arguments({
+        limit: a.integer(),
+        nextToken: a.string(),
+      })
+      .returns(a.ref("BillingPaymentsPage"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(listBillingPayments)),
 
     getLineupPlan: a
       .query()
@@ -1566,6 +2074,15 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(predictionSubmit)),
 
+    submitOpponentForecastJob: a
+      .mutation()
+      .arguments({
+        teamId: a.string().required(),
+      })
+      .returns(a.ref("OpponentForecastSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(opponentForecastSubmit)),
+
     submitGameDayRecap: a
       .mutation()
       .arguments({
@@ -1610,6 +2127,15 @@ const schema = a
       .returns(a.ref("TeamHighlightsScanSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(submitMyTeamHighlightsScan)),
+
+    submitLeagueHistoryBackfill: a
+      .mutation()
+      .arguments({
+        leagueId: a.string(),
+      })
+      .returns(a.ref("LeagueHistoryBackfillSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(submitLeagueHistoryBackfill)),
   })
   .authorization((allow) =>
     dataFunctions.map((resource) =>

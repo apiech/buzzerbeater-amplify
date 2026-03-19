@@ -23,6 +23,7 @@ export const handler: Handler = async (event) => {
     appBaseUrl,
     env: runtimeEnv,
     identity: event.identity,
+    returnPath: event.arguments.returnPath ?? null,
     stripeSecretKey,
   });
 };

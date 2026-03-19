@@ -26,6 +26,7 @@ export const handler: Handler = async (event) => {
     env: runtimeEnv,
     identity: event.identity,
     premiumPriceId,
+    returnPath: event.arguments.returnPath ?? null,
     stripeSecretKey,
   });
 };

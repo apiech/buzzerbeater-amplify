@@ -4,6 +4,7 @@ export type SharedInfraBindings = {
   activeTrackedTeamsTableName: string;
   matchCatalogTableName: string;
   matchStoreBucketName: string;
+  opponentForecastEndpointName: string | null;
   playerSkillSnapshotTableName: string;
   predictionEndpointName: string;
   teamHighlightsScanQueueUrl: string;
@@ -46,6 +47,7 @@ export function buildSharedInfraParameterPaths(
     activeTrackedTeamsTableName: `${basePath}/active-tracked-teams-table-name`,
     matchCatalogTableName: `${basePath}/match-catalog-table-name`,
     matchStoreBucketName: `${basePath}/match-store-bucket-name`,
+    opponentForecastEndpointName: `${basePath}/opponent-forecast-endpoint-name`,
     playerSkillSnapshotTableName: `${basePath}/player-skill-snapshot-table-name`,
     predictionEndpointName: `${basePath}/prediction-endpoint-name`,
     teamHighlightsScanQueueUrl: `${basePath}/team-highlights-scan-queue-url`,

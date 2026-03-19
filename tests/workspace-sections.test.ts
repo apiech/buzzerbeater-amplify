@@ -12,13 +12,21 @@ test("normalizeWorkspaceSection accepts known product routes", () => {
   }
 });
 
-test("workspace sections expose the dedicated highlights and lineups routes", () => {
+test("workspace sections expose the dedicated highlights, lineups, league history, and rivals routes", () => {
   assert.equal(
     workspaceSections.some((section) => section.id === "lineups"),
     true,
   );
   assert.equal(
     workspaceSections.some((section) => section.id === "highlights"),
+    true,
+  );
+  assert.equal(
+    workspaceSections.some((section) => section.id === "league-history"),
+    true,
+  );
+  assert.equal(
+    workspaceSections.some((section) => section.id === "rivals"),
     true,
   );
 });

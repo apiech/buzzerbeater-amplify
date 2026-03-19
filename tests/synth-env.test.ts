@@ -6,6 +6,7 @@ import { RemovalPolicy } from "aws-cdk-lib";
 import {
   __testing as synthEnvTesting,
   resolveAuthAppOrigin,
+  resolveBillingConfig,
   resolveSharedEnvironmentName,
 } from "../amplify/_shared/synth-env";
 
@@ -65,6 +66,10 @@ test("shared synth env maps the SSM contract into runtime bindings", () => {
             Value: "bucket",
           },
           {
+            Name: "/buzzerbeater/ml-data-infra/sandbox-karey/opponent-forecast-endpoint-name",
+            Value: "opponent-endpoint",
+          },
+          {
             Name: "/buzzerbeater/ml-data-infra/sandbox-karey/player-skill-snapshot-table-name",
             Value: "snapshots",
           },
@@ -100,6 +105,7 @@ test("shared synth env maps the SSM contract into runtime bindings", () => {
     activeTrackedTeamsTableName: "active",
     matchCatalogTableName: "catalog",
     matchStoreBucketName: "bucket",
+    opponentForecastEndpointName: "opponent-endpoint",
     playerSkillSnapshotTableName: "snapshots",
     predictionEndpointName: "endpoint",
     teamHighlightsScanQueueUrl: "https://queue.example.com/123/team-highlights",
@@ -107,6 +113,61 @@ test("shared synth env maps the SSM contract into runtime bindings", () => {
     teamMatchProjectionTableName: "projection",
     teamMomentsTableName: "moments",
   });
+});
+
+test("shared synth env allows the optional opponent forecast endpoint binding to be absent", () => {
+  const bindings = synthEnvTesting.readSharedInfraBindingsFromRuntime(
+    "dev",
+    "us-east-1",
+    {
+      execAwsJson: () => ({
+        Parameters: [
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/active-tracked-teams-table-name",
+            Value: "active",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/match-catalog-table-name",
+            Value: "catalog",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/match-store-bucket-name",
+            Value: "bucket",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/player-skill-snapshot-table-name",
+            Value: "snapshots",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/prediction-endpoint-name",
+            Value: "endpoint",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/team-highlights-scan-queue-url",
+            Value: "https://queue.example.com/123/team-highlights",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/team-highlights-status-table-name",
+            Value: "status",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/team-match-projection-table-name",
+            Value: "projection",
+          },
+          {
+            Name: "/buzzerbeater/ml-data-infra/dev/team-moments-table-name",
+            Value: "moments",
+          },
+        ],
+      }),
+      fileExists: () => false,
+      loadEnvFile: () => undefined,
+      userName: () => "ignored",
+    },
+  );
+
+  assert.equal(bindings.opponentForecastEndpointName, null);
+  assert.equal(bindings.predictionEndpointName, "endpoint");
 });
 
 test("shared synth env fails fast when required SSM parameters are missing", () => {
@@ -130,6 +191,32 @@ test("shared synth env fails fast when required SSM parameters are missing", () 
         },
       ),
     /Shared ML infra parameters are missing/,
+  );
+});
+
+test("shared synth env surfaces actionable IAM guidance when SSM access is denied", () => {
+  assert.throws(
+    () =>
+      synthEnvTesting.readSharedInfraBindingsFromRuntime(
+        "dev",
+        "us-east-1",
+        {
+          execAwsJson: () => {
+            const error = new Error(
+              "Command failed: aws ssm get-parameters --with-decryption --region us-east-1 --output json --names /buzzerbeater/ml-data-infra/dev/active-tracked-teams-table-name",
+            ) as Error & { stderr?: string };
+            error.stderr = [
+              "An error occurred (AccessDeniedException) when calling the GetParameters operation:",
+              "User is not authorized to perform: ssm:GetParameters",
+            ].join(" ");
+            throw error;
+          },
+          fileExists: () => false,
+          loadEnvFile: () => undefined,
+          userName: () => "ignored",
+        },
+      ),
+    /missing shared-infra SSM read access/,
   );
 });
 
@@ -210,3 +297,48 @@ test("auth origin fails fast when APP_BASE_URL is missing", () => {
     synthEnvTesting.resetCachedState();
   }
 });
+
+test("billing config resolves offer flags and optional lifetime pricing", () => {
+  const originalAppBaseUrl = process.env.APP_BASE_URL;
+  const originalSharedEnvironmentName = process.env.BB_SHARED_ENVIRONMENT_NAME;
+  const originalPremiumPriceId = process.env.STRIPE_PREMIUM_PRICE_ID;
+  const originalLifetimePriceId = process.env.STRIPE_LIFETIME_PRICE_ID;
+  const originalPremiumOffer = process.env.BILLING_ENABLE_PREMIUM_SUBSCRIPTION;
+  const originalLifetimeOffer = process.env.BILLING_ENABLE_LIFETIME_PURCHASE;
+
+  try {
+    process.env.APP_BASE_URL = "https://app.example.com";
+    process.env.BB_SHARED_ENVIRONMENT_NAME = "sandbox-karey";
+    process.env.STRIPE_PREMIUM_PRICE_ID = "price_premium";
+    process.env.STRIPE_LIFETIME_PRICE_ID = "price_lifetime";
+    process.env.BILLING_ENABLE_PREMIUM_SUBSCRIPTION = "false";
+    process.env.BILLING_ENABLE_LIFETIME_PURCHASE = "true";
+    synthEnvTesting.resetCachedState();
+
+    assert.deepStrictEqual(resolveBillingConfig(), {
+      appBaseUrl: "https://app.example.com",
+      defaultPlanId: "premium",
+      lifetimePriceId: "price_lifetime",
+      lifetimePurchaseOfferEnabled: true,
+      premiumPriceId: "price_premium",
+      premiumSubscriptionOfferEnabled: false,
+    });
+  } finally {
+    restoreEnv("APP_BASE_URL", originalAppBaseUrl);
+    restoreEnv("BB_SHARED_ENVIRONMENT_NAME", originalSharedEnvironmentName);
+    restoreEnv("STRIPE_PREMIUM_PRICE_ID", originalPremiumPriceId);
+    restoreEnv("STRIPE_LIFETIME_PRICE_ID", originalLifetimePriceId);
+    restoreEnv("BILLING_ENABLE_PREMIUM_SUBSCRIPTION", originalPremiumOffer);
+    restoreEnv("BILLING_ENABLE_LIFETIME_PURCHASE", originalLifetimeOffer);
+    synthEnvTesting.resetCachedState();
+  }
+});
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
+}

@@ -17,6 +17,9 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # Optional deploy-time tuning. Defaults or recommended values shown below.
 # GAME_DAY_RECAP_MODEL_ID_PREMIUM=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # BILLING_DEFAULT_PLAN=premium
+# BILLING_ENABLE_PREMIUM_SUBSCRIPTION=true
+# BILLING_ENABLE_LIFETIME_PURCHASE=false
+# STRIPE_LIFETIME_PRICE_ID=price_lifetime_placeholder
 # ENABLE_COST_VISIBILITY=false
 # COST_ALERT_EMAILS=you@example.com
 # COST_ALERT_SMS_NUMBERS=+15555555555
@@ -30,7 +33,9 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # published by bb-shared-infra. Do not set imported resource names in .env.
 #
 # Local sandbox runs:
-# - `npm run sandbox` sets BB_SHARED_ENVIRONMENT_NAME and bootstraps ML Data Infra.
+# - `npm run sandbox` is the primary local workflow. It syncs
+#   BB_CONNECTION_ENCRYPTION_SECRET from /Users/karey/projects/bb/.env.deploy.local
+#   when needed, sets BB_SHARED_ENVIRONMENT_NAME, and bootstraps ML Data Infra.
 # - Predictor endpoints are not bootstrapped implicitly. Release one explicitly
 #   before the first sandbox or dev deploy that needs predictions.
 # - Plain `npx ampx sandbox` expects shared infra and predictor resources for
@@ -41,17 +46,19 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # BB_SHARED_ENVIRONMENT_NAME=sandbox-karey
 
 # Amplify secrets are required separately and should not be stored in .env.
-# Local sandbox:
-#   npm run ampx -- sandbox secret set BB_CONNECTION_ENCRYPTION_SECRET
-#   npm run ampx -- sandbox secret set STRIPE_SECRET_KEY
-#   npm run ampx -- sandbox secret set STRIPE_WEBHOOK_SECRET
-#   npm run ampx -- sandbox secret set BILLING_ADMIN_TOKEN
+# Preferred local operator flow:
+# - Keep deployment-only local values in /Users/karey/projects/bb/.env.deploy.local
+# - `npm run sandbox` auto-syncs BB_CONNECTION_ENCRYPTION_SECRET into the
+#   Amplify sandbox secret store when it is missing.
+# - Run `npm run sandbox:secret:sync` only when you need to repair or force
+#   that sync manually.
+# - Other secrets still use `npm run ampx -- sandbox secret set <NAME>`.
 #
 # Shared ML Data Infra deploys:
-#   export BB_CONNECTION_ENCRYPTION_SECRET=<same value as the Amplify secret>
+#   Source BB_CONNECTION_ENCRYPTION_SECRET from .env.deploy.local
 #   npm run shared-infra:deploy:ml-data-infra -- --environment dev
 # Predictor deploys:
-#   ./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>
+#   npm run dev:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>
 #
 # Amplify Hosting secrets:
 # - BB_CONNECTION_ENCRYPTION_SECRET

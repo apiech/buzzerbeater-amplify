@@ -14,19 +14,35 @@ export const workspaceSections = [
   {
     id: "highlights",
     label: "Highlights",
-    description: "All-time team moments, buzzerbeaters, and late-game swings from your club perspective.",
+    description:
+      "All-time team moments, buzzerbeaters, and late-game swings from your club perspective.",
     group: "Club",
   },
   {
     id: "lineups",
     label: "Lineups",
-    description: "Lineup helper with minute grids, tactics, and rating outputs.",
+    description:
+      "Lineup helper with minute grids, tactics, and rating outputs.",
     group: "Club",
   },
   {
     id: "league",
     label: "League",
     description: "Standings, conference races, and context around your club.",
+    group: "Competition",
+  },
+  {
+    id: "league-history",
+    label: "League History",
+    description:
+      "All-time league standings across stored final seasons and the live current table.",
+    group: "Competition",
+  },
+  {
+    id: "rivals",
+    label: "Rivals",
+    description:
+      "All-time head-to-head records, splits, and game logs against every opponent.",
     group: "Competition",
   },
   {

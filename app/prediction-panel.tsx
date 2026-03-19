@@ -1,13 +1,21 @@
 "use client";
 
-import {
-  useEffect,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import { client } from "@/app/amplify-client";
+import {
+  buildSubmissionRequest,
+  clearForecastPrefill,
+  createDefaultManualPredictionInput,
+  extractForecastContextFromRequest,
+} from "@/app/prediction-panel-state";
+import type {
+  DashboardWorkspace,
+  ManualPredictionInput,
+  PredictionConnectedOverrides,
+  PredictionDraftState,
+  PredictionJobRecord,
+} from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { cn } from "@/app/ui/primitives/cn";
@@ -21,12 +29,8 @@ import {
 } from "@/app/ui/primitives/status-badge";
 import { formatPreviewStatus } from "@/app/ui/presentation";
 import { buzzerBeaterColorStyle } from "@/lib/buzzerbeater/rating-scale";
-import type {
-  DashboardWorkspace,
-  ManualPredictionInput,
-  PredictionJobRecord,
-  PredictionSubmissionRequest,
-} from "@/app/types";
+
+export { buildSubmissionRequest, createDefaultManualPredictionInput };
 
 const OFFENSE_OPTIONS = [
   "Base",
@@ -49,6 +53,26 @@ const DEFENSE_OPTIONS = [
   "Press",
   "InsideBoxAndOne",
   "OutsideBoxAndOne",
+];
+
+const GDP_FOCUS_OPTIONS = [
+  "N/A",
+  "outside.hit",
+  "outside.miss",
+  "Inside.hit",
+  "Inside.miss",
+  "Balanced.hit",
+  "Balanced.miss",
+];
+
+const GDP_PACE_OPTIONS = [
+  "N/A",
+  "Fast.hit",
+  "Fast.miss",
+  "Normal.hit",
+  "Normal.miss",
+  "Slow.hit",
+  "Slow.miss",
 ];
 
 const RATING_FIELDS: Array<{
@@ -89,14 +113,9 @@ const RATING_FIELDS: Array<{
 ];
 
 type PredictionPanelProps = {
+  draft: PredictionDraftState;
+  onDraftChange: Dispatch<SetStateAction<PredictionDraftState>>;
   workspace: DashboardWorkspace;
-};
-
-type SubmissionMode = "MANUAL" | "CONNECTED";
-
-type ConnectedSelectionState = {
-  homeSourceMatchId: string;
-  awaySourceMatchId: string;
 };
 
 type NumericManualField =
@@ -115,6 +134,11 @@ type NumericManualField =
   | "effortDelta";
 
 type TextManualField = Exclude<keyof ManualPredictionInput, NumericManualField>;
+type NumericConnectedOverrideField = "effortDelta";
+type TextConnectedOverrideField = Exclude<
+  keyof PredictionConnectedOverrides,
+  NumericConnectedOverrideField
+>;
 
 const terminalStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
@@ -126,27 +150,29 @@ const formGridClassName = "grid gap-4 md:grid-cols-2";
 const ratingGridClassName =
   "grid min-w-[32rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-3";
 
-export function PredictionPanel({ workspace }: PredictionPanelProps) {
-  const [mode, setMode] = useState<SubmissionMode>("CONNECTED");
-  const [manualInput, setManualInput] = useState<ManualPredictionInput>(
-    createDefaultManualPredictionInput(),
-  );
-  const [connectedSelection, setConnectedSelection] =
-    useState<ConnectedSelectionState>({
-      homeSourceMatchId: workspace.home.recentMatches[0]?.matchId ?? "",
-      awaySourceMatchId: workspace.scout.summary?.recentGames[0]?.matchId ?? "",
-    });
+export function PredictionPanel({
+  draft,
+  onDraftChange,
+  workspace,
+}: PredictionPanelProps) {
   const [jobs, setJobs] = useState<PredictionJobRecord[]>([]);
   const [predictionError, setPredictionError] = useState<string | null>(null);
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const homeMatchOptions = workspace.home.recentMatches.filter(
-    (match) => Boolean(match.matchId && match.hasBoxscore),
+  const mode = draft.mode;
+  const manualInput = draft.manualInput;
+  const connectedSelection = draft.connectedSelection;
+  const connectedOverrides = draft.connectedOverrides;
+  const forecastPrefill = draft.forecastPrefill;
+
+  const homeMatchOptions = workspace.home.recentMatches.filter((match) =>
+    Boolean(match.matchId && match.hasBoxscore),
   );
-  const awayMatchOptions = workspace.scout.summary?.recentGames.filter(
-    (match) => Boolean(match.matchId && match.hasBoxscore),
-  ) ?? [];
+  const awayMatchOptions =
+    workspace.scout.summary?.recentGames.filter((match) =>
+      Boolean(match.matchId && match.hasBoxscore),
+    ) ?? [];
   const defaultHomeSourceMatchId = homeMatchOptions[0]?.matchId ?? "";
   const defaultAwaySourceMatchId = awayMatchOptions[0]?.matchId ?? "";
   const homeTeamId = workspace.home.team.teamId ?? null;
@@ -154,11 +180,27 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
     workspace.scout.summary?.matchupPerspective.opponentTeamId ?? null;
 
   useEffect(() => {
-    setConnectedSelection((current) => ({
-      homeSourceMatchId: current.homeSourceMatchId || defaultHomeSourceMatchId,
-      awaySourceMatchId: current.awaySourceMatchId || defaultAwaySourceMatchId,
-    }));
-  }, [defaultHomeSourceMatchId, defaultAwaySourceMatchId]);
+    onDraftChange((current) => {
+      const nextHome =
+        current.connectedSelection.homeSourceMatchId || defaultHomeSourceMatchId;
+      const nextAway =
+        current.connectedSelection.awaySourceMatchId || defaultAwaySourceMatchId;
+      if (
+        nextHome === current.connectedSelection.homeSourceMatchId &&
+        nextAway === current.connectedSelection.awaySourceMatchId
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        connectedSelection: {
+          homeSourceMatchId: nextHome,
+          awaySourceMatchId: nextAway,
+        },
+      };
+    });
+  }, [defaultAwaySourceMatchId, defaultHomeSourceMatchId, onDraftChange]);
 
   useEffect(() => {
     void loadJobs();
@@ -200,12 +242,9 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
     setPredictionError(null);
 
     const request = buildSubmissionRequest({
-      mode,
-      manualInput,
-      homeSourceMatchId: connectedSelection.homeSourceMatchId,
-      awaySourceMatchId: connectedSelection.awaySourceMatchId,
-      homeTeamId,
       awayTeamId,
+      draft,
+      homeTeamId,
     });
 
     const result = await client.mutations.submitPredictionJob({
@@ -222,6 +261,99 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
     setIsSubmitting(false);
   }
 
+  function updateMode(nextMode: "CONNECTED" | "MANUAL") {
+    onDraftChange((current) => ({
+      ...current,
+      mode: nextMode,
+    }));
+  }
+
+  function updateConnectedSelection(
+    field: keyof PredictionDraftState["connectedSelection"],
+    nextValue: string,
+  ) {
+    onDraftChange((current) => ({
+      ...current,
+      connectedSelection: {
+        ...current.connectedSelection,
+        [field]: nextValue,
+      },
+    }));
+  }
+
+  function updateManualNumericField(
+    field: NumericManualField,
+    nextValue: string,
+  ) {
+    const parsed = Number(nextValue);
+    onDraftChange((current) => ({
+      ...current,
+      manualInput: {
+        ...current.manualInput,
+        [field]: Number.isFinite(parsed) ? parsed : 0,
+      },
+    }));
+  }
+
+  function updateManualTextField(field: TextManualField, nextValue: string) {
+    onDraftChange((current) => ({
+      ...current,
+      manualInput: {
+        ...current.manualInput,
+        [field]: nextValue,
+      },
+    }));
+  }
+
+  function updateConnectedNumericField(
+    field: NumericConnectedOverrideField,
+    nextValue: string,
+  ) {
+    const parsed = Number(nextValue);
+    onDraftChange((current) => ({
+      ...current,
+      connectedOverrides: {
+        ...current.connectedOverrides,
+        [field]: Number.isFinite(parsed) ? parsed : 0,
+      },
+    }));
+  }
+
+  function updateConnectedTextField(
+    field: TextConnectedOverrideField,
+    nextValue: string,
+  ) {
+    onDraftChange((current) => ({
+      ...current,
+      connectedOverrides: {
+        ...current.connectedOverrides,
+        [field]: nextValue,
+      },
+    }));
+  }
+
+  function currentTextValue(
+    manualField: TextManualField,
+    connectedField?: TextConnectedOverrideField,
+  ): string {
+    if (mode === "MANUAL" || !connectedField) {
+      return manualInput[manualField];
+    }
+    const overrideValue = connectedOverrides[connectedField];
+    return typeof overrideValue === "string" && overrideValue
+      ? overrideValue
+      : manualInput[manualField];
+  }
+
+  function currentEffortValue(): number {
+    if (mode === "MANUAL") {
+      return manualInput.effortDelta;
+    }
+    return typeof connectedOverrides.effortDelta === "number"
+      ? connectedOverrides.effortDelta
+      : manualInput.effortDelta;
+  }
+
   const connectedReady = Boolean(
     connectedSelection.homeSourceMatchId &&
       connectedSelection.awaySourceMatchId &&
@@ -230,7 +362,10 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
   );
   const latestJob = jobs.length ? jobs[0] : null;
   const latestExplanation = latestJob
-    ? describeResolvedInput(latestJob.resolvedInputSnapshot)
+    ? [
+        ...describeResolvedInput(latestJob.resolvedInputSnapshot),
+        summarizeForecastContext(extractForecastContextFromRequest(latestJob.request)),
+      ].filter((entry): entry is string => Boolean(entry))
     : [];
 
   return (
@@ -250,10 +385,10 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                     ? "bg-accent text-accent-contrast"
                     : "text-ink-muted hover:text-ink",
                 )}
-                onClick={() => setMode("CONNECTED")}
+                onClick={() => updateMode("CONNECTED")}
                 role="tab"
                 type="button"
-            >
+              >
                 Box scores
               </button>
               <button
@@ -263,10 +398,10 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                     ? "bg-accent text-accent-contrast"
                     : "text-ink-muted hover:text-ink",
                 )}
-                onClick={() => setMode("MANUAL")}
+                onClick={() => updateMode("MANUAL")}
                 role="tab"
                 type="button"
-            >
+              >
                 Manual
               </button>
             </div>
@@ -292,6 +427,33 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
 
       {predictionError ? <Alert>{predictionError}</Alert> : null}
 
+      {forecastPrefill ? (
+        <Alert tone="note">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="grid gap-1">
+              <strong className="text-sm text-ink">
+                Forecast prefill: {forecastPrefill.context.scenarioLabel} (
+                {formatPercent(forecastPrefill.context.scenarioProbability)})
+              </strong>
+              <span className="text-sm text-ink-muted">
+                Model {forecastPrefill.context.forecastModelVersion} • Generated{" "}
+                {formatTimestamp(forecastPrefill.context.forecastGeneratedAt)} •
+                Effort is mapped relative to a Normal home effort.
+              </span>
+            </div>
+            <Button
+              onClick={() =>
+                onDraftChange((current) => clearForecastPrefill(current))
+              }
+              size="sm"
+              variant="secondary"
+            >
+              Clear forecast prefill
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+
       <div className={twoColumnGridClassName}>
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading
@@ -304,10 +466,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <Field label="Your source game">
               <Select
                 onChange={(event) =>
-                  setConnectedSelection((current) => ({
-                    ...current,
-                    homeSourceMatchId: event.target.value,
-                  }))
+                  updateConnectedSelection("homeSourceMatchId", event.target.value)
                 }
                 value={connectedSelection.homeSourceMatchId}
               >
@@ -328,10 +487,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <Field label="Opponent source game">
               <Select
                 onChange={(event) =>
-                  setConnectedSelection((current) => ({
-                    ...current,
-                    awaySourceMatchId: event.target.value,
-                  }))
+                  updateConnectedSelection("awaySourceMatchId", event.target.value)
                 }
                 value={connectedSelection.awaySourceMatchId}
               >
@@ -371,7 +527,11 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading
             description="Ratings are required for manual previews and act as a fallback when saved games are unavailable."
-            title={mode === "MANUAL" ? "Manual matchup input" : "Manual fallback input"}
+            title={
+              mode === "MANUAL"
+                ? "Manual matchup input"
+                : "Manual fallback input"
+            }
             titleAs="h4"
           />
 
@@ -392,11 +552,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                   <Input
                     className="font-semibold"
                     onChange={(event) =>
-                      updateNumericField(
-                        field.homeKey,
-                        event.target.value,
-                        setManualInput,
-                      )
+                      updateManualNumericField(field.homeKey, event.target.value)
                     }
                     style={buzzerBeaterColorStyle({
                       scale: "team_rating",
@@ -409,11 +565,7 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                   <Input
                     className="font-semibold"
                     onChange={(event) =>
-                      updateNumericField(
-                        field.awayKey,
-                        event.target.value,
-                        setManualInput,
-                      )
+                      updateManualNumericField(field.awayKey, event.target.value)
                     }
                     style={buzzerBeaterColorStyle({
                       scale: "team_rating",
@@ -437,9 +589,11 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <Field label="Home offense">
               <Select
                 onChange={(event) =>
-                  updateTextField("home_offStrategy", event.target.value, setManualInput)
+                  mode === "MANUAL"
+                    ? updateManualTextField("home_offStrategy", event.target.value)
+                    : updateConnectedTextField("home_offStrategy", event.target.value)
                 }
-                value={manualInput.home_offStrategy}
+                value={currentTextValue("home_offStrategy", "home_offStrategy")}
               >
                 {OFFENSE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
@@ -451,9 +605,11 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <Field label="Home defense">
               <Select
                 onChange={(event) =>
-                  updateTextField("home_defStrategy", event.target.value, setManualInput)
+                  mode === "MANUAL"
+                    ? updateManualTextField("home_defStrategy", event.target.value)
+                    : updateConnectedTextField("home_defStrategy", event.target.value)
                 }
-                value={manualInput.home_defStrategy}
+                value={currentTextValue("home_defStrategy", "home_defStrategy")}
               >
                 {DEFENSE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
@@ -465,9 +621,11 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <Field label="Away offense">
               <Select
                 onChange={(event) =>
-                  updateTextField("away_offStrategy", event.target.value, setManualInput)
+                  mode === "MANUAL"
+                    ? updateManualTextField("away_offStrategy", event.target.value)
+                    : updateConnectedTextField("away_offStrategy", event.target.value)
                 }
-                value={manualInput.away_offStrategy}
+                value={currentTextValue("away_offStrategy", "away_offStrategy")}
               >
                 {OFFENSE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
@@ -479,11 +637,77 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <Field label="Away defense">
               <Select
                 onChange={(event) =>
-                  updateTextField("away_defStrategy", event.target.value, setManualInput)
+                  mode === "MANUAL"
+                    ? updateManualTextField("away_defStrategy", event.target.value)
+                    : updateConnectedTextField("away_defStrategy", event.target.value)
                 }
-                value={manualInput.away_defStrategy}
+                value={currentTextValue("away_defStrategy", "away_defStrategy")}
               >
                 {DEFENSE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Home GDP focus">
+              <Select
+                onChange={(event) =>
+                  mode === "MANUAL"
+                    ? updateManualTextField("home_gdp_focus", event.target.value)
+                    : updateConnectedTextField("home_gdp_focus", event.target.value)
+                }
+                value={currentTextValue("home_gdp_focus", "home_gdp_focus")}
+              >
+                {GDP_FOCUS_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Home GDP pace">
+              <Select
+                onChange={(event) =>
+                  mode === "MANUAL"
+                    ? updateManualTextField("home_gdp_pace", event.target.value)
+                    : updateConnectedTextField("home_gdp_pace", event.target.value)
+                }
+                value={currentTextValue("home_gdp_pace", "home_gdp_pace")}
+              >
+                {GDP_PACE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Away GDP focus">
+              <Select
+                onChange={(event) =>
+                  mode === "MANUAL"
+                    ? updateManualTextField("away_gdp_focus", event.target.value)
+                    : updateConnectedTextField("away_gdp_focus", event.target.value)
+                }
+                value={currentTextValue("away_gdp_focus", "away_gdp_focus")}
+              >
+                {GDP_FOCUS_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Away GDP pace">
+              <Select
+                onChange={(event) =>
+                  mode === "MANUAL"
+                    ? updateManualTextField("away_gdp_pace", event.target.value)
+                    : updateConnectedTextField("away_gdp_pace", event.target.value)
+                }
+                value={currentTextValue("away_gdp_pace", "away_gdp_pace")}
+              >
+                {GDP_PACE_OPTIONS.map((option) => (
                   <option key={option} value={option}>
                     {option}
                   </option>
@@ -499,9 +723,11 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
             <Field label="Neutral site">
               <Select
                 onChange={(event) =>
-                  updateTextField("neutral", event.target.value, setManualInput)
+                  mode === "MANUAL"
+                    ? updateManualTextField("neutral", event.target.value)
+                    : updateConnectedTextField("neutral", event.target.value)
                 }
-                value={manualInput.neutral}
+                value={currentTextValue("neutral", "neutral")}
               >
                 <option value="0">Home court</option>
                 <option value="1">Neutral site</option>
@@ -512,11 +738,13 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
                 max={2}
                 min={-2}
                 onChange={(event) =>
-                  updateNumericField("effortDelta", event.target.value, setManualInput)
+                  mode === "MANUAL"
+                    ? updateManualNumericField("effortDelta", event.target.value)
+                    : updateConnectedNumericField("effortDelta", event.target.value)
                 }
                 step={1}
                 type="number"
-                value={manualInput.effortDelta}
+                value={currentEffortValue()}
               />
             </Field>
           </div>
@@ -526,7 +754,9 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
               <StatusBadge tone={statusToneFromValue(latestJob.status)}>
                 {formatPreviewStatus(latestJob.status)}
               </StatusBadge>
-              <strong className="text-base text-ink">{describePredictionJob(latestJob)}</strong>
+              <strong className="text-base text-ink">
+                {describePredictionJob(latestJob)}
+              </strong>
               <span className="text-sm text-ink-muted">
                 Updated {formatTimestamp(latestJob.updatedAt)}
               </span>
@@ -555,15 +785,27 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
           <p className={statusCopyClassName}>Loading recent preview history.</p>
         ) : jobs.length ? (
           <ul className={listClassName}>
-            {jobs.map((job) => (
-              <li className={listItemClassName} key={job.id}>
-                <strong className="text-sm text-ink">{describePredictionJob(job)}</strong>
-                <span className={statusCopyClassName}>
-                  {formatPreviewStatus(job.status)} • {formatTimestamp(job.updatedAt)}
-                  {job.error ? ` • ${job.error}` : ""}
-                </span>
-              </li>
-            ))}
+            {jobs.map((job) => {
+              const forecastContext = extractForecastContextFromRequest(job.request);
+              return (
+                <li className={listItemClassName} key={job.id}>
+                  <strong className="text-sm text-ink">
+                    {describePredictionJob(job)}
+                  </strong>
+                  <span className={statusCopyClassName}>
+                    {formatPreviewStatus(job.status)} •{" "}
+                    {formatTimestamp(job.updatedAt)}
+                    {job.error ? ` • ${job.error}` : ""}
+                  </span>
+                  {forecastContext ? (
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-note">
+                      Forecast {forecastContext.scenarioLabel} •{" "}
+                      {formatPercent(forecastContext.scenarioProbability)}
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className={statusCopyClassName}>No preview history yet.</p>
@@ -571,85 +813,6 @@ export function PredictionPanel({ workspace }: PredictionPanelProps) {
       </Panel>
     </Panel>
   );
-}
-
-export function buildSubmissionRequest(args: {
-  mode: SubmissionMode;
-  manualInput: ManualPredictionInput;
-  homeSourceMatchId: string;
-  awaySourceMatchId: string;
-  homeTeamId: string | null;
-  awayTeamId: string | null;
-}): PredictionSubmissionRequest {
-  if (args.mode === "MANUAL") {
-    return {
-      mode: "MANUAL",
-      manualInput: args.manualInput,
-    };
-  }
-
-  return {
-    mode: "CONNECTED",
-    connectedInput: {
-      homeSourceMatchId: args.homeSourceMatchId || undefined,
-      awaySourceMatchId: args.awaySourceMatchId || undefined,
-      homeTeamId: args.homeTeamId ?? undefined,
-      awayTeamId: args.awayTeamId ?? undefined,
-      home_offStrategy: args.manualInput.home_offStrategy,
-      home_defStrategy: args.manualInput.home_defStrategy,
-      away_offStrategy: args.manualInput.away_offStrategy,
-      away_defStrategy: args.manualInput.away_defStrategy,
-      neutral: args.manualInput.neutral,
-      effortDelta: args.manualInput.effortDelta,
-      manualFallback: args.manualInput,
-    },
-  };
-}
-
-export function createDefaultManualPredictionInput(): ManualPredictionInput {
-  return {
-    home_outsideScoring: 10,
-    home_insideScoring: 10,
-    home_outsideDefense: 10,
-    home_insideDefense: 10,
-    home_rebounding: 10,
-    home_offensiveFlow: 10,
-    away_outsideScoring: 10,
-    away_insideScoring: 10,
-    away_outsideDefense: 10,
-    away_insideDefense: 10,
-    away_rebounding: 10,
-    away_offensiveFlow: 10,
-    home_offStrategy: "Base",
-    home_defStrategy: "ManToMan",
-    away_offStrategy: "Base",
-    away_defStrategy: "ManToMan",
-    neutral: "0",
-    effortDelta: 0,
-  };
-}
-
-function updateNumericField(
-  field: NumericManualField,
-  nextValue: string,
-  setManualInput: Dispatch<SetStateAction<ManualPredictionInput>>,
-) {
-  const parsed = Number(nextValue);
-  setManualInput((current) => ({
-    ...current,
-    [field]: Number.isFinite(parsed) ? parsed : 0,
-  }));
-}
-
-function updateTextField(
-  field: TextManualField,
-  nextValue: string,
-  setManualInput: Dispatch<SetStateAction<ManualPredictionInput>>,
-) {
-  setManualInput((current) => ({
-    ...current,
-    [field]: nextValue,
-  }));
 }
 
 function describePredictionJob(job: PredictionJobRecord): string {
@@ -662,9 +825,7 @@ function describePredictionJob(job: PredictionJobRecord): string {
     return "Preview needs attention";
   }
 
-  return job.mode === "CONNECTED"
-    ? "Saved-game preview"
-    : "Manual preview";
+  return job.mode === "CONNECTED" ? "Saved-game preview" : "Manual preview";
 }
 
 function toPredictionResult(value: unknown): {
@@ -774,6 +935,10 @@ function formatSigned(value: number): string {
   return value > 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
 }
 
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(0)}%`;
+}
+
 function summarizeStrategy(
   snapshot: Partial<Record<string, unknown>>,
   side: "home" | "away",
@@ -821,6 +986,15 @@ function summarizeMatchupEdge(
 
   const diff = treatAsDefense ? offenseValue - defenseValue : offenseValue - defenseValue;
   return `${label} ${formatSigned(diff)}`;
+}
+
+function summarizeForecastContext(
+  value: ReturnType<typeof extractForecastContextFromRequest>,
+): string | null {
+  if (!value) {
+    return null;
+  }
+  return `Forecast ${value.scenarioLabel} ${formatPercent(value.scenarioProbability)}`;
 }
 
 function asOptionalString(value: unknown): string | null {
