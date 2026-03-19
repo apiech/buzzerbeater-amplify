@@ -256,10 +256,10 @@ export const createBillingPortalSession = defineFunction({
   environment: billingPortalFunctionEnvironment,
 });
 
-export const listBillingPayments = defineFunction({
+export const listMyBillingPayments = defineFunction({
   resourceGroupName: "data",
-  name: "list-billing-payments",
-  entry: "./list-billing-payments/handler.ts",
+  name: "list-my-billing-payments",
+  entry: "./list-my-billing-payments/handler.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
 });
@@ -391,7 +391,7 @@ const dataFunctions = [
   createBillingCheckoutSession,
   createBillingLifetimeCheckoutSession,
   createBillingPortalSession,
-  listBillingPayments,
+  listMyBillingPayments,
   getLineupPlan,
   saveLineupScenario,
   getSalaryProjection,
@@ -1961,7 +1961,9 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(createBillingPortalSession)),
 
-    listBillingPayments: a
+    // Keep this owner-scoped history query distinct from the BillingPayment
+    // model's generated listBillingPayments operation.
+    listMyBillingPayments: a
       .query()
       .arguments({
         limit: a.integer(),
@@ -1969,7 +1971,7 @@ const schema = a
       })
       .returns(a.ref("BillingPaymentsPage"))
       .authorization((allow) => [allow.authenticated()])
-      .handler(a.handler.function(listBillingPayments)),
+      .handler(a.handler.function(listMyBillingPayments)),
 
     getLineupPlan: a
       .query()

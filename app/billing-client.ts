@@ -16,7 +16,7 @@ export async function fetchBillingPayments(input?: {
   limit?: number;
   nextToken?: string | null;
 }): Promise<BillingPaymentsPage> {
-  const response = await client.queries.listBillingPayments(input);
+  const response = await client.queries.listMyBillingPayments(input);
   if (response.errors?.length || !response.data) {
     throw new Error(formatAmplifyErrors(response.errors));
   }

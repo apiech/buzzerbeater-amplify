@@ -8,10 +8,10 @@ export type BillingSummary = NonNullable<
   Schema["getBillingSummary"]["returnType"]
 >;
 export type BillingPaymentEntry = NonNullable<
-  NonNullable<Schema["listBillingPayments"]["returnType"]>["items"]
+  NonNullable<Schema["listMyBillingPayments"]["returnType"]>["items"]
 >[number];
 export type BillingPaymentsPage = NonNullable<
-  Schema["listBillingPayments"]["returnType"]
+  Schema["listMyBillingPayments"]["returnType"]
 >;
 export type BillingSessionResult = NonNullable<
   Schema["createBillingCheckoutSession"]["returnType"]

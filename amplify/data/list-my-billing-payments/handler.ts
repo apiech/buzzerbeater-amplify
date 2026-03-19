@@ -1,9 +1,9 @@
-import { env } from "$amplify/env/list-billing-payments";
+import { env } from "$amplify/env/list-my-billing-payments";
 
 import type { Schema } from "../resource";
 import { listBillingPayments } from "../_backend/billing";
 
-type Handler = Schema["listBillingPayments"]["functionHandler"];
+type Handler = Schema["listMyBillingPayments"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
   return listBillingPayments({

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   confirmResetPassword,
   confirmSignUp,
@@ -1549,6 +1549,7 @@ function WorkspaceDashboard({
     useState(false);
   const [isRefreshingOpponentForecast, setIsRefreshingOpponentForecast] =
     useState(false);
+  const didRestorePredictionDraftRef = useRef(false);
   const [predictionDraft, setPredictionDraft] = useState<PredictionDraftState>(
     () => createDefaultPredictionDraft(workspace),
   );
@@ -1564,6 +1565,11 @@ function WorkspaceDashboard({
   }, [workspace.scout]);
 
   useEffect(() => {
+    if (didRestorePredictionDraftRef.current) {
+      return;
+    }
+    didRestorePredictionDraftRef.current = true;
+
     const storedDraft = readPredictionDraftFromStorage(
       typeof window === "undefined" ? null : window.sessionStorage,
       {
@@ -1575,7 +1581,7 @@ function WorkspaceDashboard({
       return;
     }
     setPredictionDraft(storedDraft);
-  }, []);
+  }, [scout, workspace]);
 
   useEffect(() => {
     const teamId = resolveForecastTeamId(scout);

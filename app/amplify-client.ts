@@ -43,7 +43,7 @@ type QueryOperationName =
   | "getRivalsWorkspace"
   | "getSalaryProjection"
   | "getScoutWorkspace"
-  | "listBillingPayments"
+  | "listMyBillingPayments"
   | "getTeamHub";
 type MutationOperationName =
   | "connectBbAccount"
@@ -245,8 +245,8 @@ export const client = {
       requestQuery("getSalaryProjection", input),
     getScoutWorkspace: (input?: JsonObject) =>
       requestQuery("getScoutWorkspace", input),
-    listBillingPayments: (input?: JsonObject) =>
-      requestQuery("listBillingPayments", input),
+    listMyBillingPayments: (input?: JsonObject) =>
+      requestQuery("listMyBillingPayments", input),
     getTeamHub: () => requestQuery("getTeamHub"),
   },
 };

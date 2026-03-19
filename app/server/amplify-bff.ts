@@ -77,10 +77,10 @@ const queryOperations = {
         Parameters<typeof serverDataClient.queries.getScoutWorkspace>[0]
       >(input),
     ),
-  listBillingPayments: (input) =>
-    serverDataClient.queries.listBillingPayments(
+  listMyBillingPayments: (input) =>
+    serverDataClient.queries.listMyBillingPayments(
       optionalInput<
-        Parameters<typeof serverDataClient.queries.listBillingPayments>[0]
+        Parameters<typeof serverDataClient.queries.listMyBillingPayments>[0]
       >(input),
     ),
   getTeamHub: () => serverDataClient.queries.getTeamHub(),

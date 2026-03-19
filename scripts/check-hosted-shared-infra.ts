@@ -4,6 +4,7 @@ import process from "node:process";
 import {
   branchToEnvironmentName,
   buildSharedInfraParameterPaths,
+  type SharedInfraBindings,
 } from "../amplify/_shared/shared-infra-contract.js";
 
 const ACTIVE_SERVERLESS_ENDPOINT_STATUSES = new Set([
@@ -38,9 +39,9 @@ const REQUIRED_POLICY_ACTIONS = [
 const REQUIRED_POLICY_NAME = "BuzzerBeaterSharedMlInfraRead";
 const REQUIRED_POLICY_SID = "ReadSharedMlInfraParameters";
 const SAGEMAKER_SERVERLESS_TOTAL_CONCURRENCY_QUOTA_CODE = "L-96300102";
-const OPTIONAL_SHARED_INFRA_BINDING_KEYS = new Set([
+const OPTIONAL_SHARED_INFRA_BINDING_KEYS = new Set<keyof SharedInfraBindings>([
   "opponentForecastEndpointName",
-] as const);
+]);
 
 type AwsCliRuntime = {
   execAwsJson: (args: string[]) => unknown;
