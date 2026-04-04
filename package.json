@@ -35,7 +35,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "start": "node --import tsx ./scripts/next-with-env.mjs start",
-    "lint": "eslint app amplify tests scripts lib proxy.ts next.config.ts eslint.config.mjs",
+    "lint": "node --max-old-space-size=6144 ./node_modules/eslint/bin/eslint.js app amplify tests scripts lib proxy.ts next.config.ts eslint.config.mjs",
     "typecheck:app": "tsc -p tsconfig.app.json --noEmit",
     "typecheck:amplify": "node ./scripts/typecheck-amplify.mjs",
     "test": "node --test --import tsx ./tests/*.test.ts",
