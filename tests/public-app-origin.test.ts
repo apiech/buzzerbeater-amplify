@@ -25,6 +25,15 @@ test("resolvePublicAppOrigin reads APP_BASE_URL from env", () => {
   );
 });
 
+test("resolvePublicAppOrigin falls back to AMPLIFY_APP_ORIGIN at runtime", () => {
+  assert.equal(
+    resolvePublicAppOrigin({
+      AMPLIFY_APP_ORIGIN: "https://runtime.example.com///",
+    }),
+    "https://runtime.example.com",
+  );
+});
+
 test("resolvePublicAppOrigin supports the local fallback", () => {
   assert.equal(
     resolvePublicAppOrigin({}, { fallback: LOCALHOST_APP_ORIGIN }),

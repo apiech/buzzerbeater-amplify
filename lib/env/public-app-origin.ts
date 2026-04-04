@@ -27,6 +27,11 @@ export function resolvePublicAppOrigin(
     return configuredOrigin;
   }
 
+  const runtimeOrigin = normalizePublicAppOrigin(env.AMPLIFY_APP_ORIGIN);
+  if (runtimeOrigin) {
+    return runtimeOrigin;
+  }
+
   const fallbackOrigin = normalizePublicAppOrigin(options.fallback);
   if (fallbackOrigin) {
     return fallbackOrigin;
