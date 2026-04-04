@@ -945,10 +945,10 @@ export function PredictionPanel({
                     <TableCell className="bg-surface sticky left-0 z-10 font-semibold">
                       {defense}
                     </TableCell>
-                    {row.map((cell) => {
-                      const isSelected =
-                        selectedGridCell?.homeOffense === cell.homeOffense &&
-                        selectedGridCell?.awayDefense === cell.awayDefense;
+	                    {row.map((cell) => {
+	                      const isSelected =
+	                        selectedGridCell?.homeOffense === cell.homeOffense &&
+	                        selectedGridCell.awayDefense === cell.awayDefense;
 
                       return (
                         <TableCell

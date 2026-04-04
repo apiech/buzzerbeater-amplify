@@ -478,7 +478,9 @@ test("processPredictionJob stores grid-enabled endpoint results without extra in
   assert.equal(updates[0]?.status, "RESOLVING_INPUT");
   assert.equal(updates[1]?.status, "INVOKING_MODEL");
   assert.equal(updates[2]?.status, "SUCCEEDED");
-  assert.deepStrictEqual(updates[2]?.result, {
+  const successfulUpdate = updates[2];
+  assert.ok(successfulUpdate);
+  assert.deepStrictEqual(successfulUpdate.result, {
     awayScore: 94.8,
     homeScore: 101.3,
     modelVersion: "bundle-v1",
@@ -522,5 +524,5 @@ test("processPredictionJob stores grid-enabled endpoint results without extra in
       ],
     },
   });
-  assert.equal(updates[2]?.modelVersion, "bundle-v1");
+  assert.equal(successfulUpdate.modelVersion, "bundle-v1");
 });

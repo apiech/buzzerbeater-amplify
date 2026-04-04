@@ -245,9 +245,10 @@ test("grid-enabled prediction results parse and expose the best cell", () => {
     },
   });
 
-  assert.ok(result?.tacticsGrid);
-  assert.equal(result?.tacticsGrid?.cells[0][1].pointDiff, 9);
-  assert.deepStrictEqual(findBestPredictionGridCell(result!.tacticsGrid!), {
+  assert.ok(result);
+  assert.ok(result.tacticsGrid);
+  assert.equal(result.tacticsGrid.cells[0][1].pointDiff, 9);
+  assert.deepStrictEqual(findBestPredictionGridCell(result.tacticsGrid), {
     awayDefense: "ManToMan",
     awayScore: 94,
     homeOffense: "Motion",
@@ -310,12 +311,14 @@ test("grid selection helpers align the highlighted cell with resolved tactics", 
     awayDefense: "23Zone",
     homeOffense: "Motion",
   });
+  assert.ok(result.tacticsGrid);
+  assert.ok(selection);
   assert.equal(
-    isPredictionGridSelectionSupported(result!.tacticsGrid!, selection!),
+    isPredictionGridSelectionSupported(result.tacticsGrid, selection),
     true,
   );
   assert.deepStrictEqual(
-    findPredictionGridCell(result!.tacticsGrid!, selection!),
+    findPredictionGridCell(result.tacticsGrid, selection),
     {
       awayDefense: "23Zone",
       awayScore: 97,

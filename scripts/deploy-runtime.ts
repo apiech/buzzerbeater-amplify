@@ -220,12 +220,12 @@ export function writePredictorTargetPin(
   options: SandboxTargetPinOptions = {},
 ): PredictorTargetPinsFile {
   const currentPins = readPredictorTargetPins(filePath, runtime);
-  const nextPins =
+  const nextPins: PredictorTargetPinsFile =
     targetName === "sandbox"
       ? {
           ...currentPins,
           sandboxes: {
-            ...readSandboxScopedPins(currentPins.sandboxes),
+            ...readSandboxScopedPins<PredictorTargetPin>(currentPins.sandboxes),
             [resolveRequiredSandboxPinIdentifier(options)]: pin,
           },
         }
@@ -280,12 +280,14 @@ export function writeOpponentForecastTargetPin(
   options: SandboxTargetPinOptions = {},
 ): OpponentForecastTargetPinsFile {
   const currentPins = readOpponentForecastTargetPins(filePath, runtime);
-  const nextPins =
+  const nextPins: OpponentForecastTargetPinsFile =
     targetName === "sandbox"
       ? {
           ...currentPins,
           sandboxes: {
-            ...readSandboxScopedPins(currentPins.sandboxes),
+            ...readSandboxScopedPins<OpponentForecastTargetPin>(
+              currentPins.sandboxes,
+            ),
             [resolveRequiredSandboxPinIdentifier(options)]: pin,
           },
         }

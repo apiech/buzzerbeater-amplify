@@ -42,6 +42,7 @@ import { normalizeOptionalString } from "./project-env.mjs";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const ampxWithEnvScriptPath = join(currentDir, "ampx-with-env.mjs");
+const skipDeployVerifyEnvName = "BB_SKIP_DEPLOY_VERIFY";
 type SharedInfraRuntime = Parameters<typeof resolveSandboxEnvironmentName>[1];
 
 type WorkflowCommand =
@@ -233,15 +234,12 @@ export function collectSandboxDoctorReport(
   const sharedInfraCheck = checkSharedInfraParameters(environmentName, region, runtime);
   checks.push(sharedInfraCheck);
 
-  const predictorRemediationCommand = buildSandboxPredictorNpmCommand(
-    sandboxIdentifier,
-    false,
-  );
+  const sandboxDeployCommand = buildRootSandboxDeployCommand(sandboxIdentifier);
   checks.push(
     checkPredictorEndpoint({
       environmentName,
       region,
-      remediation: predictorRemediationCommand,
+      remediation: sandboxDeployCommand,
       runtime,
     }),
   );
@@ -262,14 +260,14 @@ export function collectSandboxDoctorReport(
     checks.push({
       detail: pinInspection.message,
       label: "Predictor pin",
-      remediation: predictorRemediationCommand,
+      remediation: sandboxDeployCommand,
       status: sharedInfraCheck.status === "pass" ? "warn" : "warn",
     });
   } else {
     checks.push({
       detail: pinInspection.message,
       label: "Predictor pin",
-      remediation: predictorRemediationCommand,
+      remediation: sandboxDeployCommand,
       status: "fail",
     });
   }
@@ -310,7 +308,7 @@ export function collectDevDoctorReport(
     checkPredictorEndpoint({
       environmentName,
       region,
-      remediation: buildDevPredictorNpmCommand(false),
+      remediation: buildRootDeployCommand("dev"),
       runtime,
     }),
   );
@@ -330,14 +328,14 @@ export function collectDevDoctorReport(
     checks.push({
       detail: pinInspection.message,
       label: "Predictor pin",
-      remediation: buildDevPredictorNpmCommand(false),
+      remediation: buildRootDeployCommand("dev"),
       status: "warn",
     });
   } else {
     checks.push({
       detail: pinInspection.message,
       label: "Predictor pin",
-      remediation: buildDevPredictorNpmCommand(false),
+      remediation: buildRootDeployCommand("dev"),
       status: "fail",
     });
   }
@@ -595,7 +593,11 @@ function runSandboxUp(
     `Preparing sandbox '${sandboxIdentifier}' with shared environment '${environmentName}'.`,
   );
 
-  runVerifyDeploy(runtime);
+  if (normalizeOptionalString(runtime.env[skipDeployVerifyEnvName])) {
+    runtime.write("Skipping deploy verification because BB_SKIP_DEPLOY_VERIFY is set.");
+  } else {
+    runVerifyDeploy(runtime);
+  }
   runSandboxSecretSync(explicitSandboxArgs, runtime);
   runSandboxData(explicitSandboxArgs, runtime);
 
@@ -665,7 +667,7 @@ function runDevData(runtime: WorkflowRuntime = createDefaultRuntime()): void {
 
   runtime.write("Deploying ML Data Infra for dev.");
   const result = runtime.spawnSync(
-    resolveNpxCommand(),
+    resolveNpmCommand(),
     [
       "--prefix",
       join(workspaceRoot, "bb-shared-infra"),
@@ -862,8 +864,8 @@ function checkSharedInfraParameters(
         label: "Shared infra SSM contract",
         remediation:
           environmentName === "dev"
-            ? `From ${projectRoot} run: npm run dev:data`
-            : `From ${projectRoot} run: npm run sandbox:data`,
+            ? `From ${projectRoot} run: ${buildRootDeployCommand("dev")}`
+            : `From ${projectRoot} run: ${buildRootSandboxDeployCommandForEnvironment(environmentName)}`,
         status: "fail",
       };
     }
@@ -871,8 +873,8 @@ function checkSharedInfraParameters(
     if (missingOptional.length > 0) {
       const remediation =
         environmentName === "dev"
-          ? `From ${projectRoot} run: ${buildDevOpponentForecastNpmCommand(false)}`
-          : `From ${projectRoot} run: ${buildSandboxOpponentForecastCommandForEnvironment(environmentName, false)}`;
+          ? `From ${projectRoot} run: ${buildRootDeployCommand("dev")}`
+          : `From ${projectRoot} run: ${buildRootSandboxDeployCommandForEnvironment(environmentName)}`;
       return {
         detail: `Optional shared infra parameters are missing: ${missingOptional.join(", ")}. Opponent forecast jobs remain disabled until the endpoint is deployed.`,
         label: "Shared infra SSM contract",
@@ -892,8 +894,8 @@ function checkSharedInfraParameters(
       label: "Shared infra SSM contract",
       remediation:
         environmentName === "dev"
-          ? `From ${projectRoot} run: npm run dev:data`
-          : `From ${projectRoot} run: npm run sandbox:data`,
+          ? `From ${projectRoot} run: ${buildRootDeployCommand("dev")}`
+          : `From ${projectRoot} run: ${buildRootSandboxDeployCommandForEnvironment(environmentName)}`,
       status: "fail",
     };
   }
@@ -1142,7 +1144,7 @@ function buildPredictorReleaseArgs(
 
   if (!options.usePin) {
     const command =
-      stage === "sandbox"
+      stage === "sandbox" && sandboxIdentifier
         ? buildSandboxPredictorNpmCommand(sandboxIdentifier, false)
         : buildDevPredictorNpmCommand(false);
     throw new Error(
@@ -1185,7 +1187,7 @@ function buildOpponentForecastReleaseArgs(
 
   if (!options.usePin) {
     const command =
-      stage === "sandbox"
+      stage === "sandbox" && sandboxIdentifier
         ? buildSandboxOpponentForecastNpmCommand(sandboxIdentifier, false)
         : buildDevOpponentForecastNpmCommand(false);
     throw new Error(
@@ -1399,14 +1401,16 @@ function buildDevOpponentForecastNpmCommand(usePin: boolean): string {
     : "npm run dev:opponent-forecast -- --release-id <release-id> --dataset-root <absolute-dataset-root>";
 }
 
-function buildSandboxOpponentForecastCommandForEnvironment(
-  environmentName: string,
-  usePin: boolean,
-): string {
-  const identifier = environmentName.startsWith("sandbox-")
-    ? environmentName.slice("sandbox-".length)
-    : "";
-  return buildSandboxOpponentForecastNpmCommand(identifier, usePin);
+function buildRootDeployCommand(stage: "dev" | "prod"): string {
+  return `./scripts/deploy ${stage}`;
+}
+
+function buildRootSandboxDeployCommand(sandboxIdentifier: string): string {
+  return `./scripts/deploy sandbox-${sandboxIdentifier}`;
+}
+
+function buildRootSandboxDeployCommandForEnvironment(environmentName: string): string {
+  return `./scripts/deploy ${environmentName}`;
 }
 
 function withResolvedSandboxIdentifier(
@@ -1424,13 +1428,16 @@ function removeIdentifierArgs(argv: string[]): string[] {
   const nextArgs: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--identifier") {
-      index += 1;
+    if (argument === undefined) {
       continue;
     }
-    if (argument?.startsWith("--identifier=")) {
-      continue;
-    }
+	    if (argument === "--identifier") {
+	      index += 1;
+	      continue;
+	    }
+	    if (argument.startsWith("--identifier=")) {
+	      continue;
+	    }
     nextArgs.push(argument);
   }
 

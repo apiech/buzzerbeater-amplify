@@ -132,12 +132,13 @@ test("sandbox doctor reports missing predictor infrastructure with the wrapper r
   assert.equal(predictorCheck.status, "fail");
   assert.match(
     predictorCheck.remediation,
-    /npm run sandbox:predictor -- --identifier karey --release-id <release-id> --artifact-prefix <absolute-artifact-stem>/,
+    /\.\/scripts\/deploy sandbox-karey/,
   );
 
   const pinCheck = report.checks.find((check) => check.label === "Predictor pin");
   assert.ok(pinCheck);
   assert.equal(pinCheck.status, "warn");
+  assert.match(pinCheck.remediation, /\.\/scripts\/deploy sandbox-karey/);
 });
 
 test("sandbox up runs deploy verification, secret sync, ML data infra, pinned predictor, then the sandbox process", () => {
@@ -260,13 +261,14 @@ test("sandbox up runs deploy verification, secret sync, ML data infra, pinned pr
   assert.equal(calls[4].command, process.execPath);
   assert.deepEqual(calls[4].args.slice(1), ["sandbox", "--identifier", "karey"]);
   const sandboxEnv = calls[4].options?.env as Record<string, string> | undefined;
+  assert.ok(sandboxEnv);
   assert.equal(
-    sandboxEnv?.BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP,
+    sandboxEnv.BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP,
     "1",
   );
-  assert.equal(sandboxEnv?.BB_SHARED_ENVIRONMENT_NAME, "sandbox-karey");
+  assert.equal(sandboxEnv.BB_SHARED_ENVIRONMENT_NAME, "sandbox-karey");
   assert.match(
-    sandboxEnv?.DOCKER_CONFIG ?? "",
+    sandboxEnv.DOCKER_CONFIG,
     /bb-machine-learning\/dist\/.docker-cli$/,
   );
 });
@@ -453,7 +455,7 @@ test("dev prepare runs deploy verification before shared infra deploy side effec
           };
         }
 
-        if (command === "npx" && args.includes("deploy:ml-data-infra")) {
+        if (command === "npm" && args.includes("deploy:ml-data-infra")) {
           return {
             status: 0,
             stderr: "",
@@ -470,7 +472,7 @@ test("dev prepare runs deploy verification before shared infra deploy side effec
   assert.equal(calls.length, 2);
   assert.equal(calls[0].command, "npm");
   assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
-  assert.equal(calls[1].command, "npx");
+  assert.equal(calls[1].command, "npm");
   assert.match(calls[1].args.join(" "), /deploy:ml-data-infra/);
   const devDataEnv = calls[1].options?.env as Record<string, string> | undefined;
   assert.match(
@@ -570,8 +572,56 @@ test("dev doctor warns when the optional opponent forecast endpoint contract is 
   assert.equal(sharedInfraCheck.status, "warn");
   assert.match(
     sharedInfraCheck.remediation,
-    /npm run dev:opponent-forecast -- --release-id <release-id> --dataset-root <absolute-dataset-root>/,
+    /\.\/scripts\/deploy dev/,
   );
+});
+
+test("dev doctor points missing predictor pins at the root deploy wrapper", () => {
+  const report = workflowTesting.collectDevDoctorReport(
+    createRuntime({
+      env: {
+        AWS_REGION: "us-east-1",
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "sts") {
+          return {
+            Account: "427377913956",
+          };
+        }
+        if (args[0] === "ssm" && args.includes("prediction-endpoint-name")) {
+          return {
+            Parameters: [
+              {
+                Name: "/buzzerbeater/ml-data-infra/dev/prediction-endpoint-name",
+                Value: "predictor-endpoint",
+              },
+            ],
+          };
+        }
+        if (args[0] === "ssm") {
+          return {
+            InvalidParameters: [],
+          };
+        }
+        if (args[0] === "sagemaker") {
+          return {
+            EndpointStatus: "InService",
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      spawnSync(command, args, _options) {
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  const pinCheck = report.checks.find((check) => check.label === "Predictor pin");
+  assert.ok(pinCheck);
+  assert.equal(pinCheck.status, "warn");
+  assert.match(pinCheck.remediation, /\.\/scripts\/deploy dev/);
 });
 
 function createRuntime({
