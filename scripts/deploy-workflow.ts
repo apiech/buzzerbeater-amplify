@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 
 import { buildSharedInfraParameterPaths } from "../amplify/_shared/shared-infra-contract.js";
 import {
-  buildSandboxPredictorReleaseCommand,
   createSharedInfraBootstrapCommand,
   resolveSandboxEnvironmentName,
   resolveSandboxIdentifier,
@@ -118,6 +117,13 @@ type OpponentForecastCommandOptions = {
   releaseId: string | null;
   usePin: boolean;
 };
+
+const dockerConfigRoot = join(
+  workspaceRoot,
+  "bb-machine-learning",
+  "dist",
+  ".docker-cli",
+);
 
 function asSharedInfraRuntime(runtime: WorkflowRuntime): SharedInfraRuntime {
   return runtime as unknown as SharedInfraRuntime;
@@ -227,12 +233,15 @@ export function collectSandboxDoctorReport(
   const sharedInfraCheck = checkSharedInfraParameters(environmentName, region, runtime);
   checks.push(sharedInfraCheck);
 
-  const predictorCommand = buildSandboxPredictorNpmCommand(sandboxArgs, false);
+  const predictorRemediationCommand = buildSandboxPredictorNpmCommand(
+    sandboxIdentifier,
+    false,
+  );
   checks.push(
     checkPredictorEndpoint({
       environmentName,
       region,
-      remediation: predictorCommand,
+      remediation: predictorRemediationCommand,
       runtime,
     }),
   );
@@ -241,6 +250,7 @@ export function collectSandboxDoctorReport(
     "sandbox",
     resolvePredictorTargetsFilePath(),
     runtime,
+    { sandboxIdentifier },
   );
   if (pinInspection.status === "ready") {
     checks.push({
@@ -252,14 +262,14 @@ export function collectSandboxDoctorReport(
     checks.push({
       detail: pinInspection.message,
       label: "Predictor pin",
-      remediation: predictorCommand,
+      remediation: predictorRemediationCommand,
       status: sharedInfraCheck.status === "pass" ? "warn" : "warn",
     });
   } else {
     checks.push({
       detail: pinInspection.message,
       label: "Predictor pin",
-      remediation: predictorCommand,
+      remediation: predictorRemediationCommand,
       status: "fail",
     });
   }
@@ -470,10 +480,9 @@ function runSandboxData(
   runtime.write(`Deploying ML Data Infra for ${command.environmentName}.`);
   const result = runtime.spawnSync(command.command, command.args, {
     cwd: projectRoot,
-    env: {
-      ...runtime.env,
+    env: buildDockerCliEnv(runtime, {
       BB_SHARED_ENVIRONMENT_NAME: command.environmentName,
-    },
+    }),
     stdio: "inherit",
   });
   if ((result.status ?? 1) !== 0) {
@@ -501,13 +510,17 @@ function runSandboxPredictor(
 
   runtime.write(`Deploying predictor for ${environmentName} using ${runMode} inputs.`);
   runPredictorRelease({
-    args: buildPredictorReleaseArgs("sandbox", options, sandboxIdentifier, runtime),
+    args: buildPredictorReleaseArgs("sandbox", options, sandboxIdentifier),
     runtime,
   });
 
-  const pin = resolveWrittenPin("sandbox", options, runtime);
-  writePredictorTargetPin("sandbox", pin, resolvePredictorTargetsFilePath(), runtime);
-  runtime.write(`Updated sandbox predictor pin '${pin.releaseId}'.`);
+  const pin = resolveWrittenPin("sandbox", options, runtime, sandboxIdentifier);
+  writePredictorTargetPin("sandbox", pin, resolvePredictorTargetsFilePath(), runtime, {
+    sandboxIdentifier,
+  });
+  runtime.write(
+    `Updated sandbox predictor pin '${pin.releaseId}' for sandbox-${sandboxIdentifier}.`,
+  );
 }
 
 function runSandboxOpponentForecast(
@@ -530,23 +543,26 @@ function runSandboxOpponentForecast(
     `Deploying opponent forecast for ${environmentName} using ${runMode} inputs.`,
   );
   runOpponentForecastRelease({
-    args: buildOpponentForecastReleaseArgs(
-      "sandbox",
-      options,
-      sandboxIdentifier,
-      runtime,
-    ),
+    args: buildOpponentForecastReleaseArgs("sandbox", options, sandboxIdentifier),
     runtime,
   });
 
-  const pin = resolveWrittenOpponentForecastPin("sandbox", options, runtime);
+  const pin = resolveWrittenOpponentForecastPin(
+    "sandbox",
+    options,
+    runtime,
+    sandboxIdentifier,
+  );
   writeOpponentForecastTargetPin(
     "sandbox",
     pin,
     resolveOpponentForecastTargetsFilePath(),
     runtime,
+    { sandboxIdentifier },
   );
-  runtime.write(`Updated sandbox opponent forecast pin '${pin.releaseId}'.`);
+  runtime.write(
+    `Updated sandbox opponent forecast pin '${pin.releaseId}' for sandbox-${sandboxIdentifier}.`,
+  );
 }
 
 function runVerifyDeploy(
@@ -566,15 +582,22 @@ function runSandboxUp(
   sandboxArgs: string[],
   runtime: WorkflowRuntime = createDefaultRuntime(),
 ): number {
+  const sandboxIdentifier = resolveSandboxIdentifier(
+    ["sandbox", ...sandboxArgs],
+    asSharedInfraRuntime(runtime),
+  );
   const environmentName = resolveSandboxEnvironmentName(
     ["sandbox", ...sandboxArgs],
     asSharedInfraRuntime(runtime),
   );
-  runtime.write(`Preparing ${environmentName}.`);
+  const explicitSandboxArgs = withResolvedSandboxIdentifier(sandboxArgs, sandboxIdentifier);
+  runtime.write(
+    `Preparing sandbox '${sandboxIdentifier}' with shared environment '${environmentName}'.`,
+  );
 
   runVerifyDeploy(runtime);
-  runSandboxSecretSync(sandboxArgs, runtime);
-  runSandboxData(sandboxArgs, runtime);
+  runSandboxSecretSync(explicitSandboxArgs, runtime);
+  runSandboxData(explicitSandboxArgs, runtime);
 
   const predictorStatus = inspectPredictorEndpoint({
     environmentName,
@@ -586,12 +609,13 @@ function runSandboxUp(
       "sandbox",
       resolvePredictorTargetsFilePath(),
       runtime,
+      { sandboxIdentifier },
     );
     if (pinInspection.status !== "ready") {
       throw new Error(
         [
           predictorStatus.detail,
-          `From ${projectRoot} run: ${buildSandboxPredictorNpmCommand(sandboxArgs, false)}`,
+          `From ${projectRoot} run: ${buildSandboxPredictorNpmCommand(sandboxIdentifier, false)}`,
         ].join(" "),
       );
     }
@@ -603,11 +627,7 @@ function runSandboxUp(
       args: buildPredictorReleaseArgs(
         "sandbox",
         { artifactPrefix: null, identifier: null, releaseId: null, usePin: true },
-        resolveSandboxIdentifier(
-          ["sandbox", ...sandboxArgs],
-          asSharedInfraRuntime(runtime),
-        ),
-        runtime,
+        sandboxIdentifier,
       ),
       runtime,
     });
@@ -615,20 +635,20 @@ function runSandboxUp(
     throw new Error(
       [
         predictorStatus.detail,
-        `From ${projectRoot} run: ${buildSandboxPredictorNpmCommand(sandboxArgs, true)}`,
+        `From ${projectRoot} run: ${buildSandboxPredictorNpmCommand(sandboxIdentifier, true)}`,
       ].join(" "),
     );
   }
 
   const result = runtime.spawnSync(
     process.execPath,
-    [ampxWithEnvScriptPath, "sandbox", ...sandboxArgs],
+    [ampxWithEnvScriptPath, "sandbox", ...explicitSandboxArgs],
     {
       cwd: projectRoot,
-      env: {
-        ...runtime.env,
+      env: buildDockerCliEnv(runtime, {
         [skipSandboxSharedInfraBootstrapEnvName]: "1",
-      },
+        BB_SHARED_ENVIRONMENT_NAME: environmentName,
+      }),
       stdio: "inherit",
     },
   );
@@ -657,7 +677,7 @@ function runDevData(runtime: WorkflowRuntime = createDefaultRuntime()): void {
     ],
     {
       cwd: projectRoot,
-      env: runtime.env,
+      env: buildDockerCliEnv(runtime),
       stdio: "inherit",
     },
   );
@@ -673,7 +693,7 @@ function runDevPredictor(
   const options = parsePredictorCommandOptions(args, false);
   runtime.write(`Deploying predictor for dev using ${options.usePin ? "pinned" : "explicit"} inputs.`);
   runPredictorRelease({
-    args: buildPredictorReleaseArgs("dev", options, null, runtime),
+    args: buildPredictorReleaseArgs("dev", options, null),
     runtime,
   });
   const pin = resolveWrittenPin("dev", options, runtime);
@@ -690,7 +710,7 @@ function runDevOpponentForecast(
     `Deploying opponent forecast for dev using ${options.usePin ? "pinned" : "explicit"} inputs.`,
   );
   runOpponentForecastRelease({
-    args: buildOpponentForecastReleaseArgs("dev", options, null, runtime),
+    args: buildOpponentForecastReleaseArgs("dev", options, null),
     runtime,
   });
   const pin = resolveWrittenOpponentForecastPin("dev", options, runtime);
@@ -784,10 +804,6 @@ function checkSandboxSecret(
   sandboxIdentifier: string,
   runtime: WorkflowRuntime,
 ): DoctorCheck {
-  const defaultIdentifier = resolveSandboxIdentifier(
-    ["sandbox"],
-    asSharedInfraRuntime(runtime),
-  );
   try {
     const exists = hasSandboxSecret(sandboxIdentifier, runtime);
     return exists
@@ -799,7 +815,7 @@ function checkSandboxSecret(
       : {
           detail: `${sandboxSecretName} is missing for sandbox-${sandboxIdentifier}.`,
           label: "Sandbox secret",
-          remediation: `From ${projectRoot} run: npm run sandbox:secret:sync${sandboxIdentifier === defaultIdentifier ? "" : ` -- --identifier ${sandboxIdentifier}`}`,
+          remediation: `From ${projectRoot} run: npm run sandbox:secret:sync -- --identifier ${sandboxIdentifier}`,
           status: "fail",
         };
   } catch (error) {
@@ -1047,12 +1063,14 @@ function resolveWrittenPin(
   targetName: PredictorTargetName,
   options: PredictorCommandOptions,
   runtime: WorkflowRuntime,
+  sandboxIdentifier: string | null = null,
 ) {
   if (options.usePin) {
     const existing = resolvePredictorTargetPin(
       targetName,
       resolvePredictorTargetsFilePath(),
       runtime,
+      targetName === "sandbox" ? { sandboxIdentifier } : {},
     );
     return createPredictorTargetPin(
       existing.releaseId,
@@ -1072,12 +1090,14 @@ function resolveWrittenOpponentForecastPin(
   targetName: OpponentForecastTargetName,
   options: OpponentForecastCommandOptions,
   runtime: WorkflowRuntime,
+  sandboxIdentifier: string | null = null,
 ) {
   if (options.usePin) {
     const existing = resolveOpponentForecastTargetPin(
       targetName,
       resolveOpponentForecastTargetsFilePath(),
       runtime,
+      targetName === "sandbox" ? { sandboxIdentifier } : {},
     );
     return createOpponentForecastTargetPin(
       existing.releaseId,
@@ -1097,23 +1117,14 @@ function buildPredictorReleaseArgs(
   stage: "dev" | "sandbox",
   options: PredictorCommandOptions,
   sandboxIdentifier: string | null,
-  runtime: WorkflowRuntime,
 ): string[] {
   const args: string[] = [stage];
 
   if (stage === "sandbox") {
-    const explicitIdentifier = normalizeOptionalString(options.identifier);
-    if (explicitIdentifier) {
-      args.push("--identifier", explicitIdentifier);
-    } else if (sandboxIdentifier) {
-      const defaultIdentifier = resolveSandboxIdentifier(
-        ["sandbox"],
-        asSharedInfraRuntime(runtime),
-      );
-      if (sandboxIdentifier !== defaultIdentifier) {
-        args.push("--identifier", sandboxIdentifier);
-      }
+    if (!sandboxIdentifier) {
+      throw new Error("Sandbox predictor deployment requires a resolved identifier.");
     }
+    args.push("--identifier", sandboxIdentifier);
   }
 
   const releaseId = normalizeOptionalString(options.releaseId);
@@ -1132,10 +1143,7 @@ function buildPredictorReleaseArgs(
   if (!options.usePin) {
     const command =
       stage === "sandbox"
-        ? buildSandboxPredictorNpmCommand(
-            buildSandboxArgsFromIdentifier(sandboxIdentifier),
-            false,
-          )
+        ? buildSandboxPredictorNpmCommand(sandboxIdentifier, false)
         : buildDevPredictorNpmCommand(false);
     throw new Error(
       `Predictor deployment requires --release-id and --artifact-prefix, or --use-pin. From ${projectRoot} run: ${command}`,
@@ -1150,23 +1158,16 @@ function buildOpponentForecastReleaseArgs(
   stage: "dev" | "sandbox",
   options: OpponentForecastCommandOptions,
   sandboxIdentifier: string | null,
-  runtime: WorkflowRuntime,
 ): string[] {
   const args: string[] = [stage];
 
   if (stage === "sandbox") {
-    const explicitIdentifier = normalizeOptionalString(options.identifier);
-    if (explicitIdentifier) {
-      args.push("--identifier", explicitIdentifier);
-    } else if (sandboxIdentifier) {
-      const defaultIdentifier = resolveSandboxIdentifier(
-        ["sandbox"],
-        asSharedInfraRuntime(runtime),
+    if (!sandboxIdentifier) {
+      throw new Error(
+        "Sandbox opponent forecast deployment requires a resolved identifier.",
       );
-      if (sandboxIdentifier !== defaultIdentifier) {
-        args.push("--identifier", sandboxIdentifier);
-      }
     }
+    args.push("--identifier", sandboxIdentifier);
   }
 
   const releaseId = normalizeOptionalString(options.releaseId);
@@ -1185,10 +1186,7 @@ function buildOpponentForecastReleaseArgs(
   if (!options.usePin) {
     const command =
       stage === "sandbox"
-        ? buildSandboxOpponentForecastNpmCommand(
-            buildSandboxArgsFromIdentifier(sandboxIdentifier),
-            false,
-          )
+        ? buildSandboxOpponentForecastNpmCommand(sandboxIdentifier, false)
         : buildDevOpponentForecastNpmCommand(false);
     throw new Error(
       `Opponent forecast deployment requires --release-id and --dataset-root, or --use-pin. From ${projectRoot} run: ${command}`,
@@ -1344,21 +1342,14 @@ function buildSandboxArgsFromIdentifier(identifier: string | null): string[] {
 }
 
 function buildSandboxPredictorNpmCommand(
-  sandboxArgs: string[],
+  sandboxIdentifier: string,
   usePin: boolean,
 ): string {
-  const commandParts = ["npm run sandbox:predictor --"];
-  const explicitArgs = buildSandboxPredictorReleaseCommand(["sandbox", ...sandboxArgs]);
-  const sandboxIdentifier = normalizeOptionalString(explicitArgs.sandboxIdentifier);
-  if (
-    sandboxIdentifier &&
-    sandboxArgs.some(
-      (argument) =>
-        argument === "--identifier" || argument.startsWith("--identifier="),
-    )
-  ) {
-    commandParts.push("--identifier", sandboxIdentifier);
-  }
+  const commandParts = [
+    "npm run sandbox:predictor --",
+    "--identifier",
+    sandboxIdentifier,
+  ];
   if (usePin) {
     commandParts.push("--use-pin");
   } else {
@@ -1380,21 +1371,14 @@ function buildDevPredictorNpmCommand(usePin: boolean): string {
 }
 
 function buildSandboxOpponentForecastNpmCommand(
-  sandboxArgs: string[],
+  sandboxIdentifier: string,
   usePin: boolean,
 ): string {
-  const commandParts = ["npm run sandbox:opponent-forecast --"];
-  const explicitArgs = buildSandboxPredictorReleaseCommand(["sandbox", ...sandboxArgs]);
-  const sandboxIdentifier = normalizeOptionalString(explicitArgs.sandboxIdentifier);
-  if (
-    sandboxIdentifier &&
-    sandboxArgs.some(
-      (argument) =>
-        argument === "--identifier" || argument.startsWith("--identifier="),
-    )
-  ) {
-    commandParts.push("--identifier", sandboxIdentifier);
-  }
+  const commandParts = [
+    "npm run sandbox:opponent-forecast --",
+    "--identifier",
+    sandboxIdentifier,
+  ];
   if (usePin) {
     commandParts.push("--use-pin");
   } else {
@@ -1421,15 +1405,36 @@ function buildSandboxOpponentForecastCommandForEnvironment(
 ): string {
   const identifier = environmentName.startsWith("sandbox-")
     ? environmentName.slice("sandbox-".length)
-    : null;
-  return buildSandboxOpponentForecastNpmCommand(
-    buildSandboxArgsFromIdentifier(identifier),
-    usePin,
-  );
+    : "";
+  return buildSandboxOpponentForecastNpmCommand(identifier, usePin);
+}
+
+function withResolvedSandboxIdentifier(
+  sandboxArgs: string[],
+  sandboxIdentifier: string,
+): string[] {
+  return [...buildSandboxArgsFromIdentifier(sandboxIdentifier), ...removeIdentifierArgs(sandboxArgs)];
 }
 
 function removeFlag(argv: string[], flagName: string): string[] {
   return argv.filter((argument) => argument !== flagName);
+}
+
+function removeIdentifierArgs(argv: string[]): string[] {
+  const nextArgs: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--identifier") {
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--identifier=")) {
+      continue;
+    }
+    nextArgs.push(argument);
+  }
+
+  return nextArgs;
 }
 
 function resolveRegion(env: NodeJS.ProcessEnv): string {
@@ -1475,6 +1480,23 @@ function resolveNpxCommand(): string {
 
 function resolveNpmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function buildDockerCliEnv(
+  runtime: Pick<WorkflowRuntime, "env" | "fileExists" | "mkdirp" | "writeFile">,
+  extraEnv: Record<string, string> = {},
+): NodeJS.ProcessEnv {
+  runtime.mkdirp(dockerConfigRoot);
+  const dockerConfigPath = join(dockerConfigRoot, "config.json");
+  if (!runtime.fileExists(dockerConfigPath)) {
+    runtime.writeFile(dockerConfigPath, '{"auths": {}}\n');
+  }
+
+  return {
+    ...runtime.env,
+    DOCKER_CONFIG: dockerConfigRoot,
+    ...extraEnv,
+  };
 }
 
 function createDefaultRuntime(): WorkflowRuntime {

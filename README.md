@@ -301,7 +301,7 @@ Use `npm run billing:override -- --help` for the full CLI options.
 - Hosted deploy order is shared ML data infra, then predictor endpoint, then the Amplify branch rebuild.
 - Deploy or update the predictor with `./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>` before testing hosted `dev` predictions.
 - Promote with `./scripts/matchup-predictor-release prod --release-id <release-id>` only after the same release passes in `dev`.
-- The intended SageMaker serverless split is `sandbox=2`, `dev=3`, `prod=5`; an oversized sandbox endpoint can block hosted releases even when `dev` and `prod` are otherwise ready.
+- The intended SageMaker serverless split is `sandbox=1`, `dev=3`, `prod=5`; an oversized sandbox endpoint can block hosted releases even when `dev` and `prod` are otherwise ready.
 - The opponent forecast endpoint binding is currently optional.
   When `/buzzerbeater/ml-data-infra/<env>/opponent-forecast-endpoint-name` is absent, hosted builds still proceed but opponent forecast jobs stay unwired until that endpoint is deployed and published.
 - The workspace sync path stores encrypted BB credentials server-side and refreshes cached data only on initial connect plus explicit manual refresh.

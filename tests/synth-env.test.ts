@@ -26,6 +26,18 @@ test("shared synth env resolves the environment name from explicit override, bra
   assert.equal(
     resolveSharedEnvironmentName(
       {
+        BB_SANDBOX_IDENTIFIER: "Karey Local",
+      },
+      {
+        userName: () => "ignored",
+      },
+    ),
+    "sandbox-karey-local",
+  );
+
+  assert.equal(
+    resolveSharedEnvironmentName(
+      {
         AWS_BRANCH: "main",
       },
       {

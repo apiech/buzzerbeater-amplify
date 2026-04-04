@@ -132,7 +132,7 @@ test("sandbox doctor reports missing predictor infrastructure with the wrapper r
   assert.equal(predictorCheck.status, "fail");
   assert.match(
     predictorCheck.remediation,
-    /npm run sandbox:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>/,
+    /npm run sandbox:predictor -- --identifier karey --release-id <release-id> --artifact-prefix <absolute-artifact-stem>/,
   );
 
   const pinCheck = report.checks.find((check) => check.label === "Predictor pin");
@@ -169,8 +169,8 @@ test("sandbox up runs deploy verification, secret sync, ML data infra, pinned pr
       fileExists(path) {
         return (
           path === predictorTargetsPath ||
-          path === `${artifactPrefix}_model.pkl` ||
-          path === `${artifactPrefix}_config.pkl`
+          path === `${artifactPrefix}_model.ubj` ||
+          path === `${artifactPrefix}_config.json`
         );
       },
       readFile(path) {
@@ -179,10 +179,12 @@ test("sandbox up runs deploy verification, secret sync, ML data infra, pinned pr
         }
 
         return JSON.stringify({
-          sandbox: {
-            artifactPrefix,
-            releaseId: "ratings-universal-xgb-2026-03-19",
-            updatedAt: "2026-03-19T12:00:00.000Z",
+          sandboxes: {
+            karey: {
+              artifactPrefix,
+              releaseId: "ratings-universal-xgb-2026-03-19",
+              updatedAt: "2026-03-19T12:00:00.000Z",
+            },
           },
         });
       },
@@ -242,13 +244,30 @@ test("sandbox up runs deploy verification, secret sync, ML data infra, pinned pr
   ]);
   assert.equal(calls[2].command, "npm");
   assert.match(calls[2].args.join(" "), /deploy:ml-data-infra/);
+  const sandboxDataEnv = calls[2].options?.env as Record<string, string> | undefined;
+  assert.match(
+    sandboxDataEnv?.DOCKER_CONFIG ?? "",
+    /bb-machine-learning\/dist\/.docker-cli$/,
+  );
   assert.equal(calls[3].command, "./scripts/matchup-predictor-release");
-  assert.deepEqual(calls[3].args, ["sandbox", "--use-pin", "sandbox"]);
+  assert.deepEqual(calls[3].args, [
+    "sandbox",
+    "--identifier",
+    "karey",
+    "--use-pin",
+    "sandbox",
+  ]);
   assert.equal(calls[4].command, process.execPath);
+  assert.deepEqual(calls[4].args.slice(1), ["sandbox", "--identifier", "karey"]);
   const sandboxEnv = calls[4].options?.env as Record<string, string> | undefined;
   assert.equal(
     sandboxEnv?.BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP,
     "1",
+  );
+  assert.equal(sandboxEnv?.BB_SHARED_ENVIRONMENT_NAME, "sandbox-karey");
+  assert.match(
+    sandboxEnv?.DOCKER_CONFIG ?? "",
+    /bb-machine-learning\/dist\/.docker-cli$/,
   );
 });
 
@@ -328,7 +347,12 @@ test("sandbox up forwards raw sandbox flags to the underlying sandbox process", 
   assert.equal(calls.length, 4);
   assert.equal(calls[0].command, "npm");
   assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
-  assert.deepEqual(calls[3]?.args.slice(-2), ["sandbox", "--once"]);
+  assert.deepEqual(calls[3]?.args.slice(1), [
+    "sandbox",
+    "--identifier",
+    "karey",
+    "--once",
+  ]);
 });
 
 test("sandbox up stops before side effects when deploy verification fails", () => {
@@ -448,6 +472,11 @@ test("dev prepare runs deploy verification before shared infra deploy side effec
   assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
   assert.equal(calls[1].command, "npx");
   assert.match(calls[1].args.join(" "), /deploy:ml-data-infra/);
+  const devDataEnv = calls[1].options?.env as Record<string, string> | undefined;
+  assert.match(
+    devDataEnv?.DOCKER_CONFIG ?? "",
+    /bb-machine-learning\/dist\/.docker-cli$/,
+  );
 });
 
 test("sandbox opponent forecast deploy shells out through the workspace release wrapper", () => {
@@ -481,6 +510,8 @@ test("sandbox opponent forecast deploy shells out through the workspace release 
   assert.equal(calls[0].command, "./scripts/opponent-forecast-release");
   assert.deepEqual(calls[0].args, [
     "sandbox",
+    "--identifier",
+    "karey",
     "--release-id",
     "opponent-forecast-v1-2026-03-19",
     "--dataset-root",

@@ -6,6 +6,7 @@ import {
   bootstrapSandboxSharedInfra,
   buildSandboxPredictorReleaseCommand,
   createSharedInfraBootstrapCommand,
+  ensureResolvedSandboxIdentifierArgv,
   resolveSandboxEnvironmentName,
   resolveSandboxIdentifier,
   shouldBootstrapSandboxSharedInfra,
@@ -36,6 +37,15 @@ test("sandbox bootstrap resolves identifiers and environment names deterministic
   assert.equal(
     resolveSandboxEnvironmentName(["sandbox", "--identifier", "Karey Local"]),
     "sandbox-karey-local",
+  );
+  assert.equal(
+    resolveSandboxIdentifier(["sandbox"], {
+      env: {
+        BB_SANDBOX_IDENTIFIER: "Karey Env",
+      },
+      userName: () => "ignored",
+    }),
+    "karey-env",
   );
   assert.equal(
     resolveSandboxIdentifier(["sandbox"], {
@@ -112,7 +122,7 @@ test("sandbox predictor release command defaults the identifier from the current
   assert.equal(releaseCommand.sandboxIdentifier, "karey");
   assert.equal(
     releaseCommand.command,
-    "./scripts/matchup-predictor-release sandbox --release-id <release-id> --artifact-prefix <absolute-artifact-stem>",
+    "./scripts/matchup-predictor-release sandbox --identifier karey --release-id <release-id> --artifact-prefix <absolute-artifact-stem>",
   );
 });
 
@@ -132,6 +142,23 @@ test("sandbox predictor release command preserves an explicit identifier overrid
   );
 });
 
+test("sandbox argv normalization always forwards one explicit resolved identifier", () => {
+  assert.deepEqual(
+    ensureResolvedSandboxIdentifierArgv(["sandbox", "--once"], {
+      env: {
+        BB_SANDBOX_IDENTIFIER: "Karey Env",
+      },
+      userName: () => "ignored",
+    }),
+    ["sandbox", "--once", "--identifier", "karey-env"],
+  );
+
+  assert.deepEqual(
+    ensureResolvedSandboxIdentifierArgv(["sandbox", "--identifier", "Karey Local"]),
+    ["sandbox", "--identifier", "karey-local"],
+  );
+});
+
 test("sandbox predictor readiness fails with an exact remediation command when the SSM contract is missing", () => {
   assert.throws(
     () =>
@@ -142,7 +169,7 @@ test("sandbox predictor readiness fails with an exact remediation command when t
         }),
         userName: () => "karey",
       }),
-    /From .* run: \.\/scripts\/matchup-predictor-release sandbox --release-id <release-id> --artifact-prefix <absolute-artifact-stem>/,
+    /From .* run: \.\/scripts\/matchup-predictor-release sandbox --identifier karey --release-id <release-id> --artifact-prefix <absolute-artifact-stem>/,
   );
 });
 

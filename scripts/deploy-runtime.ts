@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { loadProjectEnvFiles, normalizeOptionalString } from "./project-env.mjs";
+import { normalizeSandboxIdentifier } from "./shared-infra-bootstrap.mjs";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 
@@ -34,10 +35,26 @@ export type PredictorTargetPin = {
   updatedAt: string;
 };
 
+export type PredictorTargetPinsFile = {
+  dev?: PredictorTargetPin;
+  sandbox?: PredictorTargetPin;
+  sandboxes?: Record<string, PredictorTargetPin>;
+};
+
 export type OpponentForecastTargetPin = {
   datasetRoot: string;
   releaseId: string;
   updatedAt: string;
+};
+
+export type OpponentForecastTargetPinsFile = {
+  dev?: OpponentForecastTargetPin;
+  sandbox?: OpponentForecastTargetPin;
+  sandboxes?: Record<string, OpponentForecastTargetPin>;
+};
+
+type SandboxTargetPinOptions = {
+  sandboxIdentifier?: string | null;
 };
 
 type EnvProcessLike = {
@@ -169,7 +186,7 @@ export function createOpponentForecastTargetPin(
 export function readPredictorTargetPins(
   filePath: string = resolvePredictorTargetsFilePath(),
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
-): Partial<Record<PredictorTargetName, PredictorTargetPin>> {
+): PredictorTargetPinsFile {
   if (!runtime.fileExists(filePath)) {
     return {};
   }
@@ -189,7 +206,7 @@ export function readPredictorTargetPins(
     throw new Error(`Predictor target pin file must contain an object: ${filePath}.`);
   }
 
-  return parsed as Partial<Record<PredictorTargetName, PredictorTargetPin>>;
+  return parsed as PredictorTargetPinsFile;
 }
 
 export function writePredictorTargetPin(
@@ -200,12 +217,25 @@ export function writePredictorTargetPin(
     PinRuntime,
     "fileExists" | "mkdirp" | "readFile" | "writeFile"
   > = createDefaultPinRuntime(),
-): Partial<Record<PredictorTargetName, PredictorTargetPin>> {
+  options: SandboxTargetPinOptions = {},
+): PredictorTargetPinsFile {
   const currentPins = readPredictorTargetPins(filePath, runtime);
-  const nextPins = {
-    ...currentPins,
-    [targetName]: pin,
-  };
+  const nextPins =
+    targetName === "sandbox"
+      ? {
+          ...currentPins,
+          sandboxes: {
+            ...readSandboxScopedPins(currentPins.sandboxes),
+            [resolveRequiredSandboxPinIdentifier(options)]: pin,
+          },
+        }
+      : {
+          ...currentPins,
+          [targetName]: pin,
+        };
+  if (targetName === "sandbox" && "sandbox" in nextPins) {
+    delete nextPins.sandbox;
+  }
   runtime.mkdirp(dirname(filePath));
   runtime.writeFile(filePath, `${JSON.stringify(nextPins, null, 2)}\n`);
   return nextPins;
@@ -214,7 +244,7 @@ export function writePredictorTargetPin(
 export function readOpponentForecastTargetPins(
   filePath: string = resolveOpponentForecastTargetsFilePath(),
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
-): Partial<Record<OpponentForecastTargetName, OpponentForecastTargetPin>> {
+): OpponentForecastTargetPinsFile {
   if (!runtime.fileExists(filePath)) {
     return {};
   }
@@ -236,9 +266,7 @@ export function readOpponentForecastTargetPins(
     );
   }
 
-  return parsed as Partial<
-    Record<OpponentForecastTargetName, OpponentForecastTargetPin>
-  >;
+  return parsed as OpponentForecastTargetPinsFile;
 }
 
 export function writeOpponentForecastTargetPin(
@@ -249,12 +277,25 @@ export function writeOpponentForecastTargetPin(
     PinRuntime,
     "fileExists" | "mkdirp" | "readFile" | "writeFile"
   > = createDefaultPinRuntime(),
-): Partial<Record<OpponentForecastTargetName, OpponentForecastTargetPin>> {
+  options: SandboxTargetPinOptions = {},
+): OpponentForecastTargetPinsFile {
   const currentPins = readOpponentForecastTargetPins(filePath, runtime);
-  const nextPins = {
-    ...currentPins,
-    [targetName]: pin,
-  };
+  const nextPins =
+    targetName === "sandbox"
+      ? {
+          ...currentPins,
+          sandboxes: {
+            ...readSandboxScopedPins(currentPins.sandboxes),
+            [resolveRequiredSandboxPinIdentifier(options)]: pin,
+          },
+        }
+      : {
+          ...currentPins,
+          [targetName]: pin,
+        };
+  if (targetName === "sandbox" && "sandbox" in nextPins) {
+    delete nextPins.sandbox;
+  }
   runtime.mkdirp(dirname(filePath));
   runtime.writeFile(filePath, `${JSON.stringify(nextPins, null, 2)}\n`);
   return nextPins;
@@ -264,6 +305,7 @@ export function inspectPredictorTargetPin(
   targetName: PredictorTargetName,
   filePath: string = resolvePredictorTargetsFilePath(),
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
+  options: SandboxTargetPinOptions = {},
 ): PredictorTargetInspection {
   if (!runtime.fileExists(filePath)) {
     return {
@@ -272,7 +314,7 @@ export function inspectPredictorTargetPin(
     };
   }
 
-  let pins: Partial<Record<PredictorTargetName, PredictorTargetPin>>;
+  let pins: PredictorTargetPinsFile;
   try {
     pins = readPredictorTargetPins(filePath, runtime);
   } catch (error) {
@@ -282,10 +324,14 @@ export function inspectPredictorTargetPin(
     };
   }
 
-  const pin = pins[targetName];
+  const targetLabel = formatPinnedTargetName(targetName, options);
+  const pin =
+    targetName === "sandbox"
+      ? resolveSandboxScopedPinEntry(pins.sandboxes, pins.sandbox, options)
+      : pins[targetName];
   if (!pin) {
     return {
-      message: `Predictor pin '${targetName}' is not defined in ${filePath}.`,
+      message: `Predictor pin '${targetLabel}' is not defined in ${filePath}.`,
       status: "missing",
     };
   }
@@ -293,7 +339,7 @@ export function inspectPredictorTargetPin(
   const releaseId = normalizeOptionalString(pin.releaseId);
   if (!releaseId) {
     return {
-      message: `Predictor pin '${targetName}' is missing releaseId.`,
+      message: `Predictor pin '${targetLabel}' is missing releaseId.`,
       status: "invalid",
     };
   }
@@ -301,14 +347,14 @@ export function inspectPredictorTargetPin(
   const artifactPrefix = normalizeOptionalString(pin.artifactPrefix);
   if (!artifactPrefix) {
     return {
-      message: `Predictor pin '${targetName}' is missing artifactPrefix.`,
+      message: `Predictor pin '${targetLabel}' is missing artifactPrefix.`,
       status: "invalid",
     };
   }
 
   if (!isAbsolute(artifactPrefix)) {
     return {
-      message: `Predictor pin '${targetName}' must use an absolute artifactPrefix: ${artifactPrefix}`,
+      message: `Predictor pin '${targetLabel}' must use an absolute artifactPrefix: ${artifactPrefix}`,
       status: "invalid",
     };
   }
@@ -316,22 +362,22 @@ export function inspectPredictorTargetPin(
   const updatedAt = normalizeOptionalString(pin.updatedAt);
   if (!updatedAt) {
     return {
-      message: `Predictor pin '${targetName}' is missing updatedAt.`,
+      message: `Predictor pin '${targetLabel}' is missing updatedAt.`,
       status: "invalid",
     };
   }
 
-  const modelPath = `${artifactPrefix}_model.pkl`;
-  const configPath = `${artifactPrefix}_config.pkl`;
+  const modelPath = `${artifactPrefix}_model.ubj`;
+  const configPath = `${artifactPrefix}_config.json`;
   if (!runtime.fileExists(modelPath)) {
     return {
-      message: `Predictor pin '${targetName}' points to a missing model file: ${modelPath}`,
+      message: `Predictor pin '${targetLabel}' points to a missing model file: ${modelPath}`,
       status: "invalid",
     };
   }
   if (!runtime.fileExists(configPath)) {
     return {
-      message: `Predictor pin '${targetName}' points to a missing config file: ${configPath}`,
+      message: `Predictor pin '${targetLabel}' points to a missing config file: ${configPath}`,
       status: "invalid",
     };
   }
@@ -352,8 +398,9 @@ export function resolvePredictorTargetPin(
   targetName: PredictorTargetName,
   filePath: string = resolvePredictorTargetsFilePath(),
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
+  options: SandboxTargetPinOptions = {},
 ): PredictorTargetPin {
-  const inspection = inspectPredictorTargetPin(targetName, filePath, runtime);
+  const inspection = inspectPredictorTargetPin(targetName, filePath, runtime, options);
   if (inspection.status !== "ready") {
     throw new Error(inspection.message);
   }
@@ -365,6 +412,7 @@ export function inspectOpponentForecastTargetPin(
   targetName: OpponentForecastTargetName,
   filePath: string = resolveOpponentForecastTargetsFilePath(),
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
+  options: SandboxTargetPinOptions = {},
 ): OpponentForecastTargetInspection {
   if (!runtime.fileExists(filePath)) {
     return {
@@ -373,7 +421,7 @@ export function inspectOpponentForecastTargetPin(
     };
   }
 
-  let pins: Partial<Record<OpponentForecastTargetName, OpponentForecastTargetPin>>;
+  let pins: OpponentForecastTargetPinsFile;
   try {
     pins = readOpponentForecastTargetPins(filePath, runtime);
   } catch (error) {
@@ -383,10 +431,14 @@ export function inspectOpponentForecastTargetPin(
     };
   }
 
-  const pin = pins[targetName];
+  const targetLabel = formatPinnedTargetName(targetName, options);
+  const pin =
+    targetName === "sandbox"
+      ? resolveSandboxScopedPinEntry(pins.sandboxes, pins.sandbox, options)
+      : pins[targetName];
   if (!pin) {
     return {
-      message: `Opponent forecast pin '${targetName}' is not defined in ${filePath}.`,
+      message: `Opponent forecast pin '${targetLabel}' is not defined in ${filePath}.`,
       status: "missing",
     };
   }
@@ -394,7 +446,7 @@ export function inspectOpponentForecastTargetPin(
   const releaseId = normalizeOptionalString(pin.releaseId);
   if (!releaseId) {
     return {
-      message: `Opponent forecast pin '${targetName}' is missing releaseId.`,
+      message: `Opponent forecast pin '${targetLabel}' is missing releaseId.`,
       status: "invalid",
     };
   }
@@ -402,21 +454,21 @@ export function inspectOpponentForecastTargetPin(
   const datasetRoot = normalizeOptionalString(pin.datasetRoot);
   if (!datasetRoot) {
     return {
-      message: `Opponent forecast pin '${targetName}' is missing datasetRoot.`,
+      message: `Opponent forecast pin '${targetLabel}' is missing datasetRoot.`,
       status: "invalid",
     };
   }
 
   if (!isAbsolute(datasetRoot)) {
     return {
-      message: `Opponent forecast pin '${targetName}' must use an absolute datasetRoot: ${datasetRoot}`,
+      message: `Opponent forecast pin '${targetLabel}' must use an absolute datasetRoot: ${datasetRoot}`,
       status: "invalid",
     };
   }
 
   if (!runtime.fileExists(datasetRoot)) {
     return {
-      message: `Opponent forecast pin '${targetName}' points to a missing dataset root: ${datasetRoot}`,
+      message: `Opponent forecast pin '${targetLabel}' points to a missing dataset root: ${datasetRoot}`,
       status: "invalid",
     };
   }
@@ -424,7 +476,7 @@ export function inspectOpponentForecastTargetPin(
   const updatedAt = normalizeOptionalString(pin.updatedAt);
   if (!updatedAt) {
     return {
-      message: `Opponent forecast pin '${targetName}' is missing updatedAt.`,
+      message: `Opponent forecast pin '${targetLabel}' is missing updatedAt.`,
       status: "invalid",
     };
   }
@@ -433,13 +485,13 @@ export function inspectOpponentForecastTargetPin(
   const labelsPath = join(datasetRoot, "team_match_labels.parquet");
   if (!runtime.fileExists(prestatePath)) {
     return {
-      message: `Opponent forecast pin '${targetName}' points to a missing prestate file: ${prestatePath}`,
+      message: `Opponent forecast pin '${targetLabel}' points to a missing prestate file: ${prestatePath}`,
       status: "invalid",
     };
   }
   if (!runtime.fileExists(labelsPath)) {
     return {
-      message: `Opponent forecast pin '${targetName}' points to a missing labels file: ${labelsPath}`,
+      message: `Opponent forecast pin '${targetLabel}' points to a missing labels file: ${labelsPath}`,
       status: "invalid",
     };
   }
@@ -460,8 +512,14 @@ export function resolveOpponentForecastTargetPin(
   targetName: OpponentForecastTargetName,
   filePath: string = resolveOpponentForecastTargetsFilePath(),
   runtime: Pick<PinRuntime, "fileExists" | "readFile"> = createDefaultPinRuntime(),
+  options: SandboxTargetPinOptions = {},
 ): OpponentForecastTargetPin {
-  const inspection = inspectOpponentForecastTargetPin(targetName, filePath, runtime);
+  const inspection = inspectOpponentForecastTargetPin(
+    targetName,
+    filePath,
+    runtime,
+    options,
+  );
   if (inspection.status !== "ready") {
     throw new Error(inspection.message);
   }
@@ -473,6 +531,60 @@ export function defaultSandboxUserName(
   runtime: Pick<PinRuntime, "userName"> = createDefaultPinRuntime(),
 ): string {
   return normalizeOptionalString(runtime.userName()) ?? "local";
+}
+
+function resolveSandboxScopedPinEntry<T>(
+  scopedPins: unknown,
+  legacyPin: T | undefined,
+  options: SandboxTargetPinOptions,
+): T | undefined {
+  const sandboxIdentifier = normalizeSandboxPinIdentifier(options);
+  if (sandboxIdentifier) {
+    const matchingPin = readSandboxScopedPins<T>(scopedPins)[sandboxIdentifier];
+    if (matchingPin) {
+      return matchingPin;
+    }
+  }
+
+  return legacyPin;
+}
+
+function readSandboxScopedPins<T>(value: unknown): Record<string, T> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, T>;
+}
+
+function resolveRequiredSandboxPinIdentifier(
+  options: SandboxTargetPinOptions,
+): string {
+  const sandboxIdentifier = normalizeSandboxPinIdentifier(options);
+  if (!sandboxIdentifier) {
+    throw new Error("Sandbox target pin writes require sandboxIdentifier.");
+  }
+
+  return sandboxIdentifier;
+}
+
+function formatPinnedTargetName(
+  targetName: PredictorTargetName | OpponentForecastTargetName,
+  options: SandboxTargetPinOptions,
+): string {
+  if (targetName !== "sandbox") {
+    return targetName;
+  }
+
+  const sandboxIdentifier = normalizeSandboxPinIdentifier(options);
+  return sandboxIdentifier ? `sandbox:${sandboxIdentifier}` : "sandbox";
+}
+
+function normalizeSandboxPinIdentifier(
+  options: SandboxTargetPinOptions,
+): string | null {
+  const sandboxIdentifier = normalizeOptionalString(options.sandboxIdentifier);
+  return sandboxIdentifier ? normalizeSandboxIdentifier(sandboxIdentifier) : null;
 }
 
 function createDefaultPinRuntime(): PinRuntime {

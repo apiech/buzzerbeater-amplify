@@ -12,6 +12,7 @@ const sharedInfraRoot = join(workspaceRoot, "bb-shared-infra");
 const sandboxManagementSubcommands = new Set(["delete", "secret", "seed"]);
 const predictorEndpointParameterLeafName = "prediction-endpoint-name";
 const defaultAwsRegion = "us-east-1";
+export const sandboxIdentifierEnvName = "BB_SANDBOX_IDENTIFIER";
 export const skipSandboxSharedInfraBootstrapEnvName =
   "BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP";
 
@@ -50,14 +51,16 @@ export function resolveSandboxIdentifier(
   argv,
   runtime = createDefaultRuntime(),
 ) {
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === "--identifier") {
-      return normalizeSandboxIdentifier(argv[index + 1]);
-    }
-    if (argument?.startsWith("--identifier=")) {
-      return normalizeSandboxIdentifier(argument.slice("--identifier=".length));
-    }
+  const explicitIdentifier = resolveExplicitSandboxIdentifier(argv);
+  if (explicitIdentifier) {
+    return explicitIdentifier;
+  }
+
+  const configuredIdentifier = normalizeOptionalString(
+    runtime.env?.[sandboxIdentifierEnvName],
+  );
+  if (configuredIdentifier) {
+    return normalizeSandboxIdentifier(configuredIdentifier);
   }
 
   return normalizeSandboxIdentifier(runtime.userName());
@@ -97,10 +100,12 @@ export function buildSandboxPredictorReleaseCommand(
   runtime = createDefaultRuntime(),
 ) {
   const sandboxIdentifier = resolveSandboxIdentifier(argv, runtime);
-  const commandParts = ["./scripts/matchup-predictor-release", "sandbox"];
-  if (hasExplicitSandboxIdentifier(argv)) {
-    commandParts.push("--identifier", sandboxIdentifier);
-  }
+  const commandParts = [
+    "./scripts/matchup-predictor-release",
+    "sandbox",
+    "--identifier",
+    sandboxIdentifier,
+  ];
   commandParts.push(
     "--release-id",
     "<release-id>",
@@ -209,6 +214,40 @@ export function assertSandboxPredictorReady(
   };
 }
 
+export function ensureResolvedSandboxIdentifierArgv(
+  argv,
+  runtime = createDefaultRuntime(),
+) {
+  if (argv[0] !== "sandbox") {
+    return [...argv];
+  }
+
+  if (argv.includes("--help") || argv.includes("-h")) {
+    return [...argv];
+  }
+
+  if (argv.includes("--version") || argv.includes("-v")) {
+    return [...argv];
+  }
+
+  const sandboxIdentifier = resolveSandboxIdentifier(argv, runtime);
+  const nextArgv = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--identifier") {
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--identifier=")) {
+      continue;
+    }
+    nextArgv.push(argument);
+  }
+
+  nextArgv.push("--identifier", sandboxIdentifier);
+  return nextArgv;
+}
+
 export function bootstrapSandboxSharedInfra(
   argv,
   runtime = createDefaultRuntime(),
@@ -290,12 +329,18 @@ function buildPredictorEndpointParameterPath(environmentName) {
   return `/buzzerbeater/ml-data-infra/${environmentName}/${predictorEndpointParameterLeafName}`;
 }
 
-function hasExplicitSandboxIdentifier(argv) {
-  return argv.some(
-    (argument) =>
-      argument === "--identifier" ||
-      argument?.startsWith("--identifier="),
-  );
+function resolveExplicitSandboxIdentifier(argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--identifier") {
+      return normalizeSandboxIdentifier(argv[index + 1]);
+    }
+    if (argument?.startsWith("--identifier=")) {
+      return normalizeSandboxIdentifier(argument.slice("--identifier=".length));
+    }
+  }
+
+  return null;
 }
 
 function normalizeOptionalString(value) {

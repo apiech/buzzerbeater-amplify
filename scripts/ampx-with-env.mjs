@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, watch } from "node:fs";
+import { existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import process from "node:process";
@@ -18,13 +18,21 @@ import {
 import {
   assertSandboxPredictorReady,
   bootstrapSandboxSharedInfra,
+  ensureResolvedSandboxIdentifierArgv,
   resolveSandboxEnvironmentName,
   shouldBootstrapSandboxSharedInfra,
 } from "./shared-infra-bootstrap.mjs";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(currentDir, "..");
+const workspaceRoot = join(projectRoot, "..");
 const amplifyOutputsFile = join(projectRoot, "amplify_outputs.json");
+const dockerConfigRoot = join(
+  workspaceRoot,
+  "bb-machine-learning",
+  "dist",
+  ".docker-cli",
+);
 const billingNestedStackPath =
   "billing-integration.NestedStack/billing-integration.NestedStackResource";
 const billingWebhookOutputKey = "BillingWebhookUrl";
@@ -288,20 +296,19 @@ export async function resolveBillingWebhookUrl(
 export async function main(argv = process.argv.slice(2)) {
   loadLocalEnv();
 
-  const sharedInfraBootstrap = bootstrapSandboxSharedInfra(argv);
-  assertSandboxPredictorReady(argv);
-  const sandboxArgv = applySandboxDefaults(argv);
+  const explicitSandboxArgv = ensureResolvedSandboxIdentifierArgv(argv);
+  const sharedInfraBootstrap = bootstrapSandboxSharedInfra(explicitSandboxArgv);
+  assertSandboxPredictorReady(explicitSandboxArgv);
+  const sandboxArgv = applySandboxDefaults(explicitSandboxArgv);
   const command = process.platform === "win32" ? "npx.cmd" : "npx";
-  const childEnv = {
-    ...process.env,
-  };
+  const childEnv = buildDockerCliEnv();
   if (sharedInfraBootstrap) {
     childEnv.BB_SHARED_ENVIRONMENT_NAME = sharedInfraBootstrap.environmentName;
-  } else if (shouldBootstrapSandboxSharedInfra(argv)) {
+  } else if (shouldBootstrapSandboxSharedInfra(explicitSandboxArgv)) {
     // Keep the sandbox environment identity stable even when infra already exists.
     childEnv.BB_SHARED_ENVIRONMENT_NAME =
       childEnv.BB_SHARED_ENVIRONMENT_NAME ??
-      resolveSandboxEnvironmentName(argv);
+      resolveSandboxEnvironmentName(explicitSandboxArgv);
   }
   const child = spawn(command, ["ampx", ...sandboxArgv], {
     cwd: projectRoot,
@@ -309,7 +316,7 @@ export async function main(argv = process.argv.slice(2)) {
     stdio: "inherit",
   });
 
-  const shouldWatch = shouldWatchSandboxOutputs(argv);
+  const shouldWatch = shouldWatchSandboxOutputs(explicitSandboxArgv);
   const reporter = shouldWatch
     ? createWebhookUrlReporter({
         lookupWebhookUrl: () => resolveBillingWebhookUrl(projectRoot),
@@ -362,6 +369,19 @@ async function finalizeSandboxProcess({ code, reporter, signal, watcher }) {
 
 function loadLocalEnv() {
   loadProjectEnvFiles(projectRoot);
+}
+
+function buildDockerCliEnv() {
+  mkdirSync(dockerConfigRoot, { recursive: true });
+  const configPath = join(dockerConfigRoot, "config.json");
+  if (!existsSync(configPath)) {
+    writeFileSync(configPath, '{"auths": {}}\n', "utf8");
+  }
+
+  return {
+    ...process.env,
+    DOCKER_CONFIG: dockerConfigRoot,
+  };
 }
 
 function defaultWatchDirectory(pathToWatch, listener) {

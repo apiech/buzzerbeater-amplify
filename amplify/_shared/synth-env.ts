@@ -16,6 +16,10 @@ import {
   normalizeEnvironmentName,
   type SharedInfraBindings,
 } from "./shared-infra-contract.js";
+import {
+  normalizeSandboxIdentifier,
+  sandboxIdentifierEnvName,
+} from "../../scripts/shared-infra-bootstrap.mjs";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const amplifyRoot = join(currentDir, "..", "..");
@@ -207,7 +211,16 @@ export function resolveSharedEnvironmentName(
     return branchToEnvironmentName(branchName);
   }
 
-  return normalizeEnvironmentName(`sandbox-${runtime.userName()}`);
+  const sandboxIdentifier = normalizeOptionalString(env[sandboxIdentifierEnvName]);
+  if (sandboxIdentifier) {
+    return normalizeEnvironmentName(
+      `sandbox-${normalizeSandboxIdentifier(sandboxIdentifier)}`,
+    );
+  }
+
+  return normalizeEnvironmentName(
+    `sandbox-${normalizeSandboxIdentifier(runtime.userName())}`,
+  );
 }
 
 export function resolveSharedInfraBindings(
