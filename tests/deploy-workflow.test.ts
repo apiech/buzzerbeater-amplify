@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { projectRoot, workspaceRoot } from "../scripts/deploy-runtime.ts";
 import { __testing as workflowTesting } from "../scripts/deploy-workflow.ts";
 
 test("sandbox secret sync sets the secret when it is missing", () => {
@@ -148,9 +149,9 @@ test("sandbox up runs deploy verification, secret sync, ML data infra, pinned pr
     options?: Record<string, unknown>;
   }> = [];
   const predictorTargetsPath =
-    "/Users/karey/projects/bb/bb-machine-learning/dist/matchup-predictor/targets.local.json";
+    `${workspaceRoot}/bb-machine-learning/dist/matchup-predictor/targets.local.json`;
   const artifactPrefix =
-    "/Users/karey/projects/bb/bb-machine-learning/dist/matchup-predictor/ratings_universal_xgb_all";
+    `${workspaceRoot}/bb-machine-learning/dist/matchup-predictor/ratings_universal_xgb_all`;
 
   const exitCode = workflowTesting.runSandboxUp(
     [],
@@ -395,7 +396,7 @@ test("sandbox up stops before side effects when deploy verification fails", () =
       command: "npm",
       args: ["run", "verify:deploy"],
       options: {
-        cwd: "/Users/karey/projects/bb/bb-amplify",
+        cwd: projectRoot,
         env: {
           BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
         },

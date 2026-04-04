@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import process from "node:process";
 import { cookies } from "next/headers";
 import { createServerRunner } from "@aws-amplify/adapter-nextjs";
 import { generateServerClientUsingCookies } from "@aws-amplify/adapter-nextjs/data";
@@ -7,8 +10,31 @@ import {
 } from "aws-amplify/auth/server";
 
 import type { Schema } from "@/amplify/data/resource";
-import outputs from "@/amplify_outputs.json";
 import { resolveViewerLabel } from "@/app/viewer-identity";
+
+function loadAmplifyOutputs(): Record<string, unknown> {
+  try {
+    return JSON.parse(
+      readFileSync(join(process.cwd(), "amplify_outputs.json"), "utf8"),
+    ) as Record<string, unknown>;
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      // CI test runs do not materialize amplify_outputs.json before importing
+      // server helpers. An empty config keeps those imports loadable until a
+      // test installs a stubbed client or the real app generates outputs.
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+const outputs = loadAmplifyOutputs();
 
 export const { createAuthRouteHandlers, runWithAmplifyServerContext } =
   createServerRunner({
