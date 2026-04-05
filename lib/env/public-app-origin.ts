@@ -27,11 +27,6 @@ export function resolvePublicAppOrigin(
     return configuredOrigin;
   }
 
-  const runtimeOrigin = normalizePublicAppOrigin(env.AMPLIFY_APP_ORIGIN);
-  if (runtimeOrigin) {
-    return runtimeOrigin;
-  }
-
   const fallbackOrigin = normalizePublicAppOrigin(options.fallback);
   if (fallbackOrigin) {
     return fallbackOrigin;
@@ -41,8 +36,12 @@ export function resolvePublicAppOrigin(
 }
 
 export function deriveAmplifyAppOrigin(env: OptionalStringRecord): string {
-  return resolvePublicAppOrigin(env, {
-    errorMessage:
-      "APP_BASE_URL must be configured to derive AMPLIFY_APP_ORIGIN for Next.js runtime.",
-  });
+  const configuredOrigin = normalizePublicAppOrigin(env.APP_BASE_URL);
+  if (configuredOrigin) {
+    return configuredOrigin;
+  }
+
+  throw new Error(
+    "APP_BASE_URL must be configured to derive AMPLIFY_APP_ORIGIN for Next.js runtime.",
+  );
 }

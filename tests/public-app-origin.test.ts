@@ -25,12 +25,13 @@ test("resolvePublicAppOrigin reads APP_BASE_URL from env", () => {
   );
 });
 
-test("resolvePublicAppOrigin falls back to AMPLIFY_APP_ORIGIN at runtime", () => {
-  assert.equal(
-    resolvePublicAppOrigin({
-      AMPLIFY_APP_ORIGIN: "https://runtime.example.com///",
-    }),
-    "https://runtime.example.com",
+test("resolvePublicAppOrigin does not accept AMPLIFY_APP_ORIGIN as an alternate source", () => {
+  assert.throws(
+    () =>
+      resolvePublicAppOrigin({
+        AMPLIFY_APP_ORIGIN: "https://runtime.example.com///",
+      }),
+    /APP_BASE_URL must be configured\./,
   );
 });
 

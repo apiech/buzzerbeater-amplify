@@ -193,7 +193,7 @@ export const envContract = {
     {
       name: "AMPLIFY_APP_ORIGIN",
       purpose:
-        "Required by the installed Next.js Amplify adapter for server-side auth. The repo-local Next.js launcher derives it from `APP_BASE_URL` to avoid a second source of truth.",
+        "Required by the installed Next.js Amplify adapter for server-side auth. It is always derived from `APP_BASE_URL` by the repo-local Next.js launcher and the hosted build env writer so the app only has one real origin input.",
     },
     {
       name: "BB_SHARED_ENVIRONMENT_NAME",

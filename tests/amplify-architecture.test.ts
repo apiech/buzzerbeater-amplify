@@ -190,10 +190,15 @@ test("public app origin and hosted builds rely on shared synth config without sy
   assert.doesNotMatch(amplifyYamlSource, /\.env\.match-data-plane/);
   assert.match(amplifyYamlSource, /npm run verify:deploy/);
   assert.match(amplifyYamlSource, /npx ampx pipeline-deploy/);
+  assert.match(amplifyYamlSource, /npm run hosted:prepare-env/);
   assert.match(amplifyYamlSource, /npm run build/);
   assert.ok(
     amplifyYamlSource.indexOf("npm run verify:deploy") <
       amplifyYamlSource.indexOf("npx ampx pipeline-deploy"),
+  );
+  assert.ok(
+    amplifyYamlSource.indexOf("npm run hosted:prepare-env") <
+      amplifyYamlSource.indexOf("npm run build"),
   );
 });
 
