@@ -410,19 +410,15 @@ test("typed handlers no longer cast GraphQL return payloads", () => {
   }
 });
 
-test("scheduled maintenance rules live in the data lambda stack", () => {
-  const refreshJobsSource = readFileSync(
-    join(repoRoot, "amplify", "_backend", "refresh-jobs.ts"),
-    "utf8",
-  );
+test("scheduled maintenance rules live only in the retained data lambda stack", () => {
   const retentionSource = readFileSync(
     join(repoRoot, "amplify", "_backend", "operational-retention.ts"),
     "utf8",
   );
 
-  assert.match(
-    refreshJobsSource,
-    /Stack\.of\(backend\.refreshBbWorkspaces\.resources\.lambda\)/,
+  assert.equal(
+    existsSync(join(repoRoot, "amplify", "_backend", "refresh-jobs.ts")),
+    false,
   );
   assert.match(
     retentionSource,

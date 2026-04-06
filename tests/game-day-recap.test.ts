@@ -642,7 +642,7 @@ test("team form helpers compute streaks, last-five form, and top players", () =>
 
 test("submitGameDayRecap is idempotent while a recap is already active", async () => {
   let upserted = false;
-  let enqueued = false;
+  let started = false;
 
   const result = await submitGameDayRecap(
     {
@@ -650,13 +650,17 @@ test("submitGameDayRecap is idempotent while a recap is already active", async (
       gameDate: "2026-03-15",
       identity: { sub: "user-1" },
       leagueId: "100",
-      queueUrl: "queue-url",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
     },
     {
-      enqueueRecapJob: async () => {
-        enqueued = true;
+      startWorkflowExecution: async () => {
+        started = true;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:active";
       },
       getGameDayRecap: async () => ({
+        executionArn:
+          "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:active",
         gameDate: "2026-03-15",
         leagueId: "100",
         requestJson: {},
@@ -674,13 +678,25 @@ test("submitGameDayRecap is idempotent while a recap is already active", async (
     },
   );
 
-  assert.deepStrictEqual(result, { targetKey: "100#2026-03-15" });
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:active",
+    targetKey: "100#2026-03-15",
+  });
   assert.equal(upserted, false);
-  assert.equal(enqueued, false);
+  assert.equal(started, false);
 });
 
 test("submitGameDayRecap reruns terminal jobs in place", async () => {
-  let queuedMessage: { requestedAt: string; targetKey: string; userId: string } | null = null;
+  let queuedMessage:
+    | {
+        kind: string;
+        modelId?: string;
+        requestedAt: string;
+        targetKey: string;
+        userId: string;
+      }
+    | null = null;
   let savedStatus = "";
 
   await submitGameDayRecap(
@@ -689,11 +705,13 @@ test("submitGameDayRecap reruns terminal jobs in place", async () => {
       gameDate: "2026-03-15",
       identity: { sub: "user-1" },
       leagueId: "100",
-      queueUrl: "queue-url",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
     },
     {
-      enqueueRecapJob: async (_queueUrl, message) => {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
         queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:rerun";
       },
       getGameDayRecap: async () => ({
         completedAt: "2026-03-15T22:00:00Z",
@@ -717,8 +735,9 @@ test("submitGameDayRecap reruns terminal jobs in place", async () => {
 
   assert.equal(savedStatus, "QUEUED");
   const rerunMessage = expectPresent<
-    { requestedAt: string; targetKey: string; userId: string }
-  >(queuedMessage, "enqueueRecapJob did not receive a rerun message");
+    { kind: string; requestedAt: string; targetKey: string; userId: string }
+  >(queuedMessage, "startWorkflowExecution did not receive a rerun message");
+  assert.equal(rerunMessage.kind, "LEAGUE_DATE");
   assert.equal(rerunMessage.targetKey, "100#2026-03-15");
 });
 
@@ -738,11 +757,13 @@ test("submitGameDayRecap allows access when premium is granted by the environmen
       gameDate: "2026-03-15",
       identity: { sub: "user-1" },
       leagueId: "100",
-      queueUrl: "queue-url",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
     },
     {
-      enqueueRecapJob: async (_queueUrl, message) => {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
         queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:premium";
       },
       getGameDayRecap: async () => null,
       now: () => new Date("2026-03-15T22:30:00Z"),
@@ -763,10 +784,21 @@ test("submitGameDayRecap allows access when premium is granted by the environmen
     },
   );
 
-  assert.deepStrictEqual(result, { targetKey: "100#2026-03-15" });
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:premium",
+    targetKey: "100#2026-03-15",
+  });
   const premiumMessage = expectPresent<
-    { modelId?: string; requestedAt: string; targetKey: string; userId: string }
-  >(queuedMessage, "enqueueRecapJob did not receive a premium message");
+    {
+      kind: string;
+      modelId?: string;
+      requestedAt: string;
+      targetKey: string;
+      userId: string;
+    }
+  >(queuedMessage, "startWorkflowExecution did not receive a premium message");
+  assert.equal(premiumMessage.kind, "LEAGUE_DATE");
   assert.equal(premiumMessage.modelId, DEFAULT_RECAP_MODEL_ID);
   assert.equal(premiumMessage.targetKey, "100#2026-03-15");
 });
@@ -837,12 +869,14 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
       gameDayNumber: 3,
       identity: { sub: "user-1" },
       leagueId: "100",
-      queueUrl: "queue-url",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
       season: 71,
     },
     {
-      enqueueRecapJob: async (_queueUrl, message) => {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
         queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-day";
       },
       getLeagueGameDayRecap: async () => null,
       now: () => new Date("2026-03-15T22:30:00Z"),
@@ -854,7 +888,11 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
     },
   );
 
-  assert.deepStrictEqual(result, { targetKey: "100#71#gameday-3" });
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-day",
+    targetKey: "100#71#gameday-3",
+  });
   assert.equal(savedModelId, PREMIUM_RECAP_MODEL_ID);
   assert.equal(
     (queuedMessage as { modelId?: string } | null)?.modelId,
@@ -878,11 +916,13 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
       }),
       identity: { sub: "user-1" },
       matchId: "137828772",
-      queueUrl: "queue-url",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
     },
     {
-      enqueueRecapJob: async (_queueUrl, message) => {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
         queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:single";
       },
       getSingleGameSummary: async () => null,
       now: () => new Date("2026-03-15T22:30:00Z"),
@@ -894,7 +934,11 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
     },
   );
 
-  assert.deepStrictEqual(result, { targetKey: "137828772" });
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:single",
+    targetKey: "137828772",
+  });
   assert.equal(savedModelId, PREMIUM_RECAP_MODEL_ID);
   assert.equal(
     (queuedMessage as { modelId?: string } | null)?.modelId,

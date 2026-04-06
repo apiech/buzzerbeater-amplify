@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useState, type FormEvent } from "react";
 
 import { client } from "@/app/amplify-client";
+import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import type {
   DashboardWorkspace,
   LeagueHistoryBackfillStatus,
@@ -107,19 +108,36 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
   }, [requestedLeagueId]);
 
   useEffect(() => {
-    if (!hasActiveLeagueHistoryBackfill(payload?.status ?? null)) {
+    if (!requestedLeagueId) {
       return;
     }
 
-    const interval = window.setInterval(() => {
-      loadHistoryEffect({
-        ensureBackfill: false,
-        showSpinner: false,
-      });
-    }, 4000);
+    const realtimeClient = getRealtimeClient();
+    const subscriptions = [
+      realtimeClient.models.LeagueHistoryBackfill.onCreate().subscribe({
+        error: logRealtimeError("LeagueHistoryBackfill.onCreate"),
+        next: () =>
+          loadHistoryEffect({
+            ensureBackfill: false,
+            showSpinner: false,
+          }),
+      }),
+      realtimeClient.models.LeagueHistoryBackfill.onUpdate().subscribe({
+        error: logRealtimeError("LeagueHistoryBackfill.onUpdate"),
+        next: () =>
+          loadHistoryEffect({
+            ensureBackfill: false,
+            showSpinner: false,
+          }),
+      }),
+    ];
 
-    return () => window.clearInterval(interval);
-  }, [payload?.status]);
+    return () => {
+      for (const subscription of subscriptions) {
+        subscription.unsubscribe();
+      }
+    };
+  }, [requestedLeagueId]);
 
   async function loadHistory(args: {
     ensureBackfill: boolean;

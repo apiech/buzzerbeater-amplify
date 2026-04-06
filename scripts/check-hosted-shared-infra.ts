@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import process from "node:process";
 
+import { getParametersByName } from "../amplify/_shared/aws-cli-ssm.js";
 import {
   branchToEnvironmentName,
   buildSharedInfraParameterPaths,
@@ -282,17 +283,11 @@ function checkSharedInfraParameters(
   const parameterEntries = Object.entries(parameterPaths) as Array<
     [keyof typeof parameterPaths, string]
   >;
-  const payload = runtime.execAwsJson([
-    "ssm",
-    "get-parameters",
-    "--region",
+  const payload = getParametersByName({
+    execAwsJson: runtime.execAwsJson,
+    names: parameterEntries.map(([, parameterPath]) => parameterPath),
     region,
-    "--with-decryption",
-    "--output",
-    "json",
-    "--names",
-    ...parameterEntries.map(([, parameterPath]) => parameterPath),
-  ]) as {
+  }) as {
     InvalidParameters?: string[];
   };
   const invalidParameters = new Set((payload.InvalidParameters ?? []).filter(Boolean));

@@ -7,10 +7,10 @@ type Handler = Schema["submitLeagueHistoryBackfill"]["functionHandler"];
 type RuntimeEnv = Record<string, string | undefined>;
 
 export const handler: Handler = async (event) => {
-  const queueUrl = (env as RuntimeEnv)["LEAGUE_HISTORY_BACKFILL_QUEUE_URL"];
-  if (!queueUrl) {
+  const stateMachineArn = (env as RuntimeEnv)["LEAGUE_HISTORY_BACKFILL_STATE_MACHINE_ARN"];
+  if (!stateMachineArn) {
     throw new Error(
-      "League history backfill queue URL environment variable was not found.",
+      "League history backfill state machine ARN environment variable was not found.",
     );
   }
 
@@ -18,6 +18,6 @@ export const handler: Handler = async (event) => {
     env,
     identity: event.identity,
     leagueId: event.arguments.leagueId,
-    queueUrl,
+    stateMachineArn,
   });
 };

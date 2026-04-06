@@ -7,11 +7,9 @@ import {
   createSyncRun,
   getBbConnection,
   getUserPreference,
-  listConnectedBbConnections,
   listPlayerSkillObservations,
   listExpiredPredictionJobs,
   listExpiredSyncRuns,
-  listStaleConnectedBbConnections,
   updateSyncRun,
   upsertBbConnection,
   upsertUserPreference,
@@ -208,7 +206,7 @@ test("generic upserts serialize AWSJSON payloads before model.create", async (t)
   });
 });
 
-test("upsertBbConnection backfills refreshSortAt before model.create", async (t) => {
+test("upsertBbConnection preserves the explicit connection payload on create", async (t) => {
   let getInput: Record<string, unknown> | null = null;
   let createInput: Record<string, unknown> | null = null;
 
@@ -239,7 +237,6 @@ test("upsertBbConnection backfills refreshSortAt before model.create", async (t)
     connectedAt: null,
     lastValidatedAt: null,
     lastSyncAt: null,
-    refreshSortAt: null,
   });
 
   assert.deepStrictEqual(getInput, { userId: "u1" });
@@ -250,14 +247,9 @@ test("upsertBbConnection backfills refreshSortAt before model.create", async (t)
   assert.equal(createInput["connectedAt"], null);
   assert.equal(createInput["lastValidatedAt"], null);
   assert.equal(createInput["lastSyncAt"], null);
-  assert.equal(typeof createInput["refreshSortAt"], "string");
-  assert.equal(
-    Number.isNaN(Date.parse(String(createInput["refreshSortAt"]))),
-    false,
-  );
 });
 
-test("upsertBbConnection rehydrates a stale null refreshSortAt before update", async (t) => {
+test("upsertBbConnection updates the existing record without adding refresh metadata", async (t) => {
   let updateInput: Record<string, unknown> | null = null;
 
   t.mock.method(
@@ -273,7 +265,6 @@ test("upsertBbConnection rehydrates a stale null refreshSortAt before update", a
                 bbLoginName: "coach",
                 status: "DISCONNECTED",
                 connectedAt: "2026-03-15T00:00:00.000Z",
-                refreshSortAt: null,
               },
             }),
             update: async (input: Record<string, unknown>) => {
@@ -292,7 +283,6 @@ test("upsertBbConnection rehydrates a stale null refreshSortAt before update", a
     connectedAt: null,
     lastValidatedAt: null,
     lastSyncAt: null,
-    refreshSortAt: null,
   });
 
   assert.deepStrictEqual(updateInput, {
@@ -302,7 +292,6 @@ test("upsertBbConnection rehydrates a stale null refreshSortAt before update", a
     connectedAt: null,
     lastValidatedAt: null,
     lastSyncAt: null,
-    refreshSortAt: "2026-03-15T00:00:00.000Z",
   });
 });
 
@@ -356,68 +345,6 @@ test("getBbConnection returns JSON fields as plain objects", async (t) => {
     scout: {},
     leagueIntel: {},
     playerLab: {},
-  });
-});
-
-test("listConnectedBbConnections queries the status index", async (t) => {
-  const queryCalls: Array<{
-    input: Record<string, unknown>;
-    options?: Record<string, unknown>;
-  }> = [];
-
-  t.mock.method(
-    repositoryTesting.runtime,
-    "getClient",
-    async () =>
-      ({
-        models: {
-          BbConnection: {
-            listBbConnectionsByStatusAndRefreshSortAt: async (
-              input: Record<string, unknown>,
-              options?: Record<string, unknown>,
-            ) => {
-              queryCalls.push({ input, options });
-              return {
-                data: [
-                  {
-                    userId: "u1",
-                    bbLoginName: "coach-1",
-                    status: "CONNECTED",
-                    workspaceCacheJson: {
-                      home: { team: { teamId: "1" } },
-                    },
-                  },
-                ],
-                nextToken: "page-2",
-              };
-            },
-          },
-        },
-      }) as any,
-  );
-
-  const page = await listConnectedBbConnections({} as any, {
-    limit: 1,
-    nextToken: "page-1",
-  });
-
-  assert.deepStrictEqual(queryCalls, [
-    {
-      input: { status: "CONNECTED" },
-      options: {
-        limit: 1,
-        nextToken: "page-1",
-        sortDirection: "ASC",
-      },
-    },
-  ]);
-  assert.deepStrictEqual(
-    page.records.map((record) => record.userId),
-    ["u1"],
-  );
-  assert.equal(page.nextToken, "page-2");
-  assert.deepStrictEqual(page.records[0]?.workspaceCacheJson, {
-    home: { team: { teamId: "1" } },
   });
 });
 
@@ -504,64 +431,6 @@ test("listPlayerSkillObservations queries the user history index with a player p
     records.map((record) => record.capturedAt),
     ["2026-03-17T00:00:00.000Z", "2026-03-10T00:00:00.000Z"],
   );
-});
-
-test("listStaleConnectedBbConnections applies the stale cutoff on the index", async (t) => {
-  let queryInput: Record<string, unknown> | null = null;
-  let queryOptions: Record<string, unknown> | null = null;
-
-  t.mock.method(
-    repositoryTesting.runtime,
-    "getClient",
-    async () =>
-      ({
-        models: {
-          BbConnection: {
-            listBbConnectionsByStatusAndRefreshSortAt: async (
-              input: Record<string, unknown>,
-              options?: Record<string, unknown>,
-            ) => {
-              queryInput = input;
-              queryOptions = options ?? null;
-              return {
-                data: [
-                  {
-                    userId: "u2",
-                    bbLoginName: "coach-2",
-                    status: "CONNECTED",
-                    refreshSortAt: "2026-03-15T08:00:00.000Z",
-                  },
-                ],
-                nextToken: null,
-              };
-            },
-          },
-        },
-      }) as any,
-  );
-
-  const page = await listStaleConnectedBbConnections(
-    {} as any,
-    "2026-03-15T12:00:00.000Z",
-    { limit: 25 },
-  );
-
-  assert.deepStrictEqual(queryInput, {
-    status: "CONNECTED",
-    refreshSortAt: { lt: "2026-03-15T12:00:00.000Z" },
-  });
-  assert.deepStrictEqual(queryOptions, {
-    limit: 25,
-    sortDirection: "ASC",
-  });
-  assert.deepStrictEqual(page.records, [
-    {
-      userId: "u2",
-      bbLoginName: "coach-2",
-      status: "CONNECTED",
-      refreshSortAt: "2026-03-15T08:00:00.000Z",
-    },
-  ]);
 });
 
 test("expired operational record helpers query expiry indexes", async (t) => {

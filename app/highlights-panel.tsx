@@ -68,18 +68,6 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     loadHighlightsEffect();
   }, [perspective, onlyOutcomeChange]);
 
-  useEffect(() => {
-    if (!hasActiveTeamHighlightsScan(payload?.scanStatus ?? null)) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      loadHighlightsEffect();
-    }, 4000);
-
-    return () => window.clearInterval(interval);
-  }, [payload?.scanStatus]);
-
   async function loadHighlights(
     options: LoadHighlightsOptions = {},
   ): Promise<void> {

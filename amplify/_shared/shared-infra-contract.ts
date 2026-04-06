@@ -3,11 +3,12 @@ const prodEnvironmentNames = new Set(["main", "master", "prod"]);
 export type SharedInfraBindings = {
   activeTrackedTeamsTableName: string;
   matchCatalogTableName: string;
+  matchProcessingStateMachineArn: string;
   matchStoreBucketName: string;
   opponentForecastEndpointName: string | null;
   playerSkillSnapshotTableName: string;
   predictionEndpointName: string;
-  teamHighlightsScanQueueUrl: string;
+  teamHighlightsScanStateMachineArn: string;
   teamHighlightsStatusTableName: string;
   teamMatchProjectionTableName: string;
   teamMomentsTableName: string;
@@ -46,11 +47,12 @@ export function buildSharedInfraParameterPaths(
   return {
     activeTrackedTeamsTableName: `${basePath}/active-tracked-teams-table-name`,
     matchCatalogTableName: `${basePath}/match-catalog-table-name`,
+    matchProcessingStateMachineArn: `${basePath}/match-processing-state-machine-arn`,
     matchStoreBucketName: `${basePath}/match-store-bucket-name`,
     opponentForecastEndpointName: `${basePath}/opponent-forecast-endpoint-name`,
     playerSkillSnapshotTableName: `${basePath}/player-skill-snapshot-table-name`,
     predictionEndpointName: `${basePath}/prediction-endpoint-name`,
-    teamHighlightsScanQueueUrl: `${basePath}/team-highlights-scan-queue-url`,
+    teamHighlightsScanStateMachineArn: `${basePath}/team-highlights-scan-state-machine-arn`,
     teamHighlightsStatusTableName: `${basePath}/team-highlights-status-table-name`,
     teamMatchProjectionTableName: `${basePath}/team-match-projection-table-name`,
     teamMomentsTableName: `${basePath}/team-moments-table-name`,

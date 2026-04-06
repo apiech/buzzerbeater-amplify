@@ -74,6 +74,10 @@ test("shared synth env maps the SSM contract into runtime bindings", () => {
             Value: "catalog",
           },
           {
+            Name: "/buzzerbeater/ml-data-infra/sandbox-karey/match-processing-state-machine-arn",
+            Value: "arn:aws:states:us-east-1:123456789012:stateMachine:match-processing",
+          },
+          {
             Name: "/buzzerbeater/ml-data-infra/sandbox-karey/match-store-bucket-name",
             Value: "bucket",
           },
@@ -90,8 +94,8 @@ test("shared synth env maps the SSM contract into runtime bindings", () => {
             Value: "endpoint",
           },
           {
-            Name: "/buzzerbeater/ml-data-infra/sandbox-karey/team-highlights-scan-queue-url",
-            Value: "https://queue.example.com/123/team-highlights",
+            Name: "/buzzerbeater/ml-data-infra/sandbox-karey/team-highlights-scan-state-machine-arn",
+            Value: "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
           },
           {
             Name: "/buzzerbeater/ml-data-infra/sandbox-karey/team-highlights-status-table-name",
@@ -116,15 +120,97 @@ test("shared synth env maps the SSM contract into runtime bindings", () => {
   assert.deepEqual(bindings, {
     activeTrackedTeamsTableName: "active",
     matchCatalogTableName: "catalog",
+    matchProcessingStateMachineArn:
+      "arn:aws:states:us-east-1:123456789012:stateMachine:match-processing",
     matchStoreBucketName: "bucket",
     opponentForecastEndpointName: "opponent-endpoint",
     playerSkillSnapshotTableName: "snapshots",
     predictionEndpointName: "endpoint",
-    teamHighlightsScanQueueUrl: "https://queue.example.com/123/team-highlights",
+    teamHighlightsScanStateMachineArn:
+      "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
     teamHighlightsStatusTableName: "status",
     teamMatchProjectionTableName: "projection",
     teamMomentsTableName: "moments",
   });
+});
+
+test("shared synth env batches SSM lookups when the contract exceeds ten parameters", () => {
+  const calls: string[][] = [];
+
+  synthEnvTesting.readSharedInfraBindingsFromRuntime(
+    "sandbox-karey",
+    "us-east-1",
+    {
+      execAwsJson: (args) => {
+        calls.push(args);
+        return {
+          Parameters: [
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/active-tracked-teams-table-name",
+              Value: "active",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/match-catalog-table-name",
+              Value: "catalog",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/match-processing-state-machine-arn",
+              Value: "arn:aws:states:us-east-1:123456789012:stateMachine:match-processing",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/match-store-bucket-name",
+              Value: "bucket",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/opponent-forecast-endpoint-name",
+              Value: "opponent-endpoint",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/player-skill-snapshot-table-name",
+              Value: "snapshots",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/prediction-endpoint-name",
+              Value: "endpoint",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/team-highlights-scan-state-machine-arn",
+              Value: "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/team-highlights-status-table-name",
+              Value: "status",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/team-match-projection-table-name",
+              Value: "projection",
+            },
+            {
+              Name: "/buzzerbeater/ml-data-infra/sandbox-karey/team-moments-table-name",
+              Value: "moments",
+            },
+          ],
+        };
+      },
+      fileExists: () => false,
+      loadEnvFile: () => undefined,
+      userName: () => "ignored",
+    },
+  );
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][0], "ssm");
+  assert.equal(calls[0][1], "get-parameters");
+  assert.equal(calls[1][0], "ssm");
+  assert.equal(calls[1][1], "get-parameters");
+  assert.equal(
+    calls[0].slice(calls[0].indexOf("--names") + 1).length,
+    10,
+  );
+  assert.equal(
+    calls[1].slice(calls[1].indexOf("--names") + 1).length,
+    1,
+  );
 });
 
 test("shared synth env allows the optional opponent forecast endpoint binding to be absent", () => {
@@ -143,6 +229,10 @@ test("shared synth env allows the optional opponent forecast endpoint binding to
             Value: "catalog",
           },
           {
+            Name: "/buzzerbeater/ml-data-infra/dev/match-processing-state-machine-arn",
+            Value: "arn:aws:states:us-east-1:123456789012:stateMachine:match-processing-dev",
+          },
+          {
             Name: "/buzzerbeater/ml-data-infra/dev/match-store-bucket-name",
             Value: "bucket",
           },
@@ -155,8 +245,8 @@ test("shared synth env allows the optional opponent forecast endpoint binding to
             Value: "endpoint",
           },
           {
-            Name: "/buzzerbeater/ml-data-infra/dev/team-highlights-scan-queue-url",
-            Value: "https://queue.example.com/123/team-highlights",
+            Name: "/buzzerbeater/ml-data-infra/dev/team-highlights-scan-state-machine-arn",
+            Value: "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights-dev",
           },
           {
             Name: "/buzzerbeater/ml-data-infra/dev/team-highlights-status-table-name",
@@ -179,6 +269,10 @@ test("shared synth env allows the optional opponent forecast endpoint binding to
   );
 
   assert.equal(bindings.opponentForecastEndpointName, null);
+  assert.equal(
+    bindings.matchProcessingStateMachineArn,
+    "arn:aws:states:us-east-1:123456789012:stateMachine:match-processing-dev",
+  );
   assert.equal(bindings.predictionEndpointName, "endpoint");
 });
 

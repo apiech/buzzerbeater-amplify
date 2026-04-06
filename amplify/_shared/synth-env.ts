@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import { RemovalPolicy } from "aws-cdk-lib";
 
 import {
+  getParametersByName,
+} from "./aws-cli-ssm.js";
+import {
   resolvePublicAppOrigin,
 } from "./public-app-origin.js";
 import {
@@ -63,12 +66,6 @@ export type GameDayRecapSynthConfig = {
 export type OperationalRetentionSynthConfig = {
   predictionJobRetentionDays: string;
   syncRunRetentionDays: string;
-};
-
-export type RefreshJobsSynthConfig = {
-  dedupeByTeam: string;
-  maxUsersPerRun: string;
-  staleAfterHours: string;
 };
 
 export const __testing = {
@@ -177,22 +174,6 @@ export function resolveOperationalRetentionConfig(): OperationalRetentionSynthCo
   };
 }
 
-export function resolveRefreshJobsConfig(): RefreshJobsSynthConfig {
-  loadLocalSynthEnv();
-
-  return {
-    dedupeByTeam:
-      normalizeOptionalString(process.env.WORKSPACE_REFRESH_DEDUPE_BY_TEAM) ??
-      "false",
-    maxUsersPerRun:
-      normalizeOptionalString(process.env.WORKSPACE_REFRESH_MAX_USERS_PER_RUN) ??
-      "50",
-    staleAfterHours:
-      normalizeOptionalString(process.env.WORKSPACE_REFRESH_STALE_AFTER_HOURS) ??
-      "24",
-  };
-}
-
 export function resolveSharedEnvironmentName(
   env: Record<string, string | undefined> = process.env,
   runtime: Pick<AwsCliRuntime, "userName"> = createDefaultRuntime(),
@@ -262,17 +243,11 @@ function readSharedInfraBindingsFromRuntime(
     Parameters?: Array<{ Name?: string; Value?: string }>;
   };
   try {
-    parametersResponse = runtime.execAwsJson([
-      "ssm",
-      "get-parameters",
-      "--with-decryption",
-      "--region",
+    parametersResponse = getParametersByName({
+      execAwsJson: runtime.execAwsJson,
+      names: Object.values(parameterPaths),
       region,
-      "--output",
-      "json",
-      "--names",
-      ...Object.values(parameterPaths),
-    ]) as {
+    }) as {
       Parameters?: Array<{ Name?: string; Value?: string }>;
     };
   } catch (error) {
@@ -323,14 +298,16 @@ function readSharedInfraBindingsFromRuntime(
     activeTrackedTeamsTableName:
       valuesByPath.get(parameterPaths.activeTrackedTeamsTableName)!,
     matchCatalogTableName: valuesByPath.get(parameterPaths.matchCatalogTableName)!,
+    matchProcessingStateMachineArn:
+      valuesByPath.get(parameterPaths.matchProcessingStateMachineArn)!,
     matchStoreBucketName: valuesByPath.get(parameterPaths.matchStoreBucketName)!,
     opponentForecastEndpointName:
       valuesByPath.get(parameterPaths.opponentForecastEndpointName) ?? null,
     playerSkillSnapshotTableName:
       valuesByPath.get(parameterPaths.playerSkillSnapshotTableName)!,
     predictionEndpointName: valuesByPath.get(parameterPaths.predictionEndpointName)!,
-    teamHighlightsScanQueueUrl:
-      valuesByPath.get(parameterPaths.teamHighlightsScanQueueUrl)!,
+    teamHighlightsScanStateMachineArn:
+      valuesByPath.get(parameterPaths.teamHighlightsScanStateMachineArn)!,
     teamHighlightsStatusTableName:
       valuesByPath.get(parameterPaths.teamHighlightsStatusTableName)!,
     teamMatchProjectionTableName:

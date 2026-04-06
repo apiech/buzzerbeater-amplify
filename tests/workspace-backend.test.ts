@@ -27,10 +27,6 @@ const refreshWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "refresh-workspace", "handler.ts"),
   "utf8",
 );
-const refreshWorkerHandlerSource = readFileSync(
-  join(repoRoot, "amplify", "data", "refresh-bb-workspace-worker", "handler.ts"),
-  "utf8",
-);
 
 test("buildScoutWorkspace includes arbitrary scout targets, league options, and matchup history", () => {
   const currentWorkspace = {
@@ -198,10 +194,6 @@ test("browse-time workspace refresh defaults to app-only persistence while expli
   );
   assert.match(
     refreshWorkspaceHandlerSource,
-    /syncActiveTrackedTeams:\s*true/,
-  );
-  assert.match(
-    refreshWorkerHandlerSource,
     /syncActiveTrackedTeams:\s*true/,
   );
 });
@@ -801,10 +793,7 @@ test("buildConnectionRecord preserves explicit null updates when clearing stale 
       workspaceCacheJson: null,
     },
   );
-
-  const { refreshSortAt, ...rest } = record;
-
-  assert.deepStrictEqual(rest, {
+  assert.deepStrictEqual(record, {
     userId: "user-1",
     bbLoginName: "coach",
     status: "CONNECTED",
@@ -824,8 +813,6 @@ test("buildConnectionRecord preserves explicit null updates when clearing stale 
     profileJson: null,
     workspaceCacheJson: null,
   });
-  assert.equal(typeof refreshSortAt, "string");
-  assert.equal(Number.isNaN(Date.parse(refreshSortAt)), false);
 });
 
 test("lookupSharedPlayerCardByToken unwraps only the sanitized share payload", async () => {

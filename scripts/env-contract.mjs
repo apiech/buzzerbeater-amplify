@@ -90,25 +90,6 @@ export const envContract = {
         templateValue: "+15555555555",
       },
       {
-        name: "WORKSPACE_REFRESH_STALE_AFTER_HOURS",
-        purpose: "Staleness threshold used by workspace refresh scheduling.",
-        defaultValue: "24",
-        templateValue: "24",
-      },
-      {
-        name: "WORKSPACE_REFRESH_MAX_USERS_PER_RUN",
-        purpose:
-          "Maximum number of users enqueued per scheduled workspace refresh run.",
-        defaultValue: "50",
-        templateValue: "50",
-      },
-      {
-        name: "WORKSPACE_REFRESH_DEDUPE_BY_TEAM",
-        purpose: "Optional refresh dedupe mode for shared-team refresh queues.",
-        defaultValue: "false",
-        templateValue: "false",
-      },
-      {
         name: "SYNC_RUN_RETENTION_DAYS",
         purpose: "Retention window for operational sync-run records.",
         defaultValue: "14",
@@ -159,7 +140,7 @@ export const envContract = {
         "Imported at synth time from the shared ML Data Infra SSM contract and injected into highlights readers and submitters.",
     },
     {
-      name: "TEAM_HIGHLIGHTS_SCAN_QUEUE_URL",
+      name: "TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN",
       purpose:
         "Imported at synth time from the shared ML Data Infra SSM contract and injected into the highlights submitter.",
     },
@@ -226,29 +207,29 @@ export const envContract = {
   ],
   runtimeInjected: [
     {
-      name: "GAME_DAY_RECAP_QUEUE_URL",
+      name: "GAME_DAY_RECAP_STATE_MACHINE_ARN",
       purpose:
-        "Backend-injected queue URL wired during synth for recap submit lambdas.",
+        "Backend-injected Step Functions state machine ARN wired during synth for recap submit lambdas.",
     },
     {
-      name: "REFRESH_WORKSPACE_JOB_QUEUE_URL",
+      name: "LEAGUE_HISTORY_BACKFILL_STATE_MACHINE_ARN",
       purpose:
-        "Backend-injected queue URL wired during synth for workspace refresh scheduling.",
+        "Backend-injected Step Functions state machine ARN wired during synth for league-history backfill submit lambdas.",
     },
     {
-      name: "PREDICTION_JOB_QUEUE_URL",
+      name: "OPPONENT_FORECAST_JOB_STATE_MACHINE_ARN",
       purpose:
-        "Backend-injected queue URL wired during synth for prediction submit lambdas.",
+        "Backend-injected Step Functions state machine ARN wired during synth for opponent forecast submit lambdas.",
     },
     {
-      name: "LEAGUE_HISTORY_BACKFILL_QUEUE_URL",
+      name: "PREDICTION_JOB_STATE_MACHINE_ARN",
       purpose:
-        "Backend-injected queue URL wired during synth for league-history backfill submit lambdas.",
+        "Backend-injected Step Functions state machine ARN wired during synth for prediction submit lambdas.",
     },
     {
-      name: "OPPONENT_FORECAST_JOB_QUEUE_URL",
+      name: "TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN",
       purpose:
-        "Backend-injected queue URL wired during synth for opponent forecast submit lambdas.",
+        "Backend-injected shared Step Functions state machine ARN wired during synth for highlights submit lambdas.",
     },
     {
       name: "PREDICTION_ENDPOINT_NAME",

@@ -2,7 +2,6 @@ import {
   BedrockRuntimeClient,
   ConverseCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
 import { BBXmlApiClient, type BBXmlApiClientOptions } from "../../../lib/bbapi";
 import type {
@@ -21,6 +20,10 @@ import {
   resolveCalendarDateKey,
 } from "../../../lib/league-timezones";
 import { resolveBbAccessKey } from "./credentials";
+import {
+  buildExecutionName,
+  startStateMachineExecution,
+} from "./step-functions";
 import {
   getBbConnection,
   getGameDayRecap,
@@ -212,10 +215,11 @@ type BedrockGameDayRecapProvider = {
 };
 
 type SubmitDependencies = {
-  enqueueRecapJob: (
-    queueUrl: string,
+  startWorkflowExecution: (
+    stateMachineArn: string,
+    executionName: string,
     message: RecapQueueMessage,
-  ) => Promise<void>;
+  ) => Promise<string>;
   getGameDayRecap: typeof getGameDayRecap;
   getLeagueGameDayRecap: typeof getLeagueGameDayRecap;
   getSingleGameSummary: typeof getSingleGameSummary;
@@ -370,14 +374,12 @@ const GAME_DAY_RECAP_LOG_PREFIX = "[game-day-recap]";
 type GameDayRecapEvidenceTag = (typeof GAME_DAY_RECAP_EVIDENCE_TAGS)[number];
 
 const defaultSubmitDependencies: SubmitDependencies = {
-  enqueueRecapJob: async (queueUrl, message) => {
-    const sqs = new SQSClient({});
-    await sqs.send(
-      new SendMessageCommand({
-        MessageBody: JSON.stringify(message),
-        QueueUrl: queueUrl,
-      }),
-    );
+  startWorkflowExecution: async (stateMachineArn, executionName, message) => {
+    return startStateMachineExecution({
+      input: message,
+      name: executionName,
+      stateMachineArn,
+    });
   },
   getGameDayRecap,
   getLeagueGameDayRecap,
@@ -416,10 +418,10 @@ export async function submitGameDayRecap(
     gameDate: string;
     identity: unknown;
     leagueId: string;
-    queueUrl: string;
+    stateMachineArn: string;
   },
   dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
-): Promise<{ targetKey: string }> {
+): Promise<{ executionArn: string | null; targetKey: string }> {
   const deps: SubmitDependencies = {
     ...defaultSubmitDependencies,
     ...dependencies,
@@ -464,7 +466,10 @@ export async function submitGameDayRecap(
       targetKey,
       userId,
     });
-    return { targetKey };
+    return {
+      executionArn: existing.executionArn ?? null,
+      targetKey,
+    };
   }
 
   const modelId = resolveConfiguredRecapModelId(args.env, planId);
@@ -499,28 +504,43 @@ export async function submitGameDayRecap(
     status: "QUEUED",
     targetKey,
     userId,
+    executionArn: null,
   });
 
   try {
-    logGameDayRecapInfo("submit.enqueue.start", {
+    logGameDayRecapInfo("submit.execution.start", {
       requestedAt,
       targetKey,
       userId,
     });
-    await deps.enqueueRecapJob(args.queueUrl, {
+    const executionArn = await deps.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName(
+        "gameday-recap",
+        `${userId}:${targetKey}:${requestedAt}`,
+      ),
+      {
       kind: "LEAGUE_DATE",
       modelId,
       requestedAt,
       targetKey,
       userId,
+      },
+    );
+    await deps.updateGameDayRecap(args.env, {
+      executionArn,
+      targetKey,
+      userId,
     });
-    logGameDayRecapInfo("submit.enqueue.succeeded", {
+    logGameDayRecapInfo("submit.execution.succeeded", {
+      executionArn,
       requestedAt,
       targetKey,
       userId,
     });
+    return { executionArn, targetKey };
   } catch (error) {
-    logGameDayRecapError("submit.enqueue.failed", {
+    logGameDayRecapError("submit.execution.failed", {
       requestedAt,
       targetKey,
       userId,
@@ -537,12 +557,6 @@ export async function submitGameDayRecap(
     throw error;
   }
 
-  logGameDayRecapInfo("submit.completed", {
-    requestedAt,
-    targetKey,
-    userId,
-  });
-  return { targetKey };
 }
 
 export async function submitLeagueGameDayRecap(
@@ -551,11 +565,11 @@ export async function submitLeagueGameDayRecap(
     gameDayNumber: number;
     identity: unknown;
     leagueId: string;
-    queueUrl: string;
+    stateMachineArn: string;
     season?: number | null;
   },
   dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
-): Promise<{ targetKey: string }> {
+): Promise<{ executionArn: string | null; targetKey: string }> {
   const deps: SubmitDependencies = {
     ...defaultSubmitDependencies,
     ...dependencies,
@@ -587,7 +601,10 @@ export async function submitLeagueGameDayRecap(
     targetKey,
   );
   if (existing && !TERMINAL_RECAP_STATUSES.has(existing.status)) {
-    return { targetKey };
+    return {
+      executionArn: existing.executionArn ?? null,
+      targetKey,
+    };
   }
 
   const modelId = resolveConfiguredRecapModelId(args.env, planId);
@@ -614,16 +631,30 @@ export async function submitLeagueGameDayRecap(
     status: "QUEUED",
     targetKey,
     userId,
+    executionArn: null,
   });
 
   try {
-    await deps.enqueueRecapJob(args.queueUrl, {
+    const executionArn = await deps.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName(
+        "league-gameday-recap",
+        `${userId}:${targetKey}:${requestedAt}`,
+      ),
+      {
       kind: "LEAGUE_GAME_DAY",
       modelId,
       requestedAt,
       targetKey,
       userId,
+      },
+    );
+    await deps.updateLeagueGameDayRecap(args.env, {
+      executionArn,
+      targetKey,
+      userId,
     });
+    return { executionArn, targetKey };
   } catch (error) {
     await deps.updateLeagueGameDayRecap(args.env, {
       completedAt: deps.now().toISOString(),
@@ -635,8 +666,6 @@ export async function submitLeagueGameDayRecap(
     });
     throw error;
   }
-
-  return { targetKey };
 }
 
 export async function submitSingleGameSummary(
@@ -644,10 +673,10 @@ export async function submitSingleGameSummary(
     env: GraphqlEnv;
     identity: unknown;
     matchId: string;
-    queueUrl: string;
+    stateMachineArn: string;
   },
   dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
-): Promise<{ targetKey: string }> {
+): Promise<{ executionArn: string | null; targetKey: string }> {
   const deps: SubmitDependencies = {
     ...defaultSubmitDependencies,
     ...dependencies,
@@ -673,7 +702,10 @@ export async function submitSingleGameSummary(
     targetKey,
   );
   if (existing && !TERMINAL_RECAP_STATUSES.has(existing.status)) {
-    return { targetKey };
+    return {
+      executionArn: existing.executionArn ?? null,
+      targetKey,
+    };
   }
 
   const modelId = resolveConfiguredRecapModelId(args.env, planId);
@@ -699,16 +731,30 @@ export async function submitSingleGameSummary(
     status: "QUEUED",
     targetKey,
     userId,
+    executionArn: null,
   });
 
   try {
-    await deps.enqueueRecapJob(args.queueUrl, {
+    const executionArn = await deps.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName(
+        "single-game-summary",
+        `${userId}:${targetKey}:${requestedAt}`,
+      ),
+      {
       kind: "SINGLE_GAME",
       modelId,
       requestedAt,
       targetKey,
       userId,
+      },
+    );
+    await deps.updateSingleGameSummary(args.env, {
+      executionArn,
+      targetKey,
+      userId,
     });
+    return { executionArn, targetKey };
   } catch (error) {
     await deps.updateSingleGameSummary(args.env, {
       completedAt: deps.now().toISOString(),
@@ -720,14 +766,13 @@ export async function submitSingleGameSummary(
     });
     throw error;
   }
-
-  return { targetKey };
 }
 
 export async function processGameDayRecap(
   args: {
     env: GraphqlEnv;
-    messageBody: string;
+    message?: RecapQueueMessage;
+    messageBody?: string;
     modelId?: string;
     region?: string;
   },
@@ -737,7 +782,7 @@ export async function processGameDayRecap(
     ...defaultProcessDependencies,
     ...dependencies,
   };
-  const message = parseGameDayRecapQueueMessage(args.messageBody);
+  const message = resolveRecapMessage(args);
   const modelId = resolveQueuedRecapModelId(message, args.modelId);
   logGameDayRecapInfo("process.message.received", {
     modelId,
@@ -961,13 +1006,14 @@ export async function processGameDayRecap(
 export async function processQueuedRecapJob(
   args: {
     env: GraphqlEnv;
-    messageBody: string;
+    message?: RecapQueueMessage;
+    messageBody?: string;
     modelId?: string;
     region?: string;
   },
   dependencies: ProcessDependencyOverrides = defaultProcessDependencies,
 ): Promise<void> {
-  const message = parseGameDayRecapQueueMessage(args.messageBody);
+  const message = resolveRecapMessage(args);
   switch (message.kind) {
     case "LEAGUE_GAME_DAY":
       await processLeagueGameDayRecap(args, dependencies);
@@ -984,7 +1030,8 @@ export async function processQueuedRecapJob(
 export async function processLeagueGameDayRecap(
   args: {
     env: GraphqlEnv;
-    messageBody: string;
+    message?: RecapQueueMessage;
+    messageBody?: string;
     modelId?: string;
     region?: string;
   },
@@ -994,7 +1041,7 @@ export async function processLeagueGameDayRecap(
     ...defaultProcessDependencies,
     ...dependencies,
   };
-  const message = parseGameDayRecapQueueMessage(args.messageBody);
+  const message = resolveRecapMessage(args);
   const modelId = resolveQueuedRecapModelId(message, args.modelId);
   const recap = await deps.getLeagueGameDayRecap(
     args.env,
@@ -1141,7 +1188,8 @@ export async function processLeagueGameDayRecap(
 export async function processSingleGameSummary(
   args: {
     env: GraphqlEnv;
-    messageBody: string;
+    message?: RecapQueueMessage;
+    messageBody?: string;
     modelId?: string;
     region?: string;
   },
@@ -1151,7 +1199,7 @@ export async function processSingleGameSummary(
     ...defaultProcessDependencies,
     ...dependencies,
   };
-  const message = parseGameDayRecapQueueMessage(args.messageBody);
+  const message = resolveRecapMessage(args);
   const modelId = resolveQueuedRecapModelId(message, args.modelId);
   const summary = await deps.getSingleGameSummary(
     args.env,
@@ -1366,6 +1414,19 @@ export function parseGameDayRecapQueueMessage(
     targetKey,
     userId,
   };
+}
+
+function resolveRecapMessage(args: {
+  message?: RecapQueueMessage;
+  messageBody?: string;
+}): RecapQueueMessage {
+  if (args.message) {
+    return args.message;
+  }
+  if (!args.messageBody) {
+    throw new Error("Game day recap payload was not provided.");
+  }
+  return parseGameDayRecapQueueMessage(args.messageBody);
 }
 
 function resolveConfiguredRecapModelId(

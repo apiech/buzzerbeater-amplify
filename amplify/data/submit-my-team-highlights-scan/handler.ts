@@ -7,16 +7,16 @@ type Handler = Schema["submitMyTeamHighlightsScan"]["functionHandler"];
 type RuntimeEnv = Record<string, string | undefined>;
 
 export const handler: Handler = async (event) => {
-  const queueUrl = (env as RuntimeEnv)["TEAM_HIGHLIGHTS_SCAN_QUEUE_URL"];
-  if (!queueUrl) {
+  const stateMachineArn = (env as RuntimeEnv)["TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN"];
+  if (!stateMachineArn) {
     throw new Error(
-      "TEAM_HIGHLIGHTS_SCAN_QUEUE_URL environment variable was not found.",
+      "TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN environment variable was not found.",
     );
   }
 
   return submitMyTeamHighlightsScan({
     env,
     identity: event.identity,
-    queueUrl,
+    stateMachineArn,
   });
 };

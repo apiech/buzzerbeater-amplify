@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import {
   InvokeEndpointCommand,
   SageMakerRuntimeClient,
@@ -14,6 +13,10 @@ import {
 } from "./repository";
 import { requireFeatureAccess } from "./billing";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
+import {
+  buildExecutionName,
+  startStateMachineExecution,
+} from "./step-functions";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -64,10 +67,11 @@ type ResolveConnectedInputDependencies = {
 type SubmitPredictionDependencies = {
   createPredictionJob: typeof createPredictionJob;
   requireFeatureAccess: typeof requireFeatureAccess;
-  sendQueueMessage: (
-    queueUrl: string,
+  startWorkflowExecution: (
+    stateMachineArn: string,
+    executionName: string,
     message: { jobId: string; userId: string },
-  ) => Promise<void>;
+  ) => Promise<string>;
   updatePredictionJob: typeof updatePredictionJob;
 };
 
@@ -106,14 +110,12 @@ const DIRECT_CONNECTED_FIELDS = [
 const defaultSubmitDependencies: SubmitPredictionDependencies = {
   createPredictionJob,
   requireFeatureAccess,
-  sendQueueMessage: async (queueUrl, message) => {
-    const sqs = new SQSClient({});
-    await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: queueUrl,
-        MessageBody: JSON.stringify(message),
-      }),
-    );
+  startWorkflowExecution: async (stateMachineArn, executionName, message) => {
+    return startStateMachineExecution({
+      input: message,
+      name: executionName,
+      stateMachineArn,
+    });
   },
   updatePredictionJob,
 };
@@ -123,10 +125,10 @@ export async function submitPredictionJob(
     env: GraphqlEnv;
     identity: unknown;
     request: unknown;
-    queueUrl: string;
+    stateMachineArn: string;
   },
   dependencies: SubmitPredictionDependencies = defaultSubmitDependencies,
-): Promise<{ jobId: string }> {
+): Promise<{ executionArn: string; jobId: string }> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -150,11 +152,21 @@ export async function submitPredictionJob(
     resolvedInputSnapshot: null,
     result: null,
     error: null,
+    executionArn: null,
     modelVersion: null,
   });
 
   try {
-    await dependencies.sendQueueMessage(args.queueUrl, { jobId, userId });
+    const executionArn = await dependencies.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName("prediction", jobId),
+      { jobId, userId },
+    );
+    await dependencies.updatePredictionJob(args.env, {
+      id: jobId,
+      executionArn,
+    });
+    return { executionArn, jobId };
   } catch (error) {
     await dependencies.updatePredictionJob(args.env, {
       id: jobId,
@@ -163,15 +175,14 @@ export async function submitPredictionJob(
     });
     throw error;
   }
-
-  return { jobId };
 }
 
 export async function processPredictionJob(
   args: {
     env: GraphqlEnv;
     endpointName: string;
-    messageBody: string;
+    message?: { jobId: string; userId: string };
+    messageBody?: string;
   },
   dependencies: ProcessPredictionDependencies = {
     getPredictionJob,
@@ -180,7 +191,7 @@ export async function processPredictionJob(
     updatePredictionJob,
   },
 ): Promise<void> {
-  const message = parseQueueMessage(args.messageBody);
+  const message = resolvePredictionJobMessage(args);
   const job = await dependencies.getPredictionJob(args.env, message.jobId);
   if (!job || job.userId !== message.userId) {
     throw new Error(
@@ -447,6 +458,19 @@ function parseQueueMessage(body: string): { jobId: string; userId: string } {
     throw new Error("Prediction queue message must include jobId and userId.");
   }
   return { jobId, userId };
+}
+
+function resolvePredictionJobMessage(args: {
+  message?: { jobId: string; userId: string };
+  messageBody?: string;
+}): { jobId: string; userId: string } {
+  if (args.message) {
+    return args.message;
+  }
+  if (!args.messageBody) {
+    throw new Error("Prediction job payload was not provided.");
+  }
+  return parseQueueMessage(args.messageBody);
 }
 
 function requireRecord(value: unknown, label: string): JsonRecord {

@@ -274,7 +274,8 @@ test("submitPredictionJob rejects free-plan users before queueing work", async (
         {
           env: {},
           identity: { sub: "user-1" },
-          queueUrl: "https://queue.example.com",
+          stateMachineArn:
+            "arn:aws:states:us-east-1:123456789012:stateMachine:prediction",
           request: {
             mode: "MANUAL",
             manualInput: manualFallback,
@@ -289,8 +290,8 @@ test("submitPredictionJob rejects free-plan users before queueing work", async (
               "Premium is required to use the prediction engine.",
             );
           },
-          sendQueueMessage: async () => {
-            throw new Error("sendQueueMessage should not be called");
+          startWorkflowExecution: async () => {
+            throw new Error("startWorkflowExecution should not be called");
           },
           updatePredictionJob: async () => {},
         },
@@ -307,7 +308,8 @@ test("submitPredictionJob queues work for premium users", async () => {
     {
       env: {},
       identity: { sub: "user-1" },
-      queueUrl: "https://queue.example.com",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:prediction",
       request: {
         mode: "MANUAL",
         manualInput: manualFallback,
@@ -323,14 +325,19 @@ test("submitPredictionJob queues work for premium users", async () => {
         } as any;
       },
       requireFeatureAccess: async () => "premium",
-      sendQueueMessage: async (_queueUrl, message) => {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
         queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:prediction:job-1";
       },
       updatePredictionJob: async () => {},
     },
   );
 
   assert.match(String(result.jobId), /^[0-9a-f-]{36}$/i);
+  assert.equal(
+    result.executionArn,
+    "arn:aws:states:us-east-1:123456789012:execution:prediction:job-1",
+  );
   const record = expectPresent<{ status: string; userId: string }>(
     createdRecord,
     "createPredictionJob did not receive an input record",
@@ -352,7 +359,8 @@ test("submitPredictionJob allows access when premium is granted by the environme
         BILLING_DEFAULT_PLAN: "premium",
       },
       identity: { sub: "user-1" },
-      queueUrl: "https://queue.example.com",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:prediction",
       request: {
         mode: "MANUAL",
         manualInput: manualFallback,
@@ -379,8 +387,9 @@ test("submitPredictionJob allows access when premium is granted by the environme
           }),
           upsertBillingAccount: async () => {},
         }),
-      sendQueueMessage: async (_queueUrl, message) => {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
         queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:prediction:job-2";
       },
       updatePredictionJob: async () => {},
     },
@@ -390,6 +399,10 @@ test("submitPredictionJob allows access when premium is granted by the environme
     jobId: result.jobId,
     userId: "user-1",
   });
+  assert.equal(
+    result.executionArn,
+    "arn:aws:states:us-east-1:123456789012:execution:prediction:job-2",
+  );
 });
 
 test("processPredictionJob stores grid-enabled endpoint results without extra invocations", async () => {

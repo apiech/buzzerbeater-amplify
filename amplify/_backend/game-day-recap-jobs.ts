@@ -1,10 +1,9 @@
-import { Duration, type RemovalPolicy, type Stack } from "aws-cdk-lib";
+import { Stack, type RemovalPolicy } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
-import type { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
-import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
-import { Queue } from "aws-cdk-lib/aws-sqs";
+import type { IFunction } from "aws-cdk-lib/aws-lambda";
 
 import type { GameDayRecapSynthConfig } from "../_shared/synth-env.js";
+import { createSingleLambdaWorkflow } from "./state-machine-workflow.js";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
@@ -14,7 +13,6 @@ type FunctionResource = {
 };
 
 type GameDayRecapBackend = {
-  createStack(name: string): Stack;
   gameDayRecapSubmit: FunctionResource;
   gameDayRecapWorker: FunctionResource;
   submitLeagueGameDayRecap: FunctionResource;
@@ -26,24 +24,16 @@ export function configureGameDayRecapJobs(
   config: GameDayRecapSynthConfig,
   removalPolicy: RemovalPolicy,
 ): void {
-  const queueStack = backend.createStack("game-day-recap-jobs");
-  const deadLetterQueue = new Queue(queueStack, "GameDayRecapDlq", {
-    removalPolicy,
-    retentionPeriod: Duration.days(14),
-  });
-  const recapJobQueue = new Queue(queueStack, "GameDayRecapQueue", {
-    deadLetterQueue: {
-      maxReceiveCount: 3,
-      queue: deadLetterQueue,
-    },
-    removalPolicy,
-    retentionPeriod: Duration.days(4),
-    visibilityTimeout: Duration.minutes(3),
+  const workflowStack = Stack.of(backend.gameDayRecapWorker.resources.lambda);
+  const workflow = createSingleLambdaWorkflow(workflowStack, {
+    idPrefix: "GameDayRecapJob",
+    logGroupRemovalPolicy: removalPolicy,
+    workerFunction: backend.gameDayRecapWorker.resources.lambda,
   });
 
   backend.gameDayRecapSubmit.addEnvironment(
-    "GAME_DAY_RECAP_QUEUE_URL",
-    recapJobQueue.queueUrl,
+    "GAME_DAY_RECAP_STATE_MACHINE_ARN",
+    workflow.stateMachineArn,
   );
   backend.gameDayRecapSubmit.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
@@ -56,8 +46,8 @@ export function configureGameDayRecapJobs(
     );
   }
   backend.submitLeagueGameDayRecap.addEnvironment(
-    "GAME_DAY_RECAP_QUEUE_URL",
-    recapJobQueue.queueUrl,
+    "GAME_DAY_RECAP_STATE_MACHINE_ARN",
+    workflow.stateMachineArn,
   );
   backend.submitLeagueGameDayRecap.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
@@ -70,8 +60,8 @@ export function configureGameDayRecapJobs(
     );
   }
   backend.submitSingleGameSummary.addEnvironment(
-    "GAME_DAY_RECAP_QUEUE_URL",
-    recapJobQueue.queueUrl,
+    "GAME_DAY_RECAP_STATE_MACHINE_ARN",
+    workflow.stateMachineArn,
   );
   backend.submitSingleGameSummary.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
@@ -88,21 +78,10 @@ export function configureGameDayRecapJobs(
     config.defaultModelId,
   );
 
-  recapJobQueue.grantSendMessages(backend.gameDayRecapSubmit.resources.lambda);
-  recapJobQueue.grantSendMessages(
-    backend.submitLeagueGameDayRecap.resources.lambda,
-  );
-  recapJobQueue.grantSendMessages(
-    backend.submitSingleGameSummary.resources.lambda,
-  );
-  recapJobQueue.grantConsumeMessages(backend.gameDayRecapWorker.resources.lambda);
-  const workerLambda = backend.gameDayRecapWorker.resources.lambda as LambdaFunction;
-  workerLambda.addEventSource(
-    new SqsEventSource(recapJobQueue, {
-      batchSize: 2,
-      reportBatchItemFailures: true,
-    }),
-  );
+  workflow.grantStartExecution(backend.gameDayRecapSubmit.resources.lambda);
+  workflow.grantStartExecution(backend.submitLeagueGameDayRecap.resources.lambda);
+  workflow.grantStartExecution(backend.submitSingleGameSummary.resources.lambda);
+  const workerLambda = backend.gameDayRecapWorker.resources.lambda;
   workerLambda.addToRolePolicy(
     new PolicyStatement({
       actions: ["bedrock:InvokeModel"],

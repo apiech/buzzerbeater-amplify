@@ -324,24 +324,6 @@ const lookupSharedPlayerCard = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-export const refreshBbWorkspaces = defineFunction({
-  resourceGroupName: "data",
-  name: "refresh-bb-workspaces",
-  entry: "./refresh-bb-workspaces/handler.ts",
-  timeoutSeconds: 300,
-  memoryMB: 1024,
-  environment: secureFunctionEnvironment,
-});
-
-export const refreshBbWorkspaceWorker = defineFunction({
-  resourceGroupName: "data",
-  name: "refresh-bb-workspace-worker",
-  entry: "./refresh-bb-workspace-worker/handler.ts",
-  timeoutSeconds: 120,
-  memoryMB: 1024,
-  environment: secureFunctionEnvironment,
-});
-
 export const pruneOperationalData = defineFunction({
   resourceGroupName: "data",
   name: "prune-operational-data",
@@ -385,8 +367,6 @@ const dataFunctions = [
   generateSharedPlayerCard,
   revokeSharedPlayerCard,
   lookupSharedPlayerCard,
-  refreshBbWorkspaces,
-  refreshBbWorkspaceWorker,
   pruneOperationalData,
   leagueHistoryWorker,
   gameDayRecapSubmit,
@@ -638,6 +618,7 @@ const schema = a
     LeagueHistoryBackfillStatus: a.customType({
       leagueId: a.string().required(),
       leagueName: a.string(),
+      executionArn: a.string(),
       status: a.ref("LeagueHistoryBackfillState").required(),
       requestedAt: a.datetime().required(),
       startedAt: a.datetime(),
@@ -659,6 +640,7 @@ const schema = a
       leagueId: a.string().required(),
       leagueName: a.string(),
       queued: a.boolean().required(),
+      executionArn: a.string(),
       status: a.ref("LeagueHistoryBackfillState").required(),
       requestedAt: a.datetime().required(),
     }),
@@ -823,10 +805,12 @@ const schema = a
 
     PredictionJobSubmitResult: a.customType({
       jobId: a.string().required(),
+      executionArn: a.string(),
     }),
 
     OpponentForecastSubmitResult: a.customType({
       jobId: a.string().required(),
+      executionArn: a.string(),
     }),
 
     OpponentForecastCoverage: a.customType({
@@ -919,6 +903,7 @@ const schema = a
       jobId: a.string().required(),
       teamId: a.string().required(),
       teamName: a.string(),
+      executionArn: a.string(),
       status: a.ref("OpponentForecastJobStatus").required(),
       requestedAt: a.datetime().required(),
       startedAt: a.datetime(),
@@ -930,6 +915,7 @@ const schema = a
 
     GameDayRecapSubmitResult: a.customType({
       targetKey: a.string().required(),
+      executionArn: a.string(),
     }),
 
     JsonLookupResponse: a.customType({
@@ -944,6 +930,7 @@ const schema = a
       status: a.string().required(),
       teamId: a.string().required(),
       teamName: a.string(),
+      executionArn: a.string(),
     }),
 
     LineupHelperContext: a.customType({
@@ -1140,6 +1127,7 @@ const schema = a
 
     TeamHighlightsScanStatus: a.customType({
       completedAt: a.datetime(),
+      executionArn: a.string(),
       error: a.string(),
       matchesDiscovered: a.integer(),
       matchesEnqueuedForIngest: a.integer(),
@@ -1387,17 +1375,11 @@ const schema = a
         connectedAt: a.datetime(),
         lastValidatedAt: a.datetime(),
         lastSyncAt: a.datetime(),
-        refreshSortAt: a.datetime().required(),
         lastSyncError: a.string(),
         profileJson: a.json(),
         workspaceCacheJson: a.json(),
       })
       .identifier(["userId"])
-      .secondaryIndexes((index) => [
-        index("status")
-          .sortKeys(["refreshSortAt"])
-          .queryField("listBbConnectionsByStatusAndRefreshSortAt"),
-      ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
     BbCredential: a
@@ -1570,6 +1552,7 @@ const schema = a
         historicalSeasonsExpected: a.integer(),
         historicalSeasonsStored: a.integer(),
         lastCompletedSeason: a.integer(),
+        executionArn: a.string(),
         updatedAt: a.datetime().required(),
       })
       .identifier(["leagueId"])
@@ -1621,6 +1604,7 @@ const schema = a
         resolvedInputSnapshot: a.json(),
         result: a.json(),
         error: a.string(),
+        executionArn: a.string(),
         modelVersion: a.string(),
         expiryKey: a.string().required(),
         expiresAt: a.datetime().required(),
@@ -1648,6 +1632,7 @@ const schema = a
         resolvedContextJson: a.json(),
         resultJson: a.json(),
         error: a.string(),
+        executionArn: a.string(),
         modelVersion: a.string(),
         expiryKey: a.string().required(),
         expiresAt: a.datetime().required(),
@@ -1677,6 +1662,7 @@ const schema = a
         coverageJson: a.json(),
         resultJson: a.json(),
         error: a.string(),
+        executionArn: a.string(),
         modelProvider: a.string(),
         modelId: a.string(),
         promptVersion: a.string(),
@@ -1704,6 +1690,7 @@ const schema = a
         coverageJson: a.json(),
         resultJson: a.json(),
         error: a.string(),
+        executionArn: a.string(),
         modelProvider: a.string(),
         modelId: a.string(),
         promptVersion: a.string(),
@@ -1732,6 +1719,7 @@ const schema = a
         coverageJson: a.json(),
         resultJson: a.json(),
         error: a.string(),
+        executionArn: a.string(),
         modelProvider: a.string(),
         modelId: a.string(),
         promptVersion: a.string(),

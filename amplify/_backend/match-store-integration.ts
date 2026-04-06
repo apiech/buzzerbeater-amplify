@@ -1,8 +1,8 @@
 import type { Stack } from "aws-cdk-lib";
 import { Table, type ITable } from "aws-cdk-lib/aws-dynamodb";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { type IFunction } from "aws-cdk-lib/aws-lambda";
 import { Bucket, type IBucket } from "aws-cdk-lib/aws-s3";
+import * as sfn from "aws-cdk-lib/aws-stepfunctions";
 
 import type { SharedInfraBindings } from "../_shared/shared-infra-contract.js";
 
@@ -32,8 +32,6 @@ type MatchStoreBackend = {
   getScoutWorkspace: FunctionResource;
   getTeamHub: FunctionResource;
   listAccessibleMatches: FunctionResource;
-  refreshBbWorkspaceWorker: FunctionResource;
-  refreshBbWorkspaces: FunctionResource;
   refreshWorkspace: FunctionResource;
   submitMyTeamHighlightsScan: FunctionResource;
 };
@@ -78,6 +76,11 @@ export function configureMatchStoreIntegration(
     "ImportedTeamHighlightsStatusTable",
     bindings.teamHighlightsStatusTableName,
   );
+  const teamHighlightsScanStateMachine = sfn.StateMachine.fromStateMachineArn(
+    stack,
+    "ImportedTeamHighlightsScanStateMachine",
+    bindings.teamHighlightsScanStateMachineArn,
+  );
 
   const matchStoreReadFunctions = [
     backend.listAccessibleMatches,
@@ -89,7 +92,6 @@ export function configureMatchStoreIntegration(
     backend.connectBbAccount,
     backend.disconnectBbAccount,
     backend.refreshWorkspace,
-    backend.refreshBbWorkspaceWorker,
   ];
   const workspaceSnapshotWriteFunctions = [
     backend.connectBbAccount,
@@ -100,7 +102,6 @@ export function configureMatchStoreIntegration(
     backend.getPlayerLab,
     backend.getRivalsWorkspace,
     backend.refreshWorkspace,
-    backend.refreshBbWorkspaceWorker,
   ];
   const playerSnapshotReadFunctions = [
     backend.getLineupHelperWorkspace,
@@ -166,16 +167,14 @@ export function configureMatchStoreIntegration(
     bindings.teamHighlightsStatusTableName,
   );
   backend.submitMyTeamHighlightsScan.addEnvironment(
-    "TEAM_HIGHLIGHTS_SCAN_QUEUE_URL",
-    bindings.teamHighlightsScanQueueUrl,
+    "TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN",
+    bindings.teamHighlightsScanStateMachineArn,
   );
   teamHighlightsStatusTable.grantReadWriteData(
     backend.submitMyTeamHighlightsScan.resources.lambda,
   );
-  grantSqsSendAccessFromQueueUrl(
-    stack,
+  teamHighlightsScanStateMachine.grantStartExecution(
     backend.submitMyTeamHighlightsScan.resources.lambda,
-    bindings.teamHighlightsScanQueueUrl,
   );
 }
 
@@ -204,31 +203,5 @@ function grantMatchStoreReadAccess(
   );
   matchCatalogTable.grantReadData(
     backend.getMatchBoxscoreDetails.resources.lambda,
-  );
-}
-
-function grantSqsSendAccessFromQueueUrl(
-  stack: Stack,
-  lambda: IFunction,
-  queueUrl: string,
-): void {
-  const parsed = new URL(queueUrl);
-  const [, accountId, queueName] = parsed.pathname.split("/");
-  const regionMatch = parsed.hostname.match(/^sqs[.-]([a-z0-9-]+)\./i);
-  const region = regionMatch?.[1];
-
-  if (!accountId || !queueName || !region) {
-    throw new Error(
-      `Unable to resolve an SQS ARN from TEAM_HIGHLIGHTS_SCAN_QUEUE_URL: ${queueUrl}`,
-    );
-  }
-
-  lambda.grantPrincipal.addToPrincipalPolicy(
-    new PolicyStatement({
-      actions: ["sqs:SendMessage"],
-      resources: [
-        `arn:${stack.partition}:sqs:${region}:${accountId}:${queueName}`,
-      ],
-    }),
   );
 }

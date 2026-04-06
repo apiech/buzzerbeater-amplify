@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
+import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
@@ -43,31 +44,65 @@ export function OperationsPanel() {
   const [predictionJobs, setPredictionJobs] = useState<PredictionJobRecord[]>([]);
   const [opsError, setOpsError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const loadOperationsEffect = useEffectEvent(() => {
+    void loadOperations();
+  });
 
   useEffect(() => {
-    void loadOperations();
+    loadOperationsEffect();
   }, []);
 
   useEffect(() => {
-    const hasActiveWork =
-      syncRuns.some((run) => !terminalSyncStatuses.has(run.status)) ||
-      combinedRecaps(
-        gameDayRecaps,
-        leagueGameDayRecaps,
-        singleGameSummaries,
-      ).some((recap) => !terminalRecapStatuses.has(recap.status)) ||
-      predictionJobs.some((job) => !terminalPredictionStatuses.has(job.status));
+    const realtimeClient = getRealtimeClient();
+    const subscriptions = [
+      realtimeClient.models.SyncRun.onCreate().subscribe({
+        error: logRealtimeError("SyncRun.onCreate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.SyncRun.onUpdate().subscribe({
+        error: logRealtimeError("SyncRun.onUpdate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.PredictionJob.onCreate().subscribe({
+        error: logRealtimeError("PredictionJob.onCreate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.PredictionJob.onUpdate().subscribe({
+        error: logRealtimeError("PredictionJob.onUpdate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.GameDayRecap.onCreate().subscribe({
+        error: logRealtimeError("GameDayRecap.onCreate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.GameDayRecap.onUpdate().subscribe({
+        error: logRealtimeError("GameDayRecap.onUpdate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.LeagueGameDayRecap.onCreate().subscribe({
+        error: logRealtimeError("LeagueGameDayRecap.onCreate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.LeagueGameDayRecap.onUpdate().subscribe({
+        error: logRealtimeError("LeagueGameDayRecap.onUpdate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.SingleGameSummary.onCreate().subscribe({
+        error: logRealtimeError("SingleGameSummary.onCreate"),
+        next: () => loadOperationsEffect(),
+      }),
+      realtimeClient.models.SingleGameSummary.onUpdate().subscribe({
+        error: logRealtimeError("SingleGameSummary.onUpdate"),
+        next: () => loadOperationsEffect(),
+      }),
+    ];
 
-    if (!hasActiveWork) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      void loadOperations();
-    }, 5000);
-
-    return () => window.clearInterval(interval);
-  }, [gameDayRecaps, leagueGameDayRecaps, predictionJobs, singleGameSummaries, syncRuns]);
+    return () => {
+      for (const subscription of subscriptions) {
+        subscription.unsubscribe();
+      }
+    };
+  }, []);
 
   async function loadOperations() {
     setIsLoading(true);

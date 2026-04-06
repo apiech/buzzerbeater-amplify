@@ -91,9 +91,15 @@ test("hosted readiness reports missing shared-infra parameters", () => {
           InvalidParameters: [],
         },
         {
+          InvalidParameters: [],
+        },
+        {
           InvalidParameters: [
             "/buzzerbeater/ml-data-infra/prod/prediction-endpoint-name",
           ],
+        },
+        {
+          InvalidParameters: [],
         },
       ],
     }),
@@ -146,9 +152,15 @@ test("hosted readiness warns when the optional opponent forecast endpoint bindin
           ],
         },
         {
+          InvalidParameters: [],
+        },
+        {
           InvalidParameters: [
             "/buzzerbeater/ml-data-infra/prod/opponent-forecast-endpoint-name",
           ],
+        },
+        {
+          InvalidParameters: [],
         },
       ],
     }),

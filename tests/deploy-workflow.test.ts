@@ -406,6 +406,183 @@ test("sandbox up stops before side effects when deploy verification fails", () =
   ]);
 });
 
+test("sandbox up fails early when another sandbox process already holds the cdk.out lock", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  assert.throws(
+    () =>
+      workflowTesting.runSandboxUp(
+        [],
+        createRuntime({
+          directoryExists(path) {
+            return path === `${projectRoot}/.amplify/artifacts/cdk.out`;
+          },
+          env: {
+            BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+          },
+          listDir(path) {
+            if (path !== `${projectRoot}/.amplify/artifacts/cdk.out`) {
+              throw new Error(`Unexpected directory read: ${path}`);
+            }
+
+            return ["read.6845.1.lock"];
+          },
+          readFile(path) {
+            if (path !== `${projectRoot}/.amplify/artifacts/cdk.out/read.6845.1.lock`) {
+              throw new Error(`Unexpected file read: ${path}`);
+            }
+
+            return "6845\n";
+          },
+          spawnSync(command, args, options) {
+            calls.push({ args, command, options });
+            if (command === "ps") {
+              return {
+                status: 0,
+                stderr: "",
+                stdout:
+                  "node /Users/karey/projects/bb/bb-amplify/node_modules/.bin/ampx sandbox --once --identifier karey\n",
+              };
+            }
+
+            throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+          },
+        }),
+      ),
+    /Another Amplify sandbox process is already running/,
+  );
+
+  assert.deepEqual(calls, [
+    {
+      command: "ps",
+      args: ["-p", "6845", "-o", "command="],
+      options: {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    },
+  ]);
+});
+
+test("sandbox up removes stale sandbox lock files before continuing", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+  const removedPaths: string[] = [];
+
+  const exitCode = workflowTesting.runSandboxUp(
+    ["--once"],
+    createRuntime({
+      directoryExists(path) {
+        return path === `${projectRoot}/.amplify/artifacts/cdk.out`;
+      },
+      env: {
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "ssm") {
+          return {
+            Parameters: [
+              {
+                Name: "/buzzerbeater/ml-data-infra/sandbox-karey/prediction-endpoint-name",
+                Value: "predictor-endpoint",
+              },
+            ],
+          };
+        }
+
+        if (args[0] === "sagemaker") {
+          return {
+            EndpointStatus: "InService",
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      listDir(path) {
+        if (path !== `${projectRoot}/.amplify/artifacts/cdk.out`) {
+          throw new Error(`Unexpected directory read: ${path}`);
+        }
+
+        return ["manifest.json", "read.9999.1.lock"];
+      },
+      readFile(path) {
+        if (path === `${projectRoot}/.amplify/artifacts/cdk.out/read.9999.1.lock`) {
+          return "9999\n";
+        }
+
+        throw new Error(`Unexpected file read: ${path}`);
+      },
+      removeFile(path) {
+        removedPaths.push(path);
+      },
+      spawnSync(command, args, options) {
+        calls.push({ args, command, options });
+
+        if (command === "ps") {
+          return {
+            status: 1,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+        if (args.includes("list")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "BB_CONNECTION_ENCRYPTION_SECRET\n",
+          };
+        }
+
+        if (command === "npm" && args.includes("deploy:ml-data-infra")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        if (command === process.execPath) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(removedPaths, [
+    `${projectRoot}/.amplify/artifacts/cdk.out/read.9999.1.lock`,
+  ]);
+  assert.equal(calls[0].command, "ps");
+  assert.deepEqual(calls[0].args, ["-p", "9999", "-o", "command="]);
+  assert.deepEqual(calls.at(-1)?.args.slice(1), [
+    "sandbox",
+    "--identifier",
+    "karey",
+    "--once",
+  ]);
+});
+
 test("dev prepare runs deploy verification before shared infra deploy side effects", () => {
   const calls: Array<{
     args: string[];
@@ -626,16 +803,22 @@ test("dev doctor points missing predictor pins at the root deploy wrapper", () =
 });
 
 function createRuntime({
+  directoryExists = () => false,
   env = {},
   execAwsJson,
   fileExists = () => false,
+  listDir = () => [],
   readFile = () => "",
+  removeFile = () => undefined,
   spawnSync,
 }: {
+  directoryExists?: (path: string) => boolean;
   env?: Record<string, string>;
   execAwsJson?: (args: string[]) => unknown;
   fileExists?: (path: string) => boolean;
+  listDir?: (path: string) => string[];
   readFile?: (path: string) => string;
+  removeFile?: (path: string) => void;
   spawnSync: (
     command: string,
     args: string[],
@@ -647,6 +830,7 @@ function createRuntime({
   };
 }) {
   return {
+    directoryExists,
     env,
     execAwsJson:
       execAwsJson ??
@@ -654,6 +838,7 @@ function createRuntime({
         throw new Error("Unexpected AWS CLI call");
       }),
     fileExists,
+    listDir,
     mkdirp() {
       return undefined;
     },
@@ -661,6 +846,7 @@ function createRuntime({
       return "2026-03-19T12:00:00.000Z";
     },
     readFile,
+    removeFile,
     spawnSync,
     userName() {
       return "karey";

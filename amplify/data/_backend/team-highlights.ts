@@ -1,5 +1,4 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -15,6 +14,10 @@ import {
   listTrackedTeamsForUser,
   type TrackedTeamRecord,
 } from "./repository";
+import {
+  buildExecutionName,
+  startStateMachineExecution,
+} from "./step-functions";
 
 type GraphqlEnv = Record<string, string | undefined>;
 type TeamMomentsEnv = {
@@ -43,10 +46,11 @@ type SubmitDependencies = {
   now: () => Date;
   putTeamHighlightsStatus: typeof putTeamHighlightsStatus;
   requireFeatureAccess: typeof requireFeatureAccess;
-  sendQueueMessage: (
-    queueUrl: string,
+  startWorkflowExecution: (
+    stateMachineArn: string,
+    executionName: string,
     message: TeamHighlightsScanMessage,
-  ) => Promise<void>;
+  ) => Promise<string>;
 };
 
 type GetDependencies = {
@@ -69,6 +73,7 @@ type TeamHighlightsScanMessage = {
 
 type TeamHighlightsStatusItem = {
   completedAt?: string | null;
+  executionArn?: string | null;
   error?: string | null;
   matchesDiscovered?: number | null;
   matchesEnqueuedForIngest?: number | null;
@@ -143,14 +148,12 @@ const defaultSubmitDependencies: SubmitDependencies = {
   now: () => new Date(),
   putTeamHighlightsStatus,
   requireFeatureAccess,
-  sendQueueMessage: async (queueUrl, message) => {
-    const sqs = new SQSClient({});
-    await sqs.send(
-      new SendMessageCommand({
-        MessageBody: JSON.stringify(message),
-        QueueUrl: queueUrl,
-      }),
-    );
+  startWorkflowExecution: async (stateMachineArn, executionName, message) => {
+    return startStateMachineExecution({
+      input: message,
+      name: executionName,
+      stateMachineArn,
+    });
   },
 };
 
@@ -176,10 +179,11 @@ export async function submitMyTeamHighlightsScan(
   args: {
     env: GraphqlEnv;
     identity: unknown;
-    queueUrl: string;
+    stateMachineArn: string;
   },
   dependencies: SubmitDependencies = defaultSubmitDependencies,
 ): Promise<{
+  executionArn: string | null;
   queued: boolean;
   requestedAt: string;
   status: string;
@@ -210,6 +214,7 @@ export async function submitMyTeamHighlightsScan(
   );
   if (existingStatus && !TERMINAL_SCAN_STATUSES.has(existingStatus.status)) {
     return {
+      executionArn: existingStatus.executionArn ?? null,
       queued: false,
       requestedAt: existingStatus.requestedAt,
       status: existingStatus.status,
@@ -220,6 +225,7 @@ export async function submitMyTeamHighlightsScan(
 
   const requestedAt = dependencies.now().toISOString();
   const queuedStatus: TeamHighlightsStatusItem = {
+    executionArn: null,
     requestedAt,
     status: "QUEUED",
     teamId: team.teamId,
@@ -231,11 +237,30 @@ export async function submitMyTeamHighlightsScan(
   await dependencies.putTeamHighlightsStatus(args.env, queuedStatus);
 
   try {
-    await dependencies.sendQueueMessage(args.queueUrl, {
+    const executionArn = await dependencies.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName(
+        "team-highlights",
+        `${userId}:${team.teamId}:${requestedAt}`,
+      ),
+      {
       requestedAt,
       teamId: team.teamId,
       userId,
+      },
+    );
+    await dependencies.putTeamHighlightsStatus(args.env, {
+      ...queuedStatus,
+      executionArn,
     });
+    return {
+      executionArn,
+      queued: true,
+      requestedAt,
+      status: queuedStatus.status,
+      teamId: team.teamId,
+      teamName: team.teamName,
+    };
   } catch (error) {
     const failedAt = dependencies.now().toISOString();
     await dependencies.putTeamHighlightsStatus(args.env, {
@@ -247,14 +272,6 @@ export async function submitMyTeamHighlightsScan(
     });
     throw error;
   }
-
-  return {
-    queued: true,
-    requestedAt,
-    status: queuedStatus.status,
-    teamId: team.teamId,
-    teamName: team.teamName,
-  };
 }
 
 export async function getMyTeamHighlights(
@@ -354,6 +371,7 @@ export async function getMyTeamHighlights(
     scanStatus: scanStatus
       ? {
           completedAt: scanStatus.completedAt ?? null,
+          executionArn: scanStatus.executionArn ?? null,
           error: scanStatus.error ?? null,
           matchesDiscovered: scanStatus.matchesDiscovered ?? null,
           matchesEnqueuedForIngest: scanStatus.matchesEnqueuedForIngest ?? null,

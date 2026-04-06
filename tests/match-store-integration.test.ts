@@ -23,10 +23,11 @@ test("match-store integration imports shared infra resources instead of provisio
   assert.doesNotMatch(source, /\.env\.match-data-plane/);
 });
 
-test("team highlights submitter derives queue access from the imported shared infra queue url", () => {
-  assert.match(source, /TEAM_HIGHLIGHTS_SCAN_QUEUE_URL/);
-  assert.match(source, /grantSqsSendAccessFromQueueUrl/);
-  assert.match(source, /arn:\$\{stack\.partition\}:sqs:/);
+test("team highlights submitter derives Step Functions access from the imported shared infra workflow", () => {
+  assert.match(source, /TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN/);
+  assert.match(source, /StateMachine\.fromStateMachineArn/);
+  assert.match(source, /grantStartExecution/);
+  assert.doesNotMatch(source, /grantSqsSendAccessFromQueueUrl/);
 });
 
 test("active tracked team wiring is limited to explicit enrollment and refresh paths", () => {
@@ -34,7 +35,6 @@ test("active tracked team wiring is limited to explicit enrollment and refresh p
   assert.match(source, /backend\.connectBbAccount/);
   assert.match(source, /backend\.disconnectBbAccount/);
   assert.match(source, /backend\.refreshWorkspace/);
-  assert.match(source, /backend\.refreshBbWorkspaceWorker/);
   const start = source.indexOf("const activeTrackedTeamSyncFunctions");
   const end = source.indexOf("const workspaceSnapshotWriteFunctions");
   const activeTrackedSection = source.slice(start, end);

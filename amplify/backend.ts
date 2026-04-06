@@ -9,14 +9,12 @@ import { configureMatchStoreIntegration } from "./_backend/match-store-integrati
 import { configureOpponentForecastJobs } from "./_backend/opponent-forecast-jobs.js";
 import { configureOperationalRetention } from "./_backend/operational-retention.js";
 import { configurePredictionJobs } from "./_backend/prediction-jobs.js";
-import { configureRefreshJobs } from "./_backend/refresh-jobs.js";
 import {
   resolveAppResourceRemovalPolicy,
   resolveBillingConfig,
   resolveCostVisibilityConfig,
   resolveGameDayRecapConfig,
   resolveOperationalRetentionConfig,
-  resolveRefreshJobsConfig,
   resolveSharedInfraBindings,
 } from "./_shared/synth-env.js";
 import { auth } from "./auth/resource.js";
@@ -47,8 +45,6 @@ import {
   leagueHistoryWorker,
   listMyBillingPayments,
   pruneOperationalData,
-  refreshBbWorkspaces,
-  refreshBbWorkspaceWorker,
   refreshWorkspace,
   setBbLeagueTimeZone,
   submitLeagueHistoryBackfill,
@@ -93,8 +89,6 @@ const backend = defineBackend({
   getSalaryProjection,
   leagueHistoryWorker,
   generateSharedPlayerCard,
-  refreshBbWorkspaces,
-  refreshBbWorkspaceWorker,
   pruneOperationalData,
   setBbLeagueTimeZone,
   getAccessibleMatch,
@@ -137,10 +131,5 @@ configureOpponentForecastJobs(
   appResourceRemovalPolicy,
 );
 configurePredictionJobs(backend, sharedInfraBindings, appResourceRemovalPolicy);
-configureRefreshJobs(
-  backend,
-  resolveRefreshJobsConfig(),
-  appResourceRemovalPolicy,
-);
 configureMatchStoreIntegration(backend, sharedInfraBindings);
 configureOperationalRetention(backend, resolveOperationalRetentionConfig());

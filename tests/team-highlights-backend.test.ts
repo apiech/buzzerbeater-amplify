@@ -38,7 +38,8 @@ test("submitMyTeamHighlightsScan rejects free-plan users before queueing work", 
         {
           env: {},
           identity: { sub: "user-1" },
-          queueUrl: "https://queue.example.com/123/highlights",
+          stateMachineArn:
+            "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
         },
         {
           getBbConnection: async () => ({
@@ -52,8 +53,8 @@ test("submitMyTeamHighlightsScan rejects free-plan users before queueing work", 
           requireFeatureAccess: async () => {
             throw new Error("Premium is required to scan team highlights.");
           },
-          sendQueueMessage: async () => {
-            throw new Error("sendQueueMessage should not be called");
+          startWorkflowExecution: async () => {
+            throw new Error("startWorkflowExecution should not be called");
           },
         },
       ),
@@ -63,7 +64,13 @@ test("submitMyTeamHighlightsScan rejects free-plan users before queueing work", 
 
 test("submitMyTeamHighlightsScan writes queued status and enqueues work", async () => {
   const writtenStatuses: Array<Record<string, unknown>> = [];
-  let queuedMessage: Record<string, string> | null = null;
+  let startedExecution:
+    | {
+        executionName: string;
+        message: Record<string, string>;
+        stateMachineArn: string;
+      }
+    | null = null;
 
   const result = await submitMyTeamHighlightsScan(
     {
@@ -71,7 +78,8 @@ test("submitMyTeamHighlightsScan writes queued status and enqueues work", async 
         BILLING_DEFAULT_PLAN: "premium",
       },
       identity: { sub: "user-1" },
-      queueUrl: "https://queue.example.com/123/highlights",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
     },
     {
       getBbConnection: async () => ({
@@ -85,13 +93,20 @@ test("submitMyTeamHighlightsScan writes queued status and enqueues work", async 
         writtenStatuses.push(record as unknown as Record<string, unknown>);
       },
       requireFeatureAccess: async () => "premium",
-      sendQueueMessage: async (_queueUrl, message) => {
-        queuedMessage = message;
+      startWorkflowExecution: async (
+        stateMachineArn,
+        executionName,
+        message,
+      ) => {
+        startedExecution = { executionName, message, stateMachineArn };
+        return "arn:aws:states:us-east-1:123456789012:execution:team-highlights:scan-1";
       },
     },
   );
 
   assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:team-highlights:scan-1",
     queued: true,
     requestedAt: "2026-03-15T12:00:00.000Z",
     status: "QUEUED",
@@ -99,6 +114,7 @@ test("submitMyTeamHighlightsScan writes queued status and enqueues work", async 
     teamName: "Alpha",
   });
   assert.deepStrictEqual(writtenStatuses[0], {
+    executionArn: null,
     requestedAt: "2026-03-15T12:00:00.000Z",
     status: "QUEUED",
     teamId: "team-1",
@@ -106,10 +122,25 @@ test("submitMyTeamHighlightsScan writes queued status and enqueues work", async 
     updatedAt: "2026-03-15T12:00:00.000Z",
     userId: "user-1",
   });
-  assert.deepStrictEqual(queuedMessage, {
+  assert.deepStrictEqual(writtenStatuses[1], {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:team-highlights:scan-1",
     requestedAt: "2026-03-15T12:00:00.000Z",
+    status: "QUEUED",
     teamId: "team-1",
+    teamName: "Alpha",
+    updatedAt: "2026-03-15T12:00:00.000Z",
     userId: "user-1",
+  });
+  assert.deepStrictEqual(startedExecution, {
+    executionName: "team-highlights-user-1-team-1-2026-03-15T12-00-00-000Z",
+    message: {
+      requestedAt: "2026-03-15T12:00:00.000Z",
+      teamId: "team-1",
+      userId: "user-1",
+    },
+    stateMachineArn:
+      "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
   });
 });
 
@@ -118,7 +149,8 @@ test("submitMyTeamHighlightsScan reuses an active scan instead of duplicating it
     {
       env: {},
       identity: { sub: "user-1" },
-      queueUrl: "https://queue.example.com/123/highlights",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
     },
     {
       getBbConnection: async () => ({
@@ -138,13 +170,14 @@ test("submitMyTeamHighlightsScan reuses an active scan instead of duplicating it
         throw new Error("putTeamHighlightsStatus should not be called");
       },
       requireFeatureAccess: async () => "premium",
-      sendQueueMessage: async () => {
-        throw new Error("sendQueueMessage should not be called");
+      startWorkflowExecution: async () => {
+        throw new Error("startWorkflowExecution should not be called");
       },
     },
   );
 
   assert.deepStrictEqual(result, {
+    executionArn: null,
     queued: false,
     requestedAt: "2026-03-15T09:00:00.000Z",
     status: "RESOLVING_HISTORY",

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import {
   InvokeEndpointCommand,
   SageMakerRuntimeClient,
@@ -17,6 +16,10 @@ import {
   updateOpponentForecastJob,
 } from "./repository";
 import { getOrRefreshWorkspace, getScoutWorkspaceForTeam } from "./workspace";
+import {
+  buildExecutionName,
+  startStateMachineExecution,
+} from "./step-functions";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -41,24 +44,23 @@ type OpponentForecastSignal = OpponentForecastResult["featureSignals"][number];
 type SubmitOpponentForecastDependencies = {
   createOpponentForecastJob: typeof createOpponentForecastJob;
   requireFeatureAccess: typeof requireFeatureAccess;
-  sendQueueMessage: (
-    queueUrl: string,
+  startWorkflowExecution: (
+    stateMachineArn: string,
+    executionName: string,
     message: { jobId: string; userId: string },
-  ) => Promise<void>;
+  ) => Promise<string>;
   updateOpponentForecastJob: typeof updateOpponentForecastJob;
 };
 
 const defaultSubmitDependencies: SubmitOpponentForecastDependencies = {
   createOpponentForecastJob,
   requireFeatureAccess,
-  sendQueueMessage: async (queueUrl, message) => {
-    const sqs = new SQSClient({});
-    await sqs.send(
-      new SendMessageCommand({
-        QueueUrl: queueUrl,
-        MessageBody: JSON.stringify(message),
-      }),
-    );
+  startWorkflowExecution: async (stateMachineArn, executionName, message) => {
+    return startStateMachineExecution({
+      input: message,
+      name: executionName,
+      stateMachineArn,
+    });
   },
   updateOpponentForecastJob,
 };
@@ -67,11 +69,11 @@ export async function submitOpponentForecastJob(
   args: {
     env: GraphqlEnv;
     identity: unknown;
-    queueUrl: string;
+    stateMachineArn: string;
     teamId: string;
   },
   dependencies: SubmitOpponentForecastDependencies = defaultSubmitDependencies,
-): Promise<{ jobId: string }> {
+): Promise<{ executionArn: string; jobId: string }> {
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -98,11 +100,21 @@ export async function submitOpponentForecastJob(
     resolvedContextJson: null,
     resultJson: null,
     error: null,
+    executionArn: null,
     modelVersion: null,
   });
 
   try {
-    await dependencies.sendQueueMessage(args.queueUrl, { jobId, userId });
+    const executionArn = await dependencies.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName("opponent-forecast", jobId),
+      { jobId, userId },
+    );
+    await dependencies.updateOpponentForecastJob(args.env, {
+      id: jobId,
+      executionArn,
+    });
+    return { executionArn, jobId };
   } catch (error) {
     await dependencies.updateOpponentForecastJob(args.env, {
       id: jobId,
@@ -112,8 +124,6 @@ export async function submitOpponentForecastJob(
     });
     throw error;
   }
-
-  return { jobId };
 }
 
 export async function getLatestOpponentForecast(args: {
@@ -137,9 +147,10 @@ export async function getLatestOpponentForecast(args: {
 export async function processOpponentForecastJob(args: {
   env: GraphqlEnv;
   endpointName: string;
-  messageBody: string;
+  message?: { jobId: string; userId: string };
+  messageBody?: string;
 }): Promise<void> {
-  const message = parseQueueMessage(args.messageBody);
+  const message = resolveOpponentForecastJobMessage(args);
   const job = await getOpponentForecastJob(args.env, message.jobId);
   if (!job || job.userId !== message.userId) {
     throw new Error(
@@ -315,6 +326,7 @@ function adaptForecastJob(job: {
   id: string;
   teamId: string;
   teamName?: string | null;
+  executionArn?: string | null;
   status: string;
   requestedAt: string;
   startedAt?: string | null;
@@ -327,6 +339,7 @@ function adaptForecastJob(job: {
     jobId: job.id,
     teamId: job.teamId,
     teamName: asOptionalString(job.teamName),
+    executionArn: asOptionalString(job.executionArn),
     status: normalizeForecastStatus(job.status),
     requestedAt: job.requestedAt,
     startedAt: asOptionalString(job.startedAt),
@@ -511,6 +524,19 @@ function parseQueueMessage(body: string): { jobId: string; userId: string } {
     );
   }
   return { jobId, userId };
+}
+
+function resolveOpponentForecastJobMessage(args: {
+  message?: { jobId: string; userId: string };
+  messageBody?: string;
+}): { jobId: string; userId: string } {
+  if (args.message) {
+    return args.message;
+  }
+  if (!args.messageBody) {
+    throw new Error("Opponent forecast job payload was not provided.");
+  }
+  return parseQueueMessage(args.messageBody);
 }
 
 function normalizeForecastStatus(

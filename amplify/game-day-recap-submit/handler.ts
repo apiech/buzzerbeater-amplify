@@ -11,10 +11,10 @@ export const handler: Handler = async (event) => {
     gameDate: event.arguments.gameDate,
     leagueId: event.arguments.leagueId,
   });
-  const queueUrl = (env as RuntimeEnv)["GAME_DAY_RECAP_QUEUE_URL"];
-  if (!queueUrl) {
+  const stateMachineArn = (env as RuntimeEnv)["GAME_DAY_RECAP_STATE_MACHINE_ARN"];
+  if (!stateMachineArn) {
     throw new Error(
-      "Game day recap queue URL environment variable was not found.",
+      "Game day recap state machine ARN environment variable was not found.",
     );
   }
 
@@ -24,7 +24,7 @@ export const handler: Handler = async (event) => {
       gameDate: event.arguments.gameDate,
       identity: event.identity,
       leagueId: event.arguments.leagueId,
-      queueUrl,
+      stateMachineArn,
     });
 
     console.info("[game-day-recap-submit] succeeded", {

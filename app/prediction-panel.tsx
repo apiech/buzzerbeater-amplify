@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import { client } from "@/app/amplify-client";
+import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import {
   findBestPredictionGridCell,
   findPredictionGridCell,
@@ -153,7 +160,6 @@ type TextConnectedOverrideField = Exclude<
   NumericConnectedOverrideField
 >;
 
-const terminalStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 const listClassName = "grid list-none gap-3 p-0";
 const listItemClassName =
@@ -191,6 +197,9 @@ export function PredictionPanel({
   const homeTeamId = workspace.home.team.teamId ?? null;
   const awayTeamId =
     workspace.scout.summary?.matchupPerspective.opponentTeamId ?? null;
+  const loadJobsEffect = useEffectEvent(() => {
+    void loadJobs();
+  });
 
   useEffect(() => {
     onDraftChange((current) => {
@@ -218,21 +227,28 @@ export function PredictionPanel({
   }, [defaultAwaySourceMatchId, defaultHomeSourceMatchId, onDraftChange]);
 
   useEffect(() => {
-    void loadJobs();
+    loadJobsEffect();
   }, []);
 
   useEffect(() => {
-    const hasActiveJob = jobs.some((job) => !terminalStatuses.has(job.status));
-    if (!hasActiveJob) {
-      return;
-    }
+    const realtimeClient = getRealtimeClient();
+    const subscriptions = [
+      realtimeClient.models.PredictionJob.onCreate().subscribe({
+        error: logRealtimeError("PredictionJob.onCreate"),
+        next: () => loadJobsEffect(),
+      }),
+      realtimeClient.models.PredictionJob.onUpdate().subscribe({
+        error: logRealtimeError("PredictionJob.onUpdate"),
+        next: () => loadJobsEffect(),
+      }),
+    ];
 
-    const interval = window.setInterval(() => {
-      void loadJobs();
-    }, 3000);
-
-    return () => window.clearInterval(interval);
-  }, [jobs]);
+    return () => {
+      for (const subscription of subscriptions) {
+        subscription.unsubscribe();
+      }
+    };
+  }, []);
 
   async function loadJobs() {
     setIsLoadingJobs(true);

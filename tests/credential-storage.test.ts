@@ -9,10 +9,6 @@ import {
   __testing as credentialTesting,
   resolveBbAccessKey,
 } from "../amplify/data/_backend/credentials";
-import {
-  __testing as workspaceTesting,
-  backfillActiveTrackedTeamCredentialProjection,
-} from "../amplify/data/_backend/workspace";
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 test("resolveBbAccessKey decrypts the stored BbCredential only", async (t) => {
@@ -45,78 +41,6 @@ test("resolveBbAccessKey decrypts the stored BbCredential only", async (t) => {
 
   assert.equal(accessKey, "access-key");
   assert.equal(decryptedSecret, "shared-secret");
-});
-
-test("backfillActiveTrackedTeamCredentialProjection hydrates active tracked teams from BbCredential", async (t) => {
-  const originalRuntime = {
-    getBbCredential: workspaceTesting.backfillRuntime.getBbCredential,
-    listActiveTrackedTeamsForUser:
-      workspaceTesting.backfillRuntime.listActiveTrackedTeamsForUser,
-    listConnectedUsers: workspaceTesting.backfillRuntime.listConnectedUsers,
-    upsertActiveTrackedTeam: workspaceTesting.backfillRuntime.upsertActiveTrackedTeam,
-  };
-
-  t.after(() => {
-    workspaceTesting.backfillRuntime.getBbCredential = originalRuntime.getBbCredential;
-    workspaceTesting.backfillRuntime.listActiveTrackedTeamsForUser =
-      originalRuntime.listActiveTrackedTeamsForUser;
-    workspaceTesting.backfillRuntime.listConnectedUsers =
-      originalRuntime.listConnectedUsers;
-    workspaceTesting.backfillRuntime.upsertActiveTrackedTeam =
-      originalRuntime.upsertActiveTrackedTeam;
-  });
-
-  const upserts: Array<Record<string, unknown>> = [];
-  workspaceTesting.backfillRuntime.listConnectedUsers = async () => [
-    {
-      userId: "user-1",
-      bbLoginName: "coach",
-      status: "CONNECTED",
-    } as any,
-  ];
-  workspaceTesting.backfillRuntime.getBbCredential = async () => ({
-    userId: "user-1",
-    cipherText: "cipher",
-    iv: "iv",
-    authTag: "auth",
-    algorithm: "aes-256-gcm",
-  });
-  workspaceTesting.backfillRuntime.listActiveTrackedTeamsForUser = async () => [
-    {
-      userId: "user-1",
-      teamId: "163730",
-      active: true,
-      isPrimary: true,
-      updatedAt: "2026-03-15T00:00:00.000Z",
-    },
-    {
-      userId: "user-1",
-      teamId: "235159",
-      active: false,
-      isPrimary: false,
-      updatedAt: "2026-03-15T00:00:00.000Z",
-    },
-  ];
-  workspaceTesting.backfillRuntime.upsertActiveTrackedTeam = async (_env, record) => {
-    upserts.push(record as Record<string, unknown>);
-  };
-
-  const result = await backfillActiveTrackedTeamCredentialProjection({});
-
-  assert.deepStrictEqual(result, {
-    connectedUsers: 1,
-    usersWithProjectedCredentials: 1,
-    usersMissingCredentials: 0,
-    trackedTeamsUpdated: 1,
-  });
-  assert.equal(upserts.length, 1);
-  const firstUpsert = upserts[0];
-  assert.ok(firstUpsert);
-  assert.equal(firstUpsert.bbLoginName, "coach");
-  assert.equal(firstUpsert.credentialCipherText, "cipher");
-  assert.equal(firstUpsert.credentialIv, "iv");
-  assert.equal(firstUpsert.credentialAuthTag, "auth");
-  assert.equal(firstUpsert.credentialAlgorithm, "aes-256-gcm");
 });
 
 test("deactivateActiveTrackedTeamsForUser clears projected credentials while leaving rows in place", async (t) => {

@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
+import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input } from "@/app/ui/primitives/field";
@@ -109,16 +110,40 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   }, []);
 
   useEffect(() => {
-    if (!hasActiveRecap(recaps)) {
-      return;
-    }
+    const realtimeClient = getRealtimeClient();
+    const subscriptions = [
+      realtimeClient.models.GameDayRecap.onCreate().subscribe({
+        error: logRealtimeError("GameDayRecap.onCreate"),
+        next: () => loadRecapsEffect(selectedRecapKey),
+      }),
+      realtimeClient.models.GameDayRecap.onUpdate().subscribe({
+        error: logRealtimeError("GameDayRecap.onUpdate"),
+        next: () => loadRecapsEffect(selectedRecapKey),
+      }),
+      realtimeClient.models.LeagueGameDayRecap.onCreate().subscribe({
+        error: logRealtimeError("LeagueGameDayRecap.onCreate"),
+        next: () => loadRecapsEffect(selectedRecapKey),
+      }),
+      realtimeClient.models.LeagueGameDayRecap.onUpdate().subscribe({
+        error: logRealtimeError("LeagueGameDayRecap.onUpdate"),
+        next: () => loadRecapsEffect(selectedRecapKey),
+      }),
+      realtimeClient.models.SingleGameSummary.onCreate().subscribe({
+        error: logRealtimeError("SingleGameSummary.onCreate"),
+        next: () => loadRecapsEffect(selectedRecapKey),
+      }),
+      realtimeClient.models.SingleGameSummary.onUpdate().subscribe({
+        error: logRealtimeError("SingleGameSummary.onUpdate"),
+        next: () => loadRecapsEffect(selectedRecapKey),
+      }),
+    ];
 
-    const interval = window.setInterval(() => {
-      loadRecapsEffect(selectedRecapKey);
-    }, 4000);
-
-    return () => window.clearInterval(interval);
-  }, [recaps, selectedRecapKey]);
+    return () => {
+      for (const subscription of subscriptions) {
+        subscription.unsubscribe();
+      }
+    };
+  }, [selectedRecapKey]);
 
   async function loadRecaps(preferredKey: string | null = selectedRecapKey) {
     setIsLoadingRecaps(true);
@@ -588,12 +613,6 @@ function toRecapSelectionKey(kind: RecapMode, targetKey: string): string {
 
 function sortRecapHistory(recaps: readonly RecapHistoryRecord[]): RecapHistoryRecord[] {
   return [...recaps].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
-function hasActiveRecap(recaps: readonly RecapHistoryRecord[]): boolean {
-  return recaps.some(
-    (recap) => Boolean(recap.status) && !terminalStatuses.has(recap.status ?? ""),
-  );
 }
 
 function recapTitle(record: RecapHistoryRecord): string {

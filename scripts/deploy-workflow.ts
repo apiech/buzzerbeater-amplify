@@ -2,7 +2,9 @@ import { execFileSync, spawnSync, type SpawnSyncOptions } from "node:child_proce
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
   type PathLike,
 } from "node:fs";
@@ -12,6 +14,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { buildSharedInfraParameterPaths } from "../amplify/_shared/shared-infra-contract.js";
+import { getParametersByName } from "../amplify/_shared/aws-cli-ssm.js";
 import {
   createSharedInfraBootstrapCommand,
   resolveSandboxEnvironmentName,
@@ -82,9 +85,11 @@ type WorkflowRuntime = {
   env: NodeJS.ProcessEnv;
   execAwsJson: (args: string[]) => unknown;
   fileExists: (path: PathLike) => boolean;
+  listDir: (path: string) => string[];
   mkdirp: (path: string) => void;
   nowIso: () => string;
   readFile: (path: string) => string;
+  removeFile: (path: string) => void;
   spawnSync: (
     command: string,
     args: string[],
@@ -125,6 +130,8 @@ const dockerConfigRoot = join(
   "dist",
   ".docker-cli",
 );
+const sandboxCdkOutPath = join(projectRoot, ".amplify", "artifacts", "cdk.out");
+const sandboxReadLockPattern = /^read\.(\d+)\.\d+\.lock$/;
 
 function asSharedInfraRuntime(runtime: WorkflowRuntime): SharedInfraRuntime {
   return runtime as unknown as SharedInfraRuntime;
@@ -592,6 +599,7 @@ function runSandboxUp(
   runtime.write(
     `Preparing sandbox '${sandboxIdentifier}' with shared environment '${environmentName}'.`,
   );
+  assertNoConflictingSandboxProcesses(runtime);
 
   if (normalizeOptionalString(runtime.env[skipDeployVerifyEnvName])) {
     runtime.write("Skipping deploy verification because BB_SKIP_DEPLOY_VERIFY is set.");
@@ -655,6 +663,66 @@ function runSandboxUp(
     },
   );
   return result.status ?? 1;
+}
+
+function assertNoConflictingSandboxProcesses(runtime: WorkflowRuntime): void {
+  if (!runtime.directoryExists(sandboxCdkOutPath)) {
+    return;
+  }
+
+  const activeConflicts: Array<{ command: string; lockPath: string; pid: string }> = [];
+  for (const entry of runtime.listDir(sandboxCdkOutPath)) {
+    const match = sandboxReadLockPattern.exec(entry);
+    if (!match) {
+      continue;
+    }
+
+    const lockPath = join(sandboxCdkOutPath, entry);
+    const pid = normalizeOptionalString(runtime.readFile(lockPath)) ?? match[1];
+    if (!pid) {
+      continue;
+    }
+
+    const processCommand = inspectRunningCommand(pid, runtime);
+    if (!processCommand) {
+      runtime.removeFile(lockPath);
+      continue;
+    }
+
+    if (!processCommand.includes("ampx")) {
+      runtime.removeFile(lockPath);
+      continue;
+    }
+
+    activeConflicts.push({
+      command: processCommand,
+      lockPath,
+      pid,
+    });
+  }
+
+  if (activeConflicts.length === 0) {
+    return;
+  }
+
+  const conflictList = activeConflicts
+    .map(({ command, lockPath, pid }) => `PID ${pid}: ${command} (${lockPath})`)
+    .join("; ");
+  throw new Error(
+    `Another Amplify sandbox process is already running for this workspace. Stop it before running sandbox:up. Conflicts: ${conflictList}`,
+  );
+}
+
+function inspectRunningCommand(
+  pid: string,
+  runtime: Pick<WorkflowRuntime, "spawnSync">,
+): string | null {
+  const capture = runCommandCapture(runtime, "ps", ["-p", pid, "-o", "command="]);
+  if (capture.status !== 0) {
+    return null;
+  }
+
+  return normalizeOptionalString(capture.stdout) ?? null;
 }
 
 function runDevData(runtime: WorkflowRuntime = createDefaultRuntime()): void {
@@ -839,17 +907,11 @@ function checkSharedInfraParameters(
   const optionalPaths = new Set([parameterPaths.opponentForecastEndpointName]);
 
   try {
-    const contract = runtime.execAwsJson([
-      "ssm",
-      "get-parameters",
-      "--with-decryption",
-      "--region",
+    const contract = getParametersByName({
+      execAwsJson: runtime.execAwsJson,
+      names: Object.values(parameterPaths),
       region,
-      "--output",
-      "json",
-      "--names",
-      ...Object.values(parameterPaths),
-    ]) as {
+    }) as {
       InvalidParameters?: string[];
     };
     const missing = (contract.InvalidParameters ?? [])
@@ -1518,11 +1580,15 @@ function createDefaultRuntime(): WorkflowRuntime {
         }),
       ),
     fileExists: existsSync,
+    listDir: (path) => readdirSync(path),
     mkdirp: (path) => {
       mkdirSync(path, { recursive: true });
     },
     nowIso: () => new Date().toISOString(),
     readFile: (path) => readFileSync(path, "utf8"),
+    removeFile: (path) => {
+      unlinkSync(path);
+    },
     spawnSync,
     userName: () => os.userInfo().username || "local",
     write: (message) => {

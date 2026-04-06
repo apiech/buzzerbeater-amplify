@@ -1,7 +1,7 @@
-import { Duration, type Stack, type RemovalPolicy } from "aws-cdk-lib";
-import type { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
-import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
-import { Queue } from "aws-cdk-lib/aws-sqs";
+import { Stack, type RemovalPolicy } from "aws-cdk-lib";
+import type { IFunction } from "aws-cdk-lib/aws-lambda";
+
+import { createSingleLambdaWorkflow } from "./state-machine-workflow.js";
 
 type FunctionResource = {
   addEnvironment(name: string, value: string): void;
@@ -11,7 +11,6 @@ type FunctionResource = {
 };
 
 type LeagueHistoryJobsBackend = {
-  createStack(name: string): Stack;
   submitLeagueHistoryBackfill: FunctionResource;
   leagueHistoryWorker: FunctionResource;
 };
@@ -20,36 +19,16 @@ export function configureLeagueHistoryJobs(
   backend: LeagueHistoryJobsBackend,
   removalPolicy: RemovalPolicy,
 ): void {
-  const stack = backend.createStack("league-history-jobs");
-  const deadLetterQueue = new Queue(stack, "LeagueHistoryBackfillDlq", {
-    removalPolicy,
-    retentionPeriod: Duration.days(14),
-  });
-  const backfillQueue = new Queue(stack, "LeagueHistoryBackfillQueue", {
-    deadLetterQueue: {
-      maxReceiveCount: 3,
-      queue: deadLetterQueue,
-    },
-    removalPolicy,
-    retentionPeriod: Duration.days(4),
-    visibilityTimeout: Duration.minutes(6),
+  const stack = Stack.of(backend.leagueHistoryWorker.resources.lambda);
+  const workflow = createSingleLambdaWorkflow(stack, {
+    idPrefix: "LeagueHistoryBackfill",
+    logGroupRemovalPolicy: removalPolicy,
+    workerFunction: backend.leagueHistoryWorker.resources.lambda,
   });
 
   backend.submitLeagueHistoryBackfill.addEnvironment(
-    "LEAGUE_HISTORY_BACKFILL_QUEUE_URL",
-    backfillQueue.queueUrl,
+    "LEAGUE_HISTORY_BACKFILL_STATE_MACHINE_ARN",
+    workflow.stateMachineArn,
   );
-
-  backfillQueue.grantSendMessages(
-    backend.submitLeagueHistoryBackfill.resources.lambda,
-  );
-  backfillQueue.grantConsumeMessages(backend.leagueHistoryWorker.resources.lambda);
-
-  const workerLambda = backend.leagueHistoryWorker.resources.lambda as LambdaFunction;
-  workerLambda.addEventSource(
-    new SqsEventSource(backfillQueue, {
-      batchSize: 5,
-      reportBatchItemFailures: true,
-    }),
-  );
+  workflow.grantStartExecution(backend.submitLeagueHistoryBackfill.resources.lambda);
 }

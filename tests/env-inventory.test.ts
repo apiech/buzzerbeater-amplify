@@ -107,13 +107,13 @@ test("externally configurable and injected env names are all classified", () => 
 
   assert.deepEqual(unexpectedNames, []);
   assert.deepEqual([...runtimeInjectedNames].sort(), [
-    "GAME_DAY_RECAP_QUEUE_URL",
-    "LEAGUE_HISTORY_BACKFILL_QUEUE_URL",
+    "GAME_DAY_RECAP_STATE_MACHINE_ARN",
+    "LEAGUE_HISTORY_BACKFILL_STATE_MACHINE_ARN",
     "OPPONENT_FORECAST_ENDPOINT_NAME",
-    "OPPONENT_FORECAST_JOB_QUEUE_URL",
+    "OPPONENT_FORECAST_JOB_STATE_MACHINE_ARN",
     "PREDICTION_ENDPOINT_NAME",
-    "PREDICTION_JOB_QUEUE_URL",
-    "REFRESH_WORKSPACE_JOB_QUEUE_URL",
+    "PREDICTION_JOB_STATE_MACHINE_ARN",
+    "TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN",
   ]);
   assert.equal(documentedNames.has("BB_SHARED_ENVIRONMENT_NAME"), true);
   assert.equal(documentedNames.has("MATCH_STORE_BUCKET_NAME"), true);

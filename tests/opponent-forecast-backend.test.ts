@@ -96,7 +96,8 @@ test("submitOpponentForecastJob rejects free-plan users before queueing work", a
         {
           env: {},
           identity: { sub: "user-1" },
-          queueUrl: "https://queue.example.com",
+          stateMachineArn:
+            "arn:aws:states:us-east-1:123456789012:stateMachine:opponent-forecast",
           teamId: "200",
         },
         {
@@ -108,8 +109,8 @@ test("submitOpponentForecastJob rejects free-plan users before queueing work", a
               "Premium is required to use the opponent forecast engine.",
             );
           },
-          sendQueueMessage: async () => {
-            throw new Error("sendQueueMessage should not be called");
+          startWorkflowExecution: async () => {
+            throw new Error("startWorkflowExecution should not be called");
           },
           updateOpponentForecastJob: async () => {},
         },
@@ -127,7 +128,8 @@ test("submitOpponentForecastJob queues work for premium users", async () => {
     {
       env: {},
       identity: { sub: "user-1" },
-      queueUrl: "https://queue.example.com",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:opponent-forecast",
       teamId: "200",
     },
     {
@@ -144,14 +146,19 @@ test("submitOpponentForecastJob queues work for premium users", async () => {
         } as any;
       },
       requireFeatureAccess: async () => "premium",
-      sendQueueMessage: async (_queueUrl, message) => {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
         queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:opponent-forecast:job-1";
       },
       updateOpponentForecastJob: async () => {},
     },
   );
 
   assert.match(String(result.jobId), /^[0-9a-f-]{36}$/i);
+  assert.equal(
+    result.executionArn,
+    "arn:aws:states:us-east-1:123456789012:execution:opponent-forecast:job-1",
+  );
   const record = expectPresent<{
     status: string;
     teamId: string;

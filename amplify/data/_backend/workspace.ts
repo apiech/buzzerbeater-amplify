@@ -41,8 +41,6 @@ import {
   getBbCredential,
   getTrackedPlayer as getTrackedPlayerRecord,
   getSharedPlayerCardRecord,
-  listConnectedBbConnections,
-  listStaleConnectedBbConnections,
   type PlayerSkillObservationRecord,
   upsertBbConnection,
   upsertBbCredential,
@@ -109,13 +107,6 @@ type WorkspaceBundle = {
   playerLab: PlayerLabWorkspaceResult;
 };
 
-export type ActiveTrackedTeamCredentialBackfillResult = {
-  connectedUsers: number;
-  usersWithProjectedCredentials: number;
-  usersMissingCredentials: number;
-  trackedTeamsUpdated: number;
-};
-
 type ActiveTrackedTeamCredentialContext =
   ActiveTrackedTeamCredentialProjection & {
     bbLoginName: string;
@@ -147,15 +138,7 @@ const defaultWorkspaceDependencies: WorkspaceDependencies = {
   updateSharedPlayerCard,
 };
 
-const backfillRuntime = {
-  getBbCredential,
-  listActiveTrackedTeamsForUser,
-  listConnectedUsers,
-  upsertActiveTrackedTeam,
-};
-
 export const __testing = {
-  backfillRuntime,
   buildConnectionRecord,
   buildHomeCorePlayers,
   matchIncludesTeam,
@@ -315,130 +298,6 @@ export async function getOrRefreshWorkspace(args: {
     force: args.force ?? false,
     syncActiveTrackedTeams: args.syncActiveTrackedTeams ?? false,
   });
-}
-
-export async function listConnectedUsers(
-  env: GraphqlEnv,
-): Promise<BbConnectionRecord[]> {
-  const connections: BbConnectionRecord[] = [];
-  let nextToken: string | null = null;
-
-  do {
-    const page = await listConnectedBbConnections(env, {
-      limit: 100,
-      nextToken,
-    });
-    connections.push(...page.records);
-    nextToken = page.nextToken;
-  } while (nextToken);
-
-  return connections;
-}
-
-export async function listStaleConnectedUsers(args: {
-  env: GraphqlEnv;
-  staleAfterHours: number;
-  maxUsers?: number;
-  dedupeByTeam?: boolean;
-}): Promise<BbConnectionRecord[]> {
-  const maxUsers = Math.max(1, args.maxUsers ?? Number.MAX_SAFE_INTEGER);
-  const staleBefore = new Date(
-    Date.now() - args.staleAfterHours * 60 * 60 * 1000,
-  ).toISOString();
-  const selected = new Map<string, BbConnectionRecord>();
-  const staleConnections: BbConnectionRecord[] = [];
-  let nextToken: string | null = null;
-
-  do {
-    const page = await listStaleConnectedBbConnections(args.env, staleBefore, {
-      limit: Math.max(25, maxUsers),
-      nextToken,
-    });
-
-    for (const connection of page.records) {
-      if (args.dedupeByTeam) {
-        const key = connection.teamId ?? `user:${connection.userId}`;
-        if (!selected.has(key)) {
-          selected.set(key, connection);
-        }
-      } else {
-        staleConnections.push(connection);
-      }
-    }
-
-    if (
-      (args.dedupeByTeam ? selected.size : staleConnections.length) >= maxUsers
-    ) {
-      break;
-    }
-
-    nextToken = page.nextToken;
-  } while (nextToken);
-
-  const orderedConnections = args.dedupeByTeam
-    ? Array.from(selected.values())
-    : staleConnections;
-  orderedConnections.sort(
-    (left, right) =>
-      connectionFreshnessSortKey(left) - connectionFreshnessSortKey(right),
-  );
-
-  return orderedConnections.slice(0, maxUsers);
-}
-
-export async function backfillActiveTrackedTeamCredentialProjection(
-  env: GraphqlEnv,
-): Promise<ActiveTrackedTeamCredentialBackfillResult> {
-  const connections = await backfillRuntime.listConnectedUsers(env);
-  let usersWithProjectedCredentials = 0;
-  let usersMissingCredentials = 0;
-  let trackedTeamsUpdated = 0;
-
-  for (const connection of connections) {
-    const credential = await backfillRuntime.getBbCredential(
-      env,
-      connection.userId,
-    );
-    if (!credential) {
-      usersMissingCredentials += 1;
-      continue;
-    }
-
-    usersWithProjectedCredentials += 1;
-    const credentialContext = buildActiveTrackedTeamCredentialContext(
-      connection.bbLoginName,
-      credential,
-    );
-    const activeTrackedTeams =
-      await backfillRuntime.listActiveTrackedTeamsForUser(
-        env,
-        connection.userId,
-      );
-
-    for (const trackedTeam of activeTrackedTeams) {
-      if (!trackedTeam.active) {
-        continue;
-      }
-
-      await backfillRuntime.upsertActiveTrackedTeam(env, {
-        ...trackedTeam,
-        bbLoginName: connection.bbLoginName,
-        credentialCipherText: credentialContext.credentialCipherText,
-        credentialIv: credentialContext.credentialIv,
-        credentialAuthTag: credentialContext.credentialAuthTag,
-        credentialAlgorithm: credentialContext.credentialAlgorithm,
-        updatedAt: new Date().toISOString(),
-      });
-      trackedTeamsUpdated += 1;
-    }
-  }
-
-  return {
-    connectedUsers: connections.length,
-    usersWithProjectedCredentials,
-    usersMissingCredentials,
-    trackedTeamsUpdated,
-  };
 }
 
 export async function generatePlayerCard(args: {
@@ -2548,7 +2407,7 @@ function buildConnectionRecord(
   existingConnection: BbConnectionRecord | null,
   updates: Partial<BbConnectionRecord>,
 ): BbConnectionRecord {
-  const record: Omit<BbConnectionRecord, "refreshSortAt"> = {
+  return {
     userId,
     bbLoginName: resolveConnectionField(
       existingConnection,
@@ -2647,24 +2506,6 @@ function buildConnectionRecord(
       "workspaceCacheJson",
       null,
     ),
-  };
-
-  const requestedRefreshSortAt = Object.prototype.hasOwnProperty.call(
-    updates,
-    "refreshSortAt",
-  )
-    ? updates.refreshSortAt
-    : existingConnection?.refreshSortAt;
-
-  return {
-    ...record,
-    refreshSortAt:
-      requestedRefreshSortAt ??
-      record.lastSyncAt ??
-      record.connectedAt ??
-      record.lastValidatedAt ??
-      existingConnection?.refreshSortAt ??
-      new Date().toISOString(),
   };
 }
 
@@ -2822,12 +2663,6 @@ function getWeekKey(date = new Date()): string {
   const day = Math.floor((date.getTime() - start.getTime()) / 86400000);
   const week = Math.floor((day + start.getUTCDay()) / 7);
   return `${year}-W${String(week).padStart(2, "0")}`;
-}
-
-function connectionFreshnessSortKey(connection: BbConnectionRecord): number {
-  const value = connection.lastSyncAt ?? connection.connectedAt ?? "";
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function byStartTimeAscending(

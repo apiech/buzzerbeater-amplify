@@ -160,7 +160,6 @@ function createDebugConnection(
     leagueId: options.leagueId,
     leagueName: standings.league?.name ?? null,
     leagueTimeZone: null,
-    refreshSortAt: new Date().toISOString(),
     status: "CONNECTED",
     userId: "debug",
   };

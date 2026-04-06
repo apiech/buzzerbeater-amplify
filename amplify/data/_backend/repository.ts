@@ -64,14 +64,9 @@ export type BbConnectionRecord = {
   connectedAt?: string | null;
   lastValidatedAt?: string | null;
   lastSyncAt?: string | null;
-  refreshSortAt: string;
   lastSyncError?: string | null;
   profileJson?: unknown;
   workspaceCacheJson?: unknown;
-};
-
-type BbConnectionRecordInput = Omit<BbConnectionRecord, "refreshSortAt"> & {
-  refreshSortAt?: string | null;
 };
 
 export type BillingAccountRecord = {
@@ -164,6 +159,7 @@ export type PredictionJobRecord = {
   status: PredictionJobStatus;
   mode: PredictionRequestMode;
   requestedAt: string;
+  executionArn?: string | null;
   request: unknown;
   resolvedInputSnapshot?: unknown;
   result?: unknown;
@@ -182,6 +178,7 @@ export type OpponentForecastJobRecord = {
   teamName?: string | null;
   status: OpponentForecastJobStatus;
   requestedAt: string;
+  executionArn?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   requestJson: unknown;
@@ -204,6 +201,7 @@ export type GameDayRecapRecord = {
   season?: number | null;
   status: GameDayRecapStatus;
   requestedAt: string;
+  executionArn?: string | null;
   completedAt?: string | null;
   requestJson: unknown;
   coverageJson?: unknown;
@@ -225,6 +223,7 @@ export type LeagueGameDayRecapRecord = {
   season?: number | null;
   status: GameDayRecapStatus;
   requestedAt: string;
+  executionArn?: string | null;
   completedAt?: string | null;
   requestJson: unknown;
   coverageJson?: unknown;
@@ -247,6 +246,7 @@ export type SingleGameSummaryRecord = {
   season?: number | null;
   status: GameDayRecapStatus;
   requestedAt: string;
+  executionArn?: string | null;
   completedAt?: string | null;
   requestJson: unknown;
   coverageJson?: unknown;
@@ -290,6 +290,7 @@ export type LeagueHistoryBackfillRecord = {
   leagueName?: string | null;
   status: LeagueHistoryBackfillState;
   requestedAt: string;
+  executionArn?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   error?: string | null;
@@ -454,75 +455,16 @@ export async function upsertUserPreference(
   await upsertModelRecord(env, "UserPreference", ["userId"], record);
 }
 
-export async function listConnectedBbConnections(
-  env: RepositoryEnv,
-  input: {
-    limit?: number;
-    nextToken?: string | null;
-  } = {},
-): Promise<PagedRecords<BbConnectionRecord>> {
-  const page = await queryModelIndexPage<BbConnectionRecord>(
-    env,
-    "BbConnection",
-    "listBbConnectionsByStatusAndRefreshSortAt",
-    { status: "CONNECTED" },
-    {
-      limit: input.limit,
-      nextToken: input.nextToken,
-      sortDirection: "ASC",
-    },
-    "list connected BB connections",
-  );
-
-  return {
-    nextToken: page.nextToken,
-    records: decodeAwsJsonList("BbConnection", page.records),
-  };
-}
-
-export async function listStaleConnectedBbConnections(
-  env: RepositoryEnv,
-  staleBefore: string,
-  input: {
-    limit?: number;
-    nextToken?: string | null;
-  } = {},
-): Promise<PagedRecords<BbConnectionRecord>> {
-  const page = await queryModelIndexPage<BbConnectionRecord>(
-    env,
-    "BbConnection",
-    "listBbConnectionsByStatusAndRefreshSortAt",
-    {
-      status: "CONNECTED",
-      refreshSortAt: { lt: staleBefore },
-    },
-    {
-      limit: input.limit,
-      nextToken: input.nextToken,
-      sortDirection: "ASC",
-    },
-    "list stale connected BB connections",
-  );
-
-  return {
-    nextToken: page.nextToken,
-    records: decodeAwsJsonList("BbConnection", page.records),
-  };
-}
-
 export async function upsertBbConnection(
   env: RepositoryEnv,
-  record: BbConnectionRecordInput,
+  record: BbConnectionRecord,
 ): Promise<void> {
   const model = await getModel<BbConnectionRecord>(env, "BbConnection");
   const currentRecord = await assertSuccessful(
     model.get({ userId: record.userId }),
     "load BbConnection record",
   );
-  const payload = prepareModelInput(
-    "BbConnection",
-    normalizeBbConnectionRecord(record, currentRecord),
-  );
+  const payload = prepareModelInput("BbConnection", record);
 
   if (currentRecord) {
     await assertSuccessful(model.update(payload), "update BbConnection record");
@@ -1264,26 +1206,6 @@ function prepareModelInput<TRecord extends Record<string, unknown>>(
   return omitUndefinedValues(encodeAwsJsonFields(modelName, input));
 }
 
-function normalizeBbConnectionRecord(
-  record: BbConnectionRecordInput,
-  currentRecord: BbConnectionRecord | null,
-): BbConnectionRecord {
-  return {
-    ...record,
-    refreshSortAt:
-      firstDefinedString(
-        record.refreshSortAt,
-        record.lastSyncAt,
-        record.connectedAt,
-        record.lastValidatedAt,
-        currentRecord?.refreshSortAt,
-        currentRecord?.lastSyncAt,
-        currentRecord?.connectedAt,
-        currentRecord?.lastValidatedAt,
-      ) ?? new Date().toISOString(),
-  };
-}
-
 async function getModelRecord<TRecord>(
   env: RepositoryEnv,
   modelName: string,
@@ -1387,18 +1309,6 @@ function omitUndefinedValues<TRecord extends Record<string, unknown>>(
   return Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== undefined),
   ) as TRecord;
-}
-
-function firstDefinedString(
-  ...values: Array<string | null | undefined>
-): string | null {
-  for (const value of values) {
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  }
-
-  return null;
 }
 
 function pickFields(

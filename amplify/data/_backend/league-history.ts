@@ -1,5 +1,3 @@
-import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
-
 import {
   BBXmlApiClient,
   type BBApiStandings,
@@ -17,6 +15,10 @@ import {
   upsertLeagueHistoryBackfill,
   upsertLeagueHistoryStandingCache,
 } from "./repository";
+import {
+  buildExecutionName,
+  startStateMachineExecution,
+} from "./step-functions";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -51,10 +53,11 @@ type SubmitDependencies = {
   listLeagueHistoryStandingCachesByLeagueId: typeof listLeagueHistoryStandingCachesByLeagueId;
   now: () => Date;
   resolveBbAccessKey: typeof resolveBbAccessKey;
-  sendQueueMessage: (
-    queueUrl: string,
+  startWorkflowExecution: (
+    stateMachineArn: string,
+    executionName: string,
     message: LeagueHistoryMessage,
-  ) => Promise<void>;
+  ) => Promise<string>;
   upsertLeagueHistoryBackfill: typeof upsertLeagueHistoryBackfill;
 };
 
@@ -103,14 +106,12 @@ const defaultSubmitDependencies: SubmitDependencies = {
   listLeagueHistoryStandingCachesByLeagueId,
   now: () => new Date(),
   resolveBbAccessKey,
-  sendQueueMessage: async (queueUrl, message) => {
-    const sqs = new SQSClient({});
-    await sqs.send(
-      new SendMessageCommand({
-        MessageBody: JSON.stringify(message),
-        QueueUrl: queueUrl,
-      }),
-    );
+  startWorkflowExecution: async (stateMachineArn, executionName, message) => {
+    return startStateMachineExecution({
+      input: message,
+      name: executionName,
+      stateMachineArn,
+    });
   },
   upsertLeagueHistoryBackfill,
 };
@@ -147,7 +148,7 @@ export async function submitLeagueHistoryBackfill(
     env: GraphqlEnv;
     identity: unknown;
     leagueId?: string | null;
-    queueUrl: string;
+    stateMachineArn: string;
   },
   dependencies: SubmitDependencies = defaultSubmitDependencies,
 ): Promise<SubmitLeagueHistoryBackfillResult> {
@@ -193,6 +194,7 @@ export async function submitLeagueHistoryBackfill(
         (request.leagueId === request.connection.leagueId
           ? request.connection.leagueName
           : null),
+      executionArn: existingStatus?.executionArn ?? null,
       requestedAt: existingStatus?.requestedAt ?? completedAt,
       startedAt: existingStatus?.startedAt ?? completedAt,
       status: "SUCCEEDED",
@@ -210,11 +212,12 @@ export async function submitLeagueHistoryBackfill(
     historicalSeasonsStored,
     lastCompletedSeason: existingStatus?.lastCompletedSeason ?? null,
     leagueId: request.leagueId,
-    leagueName:
-      existingStatus?.leagueName ??
-      (request.leagueId === request.connection.leagueId
-        ? request.connection.leagueName
-        : null),
+      leagueName:
+        existingStatus?.leagueName ??
+        (request.leagueId === request.connection.leagueId
+          ? request.connection.leagueName
+          : null),
+    executionArn: null,
     requestedAt,
     startedAt: null,
     status: "QUEUED",
@@ -224,11 +227,24 @@ export async function submitLeagueHistoryBackfill(
   await dependencies.upsertLeagueHistoryBackfill(args.env, queuedStatus);
 
   try {
-    await dependencies.sendQueueMessage(args.queueUrl, {
+    const executionArn = await dependencies.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName(
+        "league-history",
+        `${request.leagueId}:${request.userId}:${requestedAt}`,
+      ),
+      {
       leagueId: request.leagueId,
       requestedAt,
       userId: request.userId,
-    });
+      },
+    );
+    const runningStatus: LeagueHistoryBackfillRecord = {
+      ...queuedStatus,
+      executionArn,
+    };
+    await dependencies.upsertLeagueHistoryBackfill(args.env, runningStatus);
+    return toSubmitResult(runningStatus, true);
   } catch (error) {
     const failedAt = dependencies.now().toISOString();
     const failedStatus: LeagueHistoryBackfillRecord = {
@@ -241,8 +257,6 @@ export async function submitLeagueHistoryBackfill(
     await dependencies.upsertLeagueHistoryBackfill(args.env, failedStatus);
     throw error;
   }
-
-  return toSubmitResult(queuedStatus, true);
 }
 
 export async function getLeagueHistory(
@@ -318,11 +332,12 @@ export async function getLeagueHistory(
 export async function processLeagueHistoryBackfill(
   args: {
     env: GraphqlEnv;
-    messageBody: string;
+    message?: LeagueHistoryMessage;
+    messageBody?: string;
   },
   dependencies: ProcessDependencies = defaultProcessDependencies,
 ): Promise<void> {
-  const message = parseQueueMessage(args.messageBody);
+  const message = resolveLeagueHistoryMessage(args);
   const connection = await dependencies.getBbConnection(args.env, message.userId);
   if (!connection) {
     throw new Error("A connected BuzzerBeater account is required for league history backfill.");
@@ -345,6 +360,7 @@ export async function processLeagueHistoryBackfill(
   await dependencies.upsertLeagueHistoryBackfill(args.env, {
     completedAt: null,
     error: null,
+    executionArn: existingStatus?.executionArn ?? null,
     historicalSeasonsExpected: existingStatus?.historicalSeasonsExpected ?? null,
     historicalSeasonsStored: existingStatus?.historicalSeasonsStored ?? null,
     lastCompletedSeason: existingStatus?.lastCompletedSeason ?? null,
@@ -395,6 +411,7 @@ export async function processLeagueHistoryBackfill(
           historicalSeasons[historicalSeasons.length - 1] ?? lastCompletedSeason,
         leagueId: message.leagueId,
         leagueName,
+        executionArn: existingStatus?.executionArn ?? null,
         requestedAt: existingStatus?.requestedAt ?? message.requestedAt,
         startedAt: existingStatus?.startedAt ?? now,
         status: "SUCCEEDED",
@@ -423,6 +440,7 @@ export async function processLeagueHistoryBackfill(
         lastCompletedSeason,
         leagueId: message.leagueId,
         leagueName,
+        executionArn: existingStatus?.executionArn ?? null,
         requestedAt: existingStatus?.requestedAt ?? message.requestedAt,
         startedAt: existingStatus?.startedAt ?? now,
         status: "FETCHING_STANDINGS",
@@ -439,6 +457,7 @@ export async function processLeagueHistoryBackfill(
       lastCompletedSeason,
       leagueId: message.leagueId,
       leagueName,
+      executionArn: existingStatus?.executionArn ?? null,
       requestedAt: existingStatus?.requestedAt ?? message.requestedAt,
       startedAt: existingStatus?.startedAt ?? now,
       status: "SUCCEEDED",
@@ -454,6 +473,7 @@ export async function processLeagueHistoryBackfill(
       lastCompletedSeason,
       leagueId: message.leagueId,
       leagueName,
+      executionArn: existingStatus?.executionArn ?? null,
       requestedAt: existingStatus?.requestedAt ?? message.requestedAt,
       startedAt: existingStatus?.startedAt ?? now,
       status: "FAILED",
@@ -567,6 +587,7 @@ async function createLeagueHistoryBbClient(
 function toStatus(status: LeagueHistoryBackfillRecord): LeagueHistoryStatus {
   return {
     completedAt: status.completedAt ?? null,
+    executionArn: status.executionArn ?? null,
     error: status.error ?? null,
     historicalSeasonsExpected: status.historicalSeasonsExpected ?? null,
     historicalSeasonsStored: status.historicalSeasonsStored ?? null,
@@ -585,6 +606,7 @@ function toSubmitResult(
   queued: boolean,
 ): SubmitLeagueHistoryBackfillResult {
   return {
+    executionArn: status.executionArn ?? null,
     leagueId: status.leagueId,
     leagueName: status.leagueName ?? null,
     queued,
@@ -753,6 +775,19 @@ function parseQueueMessage(body: string): LeagueHistoryMessage {
     requestedAt,
     userId,
   };
+}
+
+function resolveLeagueHistoryMessage(args: {
+  message?: LeagueHistoryMessage;
+  messageBody?: string;
+}): LeagueHistoryMessage {
+  if (args.message) {
+    return args.message;
+  }
+  if (!args.messageBody) {
+    throw new Error("League history payload was not provided.");
+  }
+  return parseQueueMessage(args.messageBody);
 }
 
 export function normalizeLeagueId(value: unknown): string | null {

@@ -2,9 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { client } from "@/app/amplify-client";
+import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import { fetchBillingSummary } from "@/app/billing-client";
 import { HighlightsPanel } from "@/app/highlights-panel";
@@ -81,7 +88,6 @@ const listRowClassName =
   "flex flex-wrap items-start justify-between gap-3 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
 const listCopyClassName = "grid gap-1";
 const mutedMetaClassName = "text-xs font-semibold text-ink-muted";
-const terminalOpponentForecastStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const boxscoreLinkClassName =
   "inline-flex min-h-9 items-center justify-center rounded-full border border-border-soft bg-white/70 px-3.5 text-xs font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90";
 const numericTableCellClassName = "text-right tabular-nums";
@@ -633,6 +639,9 @@ function WorkspaceDashboard({
   const [predictionDraft, setPredictionDraft] = useState<PredictionDraftState>(
     () => createDefaultPredictionDraft(workspace),
   );
+  const loadLatestOpponentForecastEffect = useEffectEvent((teamId: string) => {
+    void loadLatestOpponentForecast(teamId);
+  });
 
   useEffect(() => {
     setScout(workspace.scout);
@@ -671,25 +680,33 @@ function WorkspaceDashboard({
       return;
     }
 
-    void loadLatestOpponentForecast(teamId);
+    loadLatestOpponentForecastEffect(teamId);
   }, [scout]);
 
   useEffect(() => {
     const teamId = resolveForecastTeamId(scout);
-    if (
-      !teamId ||
-      !opponentForecast ||
-      terminalOpponentForecastStatuses.has(opponentForecast.status)
-    ) {
+    if (!teamId) {
       return;
     }
 
-    const interval = window.setInterval(() => {
-      void loadLatestOpponentForecast(teamId);
-    }, 5000);
+    const realtimeClient = getRealtimeClient();
+    const subscriptions = [
+      realtimeClient.models.OpponentForecastJob.onCreate().subscribe({
+        error: logRealtimeError("OpponentForecastJob.onCreate"),
+        next: () => loadLatestOpponentForecastEffect(teamId),
+      }),
+      realtimeClient.models.OpponentForecastJob.onUpdate().subscribe({
+        error: logRealtimeError("OpponentForecastJob.onUpdate"),
+        next: () => loadLatestOpponentForecastEffect(teamId),
+      }),
+    ];
 
-    return () => window.clearInterval(interval);
-  }, [opponentForecast, scout]);
+    return () => {
+      for (const subscription of subscriptions) {
+        subscription.unsubscribe();
+      }
+    };
+  }, [scout]);
 
   useEffect(() => {
     setPredictionDraft((current) =>
