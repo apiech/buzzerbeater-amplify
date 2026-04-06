@@ -3,9 +3,19 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { deriveAmplifyAppOrigin } from "../lib/env/public-app-origin.ts";
+import * as publicAppOriginModule from "../lib/env/public-app-origin.ts";
 import { envContract } from "./env-contract.mjs";
 import { normalizeOptionalString } from "./project-env.mjs";
+
+const deriveAmplifyAppOrigin =
+  publicAppOriginModule.deriveAmplifyAppOrigin ??
+  publicAppOriginModule.default?.deriveAmplifyAppOrigin;
+
+if (typeof deriveAmplifyAppOrigin !== "function") {
+  throw new Error(
+    "Unable to resolve deriveAmplifyAppOrigin from public-app-origin.ts.",
+  );
+}
 
 export const hostedRuntimeEnvFileName = ".env.production";
 
