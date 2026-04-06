@@ -689,19 +689,41 @@ function WorkspaceDashboard({
       return;
     }
 
-    const realtimeClient = getRealtimeClient();
-    const subscriptions = [
-      realtimeClient.models.OpponentForecastJob.onCreate().subscribe({
-        error: logRealtimeError("OpponentForecastJob.onCreate"),
-        next: () => loadLatestOpponentForecastEffect(teamId),
-      }),
-      realtimeClient.models.OpponentForecastJob.onUpdate().subscribe({
-        error: logRealtimeError("OpponentForecastJob.onUpdate"),
-        next: () => loadLatestOpponentForecastEffect(teamId),
-      }),
-    ];
+    let isActive = true;
+    let subscriptions: Array<{ unsubscribe(): void }> = [];
+    const commitSubscriptions = (
+      nextSubscriptions: Array<{ unsubscribe(): void }>,
+    ) => {
+      if (!isActive) {
+        for (const subscription of nextSubscriptions) {
+          subscription.unsubscribe();
+        }
+        return;
+      }
+
+      subscriptions = nextSubscriptions;
+    };
+
+    void (async () => {
+      try {
+        const realtimeClient = await getRealtimeClient();
+        commitSubscriptions([
+          realtimeClient.models.OpponentForecastJob.onCreate().subscribe({
+            error: logRealtimeError("OpponentForecastJob.onCreate"),
+            next: () => loadLatestOpponentForecastEffect(teamId),
+          }),
+          realtimeClient.models.OpponentForecastJob.onUpdate().subscribe({
+            error: logRealtimeError("OpponentForecastJob.onUpdate"),
+            next: () => loadLatestOpponentForecastEffect(teamId),
+          }),
+        ]);
+      } catch (error) {
+        logRealtimeError("OpponentForecastJob.subscription.setup")(error);
+      }
+    })();
 
     return () => {
+      isActive = false;
       for (const subscription of subscriptions) {
         subscription.unsubscribe();
       }

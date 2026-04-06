@@ -1,5 +1,5 @@
 import { DEFAULT_THEME_ID, isThemeId, type ThemeId } from "@/app/theme";
-import { serverDataClient } from "@/app/server/amplify-server";
+import { getServerDataClient } from "@/app/server/amplify-server";
 
 export async function resolveServerThemeId(
   userId?: string | null,
@@ -9,6 +9,7 @@ export async function resolveServerThemeId(
   }
 
   try {
+    const serverDataClient = await getServerDataClient();
     const result = await serverDataClient.models.UserPreference.get({ userId });
     const themeId = result.data?.themeId;
     return isThemeId(themeId) ? themeId : DEFAULT_THEME_ID;
@@ -21,6 +22,7 @@ export async function upsertServerThemePreference(
   userId: string,
   themeId: ThemeId,
 ): Promise<void> {
+  const serverDataClient = await getServerDataClient();
   const existing = await serverDataClient.models.UserPreference.get({ userId });
   if (existing.data) {
     await serverDataClient.models.UserPreference.update({

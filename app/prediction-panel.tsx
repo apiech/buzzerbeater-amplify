@@ -231,19 +231,41 @@ export function PredictionPanel({
   }, []);
 
   useEffect(() => {
-    const realtimeClient = getRealtimeClient();
-    const subscriptions = [
-      realtimeClient.models.PredictionJob.onCreate().subscribe({
-        error: logRealtimeError("PredictionJob.onCreate"),
-        next: () => loadJobsEffect(),
-      }),
-      realtimeClient.models.PredictionJob.onUpdate().subscribe({
-        error: logRealtimeError("PredictionJob.onUpdate"),
-        next: () => loadJobsEffect(),
-      }),
-    ];
+    let isActive = true;
+    let subscriptions: Array<{ unsubscribe(): void }> = [];
+    const commitSubscriptions = (
+      nextSubscriptions: Array<{ unsubscribe(): void }>,
+    ) => {
+      if (!isActive) {
+        for (const subscription of nextSubscriptions) {
+          subscription.unsubscribe();
+        }
+        return;
+      }
+
+      subscriptions = nextSubscriptions;
+    };
+
+    void (async () => {
+      try {
+        const realtimeClient = await getRealtimeClient();
+        commitSubscriptions([
+          realtimeClient.models.PredictionJob.onCreate().subscribe({
+            error: logRealtimeError("PredictionJob.onCreate"),
+            next: () => loadJobsEffect(),
+          }),
+          realtimeClient.models.PredictionJob.onUpdate().subscribe({
+            error: logRealtimeError("PredictionJob.onUpdate"),
+            next: () => loadJobsEffect(),
+          }),
+        ]);
+      } catch (error) {
+        logRealtimeError("PredictionJob.subscription.setup")(error);
+      }
+    })();
 
     return () => {
+      isActive = false;
       for (const subscription of subscriptions) {
         subscription.unsubscribe();
       }

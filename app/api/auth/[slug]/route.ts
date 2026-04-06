@@ -1,6 +1,6 @@
 import { createAuthRouteHandlers } from "@/app/server/amplify-server";
 
-function getAuthHandler() {
+async function getAuthHandler() {
   return createAuthRouteHandlers({
     redirectOnSignInComplete: "/workspace/home",
     redirectOnSignOutComplete: "/login",
@@ -8,5 +8,6 @@ function getAuthHandler() {
 }
 
 export async function GET(request: Request, context: unknown) {
-  return getAuthHandler()(request, context as never);
+  const handler = await getAuthHandler();
+  return handler(request, context as never);
 }

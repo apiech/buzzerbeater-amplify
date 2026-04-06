@@ -8,10 +8,10 @@ import {
 } from "../app/server/read-bff";
 
 function installServerDataClient(t: TestContext, client: Record<string, unknown>) {
-  const originalClient = readTesting.runtime.serverDataClient;
-  readTesting.runtime.serverDataClient = client as any;
+  const originalGetServerDataClient = readTesting.runtime.getServerDataClient;
+  readTesting.runtime.getServerDataClient = async () => client as any;
   t.after(() => {
-    readTesting.runtime.serverDataClient = originalClient;
+    readTesting.runtime.getServerDataClient = originalGetServerDataClient;
   });
 }
 

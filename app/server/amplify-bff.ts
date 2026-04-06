@@ -1,4 +1,4 @@
-import { serverDataClient } from "@/app/server/amplify-server";
+import { getServerDataClient } from "@/app/server/amplify-server";
 
 type ErrorPayload = {
   message?: string;
@@ -10,10 +10,13 @@ type OperationResult<TData> = {
   nextToken?: string | null;
 };
 
+type ServerDataClient = Awaited<ReturnType<typeof getServerDataClient>>;
 type QueryOperation = (
+  serverDataClient: ServerDataClient,
   input?: Record<string, unknown>,
 ) => Promise<OperationResult<unknown>>;
 type MutationOperation = (
+  serverDataClient: ServerDataClient,
   input?: Record<string, unknown>,
 ) => Promise<OperationResult<unknown>>;
 
@@ -21,143 +24,146 @@ type QueryName = keyof typeof queryOperations;
 type MutationName = keyof typeof mutationOperations;
 
 const queryOperations = {
-  evaluateLineupHelper: (input) =>
+  evaluateLineupHelper: (serverDataClient, input) =>
     serverDataClient.queries.evaluateLineupHelper(
       requiredInput<
-        Parameters<typeof serverDataClient.queries.evaluateLineupHelper>[0]
+        Parameters<ServerDataClient["queries"]["evaluateLineupHelper"]>[0]
       >(input),
     ),
-  getBillingSummary: () => serverDataClient.queries.getBillingSummary(),
-  getHomeWorkspace: () => serverDataClient.queries.getHomeWorkspace(),
-  getLeagueHistory: (input) =>
+  getBillingSummary: (serverDataClient) =>
+    serverDataClient.queries.getBillingSummary(),
+  getHomeWorkspace: (serverDataClient) =>
+    serverDataClient.queries.getHomeWorkspace(),
+  getLeagueHistory: (serverDataClient, input) =>
     serverDataClient.queries.getLeagueHistory(
       optionalInput<
-        Parameters<typeof serverDataClient.queries.getLeagueHistory>[0]
+        Parameters<ServerDataClient["queries"]["getLeagueHistory"]>[0]
       >(input),
     ),
-  getLeagueIntel: () => serverDataClient.queries.getLeagueIntel(),
-  getLatestOpponentForecast: (input) =>
+  getLeagueIntel: (serverDataClient) => serverDataClient.queries.getLeagueIntel(),
+  getLatestOpponentForecast: (serverDataClient, input) =>
     serverDataClient.queries.getLatestOpponentForecast(
       requiredInput<
-        Parameters<typeof serverDataClient.queries.getLatestOpponentForecast>[0]
+        Parameters<ServerDataClient["queries"]["getLatestOpponentForecast"]>[0]
       >(input),
     ),
-  getLineupHelperWorkspace: () =>
+  getLineupHelperWorkspace: (serverDataClient) =>
     serverDataClient.queries.getLineupHelperWorkspace(),
-  getMatchBoxscoreDetails: (input) =>
+  getMatchBoxscoreDetails: (serverDataClient, input) =>
     serverDataClient.queries.getMatchBoxscoreDetails(
       requiredInput<
-        Parameters<typeof serverDataClient.queries.getMatchBoxscoreDetails>[0]
+        Parameters<ServerDataClient["queries"]["getMatchBoxscoreDetails"]>[0]
       >(input),
     ),
-  getMyTeamHighlights: (input) =>
+  getMyTeamHighlights: (serverDataClient, input) =>
     serverDataClient.queries.getMyTeamHighlights(
       optionalInput<
-        Parameters<typeof serverDataClient.queries.getMyTeamHighlights>[0]
+        Parameters<ServerDataClient["queries"]["getMyTeamHighlights"]>[0]
       >(input),
     ),
-  getPlayerLab: () => serverDataClient.queries.getPlayerLab(),
-  getPlayerTrend: (input) =>
+  getPlayerLab: (serverDataClient) => serverDataClient.queries.getPlayerLab(),
+  getPlayerTrend: (serverDataClient, input) =>
     serverDataClient.queries.getPlayerTrend(
       requiredInput<
-        Parameters<typeof serverDataClient.queries.getPlayerTrend>[0]
+        Parameters<ServerDataClient["queries"]["getPlayerTrend"]>[0]
       >(input),
     ),
-  getRivalsWorkspace: () => serverDataClient.queries.getRivalsWorkspace(),
-  getSalaryProjection: (input) =>
+  getRivalsWorkspace: (serverDataClient) =>
+    serverDataClient.queries.getRivalsWorkspace(),
+  getSalaryProjection: (serverDataClient, input) =>
     serverDataClient.queries.getSalaryProjection(
       requiredInput<
-        Parameters<typeof serverDataClient.queries.getSalaryProjection>[0]
+        Parameters<ServerDataClient["queries"]["getSalaryProjection"]>[0]
       >(input),
     ),
-  getScoutWorkspace: (input) =>
+  getScoutWorkspace: (serverDataClient, input) =>
     serverDataClient.queries.getScoutWorkspace(
       optionalInput<
-        Parameters<typeof serverDataClient.queries.getScoutWorkspace>[0]
+        Parameters<ServerDataClient["queries"]["getScoutWorkspace"]>[0]
       >(input),
     ),
-  listMyBillingPayments: (input) =>
+  listMyBillingPayments: (serverDataClient, input) =>
     serverDataClient.queries.listMyBillingPayments(
       optionalInput<
-        Parameters<typeof serverDataClient.queries.listMyBillingPayments>[0]
+        Parameters<ServerDataClient["queries"]["listMyBillingPayments"]>[0]
       >(input),
     ),
-  getTeamHub: () => serverDataClient.queries.getTeamHub(),
+  getTeamHub: (serverDataClient) => serverDataClient.queries.getTeamHub(),
 } satisfies Record<string, QueryOperation>;
 
 const mutationOperations = {
-  connectBbAccount: (input) =>
+  connectBbAccount: (serverDataClient, input) =>
     serverDataClient.mutations.connectBbAccount(
       requiredInput<
-        Parameters<typeof serverDataClient.mutations.connectBbAccount>[0]
+        Parameters<ServerDataClient["mutations"]["connectBbAccount"]>[0]
       >(input),
     ),
-  createBillingCheckoutSession: (input) =>
+  createBillingCheckoutSession: (serverDataClient, input) =>
     serverDataClient.mutations.createBillingCheckoutSession(
       optionalInput<
-        Parameters<typeof serverDataClient.mutations.createBillingCheckoutSession>[0]
+        Parameters<ServerDataClient["mutations"]["createBillingCheckoutSession"]>[0]
       >(input),
     ),
-  createBillingLifetimeCheckoutSession: (input) =>
+  createBillingLifetimeCheckoutSession: (serverDataClient, input) =>
     serverDataClient.mutations.createBillingLifetimeCheckoutSession(
       optionalInput<
-        Parameters<typeof serverDataClient.mutations.createBillingLifetimeCheckoutSession>[0]
+        Parameters<
+          ServerDataClient["mutations"]["createBillingLifetimeCheckoutSession"]
+        >[0]
       >(input),
     ),
-  createBillingPortalSession: (input) =>
+  createBillingPortalSession: (serverDataClient, input) =>
     serverDataClient.mutations.createBillingPortalSession(
       optionalInput<
-        Parameters<typeof serverDataClient.mutations.createBillingPortalSession>[0]
+        Parameters<ServerDataClient["mutations"]["createBillingPortalSession"]>[0]
       >(input),
     ),
-  disconnectBbAccount: () => serverDataClient.mutations.disconnectBbAccount(),
-  refreshWorkspace: () => serverDataClient.mutations.refreshWorkspace(),
-  setBbLeagueTimeZone: (input) =>
+  disconnectBbAccount: (serverDataClient) =>
+    serverDataClient.mutations.disconnectBbAccount(),
+  refreshWorkspace: (serverDataClient) =>
+    serverDataClient.mutations.refreshWorkspace(),
+  setBbLeagueTimeZone: (serverDataClient, input) =>
     serverDataClient.mutations.setBbLeagueTimeZone(
       requiredInput<
-        Parameters<typeof serverDataClient.mutations.setBbLeagueTimeZone>[0]
+        Parameters<ServerDataClient["mutations"]["setBbLeagueTimeZone"]>[0]
       >(input),
     ),
-  submitGameDayRecap: (input) =>
+  submitGameDayRecap: (serverDataClient, input) =>
     serverDataClient.mutations.submitGameDayRecap(
       requiredInput<
-        Parameters<typeof serverDataClient.mutations.submitGameDayRecap>[0]
+        Parameters<ServerDataClient["mutations"]["submitGameDayRecap"]>[0]
       >(input),
     ),
-  submitLeagueHistoryBackfill: (input) =>
+  submitLeagueHistoryBackfill: (serverDataClient, input) =>
     serverDataClient.mutations.submitLeagueHistoryBackfill(
       optionalInput<
-        Parameters<
-          typeof serverDataClient.mutations.submitLeagueHistoryBackfill
-        >[0]
+        Parameters<ServerDataClient["mutations"]["submitLeagueHistoryBackfill"]>[0]
       >(input),
     ),
-  submitLeagueGameDayRecap: (input) =>
+  submitLeagueGameDayRecap: (serverDataClient, input) =>
     serverDataClient.mutations.submitLeagueGameDayRecap(
       requiredInput<
-        Parameters<
-          typeof serverDataClient.mutations.submitLeagueGameDayRecap
-        >[0]
+        Parameters<ServerDataClient["mutations"]["submitLeagueGameDayRecap"]>[0]
       >(input),
     ),
-  submitMyTeamHighlightsScan: () =>
+  submitMyTeamHighlightsScan: (serverDataClient) =>
     serverDataClient.mutations.submitMyTeamHighlightsScan(),
-  submitOpponentForecastJob: (input) =>
+  submitOpponentForecastJob: (serverDataClient, input) =>
     serverDataClient.mutations.submitOpponentForecastJob(
       requiredInput<
-        Parameters<typeof serverDataClient.mutations.submitOpponentForecastJob>[0]
+        Parameters<ServerDataClient["mutations"]["submitOpponentForecastJob"]>[0]
       >(input),
     ),
-  submitPredictionJob: (input) =>
+  submitPredictionJob: (serverDataClient, input) =>
     serverDataClient.mutations.submitPredictionJob(
       requiredInput<
-        Parameters<typeof serverDataClient.mutations.submitPredictionJob>[0]
+        Parameters<ServerDataClient["mutations"]["submitPredictionJob"]>[0]
       >(input),
     ),
-  submitSingleGameSummary: (input) =>
+  submitSingleGameSummary: (serverDataClient, input) =>
     serverDataClient.mutations.submitSingleGameSummary(
       requiredInput<
-        Parameters<typeof serverDataClient.mutations.submitSingleGameSummary>[0]
+        Parameters<ServerDataClient["mutations"]["submitSingleGameSummary"]>[0]
       >(input),
     ),
 } satisfies Record<string, MutationOperation>;
@@ -174,14 +180,16 @@ export async function runQueryOperation(
   name: QueryName,
   input?: Record<string, unknown>,
 ): Promise<OperationResult<unknown>> {
-  return queryOperations[name](input);
+  const serverDataClient = await getServerDataClient();
+  return queryOperations[name](serverDataClient, input);
 }
 
 export async function runMutationOperation(
   name: MutationName,
   input?: Record<string, unknown>,
 ): Promise<OperationResult<unknown>> {
-  return mutationOperations[name](input);
+  const serverDataClient = await getServerDataClient();
+  return mutationOperations[name](serverDataClient, input);
 }
 
 function optionalInput<T extends Record<string, unknown>>(

@@ -53,51 +53,73 @@ export function OperationsPanel() {
   }, []);
 
   useEffect(() => {
-    const realtimeClient = getRealtimeClient();
-    const subscriptions = [
-      realtimeClient.models.SyncRun.onCreate().subscribe({
-        error: logRealtimeError("SyncRun.onCreate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.SyncRun.onUpdate().subscribe({
-        error: logRealtimeError("SyncRun.onUpdate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.PredictionJob.onCreate().subscribe({
-        error: logRealtimeError("PredictionJob.onCreate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.PredictionJob.onUpdate().subscribe({
-        error: logRealtimeError("PredictionJob.onUpdate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.GameDayRecap.onCreate().subscribe({
-        error: logRealtimeError("GameDayRecap.onCreate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.GameDayRecap.onUpdate().subscribe({
-        error: logRealtimeError("GameDayRecap.onUpdate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.LeagueGameDayRecap.onCreate().subscribe({
-        error: logRealtimeError("LeagueGameDayRecap.onCreate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.LeagueGameDayRecap.onUpdate().subscribe({
-        error: logRealtimeError("LeagueGameDayRecap.onUpdate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.SingleGameSummary.onCreate().subscribe({
-        error: logRealtimeError("SingleGameSummary.onCreate"),
-        next: () => loadOperationsEffect(),
-      }),
-      realtimeClient.models.SingleGameSummary.onUpdate().subscribe({
-        error: logRealtimeError("SingleGameSummary.onUpdate"),
-        next: () => loadOperationsEffect(),
-      }),
-    ];
+    let isActive = true;
+    let subscriptions: Array<{ unsubscribe(): void }> = [];
+    const commitSubscriptions = (
+      nextSubscriptions: Array<{ unsubscribe(): void }>,
+    ) => {
+      if (!isActive) {
+        for (const subscription of nextSubscriptions) {
+          subscription.unsubscribe();
+        }
+        return;
+      }
+
+      subscriptions = nextSubscriptions;
+    };
+
+    void (async () => {
+      try {
+        const realtimeClient = await getRealtimeClient();
+        commitSubscriptions([
+          realtimeClient.models.SyncRun.onCreate().subscribe({
+            error: logRealtimeError("SyncRun.onCreate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.SyncRun.onUpdate().subscribe({
+            error: logRealtimeError("SyncRun.onUpdate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.PredictionJob.onCreate().subscribe({
+            error: logRealtimeError("PredictionJob.onCreate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.PredictionJob.onUpdate().subscribe({
+            error: logRealtimeError("PredictionJob.onUpdate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.GameDayRecap.onCreate().subscribe({
+            error: logRealtimeError("GameDayRecap.onCreate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.GameDayRecap.onUpdate().subscribe({
+            error: logRealtimeError("GameDayRecap.onUpdate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.LeagueGameDayRecap.onCreate().subscribe({
+            error: logRealtimeError("LeagueGameDayRecap.onCreate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.LeagueGameDayRecap.onUpdate().subscribe({
+            error: logRealtimeError("LeagueGameDayRecap.onUpdate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.SingleGameSummary.onCreate().subscribe({
+            error: logRealtimeError("SingleGameSummary.onCreate"),
+            next: () => loadOperationsEffect(),
+          }),
+          realtimeClient.models.SingleGameSummary.onUpdate().subscribe({
+            error: logRealtimeError("SingleGameSummary.onUpdate"),
+            next: () => loadOperationsEffect(),
+          }),
+        ]);
+      } catch (error) {
+        logRealtimeError("Operations.subscription.setup")(error);
+      }
+    })();
 
     return () => {
+      isActive = false;
       for (const subscription of subscriptions) {
         subscription.unsubscribe();
       }

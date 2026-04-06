@@ -1,4 +1,4 @@
-import { serverDataClient } from "@/app/server/amplify-server";
+import { getServerDataClient } from "@/app/server/amplify-server";
 import type {
   GameDayRecapRecord,
   LeagueGameDayRecapRecord,
@@ -53,7 +53,7 @@ class ReadOperationError extends Error {
 }
 
 const runtime = {
-  serverDataClient,
+  getServerDataClient,
 };
 
 export const __testing = {
@@ -87,7 +87,8 @@ export async function runReadOperation(
 async function getCurrentBbConnection(
   userId: string,
 ): Promise<OperationResult<unknown>> {
-  const result = await runtime.serverDataClient.models.BbConnection.get({ userId });
+  const serverDataClient = await runtime.getServerDataClient();
+  const result = await serverDataClient.models.BbConnection.get({ userId });
   return {
     data: result.data ?? null,
     errors: result.errors,
@@ -99,6 +100,7 @@ async function getOperationsActivity(
   input?: Record<string, unknown>,
 ): Promise<OperationResult<OperationsActivity>> {
   const limit = readLimit(input, 8);
+  const serverDataClient = await runtime.getServerDataClient();
   const [
     syncRuns,
     predictionJobs,
@@ -106,23 +108,23 @@ async function getOperationsActivity(
     leagueGameDayRecaps,
     singleGameSummaries,
   ] = await Promise.all([
-    runtime.serverDataClient.models.SyncRun.listSyncRunsByUserAndStartedAt(
+    serverDataClient.models.SyncRun.listSyncRunsByUserAndStartedAt(
       { userId },
       { limit, sortDirection: "DESC" },
     ),
-    runtime.serverDataClient.models.PredictionJob.listPredictionJobsByUserAndRequestedAt(
+    serverDataClient.models.PredictionJob.listPredictionJobsByUserAndRequestedAt(
       { userId },
       { limit, sortDirection: "DESC" },
     ),
-    runtime.serverDataClient.models.GameDayRecap.listGameDayRecapsByUserAndRequestedAt(
+    serverDataClient.models.GameDayRecap.listGameDayRecapsByUserAndRequestedAt(
       { userId },
       { limit, sortDirection: "DESC" },
     ),
-    runtime.serverDataClient.models.LeagueGameDayRecap.listLeagueGameDayRecapsByUserAndRequestedAt(
+    serverDataClient.models.LeagueGameDayRecap.listLeagueGameDayRecapsByUserAndRequestedAt(
       { userId },
       { limit, sortDirection: "DESC" },
     ),
-    runtime.serverDataClient.models.SingleGameSummary.listSingleGameSummariesByUserAndRequestedAt(
+    serverDataClient.models.SingleGameSummary.listSingleGameSummariesByUserAndRequestedAt(
       { userId },
       { limit, sortDirection: "DESC" },
     ),
@@ -158,8 +160,9 @@ async function getPredictionHistory(
   input?: Record<string, unknown>,
 ): Promise<OperationResult<PaginatedResult<PredictionJobRecord>>> {
   const limit = readLimit(input, 12);
+  const serverDataClient = await runtime.getServerDataClient();
   const result =
-    await runtime.serverDataClient.models.PredictionJob.listPredictionJobsByUserAndRequestedAt(
+    await serverDataClient.models.PredictionJob.listPredictionJobsByUserAndRequestedAt(
       { userId },
       {
         limit,
@@ -183,6 +186,7 @@ async function getRecapHistory(
 ): Promise<OperationResult<PaginatedResult<RecapHistoryRecord>>> {
   const limit = readLimit(input, 8);
   const cursor = decodeRecapHistoryToken(readToken(input));
+  const serverDataClient = await runtime.getServerDataClient();
   const state: RecapHistoryCursor = cursor ?? {
     gameDay: { buffer: [], nextToken: undefined },
     leagueGameDay: { buffer: [], nextToken: undefined },
@@ -193,7 +197,7 @@ async function getRecapHistory(
     await Promise.all([
       fillRecapHistoryBuffer(state.gameDay, limit, async (nextToken) => {
         const result =
-          await runtime.serverDataClient.models.GameDayRecap.listGameDayRecapsByUserAndRequestedAt(
+          await serverDataClient.models.GameDayRecap.listGameDayRecapsByUserAndRequestedAt(
             { userId },
             {
               limit,
@@ -209,7 +213,7 @@ async function getRecapHistory(
       }),
       fillRecapHistoryBuffer(state.leagueGameDay, limit, async (nextToken) => {
         const result =
-          await runtime.serverDataClient.models.LeagueGameDayRecap.listLeagueGameDayRecapsByUserAndRequestedAt(
+          await serverDataClient.models.LeagueGameDayRecap.listLeagueGameDayRecapsByUserAndRequestedAt(
             { userId },
             {
               limit,
@@ -225,7 +229,7 @@ async function getRecapHistory(
       }),
       fillRecapHistoryBuffer(state.singleGame, limit, async (nextToken) => {
         const result =
-          await runtime.serverDataClient.models.SingleGameSummary.listSingleGameSummariesByUserAndRequestedAt(
+          await serverDataClient.models.SingleGameSummary.listSingleGameSummariesByUserAndRequestedAt(
             { userId },
             {
               limit,

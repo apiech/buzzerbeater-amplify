@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import process from "node:process";
 import { cookies } from "next/headers";
 import { createServerRunner } from "@aws-amplify/adapter-nextjs";
 import { generateServerClientUsingCookies } from "@aws-amplify/adapter-nextjs/data";
@@ -10,41 +7,76 @@ import {
 } from "aws-amplify/auth/server";
 
 import type { Schema } from "@/amplify/data/resource";
+import { loadAmplifyOutputs } from "@/app/amplify-outputs";
 import { resolveViewerLabel } from "@/app/viewer-identity";
 
-function loadAmplifyOutputs(): Record<string, unknown> {
-  try {
-    return JSON.parse(
-      readFileSync(join(process.cwd(), "amplify_outputs.json"), "utf8"),
-    ) as Record<string, unknown>;
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      // CI test runs do not materialize amplify_outputs.json before importing
-      // server helpers. An empty config keeps those imports loadable until a
-      // test installs a stubbed client or the real app generates outputs.
-      return {};
-    }
+type ServerRunner = ReturnType<typeof createServerRunner>;
+type CreateAuthRouteHandlers = ServerRunner["createAuthRouteHandlers"];
+type RunWithAmplifyServerContext = ServerRunner["runWithAmplifyServerContext"];
+type ServerDataClient = ReturnType<typeof generateServerClientUsingCookies<Schema>>;
+type AmplifyServerRuntime = {
+  createAuthRouteHandlers: CreateAuthRouteHandlers;
+  runWithAmplifyServerContext: RunWithAmplifyServerContext;
+  serverDataClient: ServerDataClient;
+};
+type AmplifyServerRuntimeLoader = () => Promise<AmplifyServerRuntime>;
+type NextServerContext =
+  Parameters<RunWithAmplifyServerContext>[0]["nextServerContext"];
+type ServerContextSpec = Parameters<
+  Parameters<RunWithAmplifyServerContext>[0]["operation"]
+>[0];
 
-    throw error;
-  }
-}
+let amplifyServerRuntimePromise: Promise<AmplifyServerRuntime> | null = null;
+let amplifyServerRuntimeLoader: AmplifyServerRuntimeLoader =
+  defaultAmplifyServerRuntimeLoader;
 
-const outputs = loadAmplifyOutputs();
-
-export const { createAuthRouteHandlers, runWithAmplifyServerContext } =
-  createServerRunner({
+async function defaultAmplifyServerRuntimeLoader(): Promise<AmplifyServerRuntime> {
+  const outputs = await loadAmplifyOutputs();
+  const runner = createServerRunner({
     config: outputs,
   });
 
-export const serverDataClient = generateServerClientUsingCookies<Schema>({
-  config: outputs,
-  cookies,
-});
+  return {
+    createAuthRouteHandlers: runner.createAuthRouteHandlers,
+    runWithAmplifyServerContext: runner.runWithAmplifyServerContext,
+    serverDataClient: generateServerClientUsingCookies<Schema>({
+      config: outputs,
+      cookies,
+    }),
+  };
+}
+
+async function getAmplifyServerRuntime(): Promise<AmplifyServerRuntime> {
+  if (!amplifyServerRuntimePromise) {
+    amplifyServerRuntimePromise = amplifyServerRuntimeLoader().catch((error) => {
+      amplifyServerRuntimePromise = null;
+      throw error;
+    });
+  }
+
+  return amplifyServerRuntimePromise;
+}
+
+export async function createAuthRouteHandlers(
+  input: Parameters<CreateAuthRouteHandlers>[0],
+): Promise<ReturnType<CreateAuthRouteHandlers>> {
+  const runtime = await getAmplifyServerRuntime();
+  return runtime.createAuthRouteHandlers(input);
+}
+
+export async function runWithAmplifyServerContext<OperationResult>(input: {
+  nextServerContext: NextServerContext;
+  operation(
+    contextSpec: ServerContextSpec,
+  ): OperationResult | Promise<OperationResult>;
+}): Promise<OperationResult> {
+  const runtime = await getAmplifyServerRuntime();
+  return runtime.runWithAmplifyServerContext(input);
+}
+
+export async function getServerDataClient(): Promise<ServerDataClient> {
+  return (await getAmplifyServerRuntime()).serverDataClient;
+}
 
 export type ServerCurrentUser = Awaited<ReturnType<typeof getCurrentUser>>;
 
@@ -93,3 +125,20 @@ export async function resolveServerViewerLabel(
     username: currentUser.username,
   });
 }
+
+function resetAmplifyServerRuntimeCache(): void {
+  amplifyServerRuntimePromise = null;
+}
+
+export const __testing = {
+  installRuntimeLoader(loader: AmplifyServerRuntimeLoader) {
+    const previousLoader = amplifyServerRuntimeLoader;
+    amplifyServerRuntimeLoader = loader;
+    resetAmplifyServerRuntimeCache();
+    return () => {
+      amplifyServerRuntimeLoader = previousLoader;
+      resetAmplifyServerRuntimeCache();
+    };
+  },
+  resetRuntimeCache: resetAmplifyServerRuntimeCache,
+};

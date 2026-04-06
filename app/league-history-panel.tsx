@@ -112,27 +112,49 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
       return;
     }
 
-    const realtimeClient = getRealtimeClient();
-    const subscriptions = [
-      realtimeClient.models.LeagueHistoryBackfill.onCreate().subscribe({
-        error: logRealtimeError("LeagueHistoryBackfill.onCreate"),
-        next: () =>
-          loadHistoryEffect({
-            ensureBackfill: false,
-            showSpinner: false,
+    let isActive = true;
+    let subscriptions: Array<{ unsubscribe(): void }> = [];
+    const commitSubscriptions = (
+      nextSubscriptions: Array<{ unsubscribe(): void }>,
+    ) => {
+      if (!isActive) {
+        for (const subscription of nextSubscriptions) {
+          subscription.unsubscribe();
+        }
+        return;
+      }
+
+      subscriptions = nextSubscriptions;
+    };
+
+    void (async () => {
+      try {
+        const realtimeClient = await getRealtimeClient();
+        commitSubscriptions([
+          realtimeClient.models.LeagueHistoryBackfill.onCreate().subscribe({
+            error: logRealtimeError("LeagueHistoryBackfill.onCreate"),
+            next: () =>
+              loadHistoryEffect({
+                ensureBackfill: false,
+                showSpinner: false,
+              }),
           }),
-      }),
-      realtimeClient.models.LeagueHistoryBackfill.onUpdate().subscribe({
-        error: logRealtimeError("LeagueHistoryBackfill.onUpdate"),
-        next: () =>
-          loadHistoryEffect({
-            ensureBackfill: false,
-            showSpinner: false,
+          realtimeClient.models.LeagueHistoryBackfill.onUpdate().subscribe({
+            error: logRealtimeError("LeagueHistoryBackfill.onUpdate"),
+            next: () =>
+              loadHistoryEffect({
+                ensureBackfill: false,
+                showSpinner: false,
+              }),
           }),
-      }),
-    ];
+        ]);
+      } catch (error) {
+        logRealtimeError("LeagueHistoryBackfill.subscription.setup")(error);
+      }
+    })();
 
     return () => {
+      isActive = false;
       for (const subscription of subscriptions) {
         subscription.unsubscribe();
       }

@@ -142,6 +142,35 @@ test("app no longer relies on the generic GraphQL JSON helper", () => {
   assert.equal(existsSync(join(repoRoot, "app", "graphql-json.ts")), false);
 });
 
+test("app runtime code only reaches amplify_outputs.json through the approved loader", () => {
+  const appRoot = join(repoRoot, "app");
+  const approvedLoader = join(appRoot, "amplify-outputs.ts");
+
+  for (const sourceFile of listSourceFiles(appRoot)) {
+    if (sourceFile === approvedLoader) {
+      continue;
+    }
+
+    const source = readFileSync(sourceFile, "utf8");
+    assert.doesNotMatch(
+      source,
+      /amplify_outputs\.json/,
+      relative(repoRoot, sourceFile),
+    );
+  }
+
+  const approvedLoaderSource = readFileSync(approvedLoader, "utf8");
+  const serverSource = readFileSync(
+    join(appRoot, "server", "amplify-server.ts"),
+    "utf8",
+  );
+
+  assert.match(approvedLoaderSource, /import\("\.\.\/amplify_outputs\.json"/);
+  assert.match(serverSource, /loadAmplifyOutputs/);
+  assert.doesNotMatch(serverSource, /readFileSync/);
+  assert.doesNotMatch(serverSource, /return \{\}/);
+});
+
 test("app data access exposes explicit read endpoints and no generic model proxy", () => {
   assert.equal(
     existsSync(join(repoRoot, "app", "api", "app", "models", "[name]", "route.ts")),
