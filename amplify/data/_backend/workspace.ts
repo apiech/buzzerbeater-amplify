@@ -98,7 +98,7 @@ type SalaryProjectionSource = PlayerSummaryRecord & {
   profileJson?: unknown;
 };
 
-type WorkspaceBundle = {
+export type WorkspaceBundle = {
   connection: BbConnectionRecord;
   home: HomeWorkspaceResult;
   teamHub: TeamHubWorkspaceResult;

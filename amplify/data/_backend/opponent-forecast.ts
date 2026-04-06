@@ -15,7 +15,11 @@ import {
   listOpponentForecastJobsByUser,
   updateOpponentForecastJob,
 } from "./repository";
-import { getOrRefreshWorkspace, getScoutWorkspaceForTeam } from "./workspace";
+import {
+  getOrRefreshWorkspace,
+  getScoutWorkspaceForTeam,
+  type WorkspaceBundle,
+} from "./workspace";
 import {
   buildExecutionName,
   startStateMachineExecution,
@@ -228,7 +232,7 @@ async function buildOpponentForecastContext(args: {
   env: GraphqlEnv;
   scout: ResolverResult<"getScoutWorkspace">;
   userId: string;
-  workspace: Awaited<ReturnType<typeof getOrRefreshWorkspace>>;
+  workspace: WorkspaceBundle;
 }): Promise<JsonRecord> {
   const summary = args.scout.summary;
   if (!summary) {

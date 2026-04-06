@@ -46,7 +46,7 @@ import { normalizeOptionalString } from "./project-env.mjs";
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const ampxWithEnvScriptPath = join(currentDir, "ampx-with-env.mjs");
 const skipDeployVerifyEnvName = "BB_SKIP_DEPLOY_VERIFY";
-type SharedInfraRuntime = Parameters<typeof resolveSandboxEnvironmentName>[1];
+type SharedInfraRuntime = Pick<WorkflowRuntime, "env" | "userName">;
 
 type WorkflowCommand =
   | "dev:data"
@@ -134,7 +134,10 @@ const sandboxCdkOutPath = join(projectRoot, ".amplify", "artifacts", "cdk.out");
 const sandboxReadLockPattern = /^read\.(\d+)\.\d+\.lock$/;
 
 function asSharedInfraRuntime(runtime: WorkflowRuntime): SharedInfraRuntime {
-  return runtime as unknown as SharedInfraRuntime;
+  return {
+    env: runtime.env,
+    userName: runtime.userName,
+  };
 }
 
 export const __testing = {

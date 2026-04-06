@@ -8,6 +8,20 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(currentDir, "..");
 const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 const testFilePattern = /\.(?:test|spec)\.[^.]+$/;
+const productionSourceRoots = [
+  join(repoRoot, "app"),
+  join(repoRoot, "amplify"),
+  join(repoRoot, "scripts"),
+] as const;
+const approvedLargeDependencyBags = new Map<string, number>([
+  ["amplify/data/_backend/billing.ts", 4],
+  ["amplify/data/_backend/game-day-recap.ts", 19],
+  ["amplify/data/_backend/league-history.ts", 16],
+  ["amplify/data/_backend/lineup-helper.ts", 4],
+  ["amplify/data/_backend/match-store.ts", 5],
+  ["amplify/data/_backend/prediction.ts", 7],
+  ["amplify/data/_backend/team-highlights.ts", 11],
+]);
 
 function listRepoEntries(rootPath: string) {
   return readdirSync(rootPath, { withFileTypes: true }).map((entry) => ({
@@ -61,6 +75,18 @@ function listFiles(rootPath: string): string[] {
   }
 
   return files;
+}
+
+function listProductionSourceFiles(): string[] {
+  return productionSourceRoots.flatMap((rootPath) =>
+    listSourceFiles(rootPath).filter(
+      (sourceFile) => !testFilePattern.test(sourceFile),
+    ),
+  );
+}
+
+function countMatches(source: string, pattern: RegExp): number {
+  return [...source.matchAll(pattern)].length;
 }
 
 test("lambda data access uses the Amplify runtime client", () => {
@@ -142,13 +168,16 @@ test("app no longer relies on the generic GraphQL JSON helper", () => {
   assert.equal(existsSync(join(repoRoot, "app", "graphql-json.ts")), false);
 });
 
-test("app runtime code only reaches amplify_outputs.json through the approved runtime loader", () => {
-  const appRoot = join(repoRoot, "app");
-  const approvedRuntimeLoader = join(appRoot, "amplify-outputs-runtime.js");
+test("production runtime code only reaches amplify_outputs.json through the approved runtime loader", () => {
+  const approvedRuntimeLoader = join(
+    repoRoot,
+    "app",
+    "amplify-outputs-runtime.js",
+  );
   const directOutputsImportPattern =
     /from\s+["'][^"']*amplify_outputs\.json["']|import\(\s*["'][^"']*amplify_outputs\.json["']/;
 
-  for (const sourceFile of listSourceFiles(appRoot)) {
+  for (const sourceFile of listProductionSourceFiles()) {
     if (sourceFile === approvedRuntimeLoader) {
       continue;
     }
@@ -163,11 +192,11 @@ test("app runtime code only reaches amplify_outputs.json through the approved ru
 
   const runtimeLoaderSource = readFileSync(approvedRuntimeLoader, "utf8");
   const approvedLoaderSource = readFileSync(
-    join(appRoot, "amplify-outputs.ts"),
+    join(repoRoot, "app", "amplify-outputs.ts"),
     "utf8",
   );
   const serverSource = readFileSync(
-    join(appRoot, "server", "amplify-server.ts"),
+    join(repoRoot, "app", "server", "amplify-server.ts"),
     "utf8",
   );
 
@@ -191,6 +220,46 @@ test("server BFF dispatch avoids generated client meta-types", () => {
   assert.doesNotMatch(bffSource, /Awaited<ReturnType<typeof getServerDataClient>>/);
   assert.doesNotMatch(bffSource, /Parameters<ServerDataClient/);
   assert.doesNotMatch(bffSource, /DeepReadOnlyObject/);
+});
+
+test("production source avoids wrapper-derived meta-types", () => {
+  const bannedPatterns = [
+    /Awaited<ReturnType<typeof /,
+    /Parameters<typeof /,
+    /Parameters<[^;\n]*\.(?:queries|mutations|models)\b/,
+    /Parameters<[^;\n]*\["(?:queries|mutations|models)"\]/,
+  ];
+
+  for (const sourceFile of listProductionSourceFiles()) {
+    const source = readFileSync(sourceFile, "utf8");
+    for (const pattern of bannedPatterns) {
+      assert.doesNotMatch(source, pattern, relative(repoRoot, sourceFile));
+    }
+  }
+});
+
+test("large dependency bags stay on a reviewed allowlist", () => {
+  const dependencyBagPattern = /:\s*typeof\s+[A-Za-z0-9_$.]+/g;
+
+  for (const sourceFile of listProductionSourceFiles()) {
+    const source = readFileSync(sourceFile, "utf8");
+    const relativePath = relative(repoRoot, sourceFile).replaceAll("\\", "/");
+    const dependencyCount = countMatches(source, dependencyBagPattern);
+    if (dependencyCount <= 3) {
+      continue;
+    }
+
+    const allowedCount = approvedLargeDependencyBags.get(relativePath);
+    assert.notEqual(
+      allowedCount,
+      undefined,
+      `${relativePath} introduces an unreviewed large : typeof dependency bag (${dependencyCount}).`,
+    );
+    assert.ok(
+      dependencyCount <= allowedCount,
+      `${relativePath} grew its reviewed : typeof dependency bag from ${allowedCount} to ${dependencyCount}.`,
+    );
+  }
 });
 
 test("deploy verification uses a cold app typecheck", () => {

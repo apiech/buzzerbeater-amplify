@@ -181,7 +181,7 @@ type GameDayRecapPromptTeam = {
   }>;
 };
 
-type SlateGame = {
+export type SlateGame = {
   awayTeamId: string;
   awayTeamName: string;
   homeTeamId: string;
@@ -2494,7 +2494,7 @@ function parseDateOnlyToTimestamp(value: string | null): number {
   return Date.parse(`${value}T00:00:00Z`);
 }
 
-type SeasonResolutionDiagnostic = {
+export type SeasonResolutionDiagnostic = {
   finish: string | null;
   finishTimestamp: number | null;
   hasUsableBounds: boolean;

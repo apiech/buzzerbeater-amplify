@@ -141,17 +141,12 @@ export function loadDeployLocalEnvFile(
   return envFilePath;
 }
 
-export function loadDeployWorkflowEnv(
-  envProcess: EnvProcessLike = process,
-): {
+export function loadDeployWorkflowEnv(): {
   appEnvPath: string;
   deployEnvPath: string;
 } {
-  const deployEnvPath = loadDeployLocalEnvFile(workspaceRoot, envProcess);
-  loadProjectEnvFiles(
-    projectRoot,
-    envProcess as Parameters<typeof loadProjectEnvFiles>[1],
-  );
+  const deployEnvPath = loadDeployLocalEnvFile(workspaceRoot, process);
+  loadProjectEnvFiles(projectRoot);
 
   return {
     appEnvPath: join(projectRoot, ".env"),

@@ -1,30 +1,30 @@
 import { cookies } from "next/headers";
-import { createServerRunner } from "@aws-amplify/adapter-nextjs";
+import { createServerRunner, type NextServer } from "@aws-amplify/adapter-nextjs";
 import { generateServerClientUsingCookies } from "@aws-amplify/adapter-nextjs/data";
 import {
   fetchUserAttributes,
   getCurrentUser,
 } from "aws-amplify/auth/server";
+import type { GetCurrentUserOutput } from "aws-amplify/auth";
+import type { V6ClientSSRCookies } from "aws-amplify/api/internals";
 
 import type { Schema } from "@/amplify/data/resource";
 import { loadAmplifyOutputs } from "@/app/amplify-outputs";
 import { resolveViewerLabel } from "@/app/viewer-identity";
 
-type ServerRunner = ReturnType<typeof createServerRunner>;
-type CreateAuthRouteHandlers = ServerRunner["createAuthRouteHandlers"];
-type RunWithAmplifyServerContext = ServerRunner["runWithAmplifyServerContext"];
-type ServerDataClient = ReturnType<typeof generateServerClientUsingCookies<Schema>>;
-type AmplifyServerRuntime = {
-  createAuthRouteHandlers: CreateAuthRouteHandlers;
-  runWithAmplifyServerContext: RunWithAmplifyServerContext;
+type ServerDataClient = V6ClientSSRCookies<Schema>;
+type AuthRouteHandlerOptions = {
+  customState?: string;
+  redirectOnSignInComplete?: string;
+  redirectOnSignOutComplete?: string;
+};
+type AmplifyServerRuntime = Pick<
+  NextServer.CreateServerRunnerOutput,
+  "createAuthRouteHandlers" | "runWithAmplifyServerContext"
+> & {
   serverDataClient: ServerDataClient;
 };
 type AmplifyServerRuntimeLoader = () => Promise<AmplifyServerRuntime>;
-type NextServerContext =
-  Parameters<RunWithAmplifyServerContext>[0]["nextServerContext"];
-type ServerContextSpec = Parameters<
-  Parameters<RunWithAmplifyServerContext>[0]["operation"]
->[0];
 
 let amplifyServerRuntimePromise: Promise<AmplifyServerRuntime> | null = null;
 let amplifyServerRuntimeLoader: AmplifyServerRuntimeLoader =
@@ -57,18 +57,14 @@ async function getAmplifyServerRuntime(): Promise<AmplifyServerRuntime> {
   return amplifyServerRuntimePromise;
 }
 
-export async function createAuthRouteHandlers(
-  input: Parameters<CreateAuthRouteHandlers>[0],
-): Promise<ReturnType<CreateAuthRouteHandlers>> {
+export async function createAuthRouteHandlers(input: AuthRouteHandlerOptions) {
   const runtime = await getAmplifyServerRuntime();
   return runtime.createAuthRouteHandlers(input);
 }
 
 export async function runWithAmplifyServerContext<OperationResult>(input: {
-  nextServerContext: NextServerContext;
-  operation(
-    contextSpec: ServerContextSpec,
-  ): OperationResult | Promise<OperationResult>;
+  nextServerContext: NextServer.Context | null;
+  operation: NextServer.RunWithContextInput<OperationResult>["operation"];
 }): Promise<OperationResult> {
   const runtime = await getAmplifyServerRuntime();
   return runtime.runWithAmplifyServerContext(input);
@@ -78,7 +74,7 @@ export async function getServerDataClient(): Promise<ServerDataClient> {
   return (await getAmplifyServerRuntime()).serverDataClient;
 }
 
-export type ServerCurrentUser = Awaited<ReturnType<typeof getCurrentUser>>;
+export type ServerCurrentUser = GetCurrentUserOutput;
 
 export async function getServerCurrentUser(): Promise<ServerCurrentUser | null> {
   try {

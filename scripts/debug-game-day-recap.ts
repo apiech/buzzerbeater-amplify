@@ -1,6 +1,10 @@
 import process from "node:process";
 
-import { __testing } from "../amplify/data/_backend/game-day-recap";
+import {
+  __testing,
+  type SeasonResolutionDiagnostic,
+  type SlateGame,
+} from "../amplify/data/_backend/game-day-recap";
 import type { BbConnectionRecord } from "../amplify/data/_backend/repository";
 import { BBXmlApiClient } from "../lib/bbapi";
 import type { BBApiStandings } from "../lib/bbapi/types";
@@ -16,7 +20,7 @@ type CliOptions = {
 type SelectedSlate = {
   probe: "current" | "historical";
   season: number;
-  slate: Awaited<ReturnType<typeof __testing.resolveLeagueDaySlate>>;
+  slate: SlateGame[];
   standings: BBApiStandings;
 };
 
@@ -38,7 +42,7 @@ async function main(): Promise<void> {
         })
       : [];
 
-    let seasonDiagnostics: ReturnType<typeof __testing.summarizeSeasonDiagnostics> = [];
+    let seasonDiagnostics: SeasonResolutionDiagnostic[] = [];
     let candidateSeasons: number[] = [];
     const historicalProbes: Array<{ games: number; season: number }> = [];
     let selected: SelectedSlate | null = null;

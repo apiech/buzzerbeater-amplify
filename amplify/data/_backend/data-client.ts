@@ -1,15 +1,16 @@
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
+import {
+  getAmplifyDataClientConfig,
+  type DataClientEnv,
+} from "@aws-amplify/backend-function/runtime";
 import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
+import { generateClient, type Client } from "aws-amplify/data";
 
 import type { Schema } from "../resource";
-
-type DataClientEnv = Parameters<typeof getAmplifyDataClientConfig>[0];
 
 export type AmplifyDataFunctionEnv = DataClientEnv &
   Record<string, string | undefined>;
 
-type GeneratedDataClient = ReturnType<typeof generateClient<Schema>>;
+type GeneratedDataClient = Client<Schema>;
 
 const clientCache = new Map<string, Promise<GeneratedDataClient>>();
 

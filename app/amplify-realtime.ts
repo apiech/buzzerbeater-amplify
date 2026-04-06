@@ -1,18 +1,17 @@
 "use client";
 
 import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
+import { generateClient, type Client } from "aws-amplify/data";
+import type { ResourcesConfig } from "@aws-amplify/core";
 
 import type { Schema } from "@/amplify/data/resource";
 import { loadAmplifyOutputs } from "@/app/amplify-outputs";
 
-type RealtimeClient = ReturnType<typeof generateClient<Schema>>;
-type ConfigureAmplify = (
-  outputs: Awaited<ReturnType<typeof loadAmplifyOutputs>>,
-) => void;
+type RealtimeClient = Client<Schema>;
+type ConfigureAmplify = (outputs: ResourcesConfig) => void;
 type CreateRealtimeClient = () => RealtimeClient;
 
-let realtimeClientPromise: Promise<unknown> | null = null;
+let realtimeClientPromise: Promise<RealtimeClient> | null = null;
 let configureAmplify: ConfigureAmplify = (outputs) => {
   Amplify.configure(outputs);
 };
@@ -31,7 +30,7 @@ export function getRealtimeClient(): Promise<RealtimeClient> {
       });
   }
 
-  return realtimeClientPromise as Promise<RealtimeClient>;
+  return realtimeClientPromise;
 }
 
 export function logRealtimeError(context: string) {
