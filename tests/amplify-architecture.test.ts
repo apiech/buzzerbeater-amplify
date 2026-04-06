@@ -142,33 +142,65 @@ test("app no longer relies on the generic GraphQL JSON helper", () => {
   assert.equal(existsSync(join(repoRoot, "app", "graphql-json.ts")), false);
 });
 
-test("app runtime code only reaches amplify_outputs.json through the approved loader", () => {
+test("app runtime code only reaches amplify_outputs.json through the approved runtime loader", () => {
   const appRoot = join(repoRoot, "app");
-  const approvedLoader = join(appRoot, "amplify-outputs.ts");
+  const approvedRuntimeLoader = join(appRoot, "amplify-outputs-runtime.js");
+  const directOutputsImportPattern =
+    /from\s+["'][^"']*amplify_outputs\.json["']|import\(\s*["'][^"']*amplify_outputs\.json["']/;
 
   for (const sourceFile of listSourceFiles(appRoot)) {
-    if (sourceFile === approvedLoader) {
+    if (sourceFile === approvedRuntimeLoader) {
       continue;
     }
 
     const source = readFileSync(sourceFile, "utf8");
     assert.doesNotMatch(
       source,
-      /amplify_outputs\.json/,
+      directOutputsImportPattern,
       relative(repoRoot, sourceFile),
     );
   }
 
-  const approvedLoaderSource = readFileSync(approvedLoader, "utf8");
+  const runtimeLoaderSource = readFileSync(approvedRuntimeLoader, "utf8");
+  const approvedLoaderSource = readFileSync(
+    join(appRoot, "amplify-outputs.ts"),
+    "utf8",
+  );
   const serverSource = readFileSync(
     join(appRoot, "server", "amplify-server.ts"),
     "utf8",
   );
 
-  assert.match(approvedLoaderSource, /import\("\.\.\/amplify_outputs\.json"/);
+  assert.match(runtimeLoaderSource, directOutputsImportPattern);
+  assert.match(
+    approvedLoaderSource,
+    /from\s+["']@\/app\/amplify-outputs-runtime\.js["']/,
+  );
+  assert.doesNotMatch(approvedLoaderSource, directOutputsImportPattern);
   assert.match(serverSource, /loadAmplifyOutputs/);
   assert.doesNotMatch(serverSource, /readFileSync/);
   assert.doesNotMatch(serverSource, /return \{\}/);
+});
+
+test("server BFF dispatch avoids generated client meta-types", () => {
+  const bffSource = readFileSync(
+    join(repoRoot, "app", "server", "amplify-bff.ts"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(bffSource, /Awaited<ReturnType<typeof getServerDataClient>>/);
+  assert.doesNotMatch(bffSource, /Parameters<ServerDataClient/);
+  assert.doesNotMatch(bffSource, /DeepReadOnlyObject/);
+});
+
+test("deploy verification uses a cold app typecheck", () => {
+  const packageJson = JSON.parse(
+    readFileSync(join(repoRoot, "package.json"), "utf8"),
+  ) as {
+    scripts?: Record<string, string>;
+  };
+
+  assert.match(packageJson.scripts?.["typecheck:app"] ?? "", /--incremental false/);
 });
 
 test("app data access exposes explicit read endpoints and no generic model proxy", () => {

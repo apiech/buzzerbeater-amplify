@@ -10,161 +10,115 @@ type OperationResult<TData> = {
   nextToken?: string | null;
 };
 
-type ServerDataClient = Awaited<ReturnType<typeof getServerDataClient>>;
+type OperationInput = Record<string, unknown>;
 type QueryOperation = (
-  serverDataClient: ServerDataClient,
-  input?: Record<string, unknown>,
+  input?: OperationInput,
 ) => Promise<OperationResult<unknown>>;
 type MutationOperation = (
-  serverDataClient: ServerDataClient,
-  input?: Record<string, unknown>,
+  input?: OperationInput,
 ) => Promise<OperationResult<unknown>>;
 
 type QueryName = keyof typeof queryOperations;
 type MutationName = keyof typeof mutationOperations;
 
 const queryOperations = {
-  evaluateLineupHelper: (serverDataClient, input) =>
-    serverDataClient.queries.evaluateLineupHelper(
-      requiredInput<
-        Parameters<ServerDataClient["queries"]["evaluateLineupHelper"]>[0]
-      >(input),
+  evaluateLineupHelper: async (input) =>
+    (await getServerDataClient()).queries.evaluateLineupHelper(
+      requiredInput(input) as never,
     ),
-  getBillingSummary: (serverDataClient) =>
-    serverDataClient.queries.getBillingSummary(),
-  getHomeWorkspace: (serverDataClient) =>
-    serverDataClient.queries.getHomeWorkspace(),
-  getLeagueHistory: (serverDataClient, input) =>
-    serverDataClient.queries.getLeagueHistory(
-      optionalInput<
-        Parameters<ServerDataClient["queries"]["getLeagueHistory"]>[0]
-      >(input),
+  getBillingSummary: async () => (await getServerDataClient()).queries.getBillingSummary(),
+  getHomeWorkspace: async () => (await getServerDataClient()).queries.getHomeWorkspace(),
+  getLeagueHistory: async (input) =>
+    (await getServerDataClient()).queries.getLeagueHistory(
+      optionalInput(input) as never,
     ),
-  getLeagueIntel: (serverDataClient) => serverDataClient.queries.getLeagueIntel(),
-  getLatestOpponentForecast: (serverDataClient, input) =>
-    serverDataClient.queries.getLatestOpponentForecast(
-      requiredInput<
-        Parameters<ServerDataClient["queries"]["getLatestOpponentForecast"]>[0]
-      >(input),
+  getLeagueIntel: async () => (await getServerDataClient()).queries.getLeagueIntel(),
+  getLatestOpponentForecast: async (input) =>
+    (await getServerDataClient()).queries.getLatestOpponentForecast(
+      requiredInput(input) as never,
     ),
-  getLineupHelperWorkspace: (serverDataClient) =>
-    serverDataClient.queries.getLineupHelperWorkspace(),
-  getMatchBoxscoreDetails: (serverDataClient, input) =>
-    serverDataClient.queries.getMatchBoxscoreDetails(
-      requiredInput<
-        Parameters<ServerDataClient["queries"]["getMatchBoxscoreDetails"]>[0]
-      >(input),
+  getLineupHelperWorkspace: async () =>
+    (await getServerDataClient()).queries.getLineupHelperWorkspace(),
+  getMatchBoxscoreDetails: async (input) =>
+    (await getServerDataClient()).queries.getMatchBoxscoreDetails(
+      requiredInput(input) as never,
     ),
-  getMyTeamHighlights: (serverDataClient, input) =>
-    serverDataClient.queries.getMyTeamHighlights(
-      optionalInput<
-        Parameters<ServerDataClient["queries"]["getMyTeamHighlights"]>[0]
-      >(input),
+  getMyTeamHighlights: async (input) =>
+    (await getServerDataClient()).queries.getMyTeamHighlights(
+      optionalInput(input) as never,
     ),
-  getPlayerLab: (serverDataClient) => serverDataClient.queries.getPlayerLab(),
-  getPlayerTrend: (serverDataClient, input) =>
-    serverDataClient.queries.getPlayerTrend(
-      requiredInput<
-        Parameters<ServerDataClient["queries"]["getPlayerTrend"]>[0]
-      >(input),
+  getPlayerLab: async () => (await getServerDataClient()).queries.getPlayerLab(),
+  getPlayerTrend: async (input) =>
+    (await getServerDataClient()).queries.getPlayerTrend(
+      requiredInput(input) as never,
     ),
-  getRivalsWorkspace: (serverDataClient) =>
-    serverDataClient.queries.getRivalsWorkspace(),
-  getSalaryProjection: (serverDataClient, input) =>
-    serverDataClient.queries.getSalaryProjection(
-      requiredInput<
-        Parameters<ServerDataClient["queries"]["getSalaryProjection"]>[0]
-      >(input),
+  getRivalsWorkspace: async () =>
+    (await getServerDataClient()).queries.getRivalsWorkspace(),
+  getSalaryProjection: async (input) =>
+    (await getServerDataClient()).queries.getSalaryProjection(
+      requiredInput(input) as never,
     ),
-  getScoutWorkspace: (serverDataClient, input) =>
-    serverDataClient.queries.getScoutWorkspace(
-      optionalInput<
-        Parameters<ServerDataClient["queries"]["getScoutWorkspace"]>[0]
-      >(input),
+  getScoutWorkspace: async (input) =>
+    (await getServerDataClient()).queries.getScoutWorkspace(
+      optionalInput(input) as never,
     ),
-  listMyBillingPayments: (serverDataClient, input) =>
-    serverDataClient.queries.listMyBillingPayments(
-      optionalInput<
-        Parameters<ServerDataClient["queries"]["listMyBillingPayments"]>[0]
-      >(input),
+  listMyBillingPayments: async (input) =>
+    (await getServerDataClient()).queries.listMyBillingPayments(
+      optionalInput(input) as never,
     ),
-  getTeamHub: (serverDataClient) => serverDataClient.queries.getTeamHub(),
+  getTeamHub: async () => (await getServerDataClient()).queries.getTeamHub(),
 } satisfies Record<string, QueryOperation>;
 
 const mutationOperations = {
-  connectBbAccount: (serverDataClient, input) =>
-    serverDataClient.mutations.connectBbAccount(
-      requiredInput<
-        Parameters<ServerDataClient["mutations"]["connectBbAccount"]>[0]
-      >(input),
+  connectBbAccount: async (input) =>
+    (await getServerDataClient()).mutations.connectBbAccount(
+      requiredInput(input) as never,
     ),
-  createBillingCheckoutSession: (serverDataClient, input) =>
-    serverDataClient.mutations.createBillingCheckoutSession(
-      optionalInput<
-        Parameters<ServerDataClient["mutations"]["createBillingCheckoutSession"]>[0]
-      >(input),
+  createBillingCheckoutSession: async (input) =>
+    (await getServerDataClient()).mutations.createBillingCheckoutSession(
+      optionalInput(input) as never,
     ),
-  createBillingLifetimeCheckoutSession: (serverDataClient, input) =>
-    serverDataClient.mutations.createBillingLifetimeCheckoutSession(
-      optionalInput<
-        Parameters<
-          ServerDataClient["mutations"]["createBillingLifetimeCheckoutSession"]
-        >[0]
-      >(input),
+  createBillingLifetimeCheckoutSession: async (input) =>
+    (await getServerDataClient()).mutations.createBillingLifetimeCheckoutSession(
+      optionalInput(input) as never,
     ),
-  createBillingPortalSession: (serverDataClient, input) =>
-    serverDataClient.mutations.createBillingPortalSession(
-      optionalInput<
-        Parameters<ServerDataClient["mutations"]["createBillingPortalSession"]>[0]
-      >(input),
+  createBillingPortalSession: async (input) =>
+    (await getServerDataClient()).mutations.createBillingPortalSession(
+      optionalInput(input) as never,
     ),
-  disconnectBbAccount: (serverDataClient) =>
-    serverDataClient.mutations.disconnectBbAccount(),
-  refreshWorkspace: (serverDataClient) =>
-    serverDataClient.mutations.refreshWorkspace(),
-  setBbLeagueTimeZone: (serverDataClient, input) =>
-    serverDataClient.mutations.setBbLeagueTimeZone(
-      requiredInput<
-        Parameters<ServerDataClient["mutations"]["setBbLeagueTimeZone"]>[0]
-      >(input),
+  disconnectBbAccount: async () =>
+    (await getServerDataClient()).mutations.disconnectBbAccount(),
+  refreshWorkspace: async () =>
+    (await getServerDataClient()).mutations.refreshWorkspace(),
+  setBbLeagueTimeZone: async (input) =>
+    (await getServerDataClient()).mutations.setBbLeagueTimeZone(
+      requiredInput(input) as never,
     ),
-  submitGameDayRecap: (serverDataClient, input) =>
-    serverDataClient.mutations.submitGameDayRecap(
-      requiredInput<
-        Parameters<ServerDataClient["mutations"]["submitGameDayRecap"]>[0]
-      >(input),
+  submitGameDayRecap: async (input) =>
+    (await getServerDataClient()).mutations.submitGameDayRecap(
+      requiredInput(input) as never,
     ),
-  submitLeagueHistoryBackfill: (serverDataClient, input) =>
-    serverDataClient.mutations.submitLeagueHistoryBackfill(
-      optionalInput<
-        Parameters<ServerDataClient["mutations"]["submitLeagueHistoryBackfill"]>[0]
-      >(input),
+  submitLeagueHistoryBackfill: async (input) =>
+    (await getServerDataClient()).mutations.submitLeagueHistoryBackfill(
+      optionalInput(input) as never,
     ),
-  submitLeagueGameDayRecap: (serverDataClient, input) =>
-    serverDataClient.mutations.submitLeagueGameDayRecap(
-      requiredInput<
-        Parameters<ServerDataClient["mutations"]["submitLeagueGameDayRecap"]>[0]
-      >(input),
+  submitLeagueGameDayRecap: async (input) =>
+    (await getServerDataClient()).mutations.submitLeagueGameDayRecap(
+      requiredInput(input) as never,
     ),
-  submitMyTeamHighlightsScan: (serverDataClient) =>
-    serverDataClient.mutations.submitMyTeamHighlightsScan(),
-  submitOpponentForecastJob: (serverDataClient, input) =>
-    serverDataClient.mutations.submitOpponentForecastJob(
-      requiredInput<
-        Parameters<ServerDataClient["mutations"]["submitOpponentForecastJob"]>[0]
-      >(input),
+  submitMyTeamHighlightsScan: async () =>
+    (await getServerDataClient()).mutations.submitMyTeamHighlightsScan(),
+  submitOpponentForecastJob: async (input) =>
+    (await getServerDataClient()).mutations.submitOpponentForecastJob(
+      requiredInput(input) as never,
     ),
-  submitPredictionJob: (serverDataClient, input) =>
-    serverDataClient.mutations.submitPredictionJob(
-      requiredInput<
-        Parameters<ServerDataClient["mutations"]["submitPredictionJob"]>[0]
-      >(input),
+  submitPredictionJob: async (input) =>
+    (await getServerDataClient()).mutations.submitPredictionJob(
+      requiredInput(input) as never,
     ),
-  submitSingleGameSummary: (serverDataClient, input) =>
-    serverDataClient.mutations.submitSingleGameSummary(
-      requiredInput<
-        Parameters<ServerDataClient["mutations"]["submitSingleGameSummary"]>[0]
-      >(input),
+  submitSingleGameSummary: async (input) =>
+    (await getServerDataClient()).mutations.submitSingleGameSummary(
+      requiredInput(input) as never,
     ),
 } satisfies Record<string, MutationOperation>;
 
@@ -178,32 +132,26 @@ export function isMutationName(value: string): value is MutationName {
 
 export async function runQueryOperation(
   name: QueryName,
-  input?: Record<string, unknown>,
+  input?: OperationInput,
 ): Promise<OperationResult<unknown>> {
-  const serverDataClient = await getServerDataClient();
-  return queryOperations[name](serverDataClient, input);
+  return queryOperations[name](input);
 }
 
 export async function runMutationOperation(
   name: MutationName,
-  input?: Record<string, unknown>,
+  input?: OperationInput,
 ): Promise<OperationResult<unknown>> {
-  const serverDataClient = await getServerDataClient();
-  return mutationOperations[name](serverDataClient, input);
+  return mutationOperations[name](input);
 }
 
-function optionalInput<T extends Record<string, unknown>>(
-  input?: Record<string, unknown>,
-): T {
-  return (input ?? {}) as T;
+function optionalInput(input?: OperationInput): OperationInput {
+  return input ?? {};
 }
 
-function requiredInput<T extends Record<string, unknown>>(
-  input?: Record<string, unknown>,
-): T {
+function requiredInput(input?: OperationInput): OperationInput {
   if (!input || Array.isArray(input)) {
     throw new Error("Request body must be an object.");
   }
 
-  return input as T;
+  return input;
 }

@@ -1,8 +1,9 @@
 import type { ResourcesConfig } from "@aws-amplify/core";
+import { importAmplifyOutputsModule } from "@/app/amplify-outputs-runtime.js";
 
 type AmplifyOutputsLoader = () => Promise<ResourcesConfig>;
 type AmplifyOutputsModule = {
-  readonly default?: ResourcesConfig;
+  readonly default?: unknown;
 };
 
 const missingOutputsMessage =
@@ -45,16 +46,14 @@ export async function loadAmplifyOutputs(): Promise<ResourcesConfig> {
 }
 
 async function defaultAmplifyOutputsLoader(): Promise<ResourcesConfig> {
-  const outputsModule = (await import("../amplify_outputs.json", {
-    with: { type: "json" },
-  })) as AmplifyOutputsModule;
+  const outputsModule =
+    (await importAmplifyOutputsModule()) as AmplifyOutputsModule;
   return normalizeAmplifyOutputs(outputsModule);
 }
 
-function normalizeAmplifyOutputs(
-  module: AmplifyOutputsModule | ResourcesConfig,
-): ResourcesConfig {
-  return ((module as AmplifyOutputsModule).default ?? module) as ResourcesConfig;
+function normalizeAmplifyOutputs(module: unknown): ResourcesConfig {
+  const maybeModule = module as AmplifyOutputsModule;
+  return (maybeModule.default ?? module) as ResourcesConfig;
 }
 
 function toAmplifyOutputsError(
