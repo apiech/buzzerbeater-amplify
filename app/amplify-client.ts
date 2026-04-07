@@ -3,9 +3,9 @@
 import type { Schema } from "@/amplify/data/resource";
 import type {
   BbConnectionRecord,
+  CurrentPredictionPreview,
   OperationsActivity,
   PaginatedResult,
-  PredictionJobRecord,
   RecapHistoryRecord,
 } from "@/app/types";
 
@@ -22,8 +22,8 @@ type AmplifyLikeResult<TData> = {
 type JsonObject = Record<string, unknown>;
 type ReadOperationName =
   | "getCurrentBbConnection"
+  | "getCurrentPrediction"
   | "getOperationsActivity"
-  | "getPredictionHistory"
   | "getRecapHistory";
 type QueryOperationName =
   | "evaluateLineupHelper"
@@ -62,13 +62,13 @@ type OperationResult<TName extends QueryOperationName | MutationOperationName> =
 type ReadResult<TName extends ReadOperationName> =
   TName extends "getCurrentBbConnection"
     ? BbConnectionRecord | null
-    : TName extends "getOperationsActivity"
+    : TName extends "getCurrentPrediction"
+      ? CurrentPredictionPreview | null
+      : TName extends "getOperationsActivity"
       ? OperationsActivity
-      : TName extends "getPredictionHistory"
-        ? PaginatedResult<PredictionJobRecord>
-        : TName extends "getRecapHistory"
-          ? PaginatedResult<RecapHistoryRecord>
-          : never;
+      : TName extends "getRecapHistory"
+        ? PaginatedResult<RecapHistoryRecord>
+        : never;
 
 async function requestOperation<TData>(
   input: RequestInfo | URL,
@@ -172,12 +172,9 @@ function requestMutation<TName extends MutationOperationName>(
 export const client = {
   reads: {
     getCurrentBbConnection: () => requestRead("getCurrentBbConnection"),
+    getCurrentPrediction: () => requestRead("getCurrentPrediction"),
     getOperationsActivity: (input?: { limit?: number }) =>
       requestRead("getOperationsActivity", input),
-    getPredictionHistory: (input?: {
-      limit?: number;
-      nextToken?: string | null;
-    }) => requestRead("getPredictionHistory", input),
     getRecapHistory: (input?: { limit?: number; nextToken?: string | null }) =>
       requestRead("getRecapHistory", input),
   },

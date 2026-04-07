@@ -1,30 +1,21 @@
 "use client";
 
 import type {
-  ConnectedPredictionInput,
   DashboardWorkspace,
-  ManualPredictionInput,
   OpponentForecastScenario,
   OpponentForecastSnapshot,
-  PredictionConnectedOverrides,
-  PredictionConnectedSelection,
   PredictionDraftState,
+  PredictionForecastAppliedValues,
   PredictionForecastContext,
   PredictionForecastPrefill,
+  PredictionInput,
+  PredictionSourceSelection,
   PredictionSubmissionRequest,
 } from "@/app/types";
 
-export const PREDICTION_DRAFT_STORAGE_KEY = "bb.predictionDraft.v1";
+export const PREDICTION_DRAFT_STORAGE_KEY = "bb.predictionDraft.v2";
 
-const FORECAST_OVERRIDE_FIELDS = [
-  "away_offStrategy",
-  "away_defStrategy",
-  "away_gdp_focus",
-  "away_gdp_pace",
-  "effortDelta",
-] as const;
-
-export function createDefaultManualPredictionInput(): ManualPredictionInput {
+export function createDefaultPredictionInput(): PredictionInput {
   return {
     home_outsideScoring: 10,
     home_insideScoring: 10,
@@ -38,10 +29,6 @@ export function createDefaultManualPredictionInput(): ManualPredictionInput {
     away_insideDefense: 10,
     away_rebounding: 10,
     away_offensiveFlow: 10,
-    home_offStrategy: "Base",
-    home_defStrategy: "ManToMan",
-    away_offStrategy: "Base",
-    away_defStrategy: "ManToMan",
     home_gdp_focus: "N/A",
     home_gdp_pace: "N/A",
     away_gdp_focus: "N/A",
@@ -51,9 +38,11 @@ export function createDefaultManualPredictionInput(): ManualPredictionInput {
   };
 }
 
-export function createDefaultConnectedSelection(
+export const createDefaultManualPredictionInput = createDefaultPredictionInput;
+
+export function createDefaultPredictionSourceSelection(
   workspace: DashboardWorkspace,
-): PredictionConnectedSelection {
+): PredictionSourceSelection {
   return {
     homeSourceMatchId:
       workspace.home.recentMatches.find(
@@ -70,11 +59,9 @@ export function createDefaultPredictionDraft(
   workspace: DashboardWorkspace,
 ): PredictionDraftState {
   return {
-    mode: "CONNECTED",
-    manualInput: createDefaultManualPredictionInput(),
-    connectedSelection: createDefaultConnectedSelection(workspace),
-    connectedOverrides: {},
+    input: createDefaultPredictionInput(),
     forecastPrefill: null,
+    sourceSelection: createDefaultPredictionSourceSelection(workspace),
   };
 }
 
@@ -88,58 +75,30 @@ export function reconcilePredictionDraft(
   }
 
   return {
-    mode: draft.mode === "MANUAL" ? "MANUAL" : "CONNECTED",
-    manualInput: {
-      ...defaults.manualInput,
-      ...(toRecord(draft.manualInput) ?? {}),
-    },
-    connectedSelection: {
-      homeSourceMatchId:
-        asOptionalString(draft.connectedSelection?.homeSourceMatchId) ??
-        defaults.connectedSelection.homeSourceMatchId,
-      awaySourceMatchId:
-        asOptionalString(draft.connectedSelection?.awaySourceMatchId) ??
-        defaults.connectedSelection.awaySourceMatchId,
-    },
-    connectedOverrides: {
-      ...(toRecord(draft.connectedOverrides) ?? {}),
-    },
+    input: normalizePredictionInputValue(draft.input, defaults.input),
     forecastPrefill: normalizeForecastPrefill(draft.forecastPrefill),
+    sourceSelection: {
+      homeSourceMatchId:
+        asOptionalString(draft.sourceSelection?.homeSourceMatchId) ??
+        defaults.sourceSelection.homeSourceMatchId,
+      awaySourceMatchId:
+        asOptionalString(draft.sourceSelection?.awaySourceMatchId) ??
+        defaults.sourceSelection.awaySourceMatchId,
+    },
   };
 }
 
 export function buildSubmissionRequest(args: {
-  awayTeamId: string | null;
   draft: PredictionDraftState;
-  homeTeamId: string | null;
 }): PredictionSubmissionRequest {
-  if (args.draft.mode === "MANUAL") {
-    return {
-      mode: "MANUAL",
-      manualInput: args.draft.manualInput,
-    };
-  }
-
-  const connectedInput: ConnectedPredictionInput = {
-    homeSourceMatchId:
-      asOptionalString(args.draft.connectedSelection.homeSourceMatchId) ??
-      undefined,
-    awaySourceMatchId:
-      asOptionalString(args.draft.connectedSelection.awaySourceMatchId) ??
-      undefined,
-    homeTeamId: args.homeTeamId ?? undefined,
-    awayTeamId: args.awayTeamId ?? undefined,
-    ...args.draft.connectedOverrides,
-    manualFallback: args.draft.manualInput,
-  };
-
-  if (args.draft.forecastPrefill) {
-    connectedInput.forecastContext = args.draft.forecastPrefill.context;
-  }
-
   return {
-    mode: "CONNECTED",
-    connectedInput,
+    input: normalizePredictionInputValue(
+      args.draft.input,
+      createDefaultPredictionInput(),
+    ),
+    ...(args.draft.forecastPrefill
+      ? { forecastContext: args.draft.forecastPrefill.context }
+      : {}),
   };
 }
 
@@ -163,14 +122,10 @@ export function applyForecastScenarioToDraft(args: {
   sourceTeamId: string;
   workspace: DashboardWorkspace;
 }): PredictionDraftState {
-  const selectionDefaults = createDefaultConnectedSelection(args.workspace);
-  const overrides = {
-    away_offStrategy: args.scenario.offense,
-    away_defStrategy: args.scenario.defense,
-    away_gdp_focus: args.scenario.gdpFocus ?? "N/A",
-    away_gdp_pace: args.scenario.gdpPace ?? "N/A",
+  const selectionDefaults = createDefaultPredictionSourceSelection(args.workspace);
+  const appliedValues: PredictionForecastAppliedValues = {
     effortDelta: mapOpponentEffortChoiceToRelativeDelta(args.scenario.effortChoice),
-  } satisfies PredictionForecastPrefill["overrides"];
+  };
 
   const context: PredictionForecastContext = {
     forecastJobId: args.snapshot.jobId,
@@ -192,22 +147,24 @@ export function applyForecastScenarioToDraft(args: {
 
   return {
     ...args.draft,
-    mode: "CONNECTED",
-    connectedSelection: {
-      homeSourceMatchId:
-        args.draft.connectedSelection.homeSourceMatchId ||
-        selectionDefaults.homeSourceMatchId,
-      awaySourceMatchId:
-        args.draft.connectedSelection.awaySourceMatchId ||
-        selectionDefaults.awaySourceMatchId,
-    },
-    connectedOverrides: {
-      ...args.draft.connectedOverrides,
-      ...overrides,
+    input: {
+      ...args.draft.input,
+      ...appliedValues,
     },
     forecastPrefill: {
       context,
-      overrides,
+      appliedValues,
+      previousValues: {
+        effortDelta: args.draft.input.effortDelta,
+      },
+    },
+    sourceSelection: {
+      homeSourceMatchId:
+        args.draft.sourceSelection.homeSourceMatchId ||
+        selectionDefaults.homeSourceMatchId,
+      awaySourceMatchId:
+        args.draft.sourceSelection.awaySourceMatchId ||
+        selectionDefaults.awaySourceMatchId,
     },
   };
 }
@@ -215,23 +172,18 @@ export function applyForecastScenarioToDraft(args: {
 export function clearForecastPrefill(
   draft: PredictionDraftState,
 ): PredictionDraftState {
-  const prefill = draft.forecastPrefill;
-  if (!prefill) {
+  if (!draft.forecastPrefill) {
     return draft;
   }
 
-  const nextOverrides: PredictionConnectedOverrides = {
-    ...draft.connectedOverrides,
-  };
-  for (const field of FORECAST_OVERRIDE_FIELDS) {
-    if (nextOverrides[field] === prefill.overrides[field]) {
-      delete nextOverrides[field];
-    }
+  const nextInput = { ...draft.input };
+  if (nextInput.effortDelta === draft.forecastPrefill.appliedValues.effortDelta) {
+    nextInput.effortDelta = draft.forecastPrefill.previousValues.effortDelta;
   }
 
   return {
     ...draft,
-    connectedOverrides: nextOverrides,
+    input: nextInput,
     forecastPrefill: null,
   };
 }
@@ -267,12 +219,57 @@ export function writePredictionDraftToStorage(
   storage.setItem(PREDICTION_DRAFT_STORAGE_KEY, JSON.stringify(draft));
 }
 
-export function extractForecastContextFromRequest(
+function normalizeForecastPrefill(
+  value: unknown,
+): PredictionForecastPrefill | null {
+  const record = toRecord(value);
+  const context = normalizePredictionForecastContext(record?.context);
+  const appliedValues = normalizeForecastValues(record?.appliedValues);
+  const previousValues = normalizeForecastValues(record?.previousValues);
+  if (!context || !appliedValues || !previousValues) {
+    return null;
+  }
+
+  return {
+    context,
+    appliedValues,
+    previousValues,
+  };
+}
+
+function normalizeForecastValues(
+  value: unknown,
+): PredictionForecastAppliedValues | null {
+  const record = toRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    effortDelta: asOptionalNumber(record.effortDelta) ?? 0,
+  };
+}
+
+function normalizePredictionInputValue(
+  value: unknown,
+  defaults: PredictionInput,
+): PredictionInput {
+  const record = toRecord(value);
+
+  return {
+    ...defaults,
+    ...(record ?? {}),
+    home_gdp_focus: "N/A",
+    home_gdp_pace: "N/A",
+    away_gdp_focus: "N/A",
+    away_gdp_pace: "N/A",
+  };
+}
+
+function normalizePredictionForecastContext(
   value: unknown,
 ): PredictionForecastContext | null {
-  const record = toRecord(value);
-  const connectedInput = toRecord(record?.connectedInput);
-  const forecastContext = toRecord(connectedInput?.forecastContext);
+  const forecastContext = toRecord(value);
   if (!forecastContext) {
     return null;
   }
@@ -298,44 +295,19 @@ export function extractForecastContextFromRequest(
     enthusiasmBand: asOptionalString(forecastContext.enthusiasmBand),
     evidence: Array.isArray(forecastContext.evidence)
       ? forecastContext.evidence.filter(
-          (entry): entry is string => typeof entry === "string" && Boolean(entry),
+          (entry): entry is string =>
+            typeof entry === "string" && Boolean(entry.trim()),
         )
       : [],
     sourceTeamId,
   };
 }
 
-function normalizeForecastPrefill(
-  value: unknown,
-): PredictionForecastPrefill | null {
-  const record = toRecord(value);
-  const context = extractForecastContextFromRequest({
-    connectedInput: {
-      forecastContext: record?.context,
-    },
-  });
-  const overrides = toRecord(record?.overrides);
-  if (!context || !overrides) {
-    return null;
-  }
-
-  return {
-    context,
-    overrides: {
-      away_offStrategy: asOptionalString(overrides.away_offStrategy) ?? "Base",
-      away_defStrategy: asOptionalString(overrides.away_defStrategy) ?? "ManToMan",
-      away_gdp_focus: asOptionalString(overrides.away_gdp_focus) ?? "N/A",
-      away_gdp_pace: asOptionalString(overrides.away_gdp_pace) ?? "N/A",
-      effortDelta: asOptionalNumber(overrides.effortDelta) ?? 0,
-    },
-  };
-}
-
-function toRecord(value: unknown): Record<string, any> | null {
+function toRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
-  return value as Record<string, any>;
+  return value as Record<string, unknown>;
 }
 
 function asOptionalString(value: unknown): string | null {

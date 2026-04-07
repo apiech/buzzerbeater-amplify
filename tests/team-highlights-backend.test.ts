@@ -5,6 +5,7 @@ import {
   getMyTeamHighlights,
   submitMyTeamHighlightsScan,
 } from "../amplify/data/_backend/team-highlights";
+import { buildExecutionName } from "../amplify/data/_backend/step-functions";
 
 function createMoment(index: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -30,6 +31,30 @@ function createTrackedTeam() {
     userId: "user-1",
   };
 }
+
+test("buildExecutionName keeps readable names when the full key fits", () => {
+  assert.equal(
+    buildExecutionName("team-highlights", "user-1:team-1:2026-03-15T12:00:00.000Z"),
+    "team-highlights-user-1-team-1-2026-03-15T12-00-00-000Z",
+  );
+});
+
+test("buildExecutionName preserves uniqueness for long keys", () => {
+  const first = buildExecutionName(
+    "team-highlights",
+    "12345678-1234-1234-1234-123456789abc:163730:2026-04-06T12:00:00.000Z",
+  );
+  const second = buildExecutionName(
+    "team-highlights",
+    "12345678-1234-1234-1234-123456789abc:163730:2026-04-06T12:05:00.000Z",
+  );
+
+  assert.notEqual(first, second);
+  assert.ok(first.length <= 80);
+  assert.ok(second.length <= 80);
+  assert.match(first, /^team-highlights-/);
+  assert.match(second, /^team-highlights-/);
+});
 
 test("submitMyTeamHighlightsScan rejects free-plan users before queueing work", async () => {
   await assert.rejects(

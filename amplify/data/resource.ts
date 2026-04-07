@@ -416,8 +416,6 @@ const schema = a
       "FAILED",
     ]),
 
-    PredictionRequestMode: a.enum(["MANUAL", "CONNECTED"]),
-
     MatchIngestStatus: a.enum(["PENDING", "PARTIAL", "SUCCEEDED", "FAILED"]),
 
     ThemeId: a.enum(["clubhouse", "arena", "nightfall"]),
@@ -1221,10 +1219,6 @@ const schema = a
       away_insideDefense: a.float().required(),
       away_rebounding: a.float().required(),
       away_offensiveFlow: a.float().required(),
-      home_offStrategy: a.string().required(),
-      home_defStrategy: a.string().required(),
-      away_offStrategy: a.string().required(),
-      away_defStrategy: a.string().required(),
       home_gdp_focus: a.string().required(),
       home_gdp_pace: a.string().required(),
       away_gdp_focus: a.string().required(),
@@ -1245,29 +1239,9 @@ const schema = a
       sourceTeamId: a.string().required(),
     }),
 
-    PredictionConnectedInput: a.customType({
-      homeSourceMatchId: a.string(),
-      awaySourceMatchId: a.string(),
-      homeTeamId: a.string(),
-      awayTeamId: a.string(),
-      home_offStrategy: a.string(),
-      home_defStrategy: a.string(),
-      away_offStrategy: a.string(),
-      away_defStrategy: a.string(),
-      home_gdp_focus: a.string(),
-      home_gdp_pace: a.string(),
-      away_gdp_focus: a.string(),
-      away_gdp_pace: a.string(),
-      neutral: a.string(),
-      effortDelta: a.float(),
-      forecastContext: a.ref("PredictionForecastContext"),
-      manualFallback: a.ref("PredictionManualInput"),
-    }),
-
     PredictionSubmissionRequestInput: a.customType({
-      mode: a.ref("PredictionRequestMode").required(),
-      manualInput: a.ref("PredictionManualInput"),
-      connectedInput: a.ref("PredictionConnectedInput"),
+      input: a.ref("PredictionManualInput").required(),
+      forecastContext: a.ref("PredictionForecastContext"),
     }),
 
     SharedPlayerCardPayloadPlayer: a.customType({
@@ -1597,25 +1571,60 @@ const schema = a
     PredictionJob: a
       .model({
         userId: a.string().required(),
+        requestId: a.string().required(),
         status: a.ref("PredictionJobStatus").required(),
-        mode: a.ref("PredictionRequestMode").required(),
         requestedAt: a.datetime().required(),
-        request: a.json().required(),
-        resolvedInputSnapshot: a.json(),
-        result: a.json(),
+        home_outsideScoring: a.float(),
+        home_insideScoring: a.float(),
+        home_outsideDefense: a.float(),
+        home_insideDefense: a.float(),
+        home_rebounding: a.float(),
+        home_offensiveFlow: a.float(),
+        away_outsideScoring: a.float(),
+        away_insideScoring: a.float(),
+        away_outsideDefense: a.float(),
+        away_insideDefense: a.float(),
+        away_rebounding: a.float(),
+        away_offensiveFlow: a.float(),
+        home_gdp_focus: a.string(),
+        home_gdp_pace: a.string(),
+        away_gdp_focus: a.string(),
+        away_gdp_pace: a.string(),
+        neutral: a.string(),
+        effortDelta: a.float(),
+        homeScore: a.float(),
+        awayScore: a.float(),
+        pointDiff: a.float(),
         error: a.string(),
         executionArn: a.string(),
         modelVersion: a.string(),
-        expiryKey: a.string().required(),
-        expiresAt: a.datetime().required(),
+        forecastJobId: a.string(),
+        forecastModelVersion: a.string(),
+        forecastGeneratedAt: a.datetime(),
+        forecastScenarioId: a.string(),
+        forecastScenarioLabel: a.string(),
+        forecastScenarioProbability: a.float(),
+        forecastEnthusiasmBand: a.string(),
+        forecastSourceTeamId: a.string(),
       })
+      .identifier(["userId"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    PredictionGridCell: a
+      .model({
+        userId: a.string().required(),
+        requestId: a.string().required(),
+        awayDefense: a.string().required(),
+        homeOffense: a.string().required(),
+        homeScore: a.float(),
+        awayScore: a.float(),
+        pointDiff: a.float(),
+      })
+      .identifier(["userId", "requestId", "awayDefense", "homeOffense"])
       .secondaryIndexes((index) => [
         index("userId")
-          .sortKeys(["requestedAt"])
-          .queryField("listPredictionJobsByUserAndRequestedAt"),
-        index("expiryKey")
-          .sortKeys(["expiresAt"])
-          .queryField("listPredictionJobsByExpiryKeyAndExpiresAt"),
+          .sortKeys(["requestId"])
+          .queryField("listPredictionGridCellsByUserIdAndRequestId"),
       ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 

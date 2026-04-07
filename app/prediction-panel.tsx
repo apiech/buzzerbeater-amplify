@@ -3,7 +3,10 @@
 import {
   useEffect,
   useEffectEvent,
+  useId,
+  useRef,
   useState,
+  type FormEvent,
   type Dispatch,
   type SetStateAction,
 } from "react";
@@ -12,24 +15,19 @@ import { client } from "@/app/amplify-client";
 import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import {
   findBestPredictionGridCell,
-  findPredictionGridCell,
-  isPredictionGridSelectionSupported,
-  readPredictionGridSelection,
-  toPredictionResult,
+  hasRenderablePredictionGrid,
 } from "@/app/prediction-result";
 import {
   buildSubmissionRequest,
   clearForecastPrefill,
   createDefaultManualPredictionInput,
-  extractForecastContextFromRequest,
 } from "@/app/prediction-panel-state";
 import type {
+  CurrentPredictionPreview,
   DashboardWorkspace,
-  ManualPredictionInput,
-  PredictionGridCell,
-  PredictionConnectedOverrides,
+  MatchBoxscorePayload,
   PredictionDraftState,
-  PredictionJobRecord,
+  PredictionGridCell,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
@@ -49,56 +47,17 @@ import {
 } from "@/app/ui/primitives/table-shell";
 import { formatPreviewStatus } from "@/app/ui/presentation";
 import { buzzerBeaterColorStyle } from "@/lib/buzzerbeater/rating-scale";
+import {
+  applyBoxscoreRatingsToPredictionInput,
+  PREDICTION_HOME_COURT_FACTOR,
+} from "@/lib/prediction/normalization";
 
 export { buildSubmissionRequest, createDefaultManualPredictionInput };
 
-const OFFENSE_OPTIONS = [
-  "Base",
-  "Push",
-  "Patient",
-  "Motion",
-  "RunAndGun",
-  "Princeton",
-  "LookInside",
-  "LowPost",
-  "InsideIsolation",
-  "OutsideIsolation",
-];
-
-const DEFENSE_OPTIONS = [
-  "ManToMan",
-  "23Zone",
-  "32Zone",
-  "131Zone",
-  "Press",
-  "InsideBoxAndOne",
-  "OutsideBoxAndOne",
-];
-
-const GDP_FOCUS_OPTIONS = [
-  "N/A",
-  "outside.hit",
-  "outside.miss",
-  "Inside.hit",
-  "Inside.miss",
-  "Balanced.hit",
-  "Balanced.miss",
-];
-
-const GDP_PACE_OPTIONS = [
-  "N/A",
-  "Fast.hit",
-  "Fast.miss",
-  "Normal.hit",
-  "Normal.miss",
-  "Slow.hit",
-  "Slow.miss",
-];
-
 const RATING_FIELDS: Array<{
   label: string;
-  homeKey: NumericManualField;
-  awayKey: NumericManualField;
+  homeKey: NumericPredictionField;
+  awayKey: NumericPredictionField;
 }> = [
   {
     label: "Outside scoring",
@@ -138,7 +97,7 @@ type PredictionPanelProps = {
   workspace: DashboardWorkspace;
 };
 
-type NumericManualField =
+type NumericPredictionField =
   | "home_outsideScoring"
   | "home_insideScoring"
   | "home_outsideDefense"
@@ -153,37 +112,39 @@ type NumericManualField =
   | "away_offensiveFlow"
   | "effortDelta";
 
-type TextManualField = Exclude<keyof ManualPredictionInput, NumericManualField>;
-type NumericConnectedOverrideField = "effortDelta";
-type TextConnectedOverrideField = Exclude<
-  keyof PredictionConnectedOverrides,
-  NumericConnectedOverrideField
->;
+type SourceSide = "home" | "away";
+type TeamLocation = "HOME" | "AWAY";
 
-const statusCopyClassName = "text-sm leading-7 text-ink-muted";
-const listClassName = "grid list-none gap-3 p-0";
-const listItemClassName =
-  "grid gap-1 border-b border-black/8 pb-3 last:border-b-0 last:pb-0";
-const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
+const terminalPredictionStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const formGridClassName = "grid gap-4 md:grid-cols-2";
 const ratingGridClassName =
   "grid min-w-[32rem] grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,0.9fr))] gap-x-3 gap-y-3";
+const sourceCardClassName =
+  "rounded-card grid gap-3 border border-black/8 bg-white/70 p-4";
+const statusCopyClassName = "text-sm leading-7 text-ink-muted";
+const twoColumnGridClassName = "grid gap-4 xl:grid-cols-2";
+const incompletePredictionResultMessage =
+  "Prediction completed without any usable tactics-grid cells. Rerun the preview.";
 
 export function PredictionPanel({
   draft,
   onDraftChange,
   workspace,
 }: PredictionPanelProps) {
-  const [jobs, setJobs] = useState<PredictionJobRecord[]>([]);
+  const predictionFormId = useId();
+  const predictionMatrixRef = useRef<HTMLDivElement | null>(null);
+  const hasInitializedPredictionLoadRef = useRef(false);
+  const previousRenderablePredictionKeyRef = useRef<string | null>(null);
+  const [currentPrediction, setCurrentPrediction] =
+    useState<CurrentPredictionPreview | null>(null);
   const [predictionError, setPredictionError] = useState<string | null>(null);
-  const [isLoadingJobs, setIsLoadingJobs] = useState(true);
+  const [isLoadingPrediction, setIsLoadingPrediction] = useState(true);
+  const [isLoadingSource, setIsLoadingSource] = useState<SourceSide | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const mode = draft.mode;
-  const manualInput = draft.manualInput;
-  const connectedSelection = draft.connectedSelection;
-  const connectedOverrides = draft.connectedOverrides;
+  const input = draft.input;
   const forecastPrefill = draft.forecastPrefill;
+  const sourceSelection = draft.sourceSelection;
 
   const homeMatchOptions = workspace.home.recentMatches.filter((match) =>
     Boolean(match.matchId && match.hasBoxscore),
@@ -197,28 +158,53 @@ export function PredictionPanel({
   const homeTeamId = workspace.home.team.teamId ?? null;
   const awayTeamId =
     workspace.scout.summary?.matchupPerspective.opponentTeamId ?? null;
-  const loadJobsEffect = useEffectEvent(() => {
-    void loadJobs();
+  const currentPredictionRequestId = currentPrediction?.requestId ?? null;
+  const currentPredictionUpdatedAt = currentPrediction?.updatedAt ?? null;
+  const currentResult = readPredictionResult(currentPrediction);
+  const currentGrid = currentPrediction?.tacticsGrid ?? null;
+  const canRenderCurrentGrid = hasRenderablePredictionGrid(currentGrid);
+  const currentPredictionIssue =
+    currentPrediction?.error ??
+    (currentPrediction?.status === "SUCCEEDED" && !canRenderCurrentGrid
+      ? incompletePredictionResultMessage
+      : null);
+  const currentPredictionStatus =
+    currentPrediction?.status === "SUCCEEDED" && !canRenderCurrentGrid
+      ? "FAILED"
+      : currentPrediction?.status;
+  const currentPredictionSummary = currentPrediction
+    ? describePredictionSummary({
+        issue: currentPredictionIssue,
+        result: currentResult,
+        status: currentPrediction.status,
+        tacticsGridReady: canRenderCurrentGrid,
+      })
+    : null;
+  const bestGridCell = canRenderCurrentGrid
+    ? findBestPredictionGridCell(currentGrid)
+    : null;
+  const forecastContext = currentPrediction?.forecastContext ?? null;
+
+  const loadCurrentPredictionEffect = useEffectEvent((silent = false) => {
+    void loadCurrentPrediction(silent);
   });
 
   useEffect(() => {
     onDraftChange((current) => {
       const nextHome =
-        current.connectedSelection.homeSourceMatchId ||
-        defaultHomeSourceMatchId;
+        current.sourceSelection.homeSourceMatchId || defaultHomeSourceMatchId;
       const nextAway =
-        current.connectedSelection.awaySourceMatchId ||
-        defaultAwaySourceMatchId;
+        current.sourceSelection.awaySourceMatchId || defaultAwaySourceMatchId;
       if (
-        nextHome === current.connectedSelection.homeSourceMatchId &&
-        nextAway === current.connectedSelection.awaySourceMatchId
+        nextHome === current.sourceSelection.homeSourceMatchId &&
+        nextAway === current.sourceSelection.awaySourceMatchId
       ) {
         return current;
       }
 
       return {
         ...current,
-        connectedSelection: {
+        sourceSelection: {
           homeSourceMatchId: nextHome,
           awaySourceMatchId: nextAway,
         },
@@ -227,7 +213,7 @@ export function PredictionPanel({
   }, [defaultAwaySourceMatchId, defaultHomeSourceMatchId, onDraftChange]);
 
   useEffect(() => {
-    loadJobsEffect();
+    loadCurrentPredictionEffect();
   }, []);
 
   useEffect(() => {
@@ -252,11 +238,11 @@ export function PredictionPanel({
         commitSubscriptions([
           realtimeClient.models.PredictionJob.onCreate().subscribe({
             error: logRealtimeError("PredictionJob.onCreate"),
-            next: () => loadJobsEffect(),
+            next: () => loadCurrentPredictionEffect(true),
           }),
           realtimeClient.models.PredictionJob.onUpdate().subscribe({
             error: logRealtimeError("PredictionJob.onUpdate"),
-            next: () => loadJobsEffect(),
+            next: () => loadCurrentPredictionEffect(true),
           }),
         ]);
       } catch (error) {
@@ -272,38 +258,89 @@ export function PredictionPanel({
     };
   }, []);
 
-  async function loadJobs() {
-    setIsLoadingJobs(true);
-    const { data, errors } = await client.reads.getPredictionHistory({
-      limit: 12,
-    });
-
-    if (errors?.length || !data) {
-      setPredictionError(formatAmplifyErrors(errors));
-      setJobs([]);
-      setIsLoadingJobs(false);
+  useEffect(() => {
+    if (
+      !currentPrediction ||
+      terminalPredictionStatuses.has(currentPrediction.status)
+    ) {
       return;
     }
 
-    const sorted = [...data.items].sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt),
-    );
-    setJobs(sorted);
-    setIsLoadingJobs(false);
+    const intervalId = window.setInterval(() => {
+      loadCurrentPredictionEffect(true);
+    }, 4000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [currentPrediction]);
+
+  useEffect(() => {
+    if (isLoadingPrediction) {
+      return;
+    }
+
+    const currentRenderablePredictionKey =
+      currentPredictionRequestId && canRenderCurrentGrid
+        ? `${currentPredictionRequestId}:${currentPredictionUpdatedAt}`
+        : null;
+
+    if (!hasInitializedPredictionLoadRef.current) {
+      hasInitializedPredictionLoadRef.current = true;
+      previousRenderablePredictionKeyRef.current = currentRenderablePredictionKey;
+      return;
+    }
+
+    const previousRenderablePredictionKey =
+      previousRenderablePredictionKeyRef.current;
+    previousRenderablePredictionKeyRef.current = currentRenderablePredictionKey;
+    if (
+      previousRenderablePredictionKey !== null ||
+      currentRenderablePredictionKey === null
+    ) {
+      return;
+    }
+
+    predictionMatrixRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [
+    canRenderCurrentGrid,
+    currentPredictionRequestId,
+    currentPredictionUpdatedAt,
+    isLoadingPrediction,
+  ]);
+
+  async function loadCurrentPrediction(silent = false) {
+    if (!silent) {
+      setIsLoadingPrediction(true);
+    }
+
+    const { data, errors } = await client.reads.getCurrentPrediction();
+
+    if (errors?.length) {
+      setPredictionError(formatAmplifyErrors(errors));
+      setCurrentPrediction(null);
+      setIsLoadingPrediction(false);
+      return;
+    }
+
+    setPredictionError(null);
+    setCurrentPrediction(data ?? null);
+    setIsLoadingPrediction(false);
   }
 
   async function handleSubmit() {
+    if (isSubmitting) {
+      return;
+    }
+
     setIsSubmitting(true);
     setPredictionError(null);
 
-    const request = buildSubmissionRequest({
-      awayTeamId,
-      draft,
-      homeTeamId,
-    });
-
     const result = await client.mutations.submitPredictionJob({
-      request,
+      request: buildSubmissionRequest({ draft }),
     });
 
     if (result.errors?.length || !result.data) {
@@ -312,206 +349,110 @@ export function PredictionPanel({
       return;
     }
 
-    await loadJobs();
+    await loadCurrentPrediction(true);
     setIsSubmitting(false);
   }
 
-  function updateMode(nextMode: "CONNECTED" | "MANUAL") {
-    onDraftChange((current) => ({
-      ...current,
-      mode: nextMode,
-    }));
+  function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void handleSubmit();
   }
 
-  function updateConnectedSelection(
-    field: keyof PredictionDraftState["connectedSelection"],
-    nextValue: string,
-  ) {
+  async function handleLoadSource(side: SourceSide) {
+    const matchId =
+      side === "home"
+        ? sourceSelection.homeSourceMatchId
+        : sourceSelection.awaySourceMatchId;
+    const teamId = side === "home" ? homeTeamId : awayTeamId;
+
+    if (!matchId) {
+      setPredictionError(
+        `Select a ${side === "home" ? "home" : "away"} source game first.`,
+      );
+      return;
+    }
+    if (!teamId) {
+      setPredictionError(
+        `${side === "home" ? "Home" : "Away"} team metadata is unavailable.`,
+      );
+      return;
+    }
+
+    setIsLoadingSource(side);
+    setPredictionError(null);
+
+    const response = await client.queries.getMatchBoxscoreDetails({ matchId });
+    if (response.errors?.length || !response.data) {
+      setPredictionError(formatAmplifyErrors(response.errors));
+      setIsLoadingSource(null);
+      return;
+    }
+
+    try {
+      const resolvedSource = resolvePredictionSourceTeam(response.data, teamId);
+      onDraftChange((current) => ({
+        ...current,
+        input: applyBoxscoreRatingsToPredictionInput({
+          input: current.input,
+          side,
+          sourceTeam: resolvedSource.sourceTeam,
+          teamLocation: resolvedSource.teamLocation,
+        }),
+      }));
+    } catch (error) {
+      setPredictionError(formatClientError(error));
+    } finally {
+      setIsLoadingSource(null);
+    }
+  }
+
+  function updateSourceSelection(field: "homeSourceMatchId" | "awaySourceMatchId", value: string) {
     onDraftChange((current) => ({
       ...current,
-      connectedSelection: {
-        ...current.connectedSelection,
-        [field]: nextValue,
+      sourceSelection: {
+        ...current.sourceSelection,
+        [field]: value,
       },
     }));
   }
 
-  function updateManualNumericField(
-    field: NumericManualField,
-    nextValue: string,
-  ) {
+  function updateNumericField(field: NumericPredictionField, nextValue: string) {
     const parsed = Number(nextValue);
     onDraftChange((current) => ({
       ...current,
-      manualInput: {
-        ...current.manualInput,
+      input: {
+        ...current.input,
         [field]: Number.isFinite(parsed) ? parsed : 0,
       },
     }));
   }
 
-  function updateManualTextField(field: TextManualField, nextValue: string) {
+  function updateVenue(nextValue: string) {
     onDraftChange((current) => ({
       ...current,
-      manualInput: {
-        ...current.manualInput,
-        [field]: nextValue,
+      input: {
+        ...current.input,
+        neutral: nextValue,
       },
     }));
   }
-
-  function updateConnectedNumericField(
-    field: NumericConnectedOverrideField,
-    nextValue: string,
-  ) {
-    const parsed = Number(nextValue);
-    onDraftChange((current) => ({
-      ...current,
-      connectedOverrides: {
-        ...current.connectedOverrides,
-        [field]: Number.isFinite(parsed) ? parsed : 0,
-      },
-    }));
-  }
-
-  function updateConnectedTextField(
-    field: TextConnectedOverrideField,
-    nextValue: string,
-  ) {
-    onDraftChange((current) => ({
-      ...current,
-      connectedOverrides: {
-        ...current.connectedOverrides,
-        [field]: nextValue,
-      },
-    }));
-  }
-
-  function currentTextValue(
-    manualField: TextManualField,
-    connectedField?: TextConnectedOverrideField,
-  ): string {
-    if (mode === "MANUAL" || !connectedField) {
-      return manualInput[manualField];
-    }
-    const overrideValue = connectedOverrides[connectedField];
-    return typeof overrideValue === "string" && overrideValue
-      ? overrideValue
-      : manualInput[manualField];
-  }
-
-  function currentEffortValue(): number {
-    if (mode === "MANUAL") {
-      return manualInput.effortDelta;
-    }
-    return typeof connectedOverrides.effortDelta === "number"
-      ? connectedOverrides.effortDelta
-      : manualInput.effortDelta;
-  }
-
-  const connectedReady = Boolean(
-    connectedSelection.homeSourceMatchId &&
-    connectedSelection.awaySourceMatchId &&
-    homeTeamId &&
-    awayTeamId,
-  );
-  const latestJob = jobs.length ? jobs[0] : null;
-  const latestExplanation = latestJob
-    ? [
-        ...describeResolvedInput(latestJob.resolvedInputSnapshot),
-        summarizeForecastContext(
-          extractForecastContextFromRequest(latestJob.request),
-        ),
-      ].filter((entry): entry is string => Boolean(entry))
-    : [];
-  const latestSuccessfulJob =
-    jobs.find(
-      (job) =>
-        job.status === "SUCCEEDED" && Boolean(toPredictionResult(job.result)),
-    ) ?? null;
-  const latestSuccessfulResult = latestSuccessfulJob
-    ? toPredictionResult(latestSuccessfulJob.result)
-    : null;
-  const latestTacticsGrid = latestSuccessfulResult?.tacticsGrid ?? null;
-  const latestGridSelection = latestSuccessfulJob
-    ? readPredictionGridSelection(latestSuccessfulJob.resolvedInputSnapshot)
-    : null;
-  const selectedGridPairSupported =
-    latestTacticsGrid && latestGridSelection
-      ? isPredictionGridSelectionSupported(
-          latestTacticsGrid,
-          latestGridSelection,
-        )
-      : false;
-  const selectedGridCell =
-    latestTacticsGrid && latestGridSelection && selectedGridPairSupported
-      ? findPredictionGridCell(latestTacticsGrid, latestGridSelection)
-      : null;
-  const bestGridCell = latestTacticsGrid
-    ? findBestPredictionGridCell(latestTacticsGrid)
-    : null;
-  const unsupportedSelectedAwayDefense =
-    latestTacticsGrid &&
-    latestGridSelection &&
-    !latestTacticsGrid.defenses.includes(latestGridSelection.awayDefense)
-      ? latestGridSelection.awayDefense
-      : null;
 
   return (
     <Panel>
       <SectionHeading
         actions={
-          <>
-            <div
-              aria-label="Prediction mode"
-              className="inline-flex rounded-full bg-black/5 p-1"
-              role="tablist"
-            >
-              <button
-                className={cn(
-                  "rounded-full px-4 py-2 text-sm font-semibold transition",
-                  mode === "CONNECTED"
-                    ? "bg-accent text-accent-contrast"
-                    : "text-ink-muted hover:text-ink",
-                )}
-                onClick={() => updateMode("CONNECTED")}
-                role="tab"
-                type="button"
-              >
-                Box scores
-              </button>
-              <button
-                className={cn(
-                  "rounded-full px-4 py-2 text-sm font-semibold transition",
-                  mode === "MANUAL"
-                    ? "bg-accent text-accent-contrast"
-                    : "text-ink-muted hover:text-ink",
-                )}
-                onClick={() => updateMode("MANUAL")}
-                role="tab"
-                type="button"
-              >
-                Manual
-              </button>
-            </div>
-            <Button
-              disabled={mode === "CONNECTED" && !connectedReady}
-              loading={isSubmitting}
-              onClick={() => void handleSubmit()}
-            >
-              {mode === "CONNECTED"
-                ? "Run box-score preview"
-                : "Run manual preview"}
-            </Button>
-          </>
+          <Button form={predictionFormId} loading={isSubmitting} type="submit">
+            Run preview
+          </Button>
         }
         eyebrow="Predictions"
         title="Matchup preview"
       />
 
       <p className={statusCopyClassName}>
-        Use saved box scores for a faster preview, or fill in the matchup
-        yourself when you want full control.
+        The ratings grid is the source of truth. Loading a saved box score only
+        prefills that grid after removing source tactics and home-court effects
+        back to a Base offense / Man-to-man defense baseline.
       </p>
 
       {predictionError ? <Alert>{predictionError}</Alert> : null}
@@ -520,14 +461,14 @@ export function PredictionPanel({
         <Alert tone="note">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="grid gap-1">
-              <strong className="text-ink text-sm">
+              <strong className="text-sm text-ink">
                 Forecast prefill: {forecastPrefill.context.scenarioLabel} (
                 {formatPercent(forecastPrefill.context.scenarioProbability)})
               </strong>
-              <span className="text-ink-muted text-sm">
+              <span className="text-sm text-ink-muted">
                 Model {forecastPrefill.context.forecastModelVersion} • Generated{" "}
                 {formatTimestamp(forecastPrefill.context.forecastGeneratedAt)} •
-                Effort is mapped relative to a Normal home effort.
+                Effort stays relative to a Normal home effort.
               </span>
             </div>
             <Button
@@ -543,569 +484,419 @@ export function PredictionPanel({
         </Alert>
       ) : null}
 
-      <div className={twoColumnGridClassName}>
-        <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading
-            description="Choose one recent game for your club and one for the opponent. The preview reuses the ratings saved from those box scores."
-            title="Saved game sources"
-            titleAs="h4"
-          />
-
-          <div className={formGridClassName}>
-            <Field label="Your source game">
-              <Select
-                onChange={(event) =>
-                  updateConnectedSelection(
-                    "homeSourceMatchId",
-                    event.target.value,
-                  )
-                }
-                value={connectedSelection.homeSourceMatchId}
-              >
-                <option value="">Select a recent club game</option>
-                {homeMatchOptions.map((match) => (
-                  <option key={match.matchId} value={match.matchId ?? ""}>
-                    {formatMatchOption(
-                      match.opponentTeamName,
-                      match.startTime,
-                      match.teamScore,
-                      match.opponentScore,
-                    )}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label="Opponent source game">
-              <Select
-                onChange={(event) =>
-                  updateConnectedSelection(
-                    "awaySourceMatchId",
-                    event.target.value,
-                  )
-                }
-                value={connectedSelection.awaySourceMatchId}
-              >
-                <option value="">Select a recent opponent game</option>
-                {awayMatchOptions.map((match) => (
-                  <option key={match.matchId} value={match.matchId ?? ""}>
-                    {formatMatchOption(
-                      match.opponentTeamName,
-                      match.startTime,
-                      match.teamScore,
-                      match.opponentScore,
-                    )}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <StatCard
-              detail="Uses your saved club data."
-              label="Your team"
-              value={workspace.home.team.teamName ?? "Unavailable"}
+      <form className="grid gap-4" id={predictionFormId} onSubmit={handleFormSubmit}>
+        <div className={twoColumnGridClassName}>
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description="Choose a saved game for each side, then load normalized ratings into the editable grid."
+              title="Load from boxscore"
+              titleAs="h4"
             />
-            <StatCard
-              detail={
-                awayMatchOptions.length
-                  ? `${awayMatchOptions.length} recent opponent games ready`
-                  : "Refresh club data to load opponent examples."
-              }
-              label="Opponent"
-              value={workspace.scout.summary?.teamName ?? "No saved opponent"}
-            />
-          </div>
-        </Panel>
 
-        <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading
-            description="Ratings are required for manual previews and act as a fallback when saved games are unavailable."
-            title={
-              mode === "MANUAL"
-                ? "Manual matchup input"
-                : "Manual fallback input"
-            }
-            titleAs="h4"
-          />
+            <div className={formGridClassName}>
+              <div className={sourceCardClassName}>
+                <Field label="Home source game">
+                  <Select
+                    onChange={(event) =>
+                      updateSourceSelection("homeSourceMatchId", event.target.value)
+                    }
+                    value={sourceSelection.homeSourceMatchId}
+                  >
+                    <option value="">Select a recent home-side game</option>
+                    {homeMatchOptions.map((match) => (
+                      <option key={match.matchId} value={match.matchId ?? ""}>
+                        {formatMatchOption(
+                          match.opponentTeamName,
+                          match.startTime,
+                          match.teamScore,
+                          match.opponentScore,
+                        )}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Button
+                  disabled={!sourceSelection.homeSourceMatchId || !homeTeamId}
+                  loading={isLoadingSource === "home"}
+                  onClick={() => void handleLoadSource("home")}
+                  type="button"
+                  variant="secondary"
+                >
+                  Load home ratings
+                </Button>
+              </div>
 
-          <div className="overflow-x-auto">
-            <div className={ratingGridClassName}>
-              <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                Metric
-              </div>
-              <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                Home
-              </div>
-              <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
-                Away
-              </div>
-              {RATING_FIELDS.map((field) => (
-                <div className="contents" key={field.label}>
-                  <span className="text-ink font-semibold">{field.label}</span>
-                  <Input
-                    className="font-semibold"
+              <div className={sourceCardClassName}>
+                <Field label="Away source game">
+                  <Select
                     onChange={(event) =>
-                      updateManualNumericField(
-                        field.homeKey,
-                        event.target.value,
-                      )
+                      updateSourceSelection("awaySourceMatchId", event.target.value)
                     }
-                    style={buzzerBeaterColorStyle({
-                      scale: "team_rating",
-                      value: manualInput[field.homeKey],
-                    })}
-                    step="0.1"
-                    type="number"
-                    value={manualInput[field.homeKey]}
-                  />
-                  <Input
-                    className="font-semibold"
-                    onChange={(event) =>
-                      updateManualNumericField(
-                        field.awayKey,
-                        event.target.value,
-                      )
-                    }
-                    style={buzzerBeaterColorStyle({
-                      scale: "team_rating",
-                      value: manualInput[field.awayKey],
-                    })}
-                    step="0.1"
-                    type="number"
-                    value={manualInput[field.awayKey]}
-                  />
-                </div>
-              ))}
+                    value={sourceSelection.awaySourceMatchId}
+                  >
+                    <option value="">Select a recent away-side game</option>
+                    {awayMatchOptions.map((match) => (
+                      <option key={match.matchId} value={match.matchId ?? ""}>
+                        {formatMatchOption(
+                          match.opponentTeamName,
+                          match.startTime,
+                          match.teamScore,
+                          match.opponentScore,
+                        )}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Button
+                  disabled={!sourceSelection.awaySourceMatchId || !awayTeamId}
+                  loading={isLoadingSource === "away"}
+                  onClick={() => void handleLoadSource("away")}
+                  type="button"
+                  variant="secondary"
+                >
+                  Load away ratings
+                </Button>
+              </div>
             </div>
-          </div>
-        </Panel>
-      </div>
 
-      <div className={twoColumnGridClassName}>
-        <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Tactics" titleAs="h4" />
-          <div className={formGridClassName}>
-            <Field label="Home offense">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField(
-                        "home_offStrategy",
-                        event.target.value,
-                      )
-                    : updateConnectedTextField(
-                        "home_offStrategy",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("home_offStrategy", "home_offStrategy")}
-              >
-                {OFFENSE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Home defense">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField(
-                        "home_defStrategy",
-                        event.target.value,
-                      )
-                    : updateConnectedTextField(
-                        "home_defStrategy",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("home_defStrategy", "home_defStrategy")}
-              >
-                {DEFENSE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Away offense">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField(
-                        "away_offStrategy",
-                        event.target.value,
-                      )
-                    : updateConnectedTextField(
-                        "away_offStrategy",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("away_offStrategy", "away_offStrategy")}
-              >
-                {OFFENSE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Away defense">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField(
-                        "away_defStrategy",
-                        event.target.value,
-                      )
-                    : updateConnectedTextField(
-                        "away_defStrategy",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("away_defStrategy", "away_defStrategy")}
-              >
-                {DEFENSE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Home GDP focus">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField(
-                        "home_gdp_focus",
-                        event.target.value,
-                      )
-                    : updateConnectedTextField(
-                        "home_gdp_focus",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("home_gdp_focus", "home_gdp_focus")}
-              >
-                {GDP_FOCUS_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Home GDP pace">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField("home_gdp_pace", event.target.value)
-                    : updateConnectedTextField(
-                        "home_gdp_pace",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("home_gdp_pace", "home_gdp_pace")}
-              >
-                {GDP_PACE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Away GDP focus">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField(
-                        "away_gdp_focus",
-                        event.target.value,
-                      )
-                    : updateConnectedTextField(
-                        "away_gdp_focus",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("away_gdp_focus", "away_gdp_focus")}
-              >
-                {GDP_FOCUS_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Away GDP pace">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField("away_gdp_pace", event.target.value)
-                    : updateConnectedTextField(
-                        "away_gdp_pace",
-                        event.target.value,
-                      )
-                }
-                value={currentTextValue("away_gdp_pace", "away_gdp_pace")}
-              >
-                {GDP_PACE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        </Panel>
-
-        <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Game context" titleAs="h4" />
-          <div className={formGridClassName}>
-            <Field label="Neutral site">
-              <Select
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualTextField("neutral", event.target.value)
-                    : updateConnectedTextField("neutral", event.target.value)
-                }
-                value={currentTextValue("neutral", "neutral")}
-              >
-                <option value="0">Home court</option>
-                <option value="1">Neutral site</option>
-              </Select>
-            </Field>
-            <Field label="Effort delta">
-              <Input
-                max={2}
-                min={-2}
-                onChange={(event) =>
-                  mode === "MANUAL"
-                    ? updateManualNumericField(
-                        "effortDelta",
-                        event.target.value,
-                      )
-                    : updateConnectedNumericField(
-                        "effortDelta",
-                        event.target.value,
-                      )
-                }
-                step={1}
-                type="number"
-                value={currentEffortValue()}
+            <div className="grid gap-4 md:grid-cols-2">
+              <StatCard
+                detail="Saved box scores are a shortcut only. You can still edit every number below."
+                label="Home team"
+                value={workspace.home.team.teamName ?? "Unavailable"}
               />
-            </Field>
-          </div>
-
-          {latestJob ? (
-            <div className="rounded-card grid gap-2 border border-black/5 bg-white/65 p-4">
-              <StatusBadge tone={statusToneFromValue(latestJob.status)}>
-                {formatPreviewStatus(latestJob.status)}
-              </StatusBadge>
-              <strong className="text-ink text-base">
-                {describePredictionJob(latestJob)}
-              </strong>
-              <span className="text-ink-muted text-sm">
-                Updated {formatTimestamp(latestJob.updatedAt)}
-              </span>
-              {latestExplanation.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {latestExplanation.map((item) => (
-                    <span
-                      className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
-                      key={item}
-                    >
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
+              <StatCard
+                detail={
+                  awayMatchOptions.length
+                    ? `${awayMatchOptions.length} saved opponent games available`
+                    : "Refresh workspace data to load opponent box scores."
+                }
+                label="Away team"
+                value={workspace.scout.summary?.teamName ?? "No saved opponent"}
+              />
             </div>
-          ) : (
-            <p className={statusCopyClassName}>
-              No previews have been run yet.
-            </p>
-          )}
-        </Panel>
-      </div>
+          </Panel>
 
-      {latestTacticsGrid ? (
-        <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading
-            description="Rows show opponent defense. Columns show your offense."
-            title="Tactic matchup grid"
-            titleAs="h4"
-          />
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description="One current preview is stored per user. Reopening the page loads it immediately."
+              title="Current preview"
+              titleAs="h4"
+            />
 
-          <div className="grid gap-3">
-            {bestGridCell && bestGridCell.pointDiff !== null ? (
-              <Alert tone="note">
-                Best shown matchup: {bestGridCell.homeOffense} vs{" "}
-                {bestGridCell.awayDefense} (
-                {formatSigned(bestGridCell.pointDiff)})
-              </Alert>
-            ) : null}
-
-            <span className={statusCopyClassName}>
-              Latest successful preview updated{" "}
-              {formatTimestamp(latestSuccessfulJob?.updatedAt)}
-            </span>
-
-            {unsupportedSelectedAwayDefense ? (
-              <Alert tone="note">
-                The grid covers ML-supported opponent defenses only, so{" "}
-                {unsupportedSelectedAwayDefense} is not included in the
-                comparison set.
-              </Alert>
-            ) : null}
-          </div>
-
-          <TableShell className="mt-4" tableClassName="min-w-[56rem]">
-            <thead>
-              <tr>
-                <TableHeadCell className="bg-surface sticky left-0 z-10">
-                  Opponent defense
-                </TableHeadCell>
-                {latestTacticsGrid.offenses.map((offense) => (
-                  <TableHeadCell className="text-center" key={offense}>
-                    {offense}
-                  </TableHeadCell>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {latestTacticsGrid.defenses.map((defense, rowIndex) => {
-                const row = latestTacticsGrid.cells[rowIndex] ?? [];
-
-                return (
-                  <tr key={defense}>
-                    <TableCell className="bg-surface sticky left-0 z-10 font-semibold">
-                      {defense}
-                    </TableCell>
-	                    {row.map((cell) => {
-	                      const isSelected =
-	                        selectedGridCell?.homeOffense === cell.homeOffense &&
-	                        selectedGridCell.awayDefense === cell.awayDefense;
-
-                      return (
-                        <TableCell
-                          className="min-w-[8.5rem] text-center"
-                          key={cell.homeOffense}
-                        >
-                          <div
-                            className={cn(
-                              "rounded-card grid gap-1 border px-2 py-2",
-                              isSelected
-                                ? "border-accent bg-accent/10 shadow-sm"
-                                : "border-black/8",
-                            )}
-                            style={predictionGridCellStyle(cell.pointDiff)}
-                          >
-                            <strong className="text-ink text-sm">
-                              {formatGridScore(cell)}
-                            </strong>
-                            <span className="text-ink-muted text-xs font-semibold">
-                              {formatGridDiff(cell)}
-                            </span>
-                            {isSelected ? (
-                              <span className="text-accent text-[0.68rem] font-bold tracking-[0.1em] uppercase">
-                                Current
-                              </span>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </TableShell>
-        </Panel>
-      ) : null}
-
-      <Panel as="article" padding="sm" variant="solid">
-        <SectionHeading title="Recent previews" titleAs="h4" />
-        {isLoadingJobs ? (
-          <p className={statusCopyClassName}>Loading recent preview history.</p>
-        ) : jobs.length ? (
-          <ul className={listClassName}>
-            {jobs.map((job) => {
-              const forecastContext = extractForecastContextFromRequest(
-                job.request,
-              );
-              return (
-                <li className={listItemClassName} key={job.id}>
-                  <strong className="text-ink text-sm">
-                    {describePredictionJob(job)}
+            {isLoadingPrediction ? (
+              <p className={statusCopyClassName}>Loading current preview.</p>
+            ) : currentPrediction ? (
+              <div className="grid gap-4">
+                <div className="rounded-card grid gap-2 border border-black/8 bg-white/70 p-4">
+                  <StatusBadge tone={statusToneFromValue(currentPredictionStatus)}>
+                    {formatPreviewStatus(currentPredictionStatus)}
+                  </StatusBadge>
+                  <strong className="text-base text-ink">
+                    {currentPredictionSummary}
                   </strong>
-                  <span className={statusCopyClassName}>
-                    {formatPreviewStatus(job.status)} •{" "}
-                    {formatTimestamp(job.updatedAt)}
-                    {job.error ? ` • ${job.error}` : ""}
+                  <span className="text-sm text-ink-muted">
+                    Updated {formatTimestamp(currentPrediction.updatedAt)}
                   </span>
-                  {forecastContext ? (
-                    <span className="text-note text-xs font-semibold tracking-[0.12em] uppercase">
-                      Forecast {forecastContext.scenarioLabel} •{" "}
+                </div>
+
+                {currentPredictionIssue ? (
+                  <Alert>{currentPredictionIssue}</Alert>
+                ) : null}
+
+                {bestGridCell ? (
+                  <Alert tone="note">
+                    Best shown matchup: {bestGridCell.homeOffense} vs{" "}
+                    {bestGridCell.awayDefense} ({formatSigned(bestGridCell.pointDiff ?? 0)}
+                    )
+                  </Alert>
+                ) : null}
+
+                {forecastContext ? (
+                  <div className="flex flex-wrap gap-2">
+                    <span className="inline-flex rounded-full bg-note-bg px-3 py-1.5 text-sm font-semibold text-note">
+                      Forecast {forecastContext.scenarioLabel}
+                    </span>
+                    <span className="inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold text-ink-muted">
                       {formatPercent(forecastContext.scenarioProbability)}
                     </span>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className={statusCopyClassName}>No preview history yet.</p>
-        )}
-      </Panel>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className={statusCopyClassName}>
+                No preview has been run yet.
+              </p>
+            )}
+          </Panel>
+        </div>
+
+        <div className={twoColumnGridClassName}>
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description={`Editable baseline ratings. Source loads remove tactics and the ${PREDICTION_HOME_COURT_FACTOR.toFixed(2)} home-court factor before writing here.`}
+              title="Ratings grid"
+              titleAs="h4"
+            />
+
+            <div className="overflow-x-auto">
+              <div className={ratingGridClassName}>
+                <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                  Metric
+                </div>
+                <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                  Home
+                </div>
+                <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                  Away
+                </div>
+                {RATING_FIELDS.map((field) => (
+                  <div className="contents" key={field.label}>
+                    <span className="font-semibold text-ink">{field.label}</span>
+                    <Input
+                      className="font-semibold"
+                      onChange={(event) =>
+                        updateNumericField(field.homeKey, event.target.value)
+                      }
+                      step="0.1"
+                      style={buzzerBeaterColorStyle({
+                        scale: "team_rating",
+                        value: input[field.homeKey],
+                      })}
+                      type="number"
+                      value={input[field.homeKey]}
+                    />
+                    <Input
+                      className="font-semibold"
+                      onChange={(event) =>
+                        updateNumericField(field.awayKey, event.target.value)
+                      }
+                      step="0.1"
+                      style={buzzerBeaterColorStyle({
+                        scale: "team_rating",
+                        value: input[field.awayKey],
+                      })}
+                      type="number"
+                      value={input[field.awayKey]}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Panel>
+
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description="Venue and effort stay configurable. Tactics are compared in the result matrix instead of separate selectors."
+              title="Simulation context"
+              titleAs="h4"
+            />
+
+            <div className={formGridClassName}>
+              <Field label="Venue">
+                <Select
+                  onChange={(event) => updateVenue(event.target.value)}
+                  value={input.neutral}
+                >
+                  <option value="0">Home court</option>
+                  <option value="1">Neutral site</option>
+                </Select>
+              </Field>
+
+              <Field label="Effort delta">
+                <Input
+                  max={2}
+                  min={-2}
+                  onChange={(event) =>
+                    updateNumericField("effortDelta", event.target.value)
+                  }
+                  step={1}
+                  type="number"
+                  value={input.effortDelta}
+                />
+              </Field>
+            </div>
+
+            <p className={statusCopyClassName}>
+              GDP inputs are temporarily unavailable because the current
+              released model does not use GDP features.
+            </p>
+
+            <p className={statusCopyClassName}>
+              Hidden fixed tactics stay locked to Base offense and Man-to-man
+              defense while the matrix compares home offense against away defense.
+            </p>
+          </Panel>
+        </div>
+      </form>
+
+      {canRenderCurrentGrid ? (
+        <div ref={predictionMatrixRef}>
+          <Panel as="article" padding="sm" variant="solid">
+            <SectionHeading
+              description="Rows show opponent defense. Columns show your offense."
+              title="Outcome matrix"
+              titleAs="h4"
+            />
+
+            <div className="grid gap-3">
+              {bestGridCell && bestGridCell.pointDiff !== null ? (
+                <Alert tone="note">
+                  Best shown matchup: {bestGridCell.homeOffense} vs{" "}
+                  {bestGridCell.awayDefense} (
+                  {formatSigned(bestGridCell.pointDiff)})
+                </Alert>
+              ) : null}
+
+              <span className={statusCopyClassName}>
+                Current preview updated {formatTimestamp(currentPrediction?.updatedAt)}
+              </span>
+            </div>
+
+            <TableShell className="mt-4" tableClassName="min-w-[56rem]">
+              <thead>
+                <tr>
+                  <TableHeadCell className="bg-surface sticky left-0 z-10">
+                    Opponent defense
+                  </TableHeadCell>
+                  {currentGrid.offenses.map((offense) => (
+                    <TableHeadCell className="text-center" key={offense}>
+                      {offense}
+                    </TableHeadCell>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {currentGrid.defenses.map((defense, rowIndex) => {
+                  const row = currentGrid.cells[rowIndex] ?? [];
+
+                  return (
+                    <tr key={defense}>
+                      <TableCell className="bg-surface sticky left-0 z-10 font-semibold">
+                        {defense}
+                      </TableCell>
+                      {row.map((cell) => {
+                        const isBestCell =
+                          bestGridCell?.homeOffense === cell.homeOffense &&
+                          bestGridCell.awayDefense === cell.awayDefense;
+
+                        return (
+                          <TableCell
+                            className="min-w-[8.5rem] text-center"
+                            key={cell.homeOffense}
+                          >
+                            <div
+                              className={cn(
+                                "rounded-card grid gap-1 border px-2 py-2",
+                                isBestCell
+                                  ? "border-accent bg-accent/10 shadow-sm"
+                                  : "border-black/8",
+                              )}
+                              style={predictionGridCellStyle(cell.pointDiff)}
+                            >
+                              <strong className="text-sm text-ink">
+                                {formatGridScore(cell)}
+                              </strong>
+                              <span className="text-xs font-semibold text-ink-muted">
+                                {formatGridDiff(cell)}
+                              </span>
+                              {isBestCell ? (
+                                <span className="text-[0.68rem] font-bold uppercase tracking-[0.1em] text-accent">
+                                  Best
+                                </span>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </TableShell>
+          </Panel>
+        </div>
+      ) : null}
     </Panel>
   );
 }
 
-function describePredictionJob(job: PredictionJobRecord): string {
-  const result = toPredictionResult(job.result);
+function resolvePredictionSourceTeam(
+  payload: MatchBoxscorePayload,
+  targetTeamId: string,
+): {
+  sourceTeam: NonNullable<MatchBoxscorePayload["homeTeam"]>;
+  teamLocation: TeamLocation;
+} {
+  if (payload.homeTeam?.teamId === targetTeamId) {
+    return {
+      sourceTeam: payload.homeTeam,
+      teamLocation: "HOME",
+    };
+  }
+
+  if (payload.awayTeam?.teamId === targetTeamId) {
+    return {
+      sourceTeam: payload.awayTeam,
+      teamLocation: "AWAY",
+    };
+  }
+
+  throw new Error("The selected box score does not contain the expected team.");
+}
+
+function describePredictionSummary(input: {
+  issue: string | null;
+  result:
+    | {
+        awayScore: number;
+        homeScore: number;
+        pointDiff: number;
+      }
+    | null;
+  status: string | null | undefined;
+  tacticsGridReady: boolean;
+}): string {
+  const { issue, result, status, tacticsGridReady } = input;
   if (result) {
     return `${result.homeScore.toFixed(1)} - ${result.awayScore.toFixed(1)} (${formatSigned(result.pointDiff)})`;
   }
 
-  if (job.error) {
+  if (tacticsGridReady) {
+    return "Tactics grid ready";
+  }
+
+  if (issue || status === "FAILED") {
     return "Preview needs attention";
   }
 
-  return job.mode === "CONNECTED" ? "Saved-game preview" : "Manual preview";
+  return "Preview in progress";
 }
 
-function describeResolvedInput(value: unknown): string[] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return [];
+function readPredictionResult(
+  prediction: CurrentPredictionPreview | null,
+): {
+  awayScore: number;
+  homeScore: number;
+  pointDiff: number;
+} | null {
+  if (
+    !prediction ||
+    prediction.homeScore === null ||
+    prediction.homeScore === undefined ||
+    prediction.awayScore === null ||
+    prediction.awayScore === undefined ||
+    prediction.pointDiff === null ||
+    prediction.pointDiff === undefined
+  ) {
+    return null;
   }
 
-  const snapshot = value as Partial<Record<string, unknown>>;
-  const notes = [
-    summarizeStrategy(snapshot, "home", "Home"),
-    summarizeStrategy(snapshot, "away", "Away"),
-    summarizeVenue(snapshot.neutral),
-    summarizeEffort(snapshot.effortDelta),
-    summarizeMatchupEdge(
-      "Perimeter",
-      snapshot.home_outsideScoring,
-      snapshot.away_outsideDefense,
-    ),
-    summarizeMatchupEdge(
-      "Interior",
-      snapshot.home_insideScoring,
-      snapshot.away_insideDefense,
-    ),
-    summarizeMatchupEdge(
-      "Boards",
-      snapshot.home_rebounding,
-      snapshot.away_rebounding,
-      false,
-    ),
-  ].filter((note): note is string => Boolean(note));
-
-  return notes.slice(0, 6);
+  return {
+    awayScore: prediction.awayScore,
+    homeScore: prediction.homeScore,
+    pointDiff: prediction.pointDiff,
+  };
 }
 
 function formatAmplifyErrors(
@@ -1119,6 +910,10 @@ function formatAmplifyErrors(
     .map((error) => error.message?.trim())
     .filter((message): message is string => Boolean(message))
     .join(" ");
+}
+
+function formatClientError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function formatTimestamp(value: string | null | undefined): string {
@@ -1156,83 +951,6 @@ function formatSigned(value: number): string {
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(0)}%`;
-}
-
-function summarizeStrategy(
-  snapshot: Partial<Record<string, unknown>>,
-  side: "home" | "away",
-  label: string,
-): string | null {
-  const offense = asOptionalString(snapshot[`${side}_offStrategy`]);
-  const defense = asOptionalString(snapshot[`${side}_defStrategy`]);
-  if (!offense && !defense) {
-    return null;
-  }
-
-  return `${label} ${offense ?? "Base"} / ${defense ?? "ManToMan"}`;
-}
-
-function summarizeVenue(value: unknown): string | null {
-  const normalized = asOptionalString(value);
-  if (!normalized) {
-    return null;
-  }
-
-  return normalized === "1" ? "Neutral site" : "Home court";
-}
-
-function summarizeEffort(value: unknown): string | null {
-  const numeric = asOptionalNumber(value);
-  if (numeric === null || numeric === 0) {
-    return null;
-  }
-
-  return `Effort Δ ${numeric > 0 ? `+${numeric}` : numeric}`;
-}
-
-function summarizeMatchupEdge(
-  label: string,
-  offense: unknown,
-  defense: unknown,
-  treatAsDefense = true,
-): string | null {
-  const offenseValue = asOptionalNumber(offense);
-  const defenseValue = asOptionalNumber(defense);
-
-  if (offenseValue === null || defenseValue === null) {
-    return null;
-  }
-
-  const diff = treatAsDefense
-    ? offenseValue - defenseValue
-    : offenseValue - defenseValue;
-  return `${label} ${formatSigned(diff)}`;
-}
-
-function summarizeForecastContext(
-  value: ReturnType<typeof extractForecastContextFromRequest>,
-): string | null {
-  if (!value) {
-    return null;
-  }
-  return `Forecast ${value.scenarioLabel} ${formatPercent(value.scenarioProbability)}`;
-}
-
-function asOptionalString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function asOptionalNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
 }
 
 function formatGridScore(cell: PredictionGridCell): string {

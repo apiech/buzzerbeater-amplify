@@ -24,7 +24,6 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # COST_ALERT_EMAILS=you@example.com
 # COST_ALERT_SMS_NUMBERS=+15555555555
 # SYNC_RUN_RETENTION_DAYS=14
-# PREDICTION_JOB_RETENTION_DAYS=30
 
 # Shared ML Data Infra bindings come from deterministic SSM parameter names
 # published by bb-shared-infra. Do not set imported resource names in .env.

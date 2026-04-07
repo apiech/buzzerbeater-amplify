@@ -6,13 +6,23 @@ import {
 } from "@aws-sdk/client-sagemaker-runtime";
 
 import {
-  createPredictionJob,
-  getMatchBoxscore,
-  getPredictionJob,
-  updatePredictionJob,
-} from "./repository";
+  predictionEndpointResponseSchema,
+  type PredictionEndpointResponse,
+} from "../../../lib/prediction/contracts";
+import {
+  buildModelInputFromPredictionInput,
+  type PredictionInputShape,
+} from "../../../lib/prediction/normalization";
 import { requireFeatureAccess } from "./billing";
-import { selectBoxscorePerspective } from "./neutral-boxscore";
+import {
+  deletePredictionGridCellsByUserAndRequestId,
+  getPredictionJob,
+  type PredictionGridCellRecord,
+  type PredictionJobRecord,
+  updatePredictionJobIfRequestMatches,
+  upsertPredictionGridCells,
+  upsertPredictionJob,
+} from "./repository";
 import {
   buildExecutionName,
   startStateMachineExecution,
@@ -27,97 +37,85 @@ type Identity = {
 
 type JsonRecord = Record<string, unknown>;
 
-type ManualPredictionRequest = {
-  mode: "MANUAL";
-  manualInput: JsonRecord;
+type PredictionForecastContext = {
+  enthusiasmBand?: string | null;
+  evidence: string[];
+  forecastGeneratedAt: string;
+  forecastJobId: string;
+  forecastModelVersion: string;
+  scenarioId: string;
+  scenarioLabel: string;
+  scenarioProbability: number;
+  sourceTeamId: string;
 };
 
-type ConnectedPredictionInput = {
-  homeSourceMatchId?: string;
-  awaySourceMatchId?: string;
-  homeTeamId?: string;
-  awayTeamId?: string;
-  home_offStrategy?: string;
-  home_defStrategy?: string;
-  away_offStrategy?: string;
-  away_defStrategy?: string;
-  home_gdp_focus?: string;
-  home_gdp_pace?: string;
-  away_gdp_focus?: string;
-  away_gdp_pace?: string;
-  neutral?: string | number | boolean;
-  effortDelta?: number;
-  forecastContext?: JsonRecord;
-  manualFallback?: JsonRecord;
-};
-
-type ConnectedPredictionRequest = {
-  mode: "CONNECTED";
-  connectedInput: ConnectedPredictionInput;
-};
-
-type PredictionSubmissionRequest =
-  | ManualPredictionRequest
-  | ConnectedPredictionRequest;
-
-type ResolveConnectedInputDependencies = {
-  getMatchBoxscore: typeof getMatchBoxscore;
+type PredictionSubmissionRequest = {
+  forecastContext?: PredictionForecastContext;
+  input: PredictionInputShape;
 };
 
 type SubmitPredictionDependencies = {
-  createPredictionJob: typeof createPredictionJob;
+  deletePredictionGridCellsByUserAndRequestId:
+    typeof deletePredictionGridCellsByUserAndRequestId;
+  getPredictionJob: typeof getPredictionJob;
   requireFeatureAccess: typeof requireFeatureAccess;
   startWorkflowExecution: (
     stateMachineArn: string,
     executionName: string,
-    message: { jobId: string; userId: string },
+    message: { requestId: string; userId: string },
   ) => Promise<string>;
-  updatePredictionJob: typeof updatePredictionJob;
+  updatePredictionJobIfRequestMatches: typeof updatePredictionJobIfRequestMatches;
+  upsertPredictionJob: typeof upsertPredictionJob;
 };
 
 type ProcessPredictionDependencies = {
+  deletePredictionGridCellsByUserAndRequestId:
+    typeof deletePredictionGridCellsByUserAndRequestId;
   getPredictionJob: typeof getPredictionJob;
   invokePredictionEndpoint: (
     endpointName: string,
     resolvedInput: JsonRecord,
-  ) => Promise<JsonRecord>;
-  resolveConnectedInput: typeof resolveConnectedInput;
-  updatePredictionJob: typeof updatePredictionJob;
+  ) => Promise<PredictionEndpointResponse>;
+  updatePredictionJobIfRequestMatches: typeof updatePredictionJobIfRequestMatches;
+  upsertPredictionGridCells: typeof upsertPredictionGridCells;
 };
 
-const RATING_FIELDS = [
-  "outsideScoring",
-  "insideScoring",
-  "outsideDefense",
-  "insideDefense",
-  "rebounding",
-  "offensiveFlow",
-] as const;
-
-const DIRECT_CONNECTED_FIELDS = [
-  "home_offStrategy",
-  "home_defStrategy",
-  "away_offStrategy",
-  "away_defStrategy",
-  "home_gdp_focus",
-  "home_gdp_pace",
-  "away_gdp_focus",
-  "away_gdp_pace",
-  "neutral",
+const REQUIRED_NUMERIC_FIELDS = [
+  "home_outsideScoring",
+  "home_insideScoring",
+  "home_outsideDefense",
+  "home_insideDefense",
+  "home_rebounding",
+  "home_offensiveFlow",
+  "away_outsideScoring",
+  "away_insideScoring",
+  "away_outsideDefense",
+  "away_insideDefense",
+  "away_rebounding",
+  "away_offensiveFlow",
   "effortDelta",
 ] as const;
 
 const defaultSubmitDependencies: SubmitPredictionDependencies = {
-  createPredictionJob,
+  deletePredictionGridCellsByUserAndRequestId,
+  getPredictionJob,
   requireFeatureAccess,
-  startWorkflowExecution: async (stateMachineArn, executionName, message) => {
-    return startStateMachineExecution({
+  startWorkflowExecution: async (stateMachineArn, executionName, message) =>
+    startStateMachineExecution({
       input: message,
       name: executionName,
       stateMachineArn,
-    });
-  },
-  updatePredictionJob,
+    }),
+  updatePredictionJobIfRequestMatches,
+  upsertPredictionJob,
+};
+
+const defaultProcessDependencies: ProcessPredictionDependencies = {
+  deletePredictionGridCellsByUserAndRequestId,
+  getPredictionJob,
+  invokePredictionEndpoint,
+  updatePredictionJobIfRequestMatches,
+  upsertPredictionGridCells,
 };
 
 export async function submitPredictionJob(
@@ -127,49 +125,68 @@ export async function submitPredictionJob(
     request: unknown;
     stateMachineArn: string;
   },
-  dependencies: SubmitPredictionDependencies = defaultSubmitDependencies,
+  dependencies: Partial<SubmitPredictionDependencies> = {},
 ): Promise<{ executionArn: string; jobId: string }> {
+  const runtimeDependencies = {
+    ...defaultSubmitDependencies,
+    ...dependencies,
+  };
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
 
-  await dependencies.requireFeatureAccess({
+  await runtimeDependencies.requireFeatureAccess({
     env: args.env,
     featureKey: "predictions",
     userId,
   });
 
   const normalizedRequest = normalizePredictionRequest(args.request);
-  const jobId = randomUUID();
+  const previousJob = await runtimeDependencies.getPredictionJob(args.env, userId);
+  const requestId = randomUUID();
+  const requestedAt = new Date().toISOString();
 
-  await dependencies.createPredictionJob(args.env, {
-    id: jobId,
+  if (previousJob?.requestId) {
+    await quietlyDeletePredictionGridCells(
+      runtimeDependencies,
+      args.env,
+      userId,
+      previousJob.requestId,
+    );
+  }
+
+  await runtimeDependencies.upsertPredictionJob(args.env, {
+    ...normalizedRequest.input,
+    ...toForecastMetadata(normalizedRequest.forecastContext),
     userId,
+    requestId,
     status: "QUEUED",
-    mode: normalizedRequest.mode,
-    request: normalizedRequest,
-    resolvedInputSnapshot: null,
-    result: null,
+    requestedAt,
+    awayScore: null,
     error: null,
     executionArn: null,
+    homeScore: null,
     modelVersion: null,
+    pointDiff: null,
   });
 
   try {
-    const executionArn = await dependencies.startWorkflowExecution(
+    const executionArn = await runtimeDependencies.startWorkflowExecution(
       args.stateMachineArn,
-      buildExecutionName("prediction", jobId),
-      { jobId, userId },
+      buildExecutionName("prediction", requestId),
+      { requestId, userId },
     );
-    await dependencies.updatePredictionJob(args.env, {
-      id: jobId,
+    await runtimeDependencies.updatePredictionJobIfRequestMatches(args.env, {
+      userId,
+      requestId,
       executionArn,
     });
-    return { executionArn, jobId };
+    return { executionArn, jobId: requestId };
   } catch (error) {
-    await dependencies.updatePredictionJob(args.env, {
-      id: jobId,
+    await runtimeDependencies.updatePredictionJobIfRequestMatches(args.env, {
+      userId,
+      requestId,
       status: "FAILED",
       error: error instanceof Error ? error.message : String(error),
     });
@@ -181,63 +198,119 @@ export async function processPredictionJob(
   args: {
     env: GraphqlEnv;
     endpointName: string;
-    message?: { jobId: string; userId: string };
+    message?: { requestId: string; userId: string };
     messageBody?: string;
   },
-  dependencies: ProcessPredictionDependencies = {
-    getPredictionJob,
-    invokePredictionEndpoint,
-    resolveConnectedInput,
-    updatePredictionJob,
-  },
+  dependencies: Partial<ProcessPredictionDependencies> = {},
 ): Promise<void> {
+  const runtimeDependencies = {
+    ...defaultProcessDependencies,
+    ...dependencies,
+  };
   const message = resolvePredictionJobMessage(args);
-  const job = await dependencies.getPredictionJob(args.env, message.jobId);
-  if (!job || job.userId !== message.userId) {
-    throw new Error(
-      "Prediction job is missing or no longer belongs to the enqueued user.",
-    );
+  const job = await runtimeDependencies.getPredictionJob(args.env, message.userId);
+  if (!job || job.requestId !== message.requestId) {
+    return;
   }
 
   try {
-    await dependencies.updatePredictionJob(args.env, {
-      id: job.id,
-      status: "RESOLVING_INPUT",
-      error: null,
-    });
+    const canResolve = await runtimeDependencies.updatePredictionJobIfRequestMatches(
+      args.env,
+      {
+        userId: job.userId,
+        requestId: job.requestId,
+        status: "RESOLVING_INPUT",
+        error: null,
+      },
+    );
+    if (!canResolve) {
+      return;
+    }
 
-    const request = normalizePredictionRequest(job.request);
-    const resolvedInput =
-      request.mode === "MANUAL"
-        ? request.manualInput
-        : await dependencies.resolveConnectedInput(
-            args.env,
-            message.userId,
-            request.connectedInput,
-          );
+    const resolvedInput = buildModelInputFromPredictionInput(
+      extractPredictionInput(job),
+    );
 
-    await dependencies.updatePredictionJob(args.env, {
-      id: job.id,
-      status: "INVOKING_MODEL",
-      resolvedInputSnapshot: resolvedInput,
-      error: null,
-    });
+    const canInvoke = await runtimeDependencies.updatePredictionJobIfRequestMatches(
+      args.env,
+      {
+        userId: job.userId,
+        requestId: job.requestId,
+        status: "INVOKING_MODEL",
+        error: null,
+      },
+    );
+    if (!canInvoke) {
+      return;
+    }
 
-    const result = await dependencies.invokePredictionEndpoint(
+    const rawResult = await runtimeDependencies.invokePredictionEndpoint(
       args.endpointName,
       resolvedInput,
     );
-    await dependencies.updatePredictionJob(args.env, {
-      id: job.id,
-      status: "SUCCEEDED",
-      resolvedInputSnapshot: resolvedInput,
-      result,
-      modelVersion: asOptionalString(result.modelVersion),
-      error: null,
+    const parsedResult = predictionEndpointResponseSchema.safeParse(rawResult);
+    if (!parsedResult.success) {
+      const issue = parsedResult.error.issues[0];
+      throw new Error(
+        issue
+          ? `SageMaker prediction response was invalid at ${issue.path.join(".") || "root"}: ${issue.message}`
+          : "SageMaker prediction response was invalid.",
+      );
+    }
+    const result = parsedResult.data;
+    const gridCells = buildPredictionGridCellRecords({
+      grid: result.tacticsGrid,
+      requestId: job.requestId,
+      userId: job.userId,
     });
+    if (countRenderablePersistedGridCells(gridCells) < 1) {
+      throw new Error(
+        "SageMaker response did not contain any renderable tactics-grid cells.",
+      );
+    }
+
+    const latestJob = await runtimeDependencies.getPredictionJob(args.env, job.userId);
+    if (!latestJob || latestJob.requestId !== job.requestId) {
+      return;
+    }
+
+    await quietlyDeletePredictionGridCells(
+      runtimeDependencies,
+      args.env,
+      job.userId,
+      job.requestId,
+    );
+    await runtimeDependencies.upsertPredictionGridCells(args.env, gridCells);
+
+    const didPersistSuccess =
+      await runtimeDependencies.updatePredictionJobIfRequestMatches(args.env, {
+        userId: job.userId,
+        requestId: job.requestId,
+        status: "SUCCEEDED",
+        awayScore: result.awayScore ?? null,
+        error: null,
+        homeScore: result.homeScore ?? null,
+        modelVersion: result.modelVersion ?? null,
+        pointDiff: result.pointDiff ?? null,
+      });
+    if (!didPersistSuccess) {
+      await quietlyDeletePredictionGridCells(
+        runtimeDependencies,
+        args.env,
+        job.userId,
+        job.requestId,
+      );
+    }
   } catch (error) {
-    await dependencies.updatePredictionJob(args.env, {
-      id: job.id,
+    await quietlyDeletePredictionGridCells(
+      runtimeDependencies,
+      args.env,
+      job.userId,
+      job.requestId,
+    );
+    await runtimeDependencies.updatePredictionJobIfRequestMatches(args.env, {
+      userId: job.userId,
+      requestId: job.requestId,
       status: "FAILED",
       error: error instanceof Error ? error.message : String(error),
     });
@@ -249,180 +322,25 @@ export function normalizePredictionRequest(
   input: unknown,
 ): PredictionSubmissionRequest {
   const record = requireRecord(input, "Prediction request");
-  const mode = asOptionalString(record.mode)?.toUpperCase();
-
-  if (mode === "MANUAL") {
-    return {
-      mode,
-      manualInput: requireRecord(record.manualInput, "manualInput"),
-    };
-  }
-
-  if (mode === "CONNECTED") {
-    return {
-      mode,
-      connectedInput: requireRecord(
-        record.connectedInput,
-        "connectedInput",
-      ) as ConnectedPredictionInput,
-    };
-  }
-
-  throw new Error(
-    "Prediction request mode must be either MANUAL or CONNECTED.",
+  const normalizedInput = normalizePredictionInput(record.input);
+  const forecastContext = normalizePredictionForecastContext(
+    record.forecastContext,
   );
-}
 
-export async function resolveConnectedInput(
-  env: GraphqlEnv,
-  userId: string,
-  connectedInput: ConnectedPredictionInput,
-  dependencies: ResolveConnectedInputDependencies = { getMatchBoxscore },
-): Promise<JsonRecord> {
-  const resolved: JsonRecord = {
-    ...(connectedInput.manualFallback ?? {}),
-  };
-  const canFallback = Boolean(connectedInput.manualFallback);
-
-  if (connectedInput.homeSourceMatchId && !connectedInput.homeTeamId?.trim()) {
-    throw new Error(
-      "homeTeamId is required when homeSourceMatchId is provided.",
-    );
-  }
-
-  if (connectedInput.awaySourceMatchId && !connectedInput.awayTeamId?.trim()) {
-    throw new Error(
-      "awayTeamId is required when awaySourceMatchId is provided.",
-    );
-  }
-
-  if (connectedInput.homeSourceMatchId) {
-    const homeBoxscore = await dependencies.getMatchBoxscore(
-      env,
-      userId,
-      connectedInput.homeSourceMatchId,
-    );
-    if (!homeBoxscore && !canFallback) {
-      throw new Error(
-        "The selected home source match is unavailable in cache.",
-      );
-    }
-    if (homeBoxscore) {
-      Object.assign(
-        resolved,
-        buildSideFromBoxscore(homeBoxscore, connectedInput.homeTeamId, "home"),
-      );
-    }
-  }
-
-  if (connectedInput.awaySourceMatchId) {
-    const awayBoxscore = await dependencies.getMatchBoxscore(
-      env,
-      userId,
-      connectedInput.awaySourceMatchId,
-    );
-    if (!awayBoxscore && !canFallback) {
-      throw new Error(
-        "The selected away source match is unavailable in cache.",
-      );
-    }
-    if (awayBoxscore) {
-      Object.assign(
-        resolved,
-        buildSideFromBoxscore(awayBoxscore, connectedInput.awayTeamId, "away"),
-      );
-    }
-  }
-
-  for (const field of DIRECT_CONNECTED_FIELDS) {
-    const value = connectedInput[field];
-    if (value !== undefined && value !== null && value !== "") {
-      resolved[field] = value;
-    }
-  }
-
-  if (!connectedInput.homeSourceMatchId || !connectedInput.awaySourceMatchId) {
-    if (!connectedInput.manualFallback) {
-      throw new Error(
-        "Connected predictions require cached source matches or a manual fallback payload.",
-      );
-    }
-  }
-
-  return resolved;
-}
-
-function buildSideFromBoxscore(
-  matchBoxscore: Record<string, unknown>,
-  requestedTeamId: string | undefined,
-  side: "home" | "away",
-): JsonRecord {
-  const perspective = resolveBoxscorePerspective(
-    matchBoxscore,
-    requestedTeamId,
-  );
-  const output: JsonRecord = {};
-
-  for (const field of RATING_FIELDS) {
-    output[`${side}_${field}`] = requireNumber(
-      perspective.ratings[field],
-      `${side}_${field}`,
-    );
-  }
-
-  output[`${side}_offStrategy`] = perspective.offStrategy ?? "Base";
-  output[`${side}_defStrategy`] = perspective.defStrategy ?? "ManToMan";
-  if (perspective.gdpFocus) {
-    output[`${side}_gdp_focus`] = perspective.gdpFocus;
-  }
-  if (perspective.gdpPace) {
-    output[`${side}_gdp_pace`] = perspective.gdpPace;
-  }
-  return output;
-}
-
-function resolveBoxscorePerspective(
-  matchBoxscore: Record<string, unknown>,
-  requestedTeamId: string | undefined,
-): {
-  ratings: JsonRecord;
-  offStrategy: string | null;
-  defStrategy: string | null;
-  gdpFocus: string | null;
-  gdpPace: string | null;
-} {
-  const boxscore = requireRecord(matchBoxscore.boxscoreJson, "boxscoreJson");
-  const selectedTeamId = requestedTeamId?.trim() || null;
-  if (!selectedTeamId) {
-    throw new Error("A team id is required to resolve a source match.");
-  }
-
-  const { team: selectedSide } = selectBoxscorePerspective(
-    boxscore,
-    selectedTeamId,
-  );
-  if (!selectedSide) {
-    throw new Error(
-      `The requested team ${selectedTeamId} was not found in the stored boxscore.`,
-    );
-  }
-
-  const gdp = asOptionalRecord(selectedSide?.gdp);
-  const ratings = requireRecord(selectedSide.ratings, "ratings");
-
-  return {
-    ratings,
-    offStrategy: asOptionalString(selectedSide.offStrategy),
-    defStrategy: asOptionalString(selectedSide.defStrategy),
-    gdpFocus: asOptionalString(gdp?.focus),
-    gdpPace: asOptionalString(gdp?.pace),
-  };
+  return forecastContext
+    ? {
+        input: normalizedInput,
+        forecastContext,
+      }
+    : {
+        input: normalizedInput,
+      };
 }
 
 async function invokePredictionEndpoint(
   endpointName: string,
   resolvedInput: JsonRecord,
-): Promise<JsonRecord> {
+): Promise<PredictionEndpointResponse> {
   const runtime = new SageMakerRuntimeClient({});
   const response = await runtime.send(
     new InvokeEndpointCommand({
@@ -435,35 +353,202 @@ async function invokePredictionEndpoint(
   const rawBody = response.Body?.transformToString
     ? await Promise.resolve(response.Body.transformToString())
     : Buffer.from(response.Body ?? []).toString("utf-8");
-  const parsed = requireRecord(
-    rawBody ? JSON.parse(rawBody) : null,
-    "SageMaker prediction response",
-  );
-
-  if (
-    typeof parsed.homeScore !== "number" ||
-    typeof parsed.awayScore !== "number"
-  ) {
-    throw new Error("SageMaker response did not contain numeric scores.");
+  const parsed = rawBody ? JSON.parse(rawBody) : null;
+  const result = predictionEndpointResponseSchema.safeParse(parsed);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    throw new Error(
+      issue
+        ? `SageMaker prediction response was invalid at ${issue.path.join(".") || "root"}: ${issue.message}`
+        : "SageMaker prediction response was invalid.",
+    );
   }
 
-  return parsed;
+  return result.data;
 }
 
-function parseQueueMessage(body: string): { jobId: string; userId: string } {
-  const parsed = requireRecord(JSON.parse(body), "SQS prediction job message");
-  const jobId = asOptionalString(parsed.jobId);
-  const userId = asOptionalString(parsed.userId);
-  if (!jobId || !userId) {
-    throw new Error("Prediction queue message must include jobId and userId.");
+function buildPredictionGridCellRecords(args: {
+  grid: PredictionEndpointResponse["tacticsGrid"];
+  requestId: string;
+  userId: string;
+}): PredictionGridCellRecord[] {
+  const records: PredictionGridCellRecord[] = [];
+
+  for (const [rowIndex, awayDefense] of args.grid.defenses.entries()) {
+    const row = args.grid.cells[rowIndex] ?? [];
+
+    for (const [columnIndex, homeOffense] of args.grid.offenses.entries()) {
+      const cell = row[columnIndex];
+      if (!cell) {
+        continue;
+      }
+      if (
+        cell.awayDefense !== awayDefense ||
+        cell.homeOffense !== homeOffense
+      ) {
+        continue;
+      }
+
+      records.push({
+        userId: args.userId,
+        requestId: args.requestId,
+        awayDefense: cell.awayDefense,
+        homeOffense: cell.homeOffense,
+        awayScore: cell.awayScore,
+        homeScore: cell.homeScore,
+        pointDiff: cell.pointDiff,
+      });
+    }
   }
-  return { jobId, userId };
+
+  return records;
+}
+
+function countRenderablePersistedGridCells(
+  cells: readonly PredictionGridCellRecord[],
+): number {
+  return cells.filter((cell) => {
+    return (
+      typeof cell.homeScore === "number" &&
+      Number.isFinite(cell.homeScore) &&
+      typeof cell.awayScore === "number" &&
+      Number.isFinite(cell.awayScore) &&
+      typeof cell.pointDiff === "number" &&
+      Number.isFinite(cell.pointDiff)
+    );
+  }).length;
+}
+
+function extractPredictionInput(job: PredictionJobRecord): PredictionInputShape {
+  return {
+    home_outsideScoring: job.home_outsideScoring,
+    home_insideScoring: job.home_insideScoring,
+    home_outsideDefense: job.home_outsideDefense,
+    home_insideDefense: job.home_insideDefense,
+    home_rebounding: job.home_rebounding,
+    home_offensiveFlow: job.home_offensiveFlow,
+    away_outsideScoring: job.away_outsideScoring,
+    away_insideScoring: job.away_insideScoring,
+    away_outsideDefense: job.away_outsideDefense,
+    away_insideDefense: job.away_insideDefense,
+    away_rebounding: job.away_rebounding,
+    away_offensiveFlow: job.away_offensiveFlow,
+    home_gdp_focus: job.home_gdp_focus,
+    home_gdp_pace: job.home_gdp_pace,
+    away_gdp_focus: job.away_gdp_focus,
+    away_gdp_pace: job.away_gdp_pace,
+    neutral: job.neutral,
+    effortDelta: job.effortDelta,
+  };
+}
+
+function toForecastMetadata(
+  forecastContext: PredictionForecastContext | undefined,
+): Pick<
+  PredictionJobRecord,
+  | "forecastEnthusiasmBand"
+  | "forecastGeneratedAt"
+  | "forecastJobId"
+  | "forecastModelVersion"
+  | "forecastScenarioId"
+  | "forecastScenarioLabel"
+  | "forecastScenarioProbability"
+  | "forecastSourceTeamId"
+> {
+  return {
+    forecastEnthusiasmBand: forecastContext?.enthusiasmBand ?? null,
+    forecastGeneratedAt: forecastContext?.forecastGeneratedAt ?? null,
+    forecastJobId: forecastContext?.forecastJobId ?? null,
+    forecastModelVersion: forecastContext?.forecastModelVersion ?? null,
+    forecastScenarioId: forecastContext?.scenarioId ?? null,
+    forecastScenarioLabel: forecastContext?.scenarioLabel ?? null,
+    forecastScenarioProbability:
+      forecastContext?.scenarioProbability ?? null,
+    forecastSourceTeamId: forecastContext?.sourceTeamId ?? null,
+  };
+}
+
+function normalizePredictionInput(value: unknown): PredictionInputShape {
+  const input = requireRecord(value, "Prediction request input");
+  const normalizedNumericValues = {} as Pick<
+    PredictionInputShape,
+    (typeof REQUIRED_NUMERIC_FIELDS)[number]
+  >;
+
+  for (const field of REQUIRED_NUMERIC_FIELDS) {
+    normalizedNumericValues[field] = requireNumber(input[field], field);
+  }
+
+  return {
+    ...normalizedNumericValues,
+    home_gdp_focus: "N/A",
+    home_gdp_pace: "N/A",
+    away_gdp_focus: "N/A",
+    away_gdp_pace: "N/A",
+    neutral: requireString(input.neutral, "neutral"),
+  };
+}
+
+function normalizePredictionForecastContext(
+  value: unknown,
+): PredictionForecastContext | undefined {
+  const record = asOptionalRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  return {
+    enthusiasmBand: asOptionalString(record.enthusiasmBand),
+    evidence: Array.isArray(record.evidence)
+      ? record.evidence.filter(
+          (entry): entry is string =>
+            typeof entry === "string" && Boolean(entry.trim()),
+        )
+      : [],
+    forecastGeneratedAt: requireString(
+      record.forecastGeneratedAt,
+      "forecastContext.forecastGeneratedAt",
+    ),
+    forecastJobId: requireString(
+      record.forecastJobId,
+      "forecastContext.forecastJobId",
+    ),
+    forecastModelVersion: requireString(
+      record.forecastModelVersion,
+      "forecastContext.forecastModelVersion",
+    ),
+    scenarioId: requireString(record.scenarioId, "forecastContext.scenarioId"),
+    scenarioLabel: requireString(
+      record.scenarioLabel,
+      "forecastContext.scenarioLabel",
+    ),
+    scenarioProbability: requireNumber(
+      record.scenarioProbability,
+      "forecastContext.scenarioProbability",
+    ),
+    sourceTeamId: requireString(
+      record.sourceTeamId,
+      "forecastContext.sourceTeamId",
+    ),
+  };
+}
+
+function parseQueueMessage(body: string): { requestId: string; userId: string } {
+  const parsed = requireRecord(JSON.parse(body), "SQS prediction job message");
+  const requestId = asOptionalString(parsed.requestId);
+  const userId = asOptionalString(parsed.userId);
+  if (!requestId || !userId) {
+    throw new Error(
+      "Prediction queue message must include requestId and userId.",
+    );
+  }
+  return { requestId, userId };
 }
 
 function resolvePredictionJobMessage(args: {
-  message?: { jobId: string; userId: string };
+  message?: { requestId: string; userId: string };
   messageBody?: string;
-}): { jobId: string; userId: string } {
+}): { requestId: string; userId: string } {
   if (args.message) {
     return args.message;
   }
@@ -481,7 +566,7 @@ function requireRecord(value: unknown, label: string): JsonRecord {
 }
 
 function requireNumber(value: unknown, label: string): number {
-  if (typeof value === "number") {
+  if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
 
@@ -492,7 +577,15 @@ function requireNumber(value: unknown, label: string): number {
     }
   }
 
-  throw new Error(`${label} is unavailable in the cached source match.`);
+  throw new Error(`${label} must be numeric.`);
+}
+
+function requireString(value: unknown, label: string): string {
+  const normalized = asOptionalString(value);
+  if (!normalized) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return normalized;
 }
 
 function asOptionalString(value: unknown): string | null {
@@ -503,6 +596,25 @@ function asOptionalRecord(value: unknown): JsonRecord | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonRecord)
     : null;
+}
+
+async function quietlyDeletePredictionGridCells(
+  dependencies:
+    | SubmitPredictionDependencies
+    | ProcessPredictionDependencies,
+  env: GraphqlEnv,
+  userId: string,
+  requestId: string,
+): Promise<void> {
+  try {
+    await dependencies.deletePredictionGridCellsByUserAndRequestId(
+      env,
+      userId,
+      requestId,
+    );
+  } catch {
+    // Old or stale rows are non-authoritative. Best-effort cleanup is enough.
+  }
 }
 
 function resolveUserId(identity: unknown): string | null {

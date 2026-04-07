@@ -6,14 +6,18 @@ import {
   createOpponentForecastJob,
   createSyncRun,
   getBbConnection,
+  getPredictionJob,
   getUserPreference,
+  listPredictionGridCellsByUserAndRequestId,
   listPlayerSkillObservations,
-  listExpiredPredictionJobs,
   listExpiredSyncRuns,
   updateSyncRun,
   upsertBbConnection,
+  upsertPredictionGridCells,
+  upsertPredictionJob,
   upsertUserPreference,
   upsertTrackedPlayer,
+  updatePredictionJobIfRequestMatches,
 } from "../amplify/data/_backend/repository";
 
 test("createSyncRun serializes AWSJSON payloads before model.create", async (t) => {
@@ -433,12 +437,8 @@ test("listPlayerSkillObservations queries the user history index with a player p
   );
 });
 
-test("expired operational record helpers query expiry indexes", async (t) => {
+test("expired sync run helper queries the expiry index", async (t) => {
   const syncRunCalls: Array<{
-    input: Record<string, unknown>;
-    options?: Record<string, unknown>;
-  }> = [];
-  const predictionJobCalls: Array<{
     input: Record<string, unknown>;
     options?: Record<string, unknown>;
   }> = [];
@@ -449,25 +449,6 @@ test("expired operational record helpers query expiry indexes", async (t) => {
     async () =>
       ({
         models: {
-          PredictionJob: {
-            listPredictionJobsByExpiryKeyAndExpiresAt: async (
-              input: Record<string, unknown>,
-              options?: Record<string, unknown>,
-            ) => {
-              predictionJobCalls.push({ input, options });
-              return {
-                data: [
-                  {
-                    id: "job-1",
-                    userId: "u1",
-                    status: "FAILED",
-                    mode: "MANUAL",
-                  },
-                ],
-                nextToken: null,
-              };
-            },
-          },
           SyncRun: {
             listSyncRunsByExpiryKeyAndExpiresAt: async (
               input: Record<string, unknown>,
@@ -497,11 +478,6 @@ test("expired operational record helpers query expiry indexes", async (t) => {
     "2026-03-15T12:00:00.000Z",
     { limit: 100 },
   );
-  const predictionJobPage = await listExpiredPredictionJobs(
-    {} as any,
-    "2026-03-15T12:00:00.000Z",
-    { nextToken: "jobs-page-1" },
-  );
 
   assert.deepStrictEqual(syncRunCalls, [
     {
@@ -515,21 +491,261 @@ test("expired operational record helpers query expiry indexes", async (t) => {
       },
     },
   ]);
-  assert.deepStrictEqual(predictionJobCalls, [
+  assert.equal(syncRunPage.nextToken, "next-sync-page");
+  assert.equal(syncRunPage.records[0]?.id, "sync-1");
+});
+
+test("upsertPredictionJob stores typed prediction fields without AWSJSON encoding", async (t) => {
+  let createInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          PredictionJob: {
+            create: async (input: Record<string, unknown>) => {
+              createInput = input;
+              return { data: { ...input } };
+            },
+            get: async () => ({ data: null }),
+            update: async () => {
+              throw new Error("PredictionJob.update should not be called");
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertPredictionJob({} as any, {
+    away_gdp_focus: "N/A",
+    away_gdp_pace: "N/A",
+    away_insideDefense: 7,
+    away_insideScoring: 7,
+    away_offensiveFlow: 7,
+    away_outsideDefense: 7,
+    away_outsideScoring: 7,
+    away_rebounding: 7,
+    awayScore: null,
+    effortDelta: 0,
+    error: null,
+    executionArn: null,
+    home_gdp_focus: "N/A",
+    home_gdp_pace: "N/A",
+    home_insideDefense: 8,
+    home_insideScoring: 8,
+    home_offensiveFlow: 8,
+    home_outsideDefense: 8,
+    home_outsideScoring: 8,
+    home_rebounding: 8,
+    homeScore: null,
+    modelVersion: null,
+    neutral: "0",
+    pointDiff: null,
+    requestId: "request-1",
+    requestedAt: "2026-03-15T00:00:00.000Z",
+    status: "QUEUED",
+    userId: "u1",
+  });
+
+  assert.ok(createInput);
+  assert.equal(createInput.away_gdp_focus, "N/A");
+  assert.equal(createInput.home_outsideScoring, 8);
+  assert.equal(createInput.executionArn, null);
+  assert.equal(createInput.homeScore, null);
+  assert.equal(createInput.pointDiff, null);
+});
+
+test("getPredictionJob returns the typed persisted prediction record", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          PredictionJob: {
+            get: async () => ({
+              data: {
+                away_gdp_focus: "N/A",
+                away_gdp_pace: "N/A",
+                away_insideDefense: 7,
+                away_insideScoring: 7,
+                away_offensiveFlow: 7,
+                away_outsideDefense: 7,
+                away_outsideScoring: 7,
+                away_rebounding: 7,
+                effortDelta: 0,
+                error: null,
+                executionArn: null,
+                home_gdp_focus: "N/A",
+                home_gdp_pace: "N/A",
+                home_insideDefense: 8,
+                home_insideScoring: 8,
+                home_offensiveFlow: 8,
+                home_outsideDefense: 8,
+                home_outsideScoring: 8,
+                home_rebounding: 8,
+                neutral: "0",
+                modelVersion: "bundle-v1",
+                requestId: "request-1",
+                requestedAt: "2026-03-15T00:00:00.000Z",
+                awayScore: 94.8,
+                homeScore: 101.3,
+                pointDiff: 6.5,
+                status: "SUCCEEDED",
+                userId: "u1",
+              },
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getPredictionJob({} as any, "u1");
+
+  assert.ok(record);
+  assert.equal(record.home_outsideScoring, 8);
+  assert.equal(record.away_gdp_focus, "N/A");
+  assert.equal(record.homeScore, 101.3);
+  assert.equal(record.pointDiff, 6.5);
+});
+
+test("prediction grid cells are stored and read as typed rows", async (t) => {
+  const createInputs: Array<Record<string, unknown>> = [];
+  const listCalls: Array<{
+    input: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          PredictionGridCell: {
+            create: async (input: Record<string, unknown>) => {
+              createInputs.push(input);
+              return { data: input };
+            },
+            get: async () => ({ data: null }),
+            listPredictionGridCellsByUserIdAndRequestId: async (
+              input: Record<string, unknown>,
+              options?: Record<string, unknown>,
+            ) => {
+              listCalls.push({ input, options });
+              return {
+                data: [
+                  {
+                    awayDefense: "ManToMan",
+                    awayScore: 94.8,
+                    homeOffense: "Base",
+                    homeScore: 101.3,
+                    pointDiff: 6.5,
+                    requestId: "request-1",
+                    userId: "u1",
+                  },
+                ],
+              };
+            },
+            update: async () => {
+              throw new Error("PredictionGridCell.update should not be called");
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertPredictionGridCells({} as any, [
+    {
+      awayDefense: "ManToMan",
+      awayScore: 94.8,
+      homeOffense: "Base",
+      homeScore: 101.3,
+      pointDiff: 6.5,
+      requestId: "request-1",
+      userId: "u1",
+    },
+  ]);
+  const rows = await listPredictionGridCellsByUserAndRequestId(
+    {} as any,
+    "u1",
+    "request-1",
+  );
+
+  assert.deepStrictEqual(createInputs[0], {
+    awayDefense: "ManToMan",
+    awayScore: 94.8,
+    homeOffense: "Base",
+    homeScore: 101.3,
+    pointDiff: 6.5,
+    requestId: "request-1",
+    userId: "u1",
+  });
+  assert.deepStrictEqual(listCalls, [
     {
       input: {
-        expiryKey: "EXPIRABLE",
-        expiresAt: { lt: "2026-03-15T12:00:00.000Z" },
+        requestId: { eq: "request-1" },
+        userId: "u1",
       },
       options: {
-        nextToken: "jobs-page-1",
+        limit: 100,
+        nextToken: null,
         sortDirection: "ASC",
       },
     },
   ]);
-  assert.equal(syncRunPage.nextToken, "next-sync-page");
-  assert.equal(syncRunPage.records[0]?.id, "sync-1");
-  assert.equal(predictionJobPage.records[0]?.id, "job-1");
+  assert.deepStrictEqual(rows, [
+    {
+      awayDefense: "ManToMan",
+      awayScore: 94.8,
+      homeOffense: "Base",
+      homeScore: 101.3,
+      pointDiff: 6.5,
+      requestId: "request-1",
+      userId: "u1",
+    },
+  ]);
+});
+
+test("updatePredictionJobIfRequestMatches ignores stale completions", async (t) => {
+  let updateInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          PredictionJob: {
+            create: async () => {
+              throw new Error("PredictionJob.create should not be called");
+            },
+            get: async () => ({
+              data: {
+                requestId: "current-request",
+                status: "QUEUED",
+                userId: "u1",
+              },
+            }),
+            update: async (input: Record<string, unknown>) => {
+              updateInput = input;
+              return { data: input };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  const updated = await updatePredictionJobIfRequestMatches({} as any, {
+    requestId: "stale-request",
+    status: "SUCCEEDED",
+    userId: "u1",
+  });
+
+  assert.equal(updated, false);
+  assert.equal(updateInput, null);
 });
 
 test("getUserPreference loads the stored account theme", async (t) => {

@@ -7,6 +7,7 @@ import {
   type AwsJsonModelName,
 } from "./awsjson";
 import { getDataClient, type AmplifyDataFunctionEnv } from "./data-client";
+import type { PredictionInputShape } from "../../../lib/prediction/normalization";
 
 export type ConnectionStatus =
   | "UNSET"
@@ -45,8 +46,6 @@ export type LeagueHistoryBackfillState =
   | "FETCHING_STANDINGS"
   | "SUCCEEDED"
   | "FAILED";
-
-export type PredictionRequestMode = "MANUAL" | "CONNECTED";
 
 export type BbConnectionRecord = {
   userId: string;
@@ -154,21 +153,38 @@ export type SyncRunRecord = {
 };
 
 export type PredictionJobRecord = {
-  id: string;
   userId: string;
+  requestId: string;
   status: PredictionJobStatus;
-  mode: PredictionRequestMode;
   requestedAt: string;
   executionArn?: string | null;
-  request: unknown;
-  resolvedInputSnapshot?: unknown;
-  result?: unknown;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  pointDiff?: number | null;
   error?: string | null;
   modelVersion?: string | null;
+  forecastJobId?: string | null;
+  forecastModelVersion?: string | null;
+  forecastGeneratedAt?: string | null;
+  forecastScenarioId?: string | null;
+  forecastScenarioLabel?: string | null;
+  forecastScenarioProbability?: number | null;
+  forecastEnthusiasmBand?: string | null;
+  forecastSourceTeamId?: string | null;
   createdAt?: string;
   updatedAt?: string;
-  expiryKey: string;
-  expiresAt: string;
+} & PredictionInputShape;
+
+export type PredictionGridCellRecord = {
+  userId: string;
+  requestId: string;
+  awayDefense: string;
+  homeOffense: string;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  pointDiff?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type OpponentForecastJobRecord = {
@@ -580,98 +596,151 @@ export async function deleteSyncRun(
   await assertSuccessful(model.delete({ id }), "delete sync run");
 }
 
-export async function createPredictionJob(
+export async function upsertPredictionJob(
   env: RepositoryEnv,
-  input: Omit<
-    PredictionJobRecord,
-    "createdAt" | "updatedAt" | "requestedAt" | "expiryKey" | "expiresAt"
-  > & {
-    requestedAt?: string | null;
-    expiryKey?: string | null;
-    expiresAt?: string | null;
-  },
-): Promise<PredictionJobRecord> {
+  input: PredictionJobRecord,
+): Promise<void> {
   const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
-  const now = new Date().toISOString();
-  const record = assertPresent(
-    await assertSuccessful(
-      model.create(
-        prepareModelInput("PredictionJob", {
-          ...input,
-          requestedAt: input.requestedAt ?? now,
-          expiryKey: input.expiryKey ?? "EXPIRABLE",
-          expiresAt: input.expiresAt ?? addDays(now, 30),
-        }),
-      ),
-      "create prediction job",
-    ),
-    "create prediction job",
+  const currentRecord = await assertSuccessful(
+    model.get({ userId: input.userId }),
+    "load PredictionJob record",
   );
+  const payload = omitUndefinedValues(input);
 
-  return decodeAwsJsonFields("PredictionJob", record);
+  if (currentRecord) {
+    await assertSuccessful(model.update(payload), "update PredictionJob record");
+    return;
+  }
+
+  await assertSuccessful(model.create(payload), "create PredictionJob record");
 }
 
 export async function getPredictionJob(
   env: RepositoryEnv,
-  id: string,
+  userId: string,
 ): Promise<PredictionJobRecord | null> {
   const record = await getModelRecord<PredictionJobRecord>(
     env,
     "PredictionJob",
-    { id },
+    { userId },
     "load prediction job",
   );
-
-  return decodeAwsJsonFields("PredictionJob", record);
+  return record;
 }
 
 export async function updatePredictionJob(
   env: RepositoryEnv,
-  input: Partial<PredictionJobRecord> & Pick<PredictionJobRecord, "id">,
+  input: Partial<PredictionJobRecord> & Pick<PredictionJobRecord, "userId">,
 ): Promise<void> {
   const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
   await assertSuccessful(
-    model.update(prepareModelInput("PredictionJob", input)),
+    model.update(omitUndefinedValues(input)),
     "update prediction job",
   );
 }
 
-export async function listExpiredPredictionJobs(
+export async function updatePredictionJobIfRequestMatches(
   env: RepositoryEnv,
-  expiresBefore: string,
-  input: {
-    limit?: number;
-    nextToken?: string | null;
-  } = {},
-): Promise<PagedRecords<PredictionJobRecord>> {
-  const page = await queryModelIndexPage<PredictionJobRecord>(
-    env,
-    "PredictionJob",
-    "listPredictionJobsByExpiryKeyAndExpiresAt",
-    {
-      expiryKey: "EXPIRABLE",
-      expiresAt: { lt: expiresBefore },
-    },
-    {
-      limit: input.limit,
-      nextToken: input.nextToken,
-      sortDirection: "ASC",
-    },
-    "list expired prediction jobs",
-  );
+  input: Partial<PredictionJobRecord> &
+    Pick<PredictionJobRecord, "requestId" | "userId">,
+): Promise<boolean> {
+  const current = await getPredictionJob(env, input.userId);
+  if (!current || current.requestId !== input.requestId) {
+    return false;
+  }
 
-  return {
-    nextToken: page.nextToken,
-    records: decodeAwsJsonList("PredictionJob", page.records),
-  };
+  await updatePredictionJob(env, input);
+  return true;
 }
 
-export async function deletePredictionJob(
+export async function upsertPredictionGridCells(
   env: RepositoryEnv,
-  id: string,
+  records: readonly PredictionGridCellRecord[],
 ): Promise<void> {
-  const model = await getModel<PredictionJobRecord>(env, "PredictionJob");
-  await assertSuccessful(model.delete({ id }), "delete prediction job");
+  for (const record of records) {
+    await upsertPredictionGridCell(env, record);
+  }
+}
+
+async function upsertPredictionGridCell(
+  env: RepositoryEnv,
+  record: PredictionGridCellRecord,
+): Promise<void> {
+  const model = await getModel<PredictionGridCellRecord>(env, "PredictionGridCell");
+  const currentRecord = await assertSuccessful(
+    model.get({
+      awayDefense: record.awayDefense,
+      homeOffense: record.homeOffense,
+      requestId: record.requestId,
+      userId: record.userId,
+    }),
+    "load PredictionGridCell record",
+  );
+  const payload = omitUndefinedValues(record);
+
+  if (currentRecord) {
+    await assertSuccessful(
+      model.update(payload),
+      "update PredictionGridCell record",
+    );
+    return;
+  }
+
+  await assertSuccessful(model.create(payload), "create PredictionGridCell record");
+}
+
+export async function listPredictionGridCellsByUserAndRequestId(
+  env: RepositoryEnv,
+  userId: string,
+  requestId: string,
+): Promise<PredictionGridCellRecord[]> {
+  const records: PredictionGridCellRecord[] = [];
+  let nextToken: string | null | undefined = null;
+
+  do {
+    const page: PagedRecords<PredictionGridCellRecord> =
+      await queryModelIndexPage<PredictionGridCellRecord>(
+      env,
+      "PredictionGridCell",
+      "listPredictionGridCellsByUserIdAndRequestId",
+      { requestId: { eq: requestId }, userId },
+      {
+        limit: 100,
+        nextToken,
+        sortDirection: "ASC",
+      },
+      "list prediction grid cells",
+    );
+    records.push(...page.records);
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  return records;
+}
+
+export async function deletePredictionGridCellsByUserAndRequestId(
+  env: RepositoryEnv,
+  userId: string,
+  requestId: string,
+): Promise<void> {
+  const model = await getModel<PredictionGridCellRecord>(env, "PredictionGridCell");
+  const records = await listPredictionGridCellsByUserAndRequestId(
+    env,
+    userId,
+    requestId,
+  );
+
+  for (const record of records) {
+    await assertSuccessful(
+      model.delete({
+        awayDefense: record.awayDefense,
+        homeOffense: record.homeOffense,
+        requestId: record.requestId,
+        userId: record.userId,
+      }),
+      "delete prediction grid cell",
+    );
+  }
 }
 
 export async function createOpponentForecastJob(

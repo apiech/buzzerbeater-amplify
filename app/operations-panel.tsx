@@ -16,9 +16,9 @@ import {
   formatWriteupStatus,
 } from "@/app/ui/presentation";
 import type {
+  CurrentPredictionPreview,
   GameDayRecapRecord,
   LeagueGameDayRecapRecord,
-  PredictionJobRecord,
   SingleGameSummaryRecord,
   SyncRunRecord,
 } from "@/app/types";
@@ -41,7 +41,8 @@ export function OperationsPanel() {
     SingleGameSummaryRecord[]
   >([]);
   const [syncRuns, setSyncRuns] = useState<SyncRunRecord[]>([]);
-  const [predictionJobs, setPredictionJobs] = useState<PredictionJobRecord[]>([]);
+  const [currentPrediction, setCurrentPrediction] =
+    useState<CurrentPredictionPreview | null>(null);
   const [opsError, setOpsError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const loadOperationsEffect = useEffectEvent(() => {
@@ -138,7 +139,7 @@ export function OperationsPanel() {
       setLeagueGameDayRecaps([]);
       setSingleGameSummaries([]);
       setSyncRuns([]);
-      setPredictionJobs([]);
+      setCurrentPrediction(null);
       setIsLoading(false);
       return;
     }
@@ -163,19 +164,16 @@ export function OperationsPanel() {
         right.updatedAt.localeCompare(left.updatedAt),
       ),
     );
-    setPredictionJobs(
-      [...response.data.predictionJobs].sort((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      ),
-    );
+    setCurrentPrediction(response.data.currentPrediction);
     setIsLoading(false);
   }
 
   const activeSyncCount = syncRuns.filter((run) => !terminalSyncStatuses.has(run.status)).length;
   const failedSyncCount = syncRuns.filter((run) => run.status === "FAILED").length;
-  const activePredictionCount = predictionJobs.filter(
-    (job) => !terminalPredictionStatuses.has(job.status),
-  ).length;
+  const activePredictionCount =
+    currentPrediction && !terminalPredictionStatuses.has(currentPrediction.status)
+      ? 1
+      : 0;
   const recapActivity = combinedRecaps(
     gameDayRecaps,
     leagueGameDayRecaps,
@@ -214,8 +212,8 @@ export function OperationsPanel() {
         />
         <StatCard
           detail={
-            predictionJobs[0]
-              ? `${formatPreviewStatus(predictionJobs[0].status)} as of ${formatTimestamp(predictionJobs[0].updatedAt)}.`
+            currentPrediction
+              ? `${formatPreviewStatus(currentPrediction.status)} as of ${formatTimestamp(currentPrediction.updatedAt)}.`
               : "No preview activity yet."
           }
           label="Previews running"
@@ -255,25 +253,23 @@ export function OperationsPanel() {
         </Panel>
 
         <Panel as="article" padding="sm" variant="solid">
-          <SectionHeading title="Recent previews" titleAs="h4" />
-          {predictionJobs.length ? (
+          <SectionHeading title="Current preview" titleAs="h4" />
+          {currentPrediction ? (
             <ul className={listClassName}>
-              {predictionJobs.map((job) => (
-                <li className={listItemClassName} key={job.id}>
-                  <strong className="text-sm text-ink">
-                    {describePredictionJob(job)}
-                  </strong>
-                  <span className={statusCopyClassName}>
-                    {formatPreviewStatus(job.status)} •{" "}
-                    {formatTimestamp(job.updatedAt)}
-                    {job.error ? ` • ${job.error}` : ""}
-                  </span>
-                </li>
-              ))}
+              <li className={listItemClassName} key={currentPrediction.requestId}>
+                <strong className="text-sm text-ink">
+                  {describePredictionJob(currentPrediction)}
+                </strong>
+                <span className={statusCopyClassName}>
+                  {formatPreviewStatus(currentPrediction.status)} •{" "}
+                  {formatTimestamp(currentPrediction.updatedAt)}
+                  {currentPrediction.error ? ` • ${currentPrediction.error}` : ""}
+                </span>
+              </li>
             </ul>
           ) : (
             <p className={statusCopyClassName}>
-              No previews have been recorded yet.
+              No preview has been recorded yet.
             </p>
           )}
         </Panel>
@@ -376,14 +372,23 @@ function combinedRecaps(
   ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-function describePredictionJob(job: PredictionJobRecord): string {
+function describePredictionJob(job: CurrentPredictionPreview): string {
+  if (
+    job.homeScore !== null &&
+    job.homeScore !== undefined &&
+    job.awayScore !== null &&
+    job.awayScore !== undefined &&
+    job.pointDiff !== null &&
+    job.pointDiff !== undefined
+  ) {
+    return `${job.homeScore.toFixed(1)} - ${job.awayScore.toFixed(1)} (${job.pointDiff > 0 ? "+" : ""}${job.pointDiff.toFixed(1)})`;
+  }
+
   if (job.error) {
     return "Preview needs attention";
   }
 
-  return job.mode === "CONNECTED"
-    ? "Saved-game preview"
-    : "Manual preview";
+  return "Preview in progress";
 }
 
 function readRecapHeadline(value: unknown): string | null {

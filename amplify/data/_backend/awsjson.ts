@@ -13,7 +13,6 @@ const AWS_JSON_FIELDS = {
   LeagueHistoryBackfill: [],
   SyncRun: ["detailsJson"],
   SharedPlayerCard: ["payloadJson"],
-  PredictionJob: ["request", "resolvedInputSnapshot", "result"],
   OpponentForecastJob: ["requestJson", "resolvedContextJson", "resultJson"],
   GameDayRecap: ["requestJson", "coverageJson", "resultJson"],
   LeagueGameDayRecap: ["requestJson", "coverageJson", "resultJson"],

@@ -64,7 +64,6 @@ export type GameDayRecapSynthConfig = {
 };
 
 export type OperationalRetentionSynthConfig = {
-  predictionJobRetentionDays: string;
   syncRunRetentionDays: string;
 };
 
@@ -167,8 +166,6 @@ export function resolveOperationalRetentionConfig(): OperationalRetentionSynthCo
   loadLocalSynthEnv();
 
   return {
-    predictionJobRetentionDays:
-      normalizeOptionalString(process.env.PREDICTION_JOB_RETENTION_DAYS) ?? "30",
     syncRunRetentionDays:
       normalizeOptionalString(process.env.SYNC_RUN_RETENTION_DAYS) ?? "14",
   };

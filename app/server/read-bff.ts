@@ -1,14 +1,21 @@
 import { getServerDataClient } from "@/app/server/amplify-server";
 import type {
+  CurrentPredictionForecastContext,
+  CurrentPredictionPreview,
   GameDayRecapRecord,
   LeagueGameDayRecapRecord,
   OperationsActivity,
   PaginatedResult,
-  PredictionJobRecord,
+  PredictionGridCell,
   RecapHistoryKind,
   RecapHistoryRecord,
   SingleGameSummaryRecord,
 } from "@/app/types";
+import { currentPredictionPreviewSchema } from "@/lib/prediction/contracts";
+import {
+  PREDICTION_AWAY_DEFENSE_OPTIONS,
+  PREDICTION_HOME_OFFENSE_OPTIONS,
+} from "@/lib/prediction/normalization";
 
 type ErrorPayload = {
   message?: string;
@@ -24,6 +31,61 @@ type ReadOperation = (
   userId: string,
   input?: Record<string, unknown>,
 ) => Promise<OperationResult<unknown>>;
+
+type PredictionPreviewDataClient = {
+  models: {
+    PredictionGridCell: {
+      listPredictionGridCellsByUserIdAndRequestId: (
+        input: {
+          requestId: { eq: string };
+          userId: string;
+        },
+        options?: {
+          limit?: number;
+          nextToken?: string | null;
+          sortDirection?: "ASC" | "DESC";
+        },
+      ) => Promise<
+        OperationResult<
+          Array<{
+            awayDefense: string;
+            awayScore?: number | null;
+            homeOffense: string;
+            homeScore?: number | null;
+            pointDiff?: number | null;
+          }>
+        >
+      >;
+    };
+    PredictionJob: {
+      get: (
+        input: { userId: string },
+      ) => Promise<
+        OperationResult<{
+          awayScore?: number | null;
+          error?: string | null;
+          executionArn?: string | null;
+          forecastEnthusiasmBand?: string | null;
+          forecastGeneratedAt?: string | null;
+          forecastJobId?: string | null;
+          forecastModelVersion?: string | null;
+          forecastScenarioId?: string | null;
+          forecastScenarioLabel?: string | null;
+          forecastScenarioProbability?: number | null;
+          forecastSourceTeamId?: string | null;
+          homeScore?: number | null;
+          modelVersion?: string | null;
+          pointDiff?: number | null;
+          requestId: string;
+          requestedAt: string;
+          status: CurrentPredictionPreview["status"];
+          updatedAt: string;
+          userId: string;
+        }>
+      >;
+    };
+  };
+};
 
 type ReadName = keyof typeof readOperations;
 
@@ -67,8 +129,8 @@ export const __testing = {
 
 const readOperations = {
   getCurrentBbConnection: (userId) => getCurrentBbConnection(userId),
+  getCurrentPrediction: (userId) => getCurrentPrediction(userId),
   getOperationsActivity: (userId, input) => getOperationsActivity(userId, input),
-  getPredictionHistory: (userId, input) => getPredictionHistory(userId, input),
   getRecapHistory: (userId, input) => getRecapHistory(userId, input),
 } satisfies Record<string, ReadOperation>;
 
@@ -103,7 +165,7 @@ async function getOperationsActivity(
   const serverDataClient = await runtime.getServerDataClient();
   const [
     syncRuns,
-    predictionJobs,
+    currentPrediction,
     gameDayRecaps,
     leagueGameDayRecaps,
     singleGameSummaries,
@@ -112,10 +174,7 @@ async function getOperationsActivity(
       { userId },
       { limit, sortDirection: "DESC" },
     ),
-    serverDataClient.models.PredictionJob.listPredictionJobsByUserAndRequestedAt(
-      { userId },
-      { limit, sortDirection: "DESC" },
-    ),
+    loadCurrentPredictionPreview(serverDataClient, userId),
     serverDataClient.models.GameDayRecap.listGameDayRecapsByUserAndRequestedAt(
       { userId },
       { limit, sortDirection: "DESC" },
@@ -132,7 +191,7 @@ async function getOperationsActivity(
 
   const errors = collectErrors(
     syncRuns,
-    predictionJobs,
+    currentPrediction,
     gameDayRecaps,
     leagueGameDayRecaps,
     singleGameSummaries,
@@ -147,37 +206,19 @@ async function getOperationsActivity(
   return {
     data: {
       gameDayRecaps: toArray(gameDayRecaps.data),
+      currentPrediction: currentPrediction.data ?? null,
       leagueGameDayRecaps: toArray(leagueGameDayRecaps.data),
-      predictionJobs: toArray(predictionJobs.data),
       singleGameSummaries: toArray(singleGameSummaries.data),
       syncRuns: toArray(syncRuns.data),
     },
   };
 }
 
-async function getPredictionHistory(
+async function getCurrentPrediction(
   userId: string,
-  input?: Record<string, unknown>,
-): Promise<OperationResult<PaginatedResult<PredictionJobRecord>>> {
-  const limit = readLimit(input, 12);
+): Promise<OperationResult<CurrentPredictionPreview | null>> {
   const serverDataClient = await runtime.getServerDataClient();
-  const result =
-    await serverDataClient.models.PredictionJob.listPredictionJobsByUserAndRequestedAt(
-      { userId },
-      {
-        limit,
-        nextToken: readToken(input),
-        sortDirection: "DESC",
-      },
-    );
-
-  return {
-    data: {
-      items: toArray(result.data),
-      nextToken: result.nextToken ?? null,
-    },
-    errors: result.errors,
-  };
+  return loadCurrentPredictionPreview(serverDataClient, userId);
 }
 
 async function getRecapHistory(
@@ -271,6 +312,66 @@ function collectErrors(
   return results.flatMap((result) => result.errors ?? []);
 }
 
+async function loadCurrentPredictionPreview(
+  serverDataClient: PredictionPreviewDataClient,
+  userId: string,
+): Promise<OperationResult<CurrentPredictionPreview | null>> {
+  const predictionJob = await serverDataClient.models.PredictionJob.get({ userId });
+  if (predictionJob.errors?.length) {
+    return {
+      data: null,
+      errors: predictionJob.errors,
+    };
+  }
+
+  const job = predictionJob.data;
+  if (!job) {
+    return {
+      data: null,
+      errors: null,
+    };
+  }
+
+  const predictionGridCells =
+    await serverDataClient.models.PredictionGridCell.listPredictionGridCellsByUserIdAndRequestId(
+      {
+        userId,
+        requestId: { eq: job.requestId },
+      },
+      {
+        limit: 100,
+        sortDirection: "ASC",
+      },
+    );
+  if (predictionGridCells.errors?.length) {
+    return {
+      data: null,
+      errors: predictionGridCells.errors,
+    };
+  }
+
+  try {
+    return {
+      data: currentPredictionPreviewSchema.parse(
+        assembleCurrentPredictionPreview(
+          job,
+          toArray(predictionGridCells.data),
+        ),
+      ),
+      errors: null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      errors: [
+        {
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
+  }
+}
+
 function readLimit(input: Record<string, unknown> | undefined, fallback: number): number {
   const rawLimit = input?.["limit"];
   if (typeof rawLimit !== "number" || !Number.isFinite(rawLimit)) {
@@ -289,6 +390,149 @@ function readToken(input: Record<string, unknown> | undefined): string | null {
 
 function toArray<TItem>(value: ReadonlyArray<TItem> | null | undefined): TItem[] {
   return value ? [...value] : [];
+}
+
+function assembleCurrentPredictionPreview(
+  job: {
+    awayScore?: number | null;
+    error?: string | null;
+    executionArn?: string | null;
+    forecastEnthusiasmBand?: string | null;
+    forecastGeneratedAt?: string | null;
+    forecastJobId?: string | null;
+    forecastModelVersion?: string | null;
+    forecastScenarioId?: string | null;
+    forecastScenarioLabel?: string | null;
+    forecastScenarioProbability?: number | null;
+    forecastSourceTeamId?: string | null;
+    homeScore?: number | null;
+    modelVersion?: string | null;
+    pointDiff?: number | null;
+    requestId: string;
+    requestedAt: string;
+    status: CurrentPredictionPreview["status"];
+    updatedAt: string;
+    userId: string;
+  },
+  cells: Array<{
+    awayDefense: string;
+    awayScore?: number | null;
+    homeOffense: string;
+    homeScore?: number | null;
+    pointDiff?: number | null;
+  }>,
+): CurrentPredictionPreview {
+  const matrixCells = buildCurrentPredictionGrid(cells);
+
+  return {
+    awayScore: job.awayScore ?? null,
+    error: job.error ?? null,
+    executionArn: job.executionArn ?? null,
+    forecastContext: buildCurrentPredictionForecastContext(job),
+    homeScore: job.homeScore ?? null,
+    modelVersion: job.modelVersion ?? null,
+    pointDiff: job.pointDiff ?? null,
+    requestId: job.requestId,
+    requestedAt: job.requestedAt,
+    status: job.status,
+    tacticsGrid: matrixCells,
+    updatedAt: job.updatedAt,
+    userId: job.userId,
+  };
+}
+
+function buildCurrentPredictionForecastContext(job: {
+  forecastEnthusiasmBand?: string | null;
+  forecastGeneratedAt?: string | null;
+  forecastJobId?: string | null;
+  forecastModelVersion?: string | null;
+  forecastScenarioId?: string | null;
+  forecastScenarioLabel?: string | null;
+  forecastScenarioProbability?: number | null;
+  forecastSourceTeamId?: string | null;
+}): CurrentPredictionForecastContext | null {
+  if (
+    !job.forecastGeneratedAt ||
+    !job.forecastJobId ||
+    !job.forecastModelVersion ||
+    !job.forecastScenarioId ||
+    !job.forecastScenarioLabel ||
+    job.forecastScenarioProbability === null ||
+    job.forecastScenarioProbability === undefined ||
+    !job.forecastSourceTeamId
+  ) {
+    return null;
+  }
+
+  return {
+    forecastGeneratedAt: job.forecastGeneratedAt,
+    forecastJobId: job.forecastJobId,
+    forecastModelVersion: job.forecastModelVersion,
+    scenarioId: job.forecastScenarioId,
+    scenarioLabel: job.forecastScenarioLabel,
+    scenarioProbability: job.forecastScenarioProbability,
+    sourceTeamId: job.forecastSourceTeamId,
+    enthusiasmBand: job.forecastEnthusiasmBand ?? null,
+  };
+}
+
+function buildCurrentPredictionGrid(
+  cells: Array<{
+    awayDefense: string;
+    awayScore?: number | null;
+    homeOffense: string;
+    homeScore?: number | null;
+    pointDiff?: number | null;
+  }>,
+) {
+  const keyedCells = new Map<string, PredictionGridCell>();
+
+  for (const cell of cells) {
+    if (
+      !isPredictionAwayDefense(cell.awayDefense) ||
+      !isPredictionHomeOffense(cell.homeOffense)
+    ) {
+      continue;
+    }
+
+    keyedCells.set(`${cell.awayDefense}::${cell.homeOffense}`, {
+      awayDefense: cell.awayDefense,
+      awayScore: cell.awayScore ?? null,
+      homeOffense: cell.homeOffense,
+      homeScore: cell.homeScore ?? null,
+      pointDiff: cell.pointDiff ?? null,
+    });
+  }
+
+  return {
+    offenses: [...PREDICTION_HOME_OFFENSE_OPTIONS],
+    defenses: [...PREDICTION_AWAY_DEFENSE_OPTIONS],
+    cells: PREDICTION_AWAY_DEFENSE_OPTIONS.map((awayDefense) =>
+      PREDICTION_HOME_OFFENSE_OPTIONS.map((homeOffense) => {
+        return (
+          keyedCells.get(`${awayDefense}::${homeOffense}`) ?? {
+            awayDefense,
+            awayScore: null,
+            homeOffense,
+            homeScore: null,
+            pointDiff: null,
+          }
+        );
+      }),
+    ),
+  };
+}
+
+function isPredictionHomeOffense(
+  value: string,
+): value is (typeof PREDICTION_HOME_OFFENSE_OPTIONS)[number] {
+  return (PREDICTION_HOME_OFFENSE_OPTIONS as readonly string[]).includes(value);
+}
+
+function isPredictionAwayDefense(
+  value: string,
+): value is (typeof PREDICTION_AWAY_DEFENSE_OPTIONS)[number] {
+  return (PREDICTION_AWAY_DEFENSE_OPTIONS as readonly string[]).includes(value);
 }
 
 async function fillRecapHistoryBuffer(

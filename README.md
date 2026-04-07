@@ -138,9 +138,6 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `SYNC_RUN_RETENTION_DAYS`
   - Retention window for operational sync-run records.
   - Default or recommended value: `14`.
-- `PREDICTION_JOB_RETENTION_DAYS`
-  - Retention window for prediction-job records.
-  - Default or recommended value: `30`.
 
 ### Shared ML Infra Bindings
 
@@ -149,8 +146,6 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.
   - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
   - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.
-  - Local sandbox/dev deploy wrappers and hosted backend builds now run `npm run verify:deploy` before mutating deploy steps.
-  - Raw player snapshot payloads remain private shared storage and are not a user-facing app data source.
   - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.
   - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.
 - Imported runtime bindings
@@ -161,7 +156,7 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - `PLAYER_SKILL_SNAPSHOT_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into workspace and lineup lambdas.
   - `TEAM_MOMENTS_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into highlights readers.
   - `TEAM_HIGHLIGHTS_STATUS_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into highlights readers and submitters.
-  - `TEAM_HIGHLIGHTS_SCAN_QUEUE_URL`: Imported at synth time from the shared ML Data Infra SSM contract and injected into the highlights submitter.
+  - `TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN`: Imported at synth time from the shared ML Data Infra SSM contract and injected into the highlights submitter.
 
 ### Required Secrets
 
@@ -179,7 +174,7 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 ### Internal Or Platform-Provided Env
 
 - `AMPLIFY_APP_ORIGIN`
-  - Required by the installed Next.js Amplify adapter for server-side auth. The repo-local Next.js launcher derives it from `APP_BASE_URL` to avoid a second source of truth.
+  - Required by the installed Next.js Amplify adapter for server-side auth. It is always derived from `APP_BASE_URL` by the repo-local Next.js launcher and the hosted build env writer so the app only has one real origin input.
 - `BB_SHARED_ENVIRONMENT_NAME`
   - Optional synth-time override for shared infra discovery. `npm run sandbox` sets this automatically, while hosted builds derive the environment from `AWS_BRANCH`.
 - `AWS_BRANCH`

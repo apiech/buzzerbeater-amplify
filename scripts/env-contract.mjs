@@ -95,12 +95,6 @@ export const envContract = {
         defaultValue: "14",
         templateValue: "14",
       },
-      {
-        name: "PREDICTION_JOB_RETENTION_DAYS",
-        purpose: "Retention window for prediction-job records.",
-        defaultValue: "30",
-        templateValue: "30",
-      },
     ],
   },
   generated: [

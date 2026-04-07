@@ -4,7 +4,7 @@ import { processPredictionJob } from "../data/_backend/prediction";
 
 type RuntimeEnv = Record<string, string | undefined>;
 type PredictionJobMessage = {
-  jobId: string;
+  requestId: string;
   userId: string;
 };
 

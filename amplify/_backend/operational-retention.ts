@@ -25,10 +25,6 @@ export function configureOperationalRetention(
     "SYNC_RUN_RETENTION_DAYS",
     config.syncRunRetentionDays,
   );
-  backend.pruneOperationalData.addEnvironment(
-    "PREDICTION_JOB_RETENTION_DAYS",
-    config.predictionJobRetentionDays,
-  );
 
   new events.Rule(stack, "OperationalRetentionSchedule", {
     schedule: events.Schedule.rate(Duration.days(1)),

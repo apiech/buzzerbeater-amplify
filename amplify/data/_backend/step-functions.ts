@@ -11,6 +11,9 @@ type StartStateMachineExecutionArgs = {
   stateMachineArn: string;
 };
 
+const MAX_EXECUTION_NAME_LENGTH = 80;
+const MAX_PREFIX_LENGTH = 24;
+const DIGEST_LENGTH = 12;
 const clientCache = new Map<string, SFNClient>();
 
 export async function startStateMachineExecution(
@@ -35,15 +38,23 @@ export async function startStateMachineExecution(
 }
 
 export function buildExecutionName(prefix: string, key: string): string {
-  const normalizedPrefix = normalizeNameSegment(prefix, 24);
-  const normalizedKey = normalizeNameSegment(key, 48);
-  const candidate = `${normalizedPrefix}-${normalizedKey}`.replace(/^-+|-+$/g, "");
-  if (candidate.length <= 80) {
+  const normalizedPrefix = normalizeNameSegment(prefix, MAX_PREFIX_LENGTH);
+  const normalizedKey = normalizeNameSegment(key);
+  const candidate = joinExecutionNameSegments(normalizedPrefix, normalizedKey);
+  if (candidate.length <= MAX_EXECUTION_NAME_LENGTH) {
     return candidate;
   }
 
-  const digest = createHash("sha1").update(candidate).digest("hex").slice(0, 12);
-  return `${normalizedPrefix}-${digest}`;
+  const digest = createHash("sha1").update(candidate).digest("hex").slice(0, DIGEST_LENGTH);
+  const maxReadableKeyLength = Math.max(
+    1,
+    MAX_EXECUTION_NAME_LENGTH - normalizedPrefix.length - digest.length - 2,
+  );
+  return joinExecutionNameSegments(
+    normalizedPrefix,
+    truncateNormalizedNameSegment(normalizedKey, maxReadableKeyLength),
+    digest,
+  );
 }
 
 function getClient(region?: string): SFNClient {
@@ -58,12 +69,22 @@ function getClient(region?: string): SFNClient {
   return client;
 }
 
-function normalizeNameSegment(value: string, maxLength: number): string {
+function normalizeNameSegment(value: string, maxLength?: number): string {
   const normalized = value
     .trim()
     .replace(/[^A-Za-z0-9_-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 
-  return (normalized || "execution").slice(0, maxLength);
+  const compact = normalized || "execution";
+  return typeof maxLength === "number" ? compact.slice(0, maxLength) : compact;
+}
+
+function truncateNormalizedNameSegment(value: string, maxLength: number): string {
+  const truncated = value.slice(0, maxLength).replace(/-+$/g, "");
+  return truncated || "execution";
+}
+
+function joinExecutionNameSegments(...segments: string[]): string {
+  return segments.filter(Boolean).join("-").replace(/^-+|-+$/g, "");
 }

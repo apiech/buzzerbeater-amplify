@@ -1,5 +1,11 @@
 import type { Schema } from "@/amplify/data/resource";
 import type { PlanId } from "@/lib/billing/plans";
+import type {
+  CurrentPredictionForecastContextShape,
+  CurrentPredictionPreviewShape,
+  PredictionEndpointTacticsGrid,
+  PredictionGridCellShape,
+} from "@/lib/prediction/contracts";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -32,7 +38,7 @@ export type UserPreferenceRecord = Schema["UserPreference"]["type"];
 export type OperationsActivity = {
   gameDayRecaps: GameDayRecapRecord[];
   leagueGameDayRecaps: LeagueGameDayRecapRecord[];
-  predictionJobs: PredictionJobRecord[];
+  currentPrediction: CurrentPredictionPreview | null;
   singleGameSummaries: SingleGameSummaryRecord[];
   syncRuns: SyncRunRecord[];
 };
@@ -304,7 +310,7 @@ export type DashboardWorkspace = {
   syncedAt: string | null;
 };
 
-export type ManualPredictionInput = {
+export type PredictionInput = {
   home_outsideScoring: number;
   home_insideScoring: number;
   home_outsideDefense: number;
@@ -317,10 +323,6 @@ export type ManualPredictionInput = {
   away_insideDefense: number;
   away_rebounding: number;
   away_offensiveFlow: number;
-  home_offStrategy: string;
-  home_defStrategy: string;
-  away_offStrategy: string;
-  away_defStrategy: string;
   home_gdp_focus: string;
   home_gdp_pace: string;
   away_gdp_focus: string;
@@ -341,7 +343,33 @@ export type PredictionForecastContext = {
   sourceTeamId: string;
 };
 
-export type ConnectedPredictionInput = {
+export type PredictionSourceSelection = {
+  homeSourceMatchId: string;
+  awaySourceMatchId: string;
+};
+
+export type PredictionForecastAppliedValues = {
+  effortDelta: number;
+};
+
+export type PredictionSubmissionRequest = {
+  input: PredictionInput;
+  forecastContext?: PredictionForecastContext;
+};
+
+export type PredictionForecastPrefill = {
+  context: PredictionForecastContext;
+  appliedValues: PredictionForecastAppliedValues;
+  previousValues: PredictionForecastAppliedValues;
+};
+
+export type PredictionDraftState = {
+  input: PredictionInput;
+  forecastPrefill: PredictionForecastPrefill | null;
+  sourceSelection: PredictionSourceSelection;
+};
+
+export type LegacyConnectedPredictionInput = {
   homeSourceMatchId?: string;
   awaySourceMatchId?: string;
   homeTeamId?: string | null;
@@ -357,70 +385,12 @@ export type ConnectedPredictionInput = {
   neutral?: string;
   effortDelta?: number;
   forecastContext?: PredictionForecastContext;
-  manualFallback?: ManualPredictionInput;
+  manualFallback?: PredictionInput;
 };
 
-export type PredictionSubmissionMode = "MANUAL" | "CONNECTED";
-export type PredictionConnectedSelection = {
-  homeSourceMatchId: string;
-  awaySourceMatchId: string;
-};
+export type PredictionGridCell = PredictionGridCellShape;
 
-export type PredictionConnectedOverrides = {
-  home_offStrategy?: string;
-  home_defStrategy?: string;
-  away_offStrategy?: string;
-  away_defStrategy?: string;
-  home_gdp_focus?: string;
-  home_gdp_pace?: string;
-  away_gdp_focus?: string;
-  away_gdp_pace?: string;
-  neutral?: string;
-  effortDelta?: number;
-};
-
-export type PredictionForecastPrefill = {
-  context: PredictionForecastContext;
-  overrides: {
-    away_offStrategy: string;
-    away_defStrategy: string;
-    away_gdp_focus: string;
-    away_gdp_pace: string;
-    effortDelta: number;
-  };
-};
-
-export type PredictionDraftState = {
-  mode: PredictionSubmissionMode;
-  manualInput: ManualPredictionInput;
-  connectedSelection: PredictionConnectedSelection;
-  connectedOverrides: PredictionConnectedOverrides;
-  forecastPrefill: PredictionForecastPrefill | null;
-};
-
-export type PredictionSubmissionRequest =
-  | {
-      mode: "MANUAL";
-      manualInput: ManualPredictionInput;
-    }
-  | {
-      mode: "CONNECTED";
-      connectedInput: ConnectedPredictionInput;
-    };
-
-export type PredictionGridCell = {
-  homeOffense: string;
-  awayDefense: string;
-  homeScore: number | null;
-  awayScore: number | null;
-  pointDiff: number | null;
-};
-
-export type PredictionTacticsGrid = {
-  offenses: string[];
-  defenses: string[];
-  cells: PredictionGridCell[][];
-};
+export type PredictionTacticsGrid = PredictionEndpointTacticsGrid;
 
 export type PredictionResult = {
   homeScore: number;
@@ -429,3 +399,8 @@ export type PredictionResult = {
   modelVersion: string;
   tacticsGrid?: PredictionTacticsGrid;
 };
+
+export type CurrentPredictionForecastContext =
+  CurrentPredictionForecastContextShape;
+
+export type CurrentPredictionPreview = CurrentPredictionPreviewShape;

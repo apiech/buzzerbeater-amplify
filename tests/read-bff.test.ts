@@ -76,15 +76,64 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
         },
       },
       PredictionJob: {
+        get: async (input: Record<string, unknown>) => {
+          calls.push({ model: "PredictionJob.get", input });
+          return {
+            data: {
+              awayScore: 94.8,
+              away_gdp_focus: "N/A",
+              away_gdp_pace: "N/A",
+              away_insideDefense: 7,
+              away_insideScoring: 7,
+              away_offensiveFlow: 7,
+              away_outsideDefense: 7,
+              away_outsideScoring: 7,
+              away_rebounding: 7,
+              effortDelta: 0,
+              home_gdp_focus: "N/A",
+              home_gdp_pace: "N/A",
+              home_insideDefense: 8,
+              home_insideScoring: 8,
+              home_offensiveFlow: 8,
+              home_outsideDefense: 8,
+              home_outsideScoring: 8,
+              home_rebounding: 8,
+              homeScore: 101.3,
+              neutral: "0",
+              pointDiff: 6.5,
+              requestId: "request-1",
+              requestedAt: "2026-03-15T09:15:00.000Z",
+              status: "QUEUED",
+              updatedAt: "2026-03-15T09:16:00.000Z",
+              userId: "user-1",
+            },
+          };
+        },
         list: async () => {
           throw new Error("PredictionJob.list must not be used");
         },
-        listPredictionJobsByUserAndRequestedAt: async (
+      },
+      PredictionGridCell: {
+        listPredictionGridCellsByUserIdAndRequestId: async (
           input: Record<string, unknown>,
           options?: Record<string, unknown>,
         ) => {
-          calls.push({ model: "PredictionJob", input, options });
-          return { data: [{ id: "job-1", userId: "user-1", status: "QUEUED", mode: "MANUAL" }] };
+          calls.push({
+            model: "PredictionGridCell.listPredictionGridCellsByUserIdAndRequestId",
+            input,
+            options,
+          });
+          return {
+            data: [
+              {
+                awayDefense: "ManToMan",
+                awayScore: 94.8,
+                homeOffense: "Base",
+                homeScore: 101.3,
+                pointDiff: 6.5,
+              },
+            ],
+          };
         },
       },
       SingleGameSummary: {
@@ -119,9 +168,8 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
       options: { limit: 3, sortDirection: "DESC" },
     },
     {
-      model: "PredictionJob",
+      model: "PredictionJob.get",
       input: { userId: "user-1" },
-      options: { limit: 3, sortDirection: "DESC" },
     },
     {
       model: "GameDayRecap",
@@ -138,59 +186,111 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
       input: { userId: "user-1" },
       options: { limit: 3, sortDirection: "DESC" },
     },
+    {
+      model: "PredictionGridCell.listPredictionGridCellsByUserIdAndRequestId",
+      input: { requestId: { eq: "request-1" }, userId: "user-1" },
+      options: { limit: 100, sortDirection: "ASC" },
+    },
   ]);
   assert.equal((result.data as { syncRuns: Array<unknown> }).syncRuns.length, 1);
   assert.equal(
-    (result.data as { predictionJobs: Array<{ id: string }> }).predictionJobs[0]?.id,
-    "job-1",
+    (
+      result.data as {
+        currentPrediction:
+          | {
+              requestId: string;
+              tacticsGrid?: { cells: unknown[] };
+            }
+          | null;
+      }
+    ).currentPrediction?.requestId,
+    "request-1",
+  );
+  assert.equal(
+    (
+      result.data as {
+        currentPrediction:
+          | {
+              tacticsGrid?: { cells: unknown[] };
+            }
+          | null;
+      }
+    ).currentPrediction?.tacticsGrid?.cells.length,
+    6,
   );
 });
 
-test("getPredictionHistory uses the owner index instead of a first-page scan", async (t) => {
-  const queryCalls: Array<{
-    input: Record<string, unknown>;
-    options?: Record<string, unknown>;
-  }> = [];
+test("getCurrentPrediction reads the owner-keyed preview via get", async (t) => {
+  const getCalls: Array<Record<string, unknown>> = [];
 
   installServerDataClient(t, {
     models: {
       PredictionJob: {
-        list: async () => {
-          throw new Error("PredictionJob.list must not be used");
-        },
-        listPredictionJobsByUserAndRequestedAt: async (
-          input: Record<string, unknown>,
-          options?: Record<string, unknown>,
-        ) => {
-          queryCalls.push({ input, options });
+        get: async (input: Record<string, unknown>) => {
+          getCalls.push(input);
           return {
-            data: [{ id: "job-1", userId: "user-1", status: "SUCCEEDED", mode: "MANUAL" }],
-            nextToken: "jobs-page-2",
+            data: {
+              awayScore: null,
+              away_gdp_focus: "N/A",
+              away_gdp_pace: "N/A",
+              away_insideDefense: 7,
+              away_insideScoring: 7,
+              away_offensiveFlow: 7,
+              away_outsideDefense: 7,
+              away_outsideScoring: 7,
+              away_rebounding: 7,
+              effortDelta: 0,
+              home_gdp_focus: "N/A",
+              home_gdp_pace: "N/A",
+              home_insideDefense: 8,
+              home_insideScoring: 8,
+              home_offensiveFlow: 8,
+              home_outsideDefense: 8,
+              home_outsideScoring: 8,
+              home_rebounding: 8,
+              homeScore: null,
+              neutral: "0",
+              pointDiff: null,
+              requestId: "request-1",
+              status: "SUCCEEDED",
+              requestedAt: "2026-03-15T09:15:00.000Z",
+              updatedAt: "2026-03-15T09:16:00.000Z",
+              userId: "user-1",
+            },
           };
         },
       },
-    },
-  });
-
-  const result = await runReadOperation("getPredictionHistory", "user-1", {
-    limit: 12,
-    nextToken: "jobs-page-1",
-  });
-
-  assert.deepStrictEqual(queryCalls, [
-    {
-      input: { userId: "user-1" },
-      options: {
-        limit: 12,
-        nextToken: "jobs-page-1",
-        sortDirection: "DESC",
+      PredictionGridCell: {
+        listPredictionGridCellsByUserIdAndRequestId: async () => ({
+          data: [
+            {
+              awayDefense: "ManToMan",
+              awayScore: 95,
+              homeOffense: "Base",
+              homeScore: 101,
+              pointDiff: 6,
+            },
+          ],
+        }),
       },
     },
-  ]);
-  assert.deepStrictEqual(result.data, {
-    items: [{ id: "job-1", userId: "user-1", status: "SUCCEEDED", mode: "MANUAL" }],
-    nextToken: "jobs-page-2",
   });
+
+  const result = await runReadOperation("getCurrentPrediction", "user-1");
+
+  assert.deepStrictEqual(getCalls, [{ userId: "user-1" }]);
+  assert.equal(
+    (result.data as { requestId?: string } | null)?.requestId,
+    "request-1",
+  );
+  assert.equal(
+    (
+      result.data as {
+        tacticsGrid?: { cells: Array<Array<{ pointDiff: number | null }>> };
+      } | null
+    )?.tacticsGrid?.cells[0]?.[0]?.pointDiff,
+    6,
+  );
 });
 
 test("getRecapHistory merges owner-scoped recap streams and returns a continuation token", async (t) => {
@@ -276,4 +376,6 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
 
 test("removed lineup scenario reads are no longer exposed from the read surface", () => {
   assert.equal(isReadName("getSavedLineupScenarios"), false);
+  assert.equal(isReadName("getPredictionHistory"), false);
+  assert.equal(isReadName("getCurrentPrediction"), true);
 });
