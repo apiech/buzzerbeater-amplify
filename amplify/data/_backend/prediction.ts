@@ -374,10 +374,16 @@ function buildPredictionGridCellRecords(args: {
 }): PredictionGridCellRecord[] {
   const records: PredictionGridCellRecord[] = [];
 
-  for (const [rowIndex, awayDefense] of args.grid.defenses.entries()) {
+  for (let rowIndex = 0; rowIndex < args.grid.defenses.length; rowIndex += 1) {
+    const awayDefense = args.grid.defenses[rowIndex];
     const row = args.grid.cells[rowIndex] ?? [];
 
-    for (const [columnIndex, homeOffense] of args.grid.offenses.entries()) {
+    for (
+      let columnIndex = 0;
+      columnIndex < args.grid.offenses.length;
+      columnIndex += 1
+    ) {
+      const homeOffense = args.grid.offenses[columnIndex];
       const cell = row[columnIndex];
       if (!cell) {
         continue;
