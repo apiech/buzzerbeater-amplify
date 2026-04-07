@@ -22,6 +22,7 @@ type BillingBackend = {
   createStack(name: string): Stack;
   gameDayRecapSubmit: FunctionResource;
   getBillingSummary: FunctionResource;
+  opponentForecastSubmit: FunctionResource;
   predictionSubmit: FunctionResource;
   submitLeagueGameDayRecap: FunctionResource;
   submitMyTeamHighlightsScan: FunctionResource;
@@ -42,6 +43,10 @@ export function configureBillingIntegration(
       config.defaultPlanId,
     );
     backend.gameDayRecapSubmit.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      config.defaultPlanId,
+    );
+    backend.opponentForecastSubmit.addEnvironment(
       "BILLING_DEFAULT_PLAN",
       config.defaultPlanId,
     );

@@ -52,6 +52,7 @@ test("billing integration wires the environment default into premium-gated lambd
   );
 
   assert.match(source, /getBillingSummary\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /opponentForecastSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
   assert.match(source, /predictionSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
   assert.match(source, /gameDayRecapSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
   assert.match(source, /submitMyTeamHighlightsScan\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
