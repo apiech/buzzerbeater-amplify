@@ -7,6 +7,9 @@ import {
   processLeagueHistoryBackfill,
   submitLeagueHistoryBackfill,
 } from "../amplify/data/_backend/league-history";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 import type {
   LeagueHistoryBackfillRecord,
   LeagueHistoryStandingCacheRecord,

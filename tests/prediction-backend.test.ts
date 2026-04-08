@@ -6,6 +6,9 @@ import {
   processPredictionJob,
   submitPredictionJob,
 } from "../amplify/data/_backend/prediction";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 
 const predictionInput = {
   home_outsideScoring: 8,

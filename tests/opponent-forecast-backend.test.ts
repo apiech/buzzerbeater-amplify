@@ -8,6 +8,9 @@ import {
   normalizeOpponentForecastResult,
   submitOpponentForecastJob,
 } from "../amplify/data/_backend/opponent-forecast";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(currentDir, "..");

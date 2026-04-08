@@ -7,6 +7,9 @@ import {
   listAccessibleMatches,
   type MatchCatalogRecord,
 } from "../amplify/data/_backend/match-store";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 
 function createDependencies(overrides: Partial<any> = {}): any {
   return {

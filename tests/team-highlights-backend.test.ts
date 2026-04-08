@@ -6,6 +6,9 @@ import {
   submitMyTeamHighlightsScan,
 } from "../amplify/data/_backend/team-highlights";
 import { buildExecutionName } from "../amplify/data/_backend/step-functions";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 
 function createMoment(index: number, overrides: Record<string, unknown> = {}) {
   return {

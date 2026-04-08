@@ -16,6 +16,9 @@ import {
   lookupSharedPlayerCardByToken,
   revokePlayerCard,
 } from "../amplify/data/_backend/workspace";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(currentDir, "..");

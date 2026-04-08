@@ -10,6 +10,9 @@ import {
   listBillingPayments,
   setBillingOverride,
 } from "../amplify/data/_backend/billing";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 
 function signStripePayload(
   body: string,

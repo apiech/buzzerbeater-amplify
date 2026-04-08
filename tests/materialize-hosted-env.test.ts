@@ -48,14 +48,14 @@ test("writeHostedRuntimeEnvFile overwrites stale env contents", () => {
 
     writeHostedRuntimeEnvFile(envFilePath, {
       APP_BASE_URL: "https://bringmeacat.com",
-      USER: "karey",
+      AWS_BRANCH: "main",
       NEXT_PUBLIC_ANALYTICS_ID: "analytics-456",
     });
 
     const written = readFileSync(envFilePath, "utf8");
     assert.match(written, /^APP_BASE_URL=https:\/\/bringmeacat\.com$/m);
     assert.match(written, /^AMPLIFY_APP_ORIGIN=https:\/\/bringmeacat\.com$/m);
-    assert.match(written, /^MAINTENANCE_ENVIRONMENT_NAME=sandbox-karey$/m);
+    assert.match(written, /^MAINTENANCE_ENVIRONMENT_NAME=prod$/m);
     assert.match(written, /^NEXT_PUBLIC_ANALYTICS_ID=analytics-456$/m);
     assert.doesNotMatch(written, /^STALE=true$/m);
   } finally {

@@ -396,6 +396,10 @@ function classifySsmError(error: unknown): "missing" | "transient" | "other" {
     typeof error === "object" && error && "name" in error
       ? String((error as { name?: unknown }).name ?? "")
       : "";
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : "";
   const statusCode =
     typeof error === "object" &&
     error &&
@@ -414,15 +418,31 @@ function classifySsmError(error: unknown): "missing" | "transient" | "other" {
 
   if (
     new Set([
+      "AccessDenied",
+      "AccessDeniedException",
+      "AuthFailure",
+      "ExpiredTokenException",
       "InternalServerError",
+      "InvalidSignatureException",
       "NetworkingError",
       "RequestTimeout",
       "ServiceUnavailableException",
       "ThrottlingException",
       "TimeoutError",
       "TooManyRequestsException",
+      "UnauthorizedException",
+      "UnauthorizedOperation",
+      "UnrecognizedClientException",
     ]).has(name)
   ) {
+    return "transient";
+  }
+
+  if (message && /access denied|not authorized|unauthorized/i.test(message)) {
+    return "transient";
+  }
+
+  if (statusCode === 401 || statusCode === 403) {
     return "transient";
   }
 

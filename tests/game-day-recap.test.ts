@@ -11,6 +11,9 @@ import {
   submitLeagueGameDayRecap,
   submitSingleGameSummary,
 } from "../amplify/data/_backend/game-day-recap";
+import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
+
+installInactiveMaintenanceRuntime();
 import { requireFeatureAccess } from "../amplify/data/_backend/billing";
 import type {
   BBApiBoxScore,

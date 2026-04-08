@@ -165,3 +165,36 @@ test("maintenance control plane serves last known good state on transient SSM fa
     restore();
   }
 });
+
+test("maintenance control plane fails open when read access is denied", async () => {
+  const restore = maintenanceTesting.installRuntime({
+    getParameter: async () => {
+      const error = new Error(
+        "User is not authorized to perform ssm:GetParameter.",
+      ) as Error & {
+        $metadata?: { httpStatusCode?: number };
+        name: string;
+      };
+      error.name = "AccessDeniedException";
+      error.$metadata = {
+        httpStatusCode: 403,
+      };
+      throw error;
+    },
+  });
+
+  try {
+    const state = await getMaintenanceState({
+      AWS_REGION: "us-east-1",
+      MAINTENANCE_ENVIRONMENT_NAME: "dev",
+    });
+
+    assert.equal(state.active, false);
+    assert.equal(state.document, null);
+    assert.equal(state.environmentName, "dev");
+    assert.equal(state.parameterName, "/buzzerbeater/site-control/dev/current");
+    assert.equal(state.stale, true);
+  } finally {
+    restore();
+  }
+});
