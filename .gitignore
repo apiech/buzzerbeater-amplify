@@ -22,6 +22,7 @@
 
 # misc
 .DS_Store
+.eslintcache*
 *.pem
 *.swp
 *.swo
@@ -38,7 +39,7 @@ yarn-error.log*
 .vercel
 
 # typescript
-*.tsbuildinfo
+*.tsbuildinfo*
 next-env.d.ts
 
 # amplify
