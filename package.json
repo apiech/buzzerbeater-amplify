@@ -23,6 +23,7 @@
     "dev:opponent-forecast": "node --import tsx ./scripts/deploy-workflow.ts dev:opponent-forecast",
     "dev:prepare": "node --import tsx ./scripts/deploy-workflow.ts dev:prepare",
     "hosted:prepare-env": "node --import tsx ./scripts/materialize-hosted-env.mjs",
+    "hosted:sync-compute-role": "node --import tsx ./scripts/sync-hosted-compute-role.ts",
     "check:hosted:shared-infra": "node --import tsx ./scripts/check-hosted-shared-infra.ts",
     "shared-infra:deploy:ml-data-infra": "npm --prefix ../bb-shared-infra run deploy:ml-data-infra --",
     "ap": "date && time npm run lint && date && time npm run build && date && npm run dev",

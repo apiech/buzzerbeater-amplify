@@ -38,4 +38,8 @@ test("sandbox scripts expose the happy path and raw escape hatch", () => {
     scripts["verify:deploy:sandbox"],
     "npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox",
   );
+  assert.equal(
+    scripts["hosted:sync-compute-role"],
+    "node --import tsx ./scripts/sync-hosted-compute-role.ts",
+  );
 });

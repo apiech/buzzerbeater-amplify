@@ -19,16 +19,42 @@ test("hosted readiness maps Amplify branches with the same prod logic as synth",
       "amplify:list-branches": {
         branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
-      "iam:simulate-principal-policy": {
-        EvaluationResults: [
-          { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          {
-            EvalActionName: "ssm:GetParametersByPath",
-            EvalDecision: "allowed",
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
           },
-        ],
-      },
+        },
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
       "service-quotas:get-service-quota": {
         Quota: {
           Value: 10,
@@ -44,8 +70,18 @@ test("hosted readiness maps Amplify branches with the same prod logic as synth",
   );
 
   assert.deepEqual(report.branchSummaries, [
-    { branchName: "dev", environmentName: "dev" },
-    { branchName: "main", environmentName: "prod" },
+    {
+      branchName: "dev",
+      computeRoleArn:
+        "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
+      environmentName: "dev",
+    },
+    {
+      branchName: "main",
+      computeRoleArn:
+        "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+      environmentName: "prod",
+    },
   ]);
   assert.equal(report.issues.length, 0);
 });
@@ -66,16 +102,42 @@ test("hosted readiness reports missing shared-infra parameters", () => {
       "amplify:list-branches": {
         branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
-      "iam:simulate-principal-policy": {
-        EvaluationResults: [
-          { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          {
-            EvalActionName: "ssm:GetParametersByPath",
-            EvalDecision: "allowed",
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
           },
-        ],
-      },
+        },
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
       "service-quotas:get-service-quota": {
         Quota: {
           Value: 10,
@@ -125,16 +187,42 @@ test("hosted readiness warns when the optional opponent forecast endpoint bindin
       "amplify:list-branches": {
         branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
-      "iam:simulate-principal-policy": {
-        EvaluationResults: [
-          { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          {
-            EvalActionName: "ssm:GetParametersByPath",
-            EvalDecision: "allowed",
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
           },
-        ],
-      },
+        },
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
       "service-quotas:get-service-quota": {
         Quota: {
           Value: 10,
@@ -171,6 +259,214 @@ test("hosted readiness warns when the optional opponent forecast endpoint bindin
   );
 });
 
+test("hosted readiness reports missing compute roles separately from shared-infra access", () => {
+  const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
+    {
+      appId: "d2ckw6mf5kdema",
+    },
+    createRuntime({
+      "amplify:get-app": {
+        app: {
+          iamServiceRoleArn:
+            "arn:aws:iam::427377913956:role/service-role/AmplifySSRLoggingRole-example",
+          name: "buzzerbeater-amplify",
+        },
+      },
+      "amplify:list-branches": {
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
+      },
+      "amplify:get-branch": [{ branch: {} }, { branch: {} }],
+      "iam:simulate-principal-policy": {
+        EvaluationResults: [
+          { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+          { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          {
+            EvalActionName: "ssm:GetParametersByPath",
+            EvalDecision: "allowed",
+          },
+        ],
+      },
+      "service-quotas:get-service-quota": {
+        Quota: {
+          Value: 10,
+        },
+      },
+      "sagemaker:list-endpoints": {
+        Endpoints: [],
+      },
+      "ssm:get-parameters": {
+        InvalidParameters: [],
+      },
+    }),
+  );
+
+  assert.match(
+    report.issues.join("\n"),
+    /computeRoleArn configured for SSR runtime access/,
+  );
+});
+
+test("hosted readiness reports dead custom-domain redirects", () => {
+  const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
+    {
+      appId: "d2ckw6mf5kdema",
+    },
+    createRuntime({
+      "amplify:get-app": {
+        app: {
+          customRules: [
+            {
+              source: "https://bringmeacat.com",
+              status: "302",
+              target: "https://www.bringmeacat.com",
+            },
+          ],
+          environmentVariables: {
+            APP_BASE_URL: "https://bringmeacat.com",
+          },
+          iamServiceRoleArn:
+            "arn:aws:iam::427377913956:role/service-role/AmplifySSRLoggingRole-example",
+          name: "buzzerbeater-amplify",
+        },
+      },
+      "amplify:list-branches": {
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
+      },
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
+          },
+        },
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
+      "service-quotas:get-service-quota": {
+        Quota: {
+          Value: 10,
+        },
+      },
+      "sagemaker:list-endpoints": {
+        Endpoints: [],
+      },
+      "ssm:get-parameters": {
+        InvalidParameters: [],
+      },
+    }),
+  );
+
+  assert.match(
+    report.issues.join("\n"),
+    /redirects to 'www\.bringmeacat\.com', but no custom domain association configures that host/,
+  );
+  assert.match(
+    report.issues.join("\n"),
+    /redirects the APP_BASE_URL host 'bringmeacat\.com' to 'www\.bringmeacat\.com'/,
+  );
+});
+
+test("hosted readiness reports APP_BASE_URL hosts outside Amplify custom domains", () => {
+  const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
+    {
+      appId: "d2ckw6mf5kdema",
+    },
+    createRuntime({
+      "amplify:get-app": {
+        app: {
+          environmentVariables: {
+            APP_BASE_URL: "https://app.example.com",
+          },
+          iamServiceRoleArn:
+            "arn:aws:iam::427377913956:role/service-role/AmplifySSRLoggingRole-example",
+          name: "buzzerbeater-amplify",
+        },
+      },
+      "amplify:list-branches": {
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
+      },
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
+          },
+        },
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
+      "service-quotas:get-service-quota": {
+        Quota: {
+          Value: 10,
+        },
+      },
+      "sagemaker:list-endpoints": {
+        Endpoints: [],
+      },
+      "ssm:get-parameters": {
+        InvalidParameters: [],
+      },
+    }),
+  );
+
+  assert.match(
+    report.issues.join("\n"),
+    /APP_BASE_URL points at 'app\.example\.com', but no Amplify custom domain association configures that host/,
+  );
+});
+
 test("hosted readiness reports quota blockers when sandbox exceeds its intended allocation", () => {
   const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
     {
@@ -187,16 +483,42 @@ test("hosted readiness reports quota blockers when sandbox exceeds its intended 
       "amplify:list-branches": {
         branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
-      "iam:simulate-principal-policy": {
-        EvaluationResults: [
-          { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          {
-            EvalActionName: "ssm:GetParametersByPath",
-            EvalDecision: "allowed",
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
           },
-        ],
-      },
+        },
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
       "service-quotas:get-service-quota": {
         Quota: {
           Value: 10,
@@ -232,8 +554,8 @@ test("hosted readiness reports quota blockers when sandbox exceeds its intended 
   );
 });
 
-test("hosted readiness guidance includes maintenance control plane SSM access", () => {
-  const policy = hostedCheckTesting.buildRequiredPolicyDocument(
+test("hosted shared-infra guidance only targets shared ML infra parameters", () => {
+  const policy = hostedCheckTesting.buildHostedSharedInfraPolicyDocument(
     "us-east-1",
   ) as {
     Statement?: Array<{ Resource?: unknown }>;
@@ -245,17 +567,53 @@ test("hosted readiness guidance includes maintenance control plane SSM access", 
 
   assert.deepEqual(resources, [
     "arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*",
-    "arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/site-control/*",
   ]);
+});
+
+test("hosted compute role guidance targets the maintenance control parameter for the branch environment", () => {
+  const policy = hostedCheckTesting.buildHostedComputePolicyDocument(
+    "prod",
+    "us-east-1",
+  ) as {
+    Statement?: Array<{ Resource?: unknown }>;
+  };
+  const firstStatement = policy.Statement?.[0];
+
+  assert.equal(
+    firstStatement?.Resource,
+    "arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/site-control/prod/current",
+  );
 });
 
 function createRuntime(fixtures: Record<string, unknown | unknown[]>) {
   const callCounts = new Map<string, number>();
+  const defaultFixtures: Record<string, unknown> = {
+    "amplify:list-domain-associations": {
+      domainAssociations: [
+        {
+          domainName: "bringmeacat.com",
+          subDomains: [
+            {
+              subDomainSetting: {
+                branchName: "main",
+              },
+            },
+            {
+              subDomainSetting: {
+                prefix: "dev",
+                branchName: "dev",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
 
   return {
     execAwsJson(args: string[]) {
       const key = `${args[0]}:${args[1]}`;
-      const fixture = fixtures[key];
+      const fixture = fixtures[key] ?? defaultFixtures[key];
       if (fixture === undefined) {
         throw new Error(`Unexpected AWS CLI call: ${key}`);
       }

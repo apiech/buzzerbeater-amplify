@@ -7,6 +7,11 @@ import {
   type MaintenanceDocument,
   type MaintenanceState,
 } from "@/lib/maintenance/control-plane";
+import {
+  buildMaintenanceParameterName,
+  readMaintenanceRuntimeEnv,
+  resolveMaintenanceEnvironmentName,
+} from "@/lib/maintenance/environment";
 
 type MaintenanceApiPayload = {
   data: null;
@@ -20,11 +25,22 @@ type MaintenanceApiPayload = {
 };
 
 export const __testing = {
+  createFailOpenMaintenanceState,
   getMaintenanceState,
 };
 
 export async function getServerMaintenanceState(): Promise<MaintenanceState> {
-  return getMaintenanceState();
+  const env = readMaintenanceRuntimeEnv();
+
+  try {
+    return await getMaintenanceState(env);
+  } catch (error) {
+    console.error(
+      "[maintenance] Failed to read maintenance state in server runtime. Failing open.",
+      error,
+    );
+    return createFailOpenMaintenanceState(env);
+  }
 }
 
 export async function redirectToStatusIfMaintenanceActive(): Promise<void> {
@@ -73,6 +89,19 @@ export function toMaintenanceApiResponse(error: unknown): NextResponse | null {
   }
 
   return createMaintenanceApiResponse(error.document);
+}
+
+function createFailOpenMaintenanceState(
+  env: Record<string, string | undefined> = readMaintenanceRuntimeEnv(),
+): MaintenanceState {
+  const environmentName = resolveMaintenanceEnvironmentName(env);
+  return {
+    active: false,
+    document: null,
+    environmentName,
+    parameterName: buildMaintenanceParameterName(environmentName),
+    stale: true,
+  };
 }
 
 function readRequestUrl(

@@ -7,6 +7,7 @@ import {
   __testing as synthEnvTesting,
   resolveAuthAppOrigin,
   resolveBillingConfig,
+  resolveHostedBranchConfig,
   resolveSharedEnvironmentName,
 } from "../amplify/_shared/synth-env";
 
@@ -55,6 +56,29 @@ test("shared synth env resolves the environment name from explicit override, bra
       },
     ),
     "sandbox-karey-local",
+  );
+});
+
+test("shared synth env resolves hosted branch config only when Amplify app and branch identity are present", () => {
+  assert.deepEqual(
+    resolveHostedBranchConfig({
+      AWS_APP_ID: "d2ckw6mf5kdema",
+      AWS_BRANCH: "main",
+      AWS_REGION: "us-east-1",
+    }),
+    {
+      appId: "d2ckw6mf5kdema",
+      branchName: "main",
+      environmentName: "prod",
+      region: "us-east-1",
+    },
+  );
+
+  assert.equal(
+    resolveHostedBranchConfig({
+      AWS_BRANCH: "dev",
+    }),
+    null,
   );
 });
 

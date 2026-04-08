@@ -405,7 +405,8 @@ export function renderReadmeEnvSection() {
     "  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.",
     "  - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.",
     "  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.",
-    "  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on both `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*` and `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/site-control/*`.",
+    "  - Hosted backend deploys require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.",
+    "  - Hosted SSR runtime requires each Amplify branch compute role to have `ssm:GetParameter` on `/buzzerbeater/site-control/<env>/current`. The hosted backend stack now provisions that role and attaches it to the current branch during deploy.",
     "- Imported runtime bindings",
     ...envContract.generated.map(
       (entry) => `  - \`${entry.name}\`: ${entry.purpose}`,

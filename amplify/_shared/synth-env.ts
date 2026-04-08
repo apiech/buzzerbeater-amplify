@@ -70,11 +70,19 @@ export type OperationalRetentionSynthConfig = {
   syncRunRetentionDays: string;
 };
 
+export type HostedBranchConfig = {
+  appId: string;
+  branchName: string;
+  environmentName: string;
+  region: string;
+};
+
 export const __testing = {
   createDefaultRuntime,
   resetCachedState,
   readSharedInfraBindingsFromRuntime,
   resolveAppResourceRemovalPolicy,
+  resolveHostedBranchConfig,
   resolveSharedEnvironmentName,
 };
 
@@ -285,6 +293,25 @@ export function resolveAppResourceRemovalPolicy(): RemovalPolicy {
   return resolveSharedEnvironmentName() === "prod"
     ? RemovalPolicy.RETAIN
     : RemovalPolicy.DESTROY;
+}
+
+export function resolveHostedBranchConfig(
+  env: Record<string, string | undefined> = process.env,
+): HostedBranchConfig | null {
+  loadLocalSynthEnv();
+
+  const appId = normalizeOptionalString(env.AWS_APP_ID);
+  const branchName = normalizeOptionalString(env.AWS_BRANCH);
+  if (!appId || !branchName) {
+    return null;
+  }
+
+  return {
+    appId,
+    branchName,
+    environmentName: branchToEnvironmentName(branchName),
+    region: resolveAwsRegion(env),
+  };
 }
 
 function createMaintenanceControlPlaneConfig(

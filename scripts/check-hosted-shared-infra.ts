@@ -33,13 +33,16 @@ const INTENDED_ENDPOINT_ALLOCATIONS = [
     maxConcurrency: 5,
   },
 ] as const;
-const REQUIRED_POLICY_ACTIONS = [
+const SHARED_INFRA_POLICY_ACTIONS = [
   "ssm:GetParameter",
   "ssm:GetParameters",
   "ssm:GetParametersByPath",
 ] as const;
-const REQUIRED_POLICY_NAME = "BuzzerBeaterHostedSsmRead";
-const REQUIRED_POLICY_SID = "ReadHostedRuntimeParameters";
+const SHARED_INFRA_POLICY_NAME = "BuzzerBeaterHostedSharedInfraSsmRead";
+const SHARED_INFRA_POLICY_SID = "ReadHostedSharedInfraParameters";
+const SSR_COMPUTE_POLICY_ACTIONS = ["ssm:GetParameter"] as const;
+const SSR_COMPUTE_POLICY_NAME = "BuzzerBeaterHostedRuntimeMaintenanceRead";
+const SSR_COMPUTE_POLICY_SID = "ReadHostedMaintenanceParameter";
 const SAGEMAKER_SERVERLESS_TOTAL_CONCURRENCY_QUOTA_CODE = "L-96300102";
 const OPTIONAL_SHARED_INFRA_BINDING_KEYS = new Set<keyof SharedInfraBindings>([
   "opponentForecastEndpointName",
@@ -52,7 +55,19 @@ type AwsCliRuntime = {
 
 type HostedBranchSummary = {
   branchName: string;
+  computeRoleArn: string | null;
   environmentName: string;
+};
+
+type HostedCustomRule = {
+  source: string | null;
+  status: string | null;
+  target: string | null;
+};
+
+type HostedDomainAssociation = {
+  configuredHosts: string[];
+  domainName: string;
 };
 
 type ParameterCheck = {
@@ -85,10 +100,11 @@ export type HostedSharedInfraReport = {
   appId: string;
   appName: string;
   branchSummaries: HostedBranchSummary[];
+  computeRoleChecks: BranchComputeRoleCheck[];
   issues: string[];
   parameterChecks: ParameterCheck[];
   quota: number;
-  roleAccess: RoleAccessCheck;
+  serviceRoleAccess: RoleAccessCheck;
   serviceRoleArn: string | null;
   warnings: string[];
 };
@@ -99,12 +115,27 @@ export type HostedSharedInfraOptions = {
 };
 
 export const __testing = {
-  buildRequiredPolicyDocument,
-  buildRequiredPolicyResourceArn,
+  buildHostedComputePolicyDocument,
+  buildHostedSharedInfraPolicyDocument,
+  buildHostedSharedInfraPolicyResourceArn,
   collectHostedSharedInfraReadiness,
   describeHostedBranches,
   roleNameFromArn,
 };
+
+type BranchComputeRoleCheck =
+  | {
+      branchName: string;
+      computeRoleArn: string | null;
+      issues: string[];
+      status: "missing" | "ok";
+    }
+  | {
+      branchName: string;
+      computeRoleArn: string;
+      status: "unverified";
+      warning: string;
+    };
 
 export function parseArgs(argv: string[]): HostedSharedInfraOptions {
   let appId: string | null = null;
@@ -158,6 +189,12 @@ export function collectHostedSharedInfraReadiness(
     "json",
   ]) as {
     app?: {
+      customRules?: Array<{
+        source?: string;
+        status?: string;
+        target?: string;
+      }>;
+      environmentVariables?: Record<string, string | undefined>;
       iamServiceRoleArn?: string;
       name?: string;
     };
@@ -173,6 +210,12 @@ export function collectHostedSharedInfraReadiness(
     region,
     runtime,
   );
+  const domainAssociations = describeHostedDomainAssociations(
+    options.appId,
+    region,
+    runtime,
+  );
+  const customRules = normalizeHostedCustomRules(app.customRules);
   const environmentNames = Array.from(
     new Set(branchSummaries.map((branch) => branch.environmentName)),
   );
@@ -186,6 +229,13 @@ export function collectHostedSharedInfraReadiness(
         `Shared ML infra SSM parameters are missing for '${check.environmentName}': ${check.missingPaths.join(", ")}`,
     );
   const warnings: string[] = [];
+  const domainChecks = checkHostedDomainConfiguration({
+    appBaseUrl: normalizeOptionalString(app.environmentVariables?.APP_BASE_URL),
+    customRules,
+    domainAssociations,
+  });
+  issues.push(...domainChecks.issues);
+  warnings.push(...domainChecks.warnings);
   warnings.push(
     ...parameterChecks.flatMap((check) =>
       check.missingOptionalPaths.map(
@@ -194,7 +244,7 @@ export function collectHostedSharedInfraReadiness(
       ),
     ),
   );
-  const roleAccess =
+  const serviceRoleAccess =
     serviceRoleArn === null
       ? {
           issues: [
@@ -208,11 +258,24 @@ export function collectHostedSharedInfraReadiness(
           region,
           runtime,
         );
+  const computeRoleChecks = branchSummaries.map((branchSummary) =>
+    verifyBranchComputeRoleAccess(branchSummary, region, runtime),
+  );
 
-  if (roleAccess.status === "missing") {
-    issues.push(...roleAccess.issues);
-  } else if (roleAccess.status === "unverified") {
-    warnings.push(roleAccess.warning);
+  if (serviceRoleAccess.status === "missing") {
+    issues.push(...serviceRoleAccess.issues);
+  } else if (serviceRoleAccess.status === "unverified") {
+    warnings.push(serviceRoleAccess.warning);
+  }
+
+  for (const computeRoleCheck of computeRoleChecks) {
+    if (computeRoleCheck.status === "missing") {
+      issues.push(...computeRoleCheck.issues);
+      continue;
+    }
+    if (computeRoleCheck.status === "unverified") {
+      warnings.push(computeRoleCheck.warning);
+    }
   }
 
   const { allocations, quota, quotaIssues } = checkPredictorQuota(
@@ -231,10 +294,11 @@ export function collectHostedSharedInfraReadiness(
     appId: options.appId,
     appName: normalizeOptionalString(app.name) ?? options.appId,
     branchSummaries,
+    computeRoleChecks,
     issues,
     parameterChecks,
     quota,
-    roleAccess,
+    serviceRoleAccess,
     serviceRoleArn,
     warnings,
   };
@@ -265,14 +329,88 @@ export function describeHostedBranches(
         return [];
       }
 
+      const branchPayload = runtime.execAwsJson([
+        "amplify",
+        "get-branch",
+        "--app-id",
+        appId,
+        "--branch-name",
+        branchName,
+        "--region",
+        region,
+        "--output",
+        "json",
+      ]) as {
+        branch?: {
+          computeRoleArn?: string;
+        };
+      };
+
       return [
         {
           branchName,
+          computeRoleArn: normalizeOptionalString(
+            branchPayload.branch?.computeRoleArn,
+          ),
           environmentName: branchToEnvironmentName(branchName),
         },
       ];
     })
     .sort((left, right) => left.branchName.localeCompare(right.branchName));
+}
+
+function describeHostedDomainAssociations(
+  appId: string,
+  region: string,
+  runtime: Pick<AwsCliRuntime, "execAwsJson"> = createDefaultRuntime(),
+): HostedDomainAssociation[] {
+  const payload = runtime.execAwsJson([
+    "amplify",
+    "list-domain-associations",
+    "--app-id",
+    appId,
+    "--region",
+    region,
+    "--output",
+    "json",
+  ]) as {
+    domainAssociations?: Array<{
+      domainName?: string;
+      subDomains?: Array<{
+        subDomainSetting?: {
+          prefix?: string;
+        };
+      }>;
+    }>;
+  };
+
+  return (payload.domainAssociations ?? [])
+    .flatMap((association) => {
+      const domainName = normalizeOptionalString(association.domainName);
+      if (domainName === null) {
+        return [];
+      }
+
+      const configuredHosts = Array.from(
+        new Set([
+          domainName,
+          ...(association.subDomains ?? []).flatMap((subDomain) => {
+            const prefix = normalizeOptionalString(
+              subDomain.subDomainSetting?.prefix,
+            );
+            return prefix === null ? [] : [`${prefix}.${domainName}`];
+          }),
+        ]),
+      ).sort((left, right) => left.localeCompare(right));
+
+      return [
+        {
+          configuredHosts,
+          domainName,
+        },
+      ];
+    })
+    .sort((left, right) => left.domainName.localeCompare(right.domainName));
 }
 
 export function main(argv = process.argv.slice(2)): void {
@@ -332,10 +470,9 @@ function verifyServiceRoleSsmAccess(
   region: string,
   runtime: Pick<AwsCliRuntime, "execAwsJson">,
 ): RoleAccessCheck {
-  const representativeResources = environmentNames.map((environmentName) => [
+  const representativeResources = environmentNames.map((environmentName) =>
     buildRepresentativeParameterArn(environmentName, region),
-    buildRepresentativeMaintenanceParameterArn(environmentName, region),
-  ]);
+  );
 
   try {
     const payload = runtime.execAwsJson([
@@ -344,9 +481,9 @@ function verifyServiceRoleSsmAccess(
       "--policy-source-arn",
       serviceRoleArn,
       "--action-names",
-      ...REQUIRED_POLICY_ACTIONS,
+      ...SHARED_INFRA_POLICY_ACTIONS,
       "--resource-arns",
-      ...representativeResources.flat(),
+      ...representativeResources,
       "--output",
       "json",
     ]) as {
@@ -379,8 +516,8 @@ function verifyServiceRoleSsmAccess(
     return {
       issues: [
         [
-          `Amplify service role ${serviceRoleArn} is missing hosted runtime SSM access for actions: ${deniedActionNames.join(", ")}.`,
-          `Attach inline policy '${REQUIRED_POLICY_NAME}' with: ${JSON.stringify(buildRequiredPolicyDocument(region))}`,
+          `Amplify service role ${serviceRoleArn} is missing hosted shared-infra SSM access for actions: ${deniedActionNames.join(", ")}.`,
+          `Attach inline policy '${SHARED_INFRA_POLICY_NAME}' with: ${JSON.stringify(buildHostedSharedInfraPolicyDocument(region))}`,
         ].join(" "),
       ],
       status: "missing",
@@ -393,13 +530,105 @@ function verifyServiceRoleSsmAccess(
         warning: [
           `Unable to simulate IAM policy for ${serviceRoleArn}.`,
           `Current credentials cannot inspect role access directly.`,
-          `If hosted builds still fail with AccessDeniedException, attach inline policy '${REQUIRED_POLICY_NAME}' with: ${JSON.stringify(buildRequiredPolicyDocument(region))}`,
+          `If hosted backend deploys still fail with AccessDeniedException, attach inline policy '${SHARED_INFRA_POLICY_NAME}' with: ${JSON.stringify(buildHostedSharedInfraPolicyDocument(region))}`,
         ].join(" "),
       };
     }
 
     throw new Error(
       `Unable to inspect Amplify service role IAM access. AWS CLI error: ${message}`,
+    );
+  }
+}
+
+function verifyBranchComputeRoleAccess(
+  branchSummary: HostedBranchSummary,
+  region: string,
+  runtime: Pick<AwsCliRuntime, "execAwsJson">,
+): BranchComputeRoleCheck {
+  if (!branchSummary.computeRoleArn) {
+    return {
+      branchName: branchSummary.branchName,
+      computeRoleArn: null,
+      issues: [
+        `Amplify branch '${branchSummary.branchName}' does not have computeRoleArn configured for SSR runtime access.`,
+      ],
+      status: "missing",
+    };
+  }
+
+  try {
+    const payload = runtime.execAwsJson([
+      "iam",
+      "simulate-principal-policy",
+      "--policy-source-arn",
+      branchSummary.computeRoleArn,
+      "--action-names",
+      ...SSR_COMPUTE_POLICY_ACTIONS,
+      "--resource-arns",
+      buildRepresentativeMaintenanceParameterArn(
+        branchSummary.environmentName,
+        region,
+      ),
+      "--output",
+      "json",
+    ]) as {
+      EvaluationResults?: Array<{
+        EvalActionName?: string;
+        EvalDecision?: string;
+      }>;
+    };
+
+    const deniedActions = (payload.EvaluationResults ?? []).filter((result) => {
+      const decision = normalizeOptionalString(
+        result.EvalDecision,
+      )?.toLowerCase();
+      return decision !== "allowed";
+    });
+    if (deniedActions.length === 0) {
+      return {
+        branchName: branchSummary.branchName,
+        computeRoleArn: branchSummary.computeRoleArn,
+        issues: [],
+        status: "ok",
+      };
+    }
+
+    const deniedActionNames = Array.from(
+      new Set(
+        deniedActions
+          .map((result) => normalizeOptionalString(result.EvalActionName))
+          .filter((actionName): actionName is string => actionName !== null),
+      ),
+    );
+    return {
+      branchName: branchSummary.branchName,
+      computeRoleArn: branchSummary.computeRoleArn,
+      issues: [
+        [
+          `Amplify branch '${branchSummary.branchName}' compute role ${branchSummary.computeRoleArn} is missing hosted runtime maintenance access for actions: ${deniedActionNames.join(", ")}.`,
+          `Attach inline policy '${SSR_COMPUTE_POLICY_NAME}' with: ${JSON.stringify(buildHostedComputePolicyDocument(branchSummary.environmentName, region))}`,
+        ].join(" "),
+      ],
+      status: "missing",
+    };
+  } catch (error) {
+    const message = extractAwsCliErrorMessage(error);
+    if (message.toLowerCase().includes("accessdenied")) {
+      return {
+        branchName: branchSummary.branchName,
+        computeRoleArn: branchSummary.computeRoleArn,
+        status: "unverified",
+        warning: [
+          `Unable to simulate IAM policy for branch '${branchSummary.branchName}' compute role ${branchSummary.computeRoleArn}.`,
+          "Current credentials cannot inspect role access directly.",
+          `If hosted runtime still fails with AccessDeniedException, attach inline policy '${SSR_COMPUTE_POLICY_NAME}' with: ${JSON.stringify(buildHostedComputePolicyDocument(branchSummary.environmentName, region))}`,
+        ].join(" "),
+      };
+    }
+
+    throw new Error(
+      `Unable to inspect Amplify compute role IAM access for branch '${branchSummary.branchName}'. AWS CLI error: ${message}`,
     );
   }
 }
@@ -556,25 +785,46 @@ function buildRepresentativeMaintenanceParameterArn(
   );
 }
 
-function buildRequiredPolicyDocument(region: string): Record<string, unknown> {
+function buildHostedSharedInfraPolicyDocument(
+  region: string,
+): Record<string, unknown> {
   return {
     Version: "2012-10-17",
     Statement: [
       {
-        Sid: REQUIRED_POLICY_SID,
+        Sid: SHARED_INFRA_POLICY_SID,
         Effect: "Allow",
-        Action: [...REQUIRED_POLICY_ACTIONS],
-        Resource: buildRequiredPolicyResourceArn(region),
+        Action: [...SHARED_INFRA_POLICY_ACTIONS],
+        Resource: buildHostedSharedInfraPolicyResourceArn(region),
       },
     ],
   };
 }
 
-function buildRequiredPolicyResourceArn(region: string): string[] {
+function buildHostedSharedInfraPolicyResourceArn(region: string): string[] {
   return [
     `arn:aws:ssm:${region}:${EXPECTED_ACCOUNT}:parameter/buzzerbeater/ml-data-infra/*`,
-    `arn:aws:ssm:${region}:${EXPECTED_ACCOUNT}:parameter/buzzerbeater/site-control/*`,
   ];
+}
+
+function buildHostedComputePolicyDocument(
+  environmentName: string,
+  region: string,
+): Record<string, unknown> {
+  return {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Sid: SSR_COMPUTE_POLICY_SID,
+        Effect: "Allow",
+        Action: [...SSR_COMPUTE_POLICY_ACTIONS],
+        Resource: buildRepresentativeMaintenanceParameterArn(
+          environmentName,
+          region,
+        ),
+      },
+    ],
+  };
 }
 
 function createDefaultRuntime(): AwsCliRuntime {
@@ -635,6 +885,97 @@ function extractEndpointServerlessMaxConcurrency(payload: {
   return foundConfig ? total : null;
 }
 
+function normalizeHostedCustomRules(
+  customRules:
+    | Array<{
+        source?: string;
+        status?: string;
+        target?: string;
+      }>
+    | undefined,
+): HostedCustomRule[] {
+  return (customRules ?? []).map((rule) => ({
+    source: normalizeOptionalString(rule.source),
+    status: normalizeOptionalString(rule.status),
+    target: normalizeOptionalString(rule.target),
+  }));
+}
+
+function checkHostedDomainConfiguration(options: {
+  appBaseUrl: string | null;
+  customRules: HostedCustomRule[];
+  domainAssociations: HostedDomainAssociation[];
+}): {
+  issues: string[];
+  warnings: string[];
+} {
+  const configuredHosts = new Set(
+    options.domainAssociations.flatMap((association) => association.configuredHosts),
+  );
+  const issues: string[] = [];
+  const warnings: string[] = [];
+  const appBaseHost = extractHostFromAbsoluteUrl(options.appBaseUrl);
+
+  if (appBaseHost !== null && !configuredHosts.has(appBaseHost)) {
+    issues.push(
+      `APP_BASE_URL points at '${appBaseHost}', but no Amplify custom domain association configures that host.`,
+    );
+  }
+
+  for (const rule of options.customRules) {
+    const sourceHost = extractHostFromAbsoluteUrl(rule.source);
+    const targetHost = extractHostFromAbsoluteUrl(rule.target);
+    const renderedRule = renderHostedCustomRule(rule);
+
+    if (sourceHost !== null && !configuredHosts.has(sourceHost)) {
+      warnings.push(
+        `Amplify custom rule '${renderedRule}' matches '${sourceHost}', but that host is not configured as an Amplify custom domain.`,
+      );
+    }
+
+    if (targetHost !== null && !configuredHosts.has(targetHost)) {
+      issues.push(
+        `Amplify custom rule '${renderedRule}' redirects to '${targetHost}', but no custom domain association configures that host.`,
+      );
+    }
+
+    if (
+      appBaseHost !== null &&
+      sourceHost === appBaseHost &&
+      targetHost !== null &&
+      targetHost !== appBaseHost
+    ) {
+      issues.push(
+        `Amplify custom rule '${renderedRule}' redirects the APP_BASE_URL host '${appBaseHost}' to '${targetHost}'. Remove the redirect or update APP_BASE_URL to the canonical host.`,
+      );
+    }
+  }
+
+  return {
+    issues,
+    warnings,
+  };
+}
+
+function extractHostFromAbsoluteUrl(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  try {
+    return new URL(value).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function renderHostedCustomRule(rule: HostedCustomRule): string {
+  const source = rule.source ?? "<missing-source>";
+  const target = rule.target ?? "<missing-target>";
+  const status = rule.status ?? "unknown";
+  return `${source} -> ${target} [${status}]`;
+}
+
 function normalizeOptionalString(value: string | undefined): string | null {
   const normalized = typeof value === "string" ? value.trim() : "";
   return normalized ? normalized : null;
@@ -647,7 +988,9 @@ function printSummary(report: HostedSharedInfraReport, region: string): void {
   runtime.write(`Service role: ${report.serviceRoleArn ?? "missing"}`);
   runtime.write("Hosted branches:");
   for (const branch of report.branchSummaries) {
-    runtime.write(`- ${branch.branchName} -> ${branch.environmentName}`);
+    runtime.write(
+      `- ${branch.branchName} -> ${branch.environmentName} (compute role: ${branch.computeRoleArn ?? "missing"})`,
+    );
   }
   runtime.write("Shared-infra parameter checks:");
   for (const check of report.parameterChecks) {
@@ -664,10 +1007,20 @@ function printSummary(report: HostedSharedInfraReport, region: string): void {
   runtime.write(
     `SageMaker serverless quota ${SAGEMAKER_SERVERLESS_TOTAL_CONCURRENCY_QUOTA_CODE}: ${report.quota}`,
   );
-  if (report.roleAccess.status === "unverified") {
-    runtime.write(`Role access: ${report.roleAccess.warning}`);
+  if (report.serviceRoleAccess.status === "unverified") {
+    runtime.write(
+      `Hosted backend shared-infra access: ${report.serviceRoleAccess.warning}`,
+    );
   } else {
-    runtime.write(`Role access: ${report.roleAccess.status}`);
+    runtime.write(
+      `Hosted backend shared-infra access: ${report.serviceRoleAccess.status}`,
+    );
+  }
+  runtime.write("SSR compute role checks:");
+  for (const computeRoleCheck of report.computeRoleChecks) {
+    runtime.write(
+      `- ${computeRoleCheck.branchName}: ${computeRoleCheck.status}`,
+    );
   }
 
   for (const warning of report.warnings) {

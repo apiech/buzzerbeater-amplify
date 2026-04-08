@@ -420,6 +420,8 @@ function classifySsmError(error: unknown): "missing" | "transient" | "other" {
     new Set([
       "AccessDenied",
       "AccessDeniedException",
+      "CredentialsError",
+      "CredentialsProviderError",
       "AuthFailure",
       "ExpiredTokenException",
       "InternalServerError",
@@ -439,6 +441,15 @@ function classifySsmError(error: unknown): "missing" | "transient" | "other" {
   }
 
   if (message && /access denied|not authorized|unauthorized/i.test(message)) {
+    return "transient";
+  }
+
+  if (
+    message &&
+    /credential|could not load credentials|unable to locate credentials|no credentials/i.test(
+      message,
+    )
+  ) {
     return "transient";
   }
 

@@ -198,3 +198,32 @@ test("maintenance control plane fails open when read access is denied", async ()
     restore();
   }
 });
+
+test("maintenance control plane fails open when AWS credentials are unavailable", async () => {
+  const restore = maintenanceTesting.installRuntime({
+    getParameter: async () => {
+      const error = new Error(
+        "Could not load credentials from any providers.",
+      ) as Error & {
+        name: string;
+      };
+      error.name = "CredentialsProviderError";
+      throw error;
+    },
+  });
+
+  try {
+    const state = await getMaintenanceState({
+      AWS_REGION: "us-east-1",
+      MAINTENANCE_ENVIRONMENT_NAME: "dev",
+    });
+
+    assert.equal(state.active, false);
+    assert.equal(state.document, null);
+    assert.equal(state.environmentName, "dev");
+    assert.equal(state.parameterName, "/buzzerbeater/site-control/dev/current");
+    assert.equal(state.stale, true);
+  } finally {
+    restore();
+  }
+});

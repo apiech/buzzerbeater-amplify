@@ -95,7 +95,6 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/karey/projects/bb/bb-amplify/amplify).
 
 <!-- ENV-CONTRACT:START -->
-
 ### Required Plain Env
 
 - `APP_BASE_URL`
@@ -149,7 +148,8 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
   - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.
   - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.
-  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on both `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*` and `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/site-control/*`.
+  - Hosted backend deploys require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.
+  - Hosted SSR runtime requires each Amplify branch compute role to have `ssm:GetParameter` on `/buzzerbeater/site-control/<env>/current`. The hosted backend stack now provisions that role and attaches it to the current branch during deploy.
 - Imported runtime bindings
   - `MATCH_STORE_BUCKET_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
   - `MATCH_CATALOG_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
@@ -292,8 +292,9 @@ Use `npm run billing:override -- --help` for the full CLI options.
 ## Deploy Notes
 
 - Bring up shared ML infra before expecting `/workspace/predictions` to work. For local sandboxes, `npm run sandbox` bootstraps ML Data Infra automatically and then fails fast if the predictor endpoint is missing; for hosted `dev` and `prod`, deploy shared infra separately first.
-- Use `npm run check:hosted:shared-infra -- --app-id d2ckw6mf5kdema` before hosted rebuilds to verify the Amplify service role, SSM contract, and SageMaker quota posture.
+- Use `npm run check:hosted:shared-infra -- --app-id d2ckw6mf5kdema` before hosted rebuilds to verify the Amplify service role, branch compute roles, shared-infra SSM contract, and SageMaker quota posture.
 - Hosted deploy order is shared ML data infra, then predictor endpoint, then the Amplify branch rebuild.
+- Hosted backend deploys now create and attach the branch compute role from the backend stack, so `computeRoleArn` no longer depends on a manual console step.
 - Deploy or update the predictor with `./scripts/matchup-predictor-release dev --release-id <release-id> --artifact-prefix <absolute-artifact-stem>` before testing hosted `dev` predictions.
 - Promote with `./scripts/matchup-predictor-release prod --release-id <release-id>` only after the same release passes in `dev`.
 - The intended SageMaker serverless split is `sandbox=1`, `dev=3`, `prod=5`; an oversized sandbox endpoint can block hosted releases even when `dev` and `prod` are otherwise ready.

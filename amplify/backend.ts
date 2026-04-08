@@ -4,6 +4,7 @@ import { configureAuthControls } from "./_backend/auth-controls.js";
 import { configureBillingIntegration } from "./_backend/billing-integration.js";
 import { configureCostVisibility } from "./_backend/cost-visibility.js";
 import { configureGameDayRecapJobs } from "./_backend/game-day-recap-jobs.js";
+import { configureHostedComputeRole } from "./_backend/hosted-compute-role.js";
 import { configureLeagueHistoryJobs } from "./_backend/league-history-jobs.js";
 import { configureMaintenanceControlPlane } from "./_backend/maintenance-control-plane.js";
 import { configureMatchStoreIntegration } from "./_backend/match-store-integration.js";
@@ -165,6 +166,7 @@ configureMaintenanceControlPlane(backend, [
   backend.predictionSubmit,
   backend.predictionWorker,
 ]);
+configureHostedComputeRole(backend);
 configureCostVisibility(
   backend,
   resolveCostVisibilityConfig(),

@@ -36,3 +36,17 @@ test("maintenance control plane wiring sets Function URL output and SSM permissi
   assert.match(source, /ssm:DeleteParameter/);
   assert.match(source, /MaintenanceAdminUrl/);
 });
+
+test("hosted compute role wiring provisions an Amplify compute principal with maintenance SSM read access", () => {
+  const source = readFileSync(
+    join(repoRoot, "amplify", "_backend", "hosted-compute-role.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /amplify\.amazonaws\.com/);
+  assert.match(source, /ssm:GetParameter/);
+  assert.match(source, /HostedSsrComputeRoleArn/);
+  assert.match(source, /AwsCustomResource/);
+  assert.match(source, /amplify:UpdateBranch/);
+  assert.match(source, /iam:PassRole/);
+});
