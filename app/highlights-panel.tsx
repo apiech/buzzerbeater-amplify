@@ -52,13 +52,15 @@ const ACTIVE_SCAN_STATUSES = new Set([
   "WAITING_FOR_MATCH_JOBS",
 ]);
 const STALE_SCAN_MILLISECONDS = 15 * 60 * 1000;
+const BB_CREDENTIAL_RECONNECT_REQUIRED_PREFIX = "Reconnect BuzzerBeater:";
 
 export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const [perspective, setPerspective] =
     useState<HighlightsFilterPerspective>("both");
   const [onlyOutcomeChange, setOnlyOutcomeChange] = useState(true);
   const [payload, setPayload] = useState<TeamHighlightsPayload | null>(null);
-  const [panelError, setPanelError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -80,7 +82,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
       setIsLoading(true);
     }
     if (!options.silent) {
-      setPanelError(null);
+      setLoadError(null);
     }
 
     const response = await client.queries.getMyTeamHighlights({
@@ -90,7 +92,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     });
 
     if (response.errors?.length || !response.data) {
-      setPanelError(formatAmplifyErrors(response.errors));
+      setLoadError(formatAmplifyErrors(response.errors));
       if (!options.silent) {
         setIsLoading(false);
       }
@@ -117,11 +119,11 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
 
   async function handleSubmit(): Promise<void> {
     setIsSubmitting(true);
-    setPanelError(null);
+    setSubmitError(null);
 
     const response = await client.mutations.submitMyTeamHighlightsScan();
     if (response.errors?.length || !response.data) {
-      setPanelError(formatAmplifyErrors(response.errors));
+      setSubmitError(formatAmplifyErrors(response.errors));
       setIsSubmitting(false);
       return;
     }
@@ -178,6 +180,10 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const failedMatches = scanStatus?.matchesFailed ?? 0;
   const brokenMatches = scanStatus?.brokenMatches ?? [];
   const hasBrokenMatches = brokenMatches.length > 0;
+  const failedScanNeedsReconnect = isReconnectRequiredHighlightsError(
+    scanStatus?.error,
+  );
+  const submitNeedsReconnect = isReconnectRequiredHighlightsError(submitError);
 
   return (
     <Panel>
@@ -201,13 +207,13 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
         changed the result for your club.
       </p>
 
-      {panelError ? (
+      {loadError ? (
         <Alert>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="grid gap-1">
               <p>Couldn&apos;t load the latest moments right now.</p>
               <p className="text-xs leading-5 text-current/80">
-                Technical details: {panelError}
+                Technical details: {loadError}
               </p>
             </div>
             <Button
@@ -218,6 +224,20 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
             >
               Try again
             </Button>
+          </div>
+        </Alert>
+      ) : null}
+      {submitError ? (
+        <Alert>
+          <div className="grid gap-1">
+            <p>
+              {submitNeedsReconnect
+                ? "Reconnect BuzzerBeater in this environment and then rerun the scan."
+                : "The scan could not be started right now. Try again in a moment."}
+            </p>
+            <p className="text-xs leading-5 text-current/80">
+              Technical details: {submitError}
+            </p>
           </div>
         </Alert>
       ) : null}
@@ -419,8 +439,9 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
                 <Alert>
                   <div className="grid gap-1">
                     <p>
-                      The latest team history scan ended before all moments were
-                      ready. Retry it to start a fresh run.
+                      {failedScanNeedsReconnect
+                        ? "Reconnect BuzzerBeater in this environment and then rerun the scan."
+                        : "The latest team history scan ended before all moments were ready. Retry it to start a fresh run."}
                     </p>
                     {scanStatus.error ? (
                       <p className="text-xs leading-5 text-current/80">
@@ -576,6 +597,13 @@ export function describeHighlightsEmptyState(
     return "The latest team history scan stopped updating. Retry it to continue preparing moments.";
   }
 
+  if (
+    payload.scanStatus.status === "FAILED" &&
+    isReconnectRequiredHighlightsError(payload.scanStatus.error)
+  ) {
+    return "Reconnect BuzzerBeater in this environment and then rerun the scan.";
+  }
+
   if (hasActiveTeamHighlightsScan(payload.scanStatus)) {
     return "Scanning team history now. Older clubs can take several minutes, and this panel refreshes automatically.";
   }
@@ -707,6 +735,13 @@ export function describeScanStatus(status: TeamHighlightsScanStatus): string {
     return `Preparing moments from ${submitted} submitted match jobs. ${completed} finished so far. Older clubs can take several minutes.`;
   }
 
+  if (status.status === "FAILED") {
+    if (isReconnectRequiredHighlightsError(status.error)) {
+      return "The scan stopped before discovery began because the saved BuzzerBeater credential for this environment can no longer be decrypted.";
+    }
+    return "The latest team history scan ended before all moments were ready.";
+  }
+
   return "Scanning your club's history and preparing new moments. Older clubs can take several minutes.";
 }
 
@@ -742,6 +777,16 @@ function formatAmplifyErrors(
     .filter((message): message is string => Boolean(message));
 
   return messages[0] ?? "The request failed.";
+}
+
+export function isReconnectRequiredHighlightsError(
+  error: string | null | undefined,
+): boolean {
+  return Boolean(
+    error?.trim().toLowerCase().startsWith(
+      BB_CREDENTIAL_RECONNECT_REQUIRED_PREFIX.toLowerCase(),
+    ),
+  );
 }
 
 function formatBrokenMatchLabel(

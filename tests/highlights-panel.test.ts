@@ -9,6 +9,7 @@ import {
   describeScanStatus,
   getTeamHighlightsScanActionLabel,
   hasActiveTeamHighlightsScan,
+  isReconnectRequiredHighlightsError,
   isTeamHighlightsScanStale,
 } from "../app/highlights-panel";
 import type { TeamHighlightsPayload, TeamHighlightsScanStatus } from "../app/types";
@@ -157,6 +158,36 @@ test("describeHighlightsEmptyState guides the user through empty and active stat
     ),
     /stopped updating/i,
   );
+
+  assert.match(
+    describeHighlightsEmptyState(
+      createPayload({
+        scanStatus: createScanStatus("FAILED", {
+          error:
+            "Reconnect BuzzerBeater: the saved credential for this environment can no longer be decrypted.",
+        }),
+      }),
+      {
+        isLoading: false,
+        isScanStale: false,
+        onlyOutcomeChange: true,
+      },
+    ),
+    /reconnect buzzerbeater/i,
+  );
+});
+
+test("isReconnectRequiredHighlightsError recognizes credential drift failures", () => {
+  assert.equal(
+    isReconnectRequiredHighlightsError(
+      "Reconnect BuzzerBeater: the saved credential for this environment can no longer be decrypted.",
+    ),
+    true,
+  );
+  assert.equal(
+    isReconnectRequiredHighlightsError("The request failed."),
+    false,
+  );
 });
 
 test("describeScanStatus stays user-facing", () => {
@@ -216,6 +247,17 @@ test("describeScanStatus stays user-facing", () => {
   assert.match(
     gapsDescription,
     /could not be prepared from buzzerbeater data/i,
+  );
+
+  const reconnectFailureDescription = describeScanStatus(
+    createScanStatus("FAILED", {
+      error:
+        "Reconnect BuzzerBeater: the saved credential for this environment can no longer be decrypted.",
+    }),
+  );
+  assert.match(
+    reconnectFailureDescription,
+    /credential for this environment can no longer be decrypted/i,
   );
 });
 
@@ -281,6 +323,10 @@ test("highlights panel polls active scans silently", () => {
   assert.match(
     source,
     /ended before all moments were[\s\S]*Retry it to start a fresh run\./,
+  );
+  assert.match(
+    source,
+    /Reconnect BuzzerBeater in this environment and then rerun the scan\./,
   );
   assert.match(source, /Moments are ready for the rest of your history/);
   assert.match(source, /could not be prepared from BuzzerBeater data/);

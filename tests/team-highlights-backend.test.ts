@@ -70,6 +70,7 @@ test("submitMyTeamHighlightsScan rejects free-plan users before queueing work", 
             "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
         },
         {
+          assertBbCredentialReadable: async () => {},
           getBbConnection: async () => ({
             teamId: "team-1",
             teamName: "Alpha",
@@ -110,6 +111,7 @@ test("submitMyTeamHighlightsScan writes queued status and enqueues work", async 
         "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
     },
     {
+      assertBbCredentialReadable: async () => {},
       getBbConnection: async () => ({
         teamId: "team-1",
         teamName: "Alpha",
@@ -181,6 +183,7 @@ test("submitMyTeamHighlightsScan reuses an active scan instead of duplicating it
         "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
     },
     {
+      assertBbCredentialReadable: async () => {},
       getBbConnection: async () => ({
         teamId: "team-1",
         teamName: "Alpha",
@@ -226,6 +229,7 @@ test("submitMyTeamHighlightsScan replaces a stale active scan", async () => {
         "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
     },
     {
+      assertBbCredentialReadable: async () => {},
       getBbConnection: async () => ({
         teamId: "team-1",
         teamName: "Alpha",
@@ -252,6 +256,49 @@ test("submitMyTeamHighlightsScan replaces a stale active scan", async () => {
   assert.equal(result.queued, true);
   assert.equal(writtenStatuses.length, 2);
   assert.equal(writtenStatuses[0].status, "QUEUED");
+});
+
+test("submitMyTeamHighlightsScan fails before queueing when saved credentials are stale", async () => {
+  let wroteStatus = false;
+  let startedWorkflow = false;
+
+  await assert.rejects(
+    () =>
+      submitMyTeamHighlightsScan(
+        {
+          env: {},
+          identity: { sub: "user-1" },
+          stateMachineArn:
+            "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
+        },
+        {
+          assertBbCredentialReadable: async () => {
+            throw new Error(
+              "Reconnect BuzzerBeater: the saved credential for this environment can no longer be decrypted.",
+            );
+          },
+          getBbConnection: async () => ({
+            teamId: "team-1",
+            teamName: "Alpha",
+          }) as any,
+          getTeamHighlightsStatus: async () => null,
+          listTrackedTeamsForUser: async () => [createTrackedTeam()],
+          now: () => new Date("2026-03-15T12:00:00.000Z"),
+          putTeamHighlightsStatus: async () => {
+            wroteStatus = true;
+          },
+          requireFeatureAccess: async () => "premium",
+          startWorkflowExecution: async () => {
+            startedWorkflow = true;
+            return "arn:aws:states:us-east-1:123456789012:execution:team-highlights:scan-3";
+          },
+        },
+      ),
+    /Reconnect BuzzerBeater: the saved credential for this environment can no longer be decrypted\./i,
+  );
+
+  assert.equal(wroteStatus, false);
+  assert.equal(startedWorkflow, false);
 });
 
 test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async () => {

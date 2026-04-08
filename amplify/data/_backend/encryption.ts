@@ -14,6 +14,7 @@ type EncryptedValue = {
 };
 
 const ALGORITHM: CipherGCMTypes = "aes-256-gcm";
+const AUTHENTICATION_FAILURE_FRAGMENT = "unable to authenticate data";
 
 export function encryptValue(plainText: string, secret: string): EncryptedValue {
   const iv = randomBytes(12);
@@ -51,6 +52,13 @@ export function decryptValue(
     decipher.update(Buffer.from(encryptedValue.cipherText, "base64")),
     decipher.final(),
   ]).toString("utf8");
+}
+
+export function isEncryptedValueDecryptionFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.toLowerCase().includes(AUTHENTICATION_FAILURE_FRAGMENT)
+  );
 }
 
 export function getEncryptionSecret(

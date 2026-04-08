@@ -9,6 +9,7 @@ import {
 import type { Schema } from "../resource";
 import { TeamHighlightsPerspective } from "../schema-enums";
 import { requireFeatureAccess } from "./billing";
+import { assertBbCredentialReadable } from "./credentials";
 import { assertMaintenanceInactive } from "./maintenance";
 import {
   getBbConnection,
@@ -43,6 +44,7 @@ type TeamHighlightsScanState = TeamHighlightsScanSubmitResult["status"];
 type TeamHighlightsSummary = TeamHighlightsResult["summary"];
 
 type SubmitDependencies = {
+  assertBbCredentialReadable: typeof assertBbCredentialReadable;
   getBbConnection: typeof getBbConnection;
   getTeamHighlightsStatus: typeof getTeamHighlightsStatus;
   listTrackedTeamsForUser: typeof listTrackedTeamsForUser;
@@ -165,6 +167,7 @@ const ddbDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 });
 
 const defaultSubmitDependencies: SubmitDependencies = {
+  assertBbCredentialReadable,
   getBbConnection,
   getTeamHighlightsStatus,
   listTrackedTeamsForUser,
@@ -244,6 +247,8 @@ export async function submitMyTeamHighlightsScan(
       teamName: team.teamName ?? existingStatus.teamName ?? null,
     };
   }
+
+  await dependencies.assertBbCredentialReadable(args.env, userId);
 
   const requestedAt = dependencies.now().toISOString();
   const queuedStatus: TeamHighlightsStatusItem = {
