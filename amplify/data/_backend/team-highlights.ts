@@ -42,9 +42,13 @@ type TeamHighlightsResult = ResolverResult<"getMyTeamHighlights">;
 type TeamHighlightsScanSubmitResult = ResolverResult<"submitMyTeamHighlightsScan">;
 type TeamHighlightsScanState = TeamHighlightsScanSubmitResult["status"];
 type TeamHighlightsSummary = TeamHighlightsResult["summary"];
+type AssertBbCredentialReadableDependency = (
+  env: GraphqlEnv,
+  userId: string,
+) => Promise<void>;
 
 type SubmitDependencies = {
-  assertBbCredentialReadable: typeof assertBbCredentialReadable;
+  assertBbCredentialReadable: AssertBbCredentialReadableDependency;
   getBbConnection: typeof getBbConnection;
   getTeamHighlightsStatus: typeof getTeamHighlightsStatus;
   listTrackedTeamsForUser: typeof listTrackedTeamsForUser;
