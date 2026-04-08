@@ -7,6 +7,7 @@ import {
   buildSharedInfraParameterPaths,
   type SharedInfraBindings,
 } from "../amplify/_shared/shared-infra-contract.js";
+import { buildMaintenanceParameterName } from "../lib/maintenance/environment.js";
 
 const ACTIVE_SERVERLESS_ENDPOINT_STATUSES = new Set([
   "Creating",
@@ -37,8 +38,8 @@ const REQUIRED_POLICY_ACTIONS = [
   "ssm:GetParameters",
   "ssm:GetParametersByPath",
 ] as const;
-const REQUIRED_POLICY_NAME = "BuzzerBeaterSharedMlInfraRead";
-const REQUIRED_POLICY_SID = "ReadSharedMlInfraParameters";
+const REQUIRED_POLICY_NAME = "BuzzerBeaterHostedSsmRead";
+const REQUIRED_POLICY_SID = "ReadHostedRuntimeParameters";
 const SAGEMAKER_SERVERLESS_TOTAL_CONCURRENCY_QUOTA_CODE = "L-96300102";
 const OPTIONAL_SHARED_INFRA_BINDING_KEYS = new Set<keyof SharedInfraBindings>([
   "opponentForecastEndpointName",
@@ -167,7 +168,11 @@ export function collectHostedSharedInfraReadiness(
   }
 
   const serviceRoleArn = normalizeOptionalString(app.iamServiceRoleArn);
-  const branchSummaries = describeHostedBranches(options.appId, region, runtime);
+  const branchSummaries = describeHostedBranches(
+    options.appId,
+    region,
+    runtime,
+  );
   const environmentNames = Array.from(
     new Set(branchSummaries.map((branch) => branch.environmentName)),
   );
@@ -197,7 +202,12 @@ export function collectHostedSharedInfraReadiness(
           ],
           status: "missing" as const,
         }
-      : verifyServiceRoleSsmAccess(serviceRoleArn, environmentNames, region, runtime);
+      : verifyServiceRoleSsmAccess(
+          serviceRoleArn,
+          environmentNames,
+          region,
+          runtime,
+        );
 
   if (roleAccess.status === "missing") {
     issues.push(...roleAccess.issues);
@@ -205,7 +215,10 @@ export function collectHostedSharedInfraReadiness(
     warnings.push(roleAccess.warning);
   }
 
-  const { allocations, quota, quotaIssues } = checkPredictorQuota(region, runtime);
+  const { allocations, quota, quotaIssues } = checkPredictorQuota(
+    region,
+    runtime,
+  );
   issues.push(...quotaIssues);
   warnings.push(
     ...allocations.map(
@@ -290,7 +303,9 @@ function checkSharedInfraParameters(
   }) as {
     InvalidParameters?: string[];
   };
-  const invalidParameters = new Set((payload.InvalidParameters ?? []).filter(Boolean));
+  const invalidParameters = new Set(
+    (payload.InvalidParameters ?? []).filter(Boolean),
+  );
 
   return {
     environmentName,
@@ -317,9 +332,10 @@ function verifyServiceRoleSsmAccess(
   region: string,
   runtime: Pick<AwsCliRuntime, "execAwsJson">,
 ): RoleAccessCheck {
-  const representativeResources = environmentNames.map((environmentName) =>
+  const representativeResources = environmentNames.map((environmentName) => [
     buildRepresentativeParameterArn(environmentName, region),
-  );
+    buildRepresentativeMaintenanceParameterArn(environmentName, region),
+  ]);
 
   try {
     const payload = runtime.execAwsJson([
@@ -330,15 +346,20 @@ function verifyServiceRoleSsmAccess(
       "--action-names",
       ...REQUIRED_POLICY_ACTIONS,
       "--resource-arns",
-      ...representativeResources,
+      ...representativeResources.flat(),
       "--output",
       "json",
     ]) as {
-      EvaluationResults?: Array<{ EvalActionName?: string; EvalDecision?: string }>;
+      EvaluationResults?: Array<{
+        EvalActionName?: string;
+        EvalDecision?: string;
+      }>;
     };
 
     const deniedActions = (payload.EvaluationResults ?? []).filter((result) => {
-      const decision = normalizeOptionalString(result.EvalDecision)?.toLowerCase();
+      const decision = normalizeOptionalString(
+        result.EvalDecision,
+      )?.toLowerCase();
       return decision !== "allowed";
     });
     if (deniedActions.length === 0) {
@@ -358,7 +379,7 @@ function verifyServiceRoleSsmAccess(
     return {
       issues: [
         [
-          `Amplify service role ${serviceRoleArn} is missing shared-infra SSM access for actions: ${deniedActionNames.join(", ")}.`,
+          `Amplify service role ${serviceRoleArn} is missing hosted runtime SSM access for actions: ${deniedActionNames.join(", ")}.`,
           `Attach inline policy '${REQUIRED_POLICY_NAME}' with: ${JSON.stringify(buildRequiredPolicyDocument(region))}`,
         ].join(" "),
       ],
@@ -413,7 +434,9 @@ function checkPredictorQuota(
     !Number.isFinite(quotaValue) ||
     quotaValue < 1
   ) {
-    throw new Error("SageMaker Service Quotas response did not include a valid quota.");
+    throw new Error(
+      "SageMaker Service Quotas response did not include a valid quota.",
+    );
   }
 
   const endpointsPayload = runtime.execAwsJson([
@@ -455,7 +478,8 @@ function checkPredictorQuota(
           };
         }>;
       };
-      const maxConcurrency = extractEndpointServerlessMaxConcurrency(descriptionPayload);
+      const maxConcurrency =
+        extractEndpointServerlessMaxConcurrency(descriptionPayload);
       if (maxConcurrency === null) {
         return [];
       }
@@ -522,6 +546,16 @@ function buildRepresentativeParameterArn(
   );
 }
 
+function buildRepresentativeMaintenanceParameterArn(
+  environmentName: string,
+  region: string,
+): string {
+  return (
+    `arn:aws:ssm:${region}:${EXPECTED_ACCOUNT}:parameter` +
+    buildMaintenanceParameterName(environmentName)
+  );
+}
+
 function buildRequiredPolicyDocument(region: string): Record<string, unknown> {
   return {
     Version: "2012-10-17",
@@ -536,8 +570,11 @@ function buildRequiredPolicyDocument(region: string): Record<string, unknown> {
   };
 }
 
-function buildRequiredPolicyResourceArn(region: string): string {
-  return `arn:aws:ssm:${region}:${EXPECTED_ACCOUNT}:parameter/buzzerbeater/ml-data-infra/*`;
+function buildRequiredPolicyResourceArn(region: string): string[] {
+  return [
+    `arn:aws:ssm:${region}:${EXPECTED_ACCOUNT}:parameter/buzzerbeater/ml-data-infra/*`,
+    `arn:aws:ssm:${region}:${EXPECTED_ACCOUNT}:parameter/buzzerbeater/site-control/*`,
+  ];
 }
 
 function createDefaultRuntime(): AwsCliRuntime {
@@ -584,7 +621,10 @@ function extractEndpointServerlessMaxConcurrency(payload: {
 
   for (const variant of payload.ProductionVariants ?? []) {
     const maxConcurrency = variant.CurrentServerlessConfig?.MaxConcurrency;
-    if (typeof maxConcurrency !== "number" || !Number.isFinite(maxConcurrency)) {
+    if (
+      typeof maxConcurrency !== "number" ||
+      !Number.isFinite(maxConcurrency)
+    ) {
       continue;
     }
 
@@ -621,7 +661,9 @@ function printSummary(report: HostedSharedInfraReport, region: string): void {
       }`,
     );
   }
-  runtime.write(`SageMaker serverless quota ${SAGEMAKER_SERVERLESS_TOTAL_CONCURRENCY_QUOTA_CODE}: ${report.quota}`);
+  runtime.write(
+    `SageMaker serverless quota ${SAGEMAKER_SERVERLESS_TOTAL_CONCURRENCY_QUOTA_CODE}: ${report.quota}`,
+  );
   if (report.roleAccess.status === "unverified") {
     runtime.write(`Role access: ${report.roleAccess.warning}`);
   } else {

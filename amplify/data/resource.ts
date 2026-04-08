@@ -306,7 +306,7 @@ export const generateSharedPlayerCard = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-const revokeSharedPlayerCard = defineFunction({
+export const revokeSharedPlayerCard = defineFunction({
   resourceGroupName: "data",
   name: "revoke-shared-player-card",
   entry: "./revoke-shared-player-card/handler.ts",
@@ -315,7 +315,7 @@ const revokeSharedPlayerCard = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-const lookupSharedPlayerCard = defineFunction({
+export const lookupSharedPlayerCard = defineFunction({
   resourceGroupName: "data",
   name: "lookup-shared-player-card",
   entry: "./lookup-shared-player-card/handler.ts",
@@ -333,7 +333,7 @@ export const pruneOperationalData = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-const dataFunctions = [
+export const maintenanceProtectedFunctions = [
   connectBbAccount,
   disconnectBbAccount,
   refreshWorkspace,
@@ -367,7 +367,6 @@ const dataFunctions = [
   generateSharedPlayerCard,
   revokeSharedPlayerCard,
   lookupSharedPlayerCard,
-  pruneOperationalData,
   leagueHistoryWorker,
   gameDayRecapSubmit,
   gameDayRecapWorker,
@@ -375,6 +374,11 @@ const dataFunctions = [
   opponentForecastWorker,
   predictionSubmit,
   predictionWorker,
+] as const;
+
+const dataFunctions = [
+  ...maintenanceProtectedFunctions,
+  pruneOperationalData,
   billingWebhook,
   billingAdminOverride,
 ];
@@ -423,6 +427,15 @@ const schema = a
     PositionCode: a.enum(Object.values(PositionCode)),
 
     TeamHighlightsPerspective: a.enum(Object.values(TeamHighlightsPerspective)),
+    TeamHighlightsScanState: a.enum([
+      "QUEUED",
+      "RESOLVING_HISTORY",
+      "ENQUEUING_MATCHES",
+      "WAITING_FOR_MATCH_JOBS",
+      "COMPLETED_WITH_GAPS",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
 
     LeagueHistoryBackfillState: a.enum([
       "QUEUED",
@@ -925,7 +938,7 @@ const schema = a
     TeamHighlightsScanSubmitResult: a.customType({
       queued: a.boolean().required(),
       requestedAt: a.datetime().required(),
-      status: a.string().required(),
+      status: a.ref("TeamHighlightsScanState").required(),
       teamId: a.string().required(),
       teamName: a.string(),
       executionArn: a.string(),
@@ -1090,7 +1103,11 @@ const schema = a
       isStarter: a.boolean().required(),
       minutes: a.float(),
       performance: a.ref("MatchMetricEntry").required().array().required(),
-      minutesByPosition: a.ref("MatchMetricEntry").required().array().required(),
+      minutesByPosition: a
+        .ref("MatchMetricEntry")
+        .required()
+        .array()
+        .required(),
     }),
 
     MatchBoxscoreTeam: a.customType({
@@ -1123,19 +1140,34 @@ const schema = a
       perspective: a.ref("TeamHighlightsPerspective").required(),
     }),
 
+    TeamHighlightsBrokenMatch: a.customType({
+      awayTeamName: a.string(),
+      boxscoreUrl: a.string().required(),
+      homeTeamName: a.string(),
+      issue: a.string().required(),
+      matchId: a.string().required(),
+      matchType: a.string(),
+      season: a.integer(),
+      startTime: a.datetime(),
+    }),
+
     TeamHighlightsScanStatus: a.customType({
+      brokenMatches: a.ref("TeamHighlightsBrokenMatch").required().array(),
       completedAt: a.datetime(),
+      currentSeason: a.integer(),
       executionArn: a.string(),
       error: a.string(),
+      matchesCompleted: a.integer(),
       matchesDiscovered: a.integer(),
       matchesEnqueuedForIngest: a.integer(),
       matchesEnqueuedForMaterialize: a.integer(),
+      matchesFailed: a.integer(),
       matchesReused: a.integer(),
       requestedAt: a.datetime().required(),
       seasonsFrom: a.integer(),
       seasonsTo: a.integer(),
       startedAt: a.datetime(),
-      status: a.string().required(),
+      status: a.ref("TeamHighlightsScanState").required(),
       teamId: a.string().required(),
       teamName: a.string(),
       updatedAt: a.datetime(),

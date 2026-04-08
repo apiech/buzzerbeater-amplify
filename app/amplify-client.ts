@@ -13,9 +13,21 @@ type AmplifyLikeError = {
   message?: string;
 };
 
+type MaintenancePayload = {
+  maintenance?: {
+    active?: boolean;
+    state?: {
+      detail?: string;
+      headline?: string;
+      reasonCode?: string;
+    };
+  };
+};
+
 type AmplifyLikeResult<TData> = {
   data?: TData | null;
   errors?: AmplifyLikeError[] | null;
+  maintenance?: MaintenancePayload["maintenance"];
   nextToken?: string | null;
 };
 
@@ -65,10 +77,10 @@ type ReadResult<TName extends ReadOperationName> =
     : TName extends "getCurrentPrediction"
       ? CurrentPredictionPreview | null
       : TName extends "getOperationsActivity"
-      ? OperationsActivity
-      : TName extends "getRecapHistory"
-        ? PaginatedResult<RecapHistoryRecord>
-        : never;
+        ? OperationsActivity
+        : TName extends "getRecapHistory"
+          ? PaginatedResult<RecapHistoryRecord>
+          : never;
 
 async function requestOperation<TData>(
   input: RequestInfo | URL,
@@ -85,6 +97,11 @@ async function requestOperation<TData>(
     });
     const payload = await response.json().catch(() => null);
     if (response.ok && payload) {
+      return payload as AmplifyLikeResult<TData>;
+    }
+
+    if (response.status === 503 && isMaintenancePayload(payload)) {
+      redirectToStatusPage();
       return payload as AmplifyLikeResult<TData>;
     }
 
@@ -109,6 +126,27 @@ async function requestOperation<TData>(
       ],
     };
   }
+}
+
+function isMaintenancePayload(value: unknown): value is MaintenancePayload {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maintenance = (value as MaintenancePayload).maintenance;
+  return maintenance?.active === true;
+}
+
+function redirectToStatusPage(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (window.location.pathname === "/status") {
+    return;
+  }
+
+  window.location.assign("/status");
 }
 
 function readErrorMessage(payload: unknown): string | null {

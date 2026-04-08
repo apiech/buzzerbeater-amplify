@@ -47,7 +47,8 @@ export function isActiveStatus(status: string | null | undefined): boolean {
     normalized.startsWith("building_") ||
     normalized.startsWith("enqueuing_") ||
     normalized.startsWith("invoking_") ||
-    normalized.startsWith("resolving_")
+    normalized.startsWith("resolving_") ||
+    normalized.startsWith("waiting_")
   );
 }
 
@@ -108,6 +109,15 @@ export function formatWriteupStatus(
 export function formatHighlightsStatus(
   status: string | null | undefined,
 ): string {
+  const normalized = normalizeStatusValue(status);
+  if (normalized === "completed_with_gaps") {
+    return "Moments ready with gaps";
+  }
+
+  if (normalized === "waiting_for_match_jobs") {
+    return "Preparing moments";
+  }
+
   if (isSuccessfulStatus(status)) {
     return "Moments ready";
   }

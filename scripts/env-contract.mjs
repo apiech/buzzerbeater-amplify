@@ -163,6 +163,13 @@ export const envContract = {
       followUp:
         "Current static bearer token stays manual in this pass. Follow-up: replace it with first-party admin auth.",
     },
+    {
+      name: "MAINTENANCE_ADMIN_TOKEN",
+      purpose:
+        "Protects the maintenance control Function URL used to activate, update, and clear maintenance mode.",
+      followUp:
+        "Current static bearer token stays manual in this pass. Follow-up: replace it with first-party admin auth.",
+    },
   ],
   internal: [
     {
@@ -174,6 +181,11 @@ export const envContract = {
       name: "BB_SHARED_ENVIRONMENT_NAME",
       purpose:
         "Optional synth-time override for shared infra discovery. `npm run sandbox` sets this automatically, while hosted builds derive the environment from `AWS_BRANCH`.",
+    },
+    {
+      name: "MAINTENANCE_ENVIRONMENT_NAME",
+      purpose:
+        "Derived environment name used by hosted SSR and Lambda runtimes to read and write the site maintenance control document in SSM.",
     },
     {
       name: "AWS_BRANCH",
@@ -240,6 +252,10 @@ export const envContract = {
     {
       name: "BILLING_ADMIN_OVERRIDE_URL",
       purpose: "Local helper script target URL for `npm run billing:override`.",
+    },
+    {
+      name: "MAINTENANCE_ADMIN_URL",
+      purpose: "Local helper script target URL for `npm run maintenance:set`.",
     },
     {
       name: "BB_LOGIN",
@@ -389,7 +405,7 @@ export function renderReadmeEnvSection() {
     "  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.",
     "  - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.",
     "  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.",
-    "  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.",
+    "  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on both `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*` and `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/site-control/*`.",
     "- Imported runtime bindings",
     ...envContract.generated.map(
       (entry) => `  - \`${entry.name}\`: ${entry.purpose}`,

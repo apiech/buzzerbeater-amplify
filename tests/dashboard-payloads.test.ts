@@ -138,6 +138,21 @@ test("boxscore helper scoreline and player sorting favor starters first", () => 
   );
 });
 
+test("opponent forecast polling stops after terminal statuses", () => {
+  assert.equal(
+    dashboardTesting.isOpponentForecastTerminalStatus("SUCCEEDED"),
+    true,
+  );
+  assert.equal(
+    dashboardTesting.isOpponentForecastTerminalStatus("FAILED"),
+    true,
+  );
+  assert.equal(
+    dashboardTesting.isOpponentForecastTerminalStatus("INVOKING_MODEL"),
+    false,
+  );
+});
+
 function createRosterPlayer(
   name: string,
   overrides: Partial<{

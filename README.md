@@ -49,6 +49,7 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    Use [`env-template`](/Users/karey/projects/bb/bb-amplify/env-template) as the source of truth for required, optional, and conditional build-time variables.
    The repo-local `npm run ampx -- ...` wrapper and `npm run sandbox` workflow both pick up `.env` automatically for local sandbox deploys, so synth-time values like `APP_BASE_URL` do not need extra shell setup.
    The repo-local Next.js launcher derives `AMPLIFY_APP_ORIGIN` from `APP_BASE_URL`, so `npm run dev`, `npm run build`, and `npm run start` do not need a second origin variable.
+
 4. Run the local doctor and release the sandbox predictor once:
 
    ```bash
@@ -94,6 +95,7 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/karey/projects/bb/bb-amplify/amplify).
 
 <!-- ENV-CONTRACT:START -->
+
 ### Required Plain Env
 
 - `APP_BASE_URL`
@@ -147,7 +149,7 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
   - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.
   - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.
-  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.
+  - Hosted builds require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on both `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*` and `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/site-control/*`.
 - Imported runtime bindings
   - `MATCH_STORE_BUCKET_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
   - `MATCH_CATALOG_TABLE_NAME`: Imported at synth time from the shared ML Data Infra SSM contract and injected into match-store readers.
@@ -170,6 +172,9 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `BILLING_ADMIN_TOKEN`
   - Protects the manual billing override Function URL used for complimentary plan grants and removals.
   - Current static bearer token stays manual in this pass. Follow-up: replace it with first-party admin auth.
+- `MAINTENANCE_ADMIN_TOKEN`
+  - Protects the maintenance control Function URL used to activate, update, and clear maintenance mode.
+  - Current static bearer token stays manual in this pass. Follow-up: replace it with first-party admin auth.
 
 ### Internal Or Platform-Provided Env
 
@@ -177,6 +182,8 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - Required by the installed Next.js Amplify adapter for server-side auth. It is always derived from `APP_BASE_URL` by the repo-local Next.js launcher and the hosted build env writer so the app only has one real origin input.
 - `BB_SHARED_ENVIRONMENT_NAME`
   - Optional synth-time override for shared infra discovery. `npm run sandbox` sets this automatically, while hosted builds derive the environment from `AWS_BRANCH`.
+- `MAINTENANCE_ENVIRONMENT_NAME`
+  - Derived environment name used by hosted SSR and Lambda runtimes to read and write the site maintenance control document in SSM.
 - `AWS_BRANCH`
   - Provided by Amplify Hosting and used to derive the shared infra environment name plus branch-aware defaults such as billing plan behavior.
 - `AWS_APP_ID`
@@ -192,6 +199,8 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 
 - `BILLING_ADMIN_OVERRIDE_URL`
   - Local helper script target URL for `npm run billing:override`.
+- `MAINTENANCE_ADMIN_URL`
+  - Local helper script target URL for `npm run maintenance:set`.
 - `BB_LOGIN`
   - Optional username fallback for `npm run debug:game-day-recap`.
 - `BB_ACCESS_KEY`

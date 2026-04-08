@@ -18,6 +18,7 @@ import {
   getMatchBoxscore,
   listTrackedTeamsForUser,
 } from "./repository";
+import { assertMaintenanceInactive } from "./maintenance";
 import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -212,6 +213,8 @@ export async function listAccessibleMatches(
   },
   dependencies: MatchStoreDependencies = defaultDependencies,
 ): Promise<Record<string, unknown>> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -287,6 +290,8 @@ export async function getAccessibleMatch(
   },
   dependencies: MatchStoreDependencies = defaultDependencies,
 ): Promise<Record<string, unknown>> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -317,6 +322,8 @@ export async function getAccessiblePlayByPlay(
   },
   dependencies: MatchStoreDependencies = defaultDependencies,
 ): Promise<Record<string, unknown>> {
+  await assertMaintenanceInactive();
+
   const match = await getAccessibleMatch(args, dependencies);
   return {
     matchId: match.matchId,
@@ -335,6 +342,8 @@ export async function getMatchBoxscoreDetails(
   },
   dependencies: MatchStoreDependencies = defaultDependencies,
 ): Promise<MatchBoxscoreDetailsResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");

@@ -19,6 +19,7 @@ const approvedLargeDependencyBags = new Map<string, number>([
   ["amplify/data/_backend/league-history.ts", 16],
   ["amplify/data/_backend/lineup-helper.ts", 4],
   ["amplify/data/_backend/match-store.ts", 5],
+  ["amplify/data/_backend/opponent-forecast.ts", 8],
   ["amplify/data/_backend/prediction.ts", 9],
   ["amplify/data/_backend/team-highlights.ts", 11],
 ]);
@@ -217,7 +218,10 @@ test("server BFF dispatch avoids generated client meta-types", () => {
     "utf8",
   );
 
-  assert.doesNotMatch(bffSource, /Awaited<ReturnType<typeof getServerDataClient>>/);
+  assert.doesNotMatch(
+    bffSource,
+    /Awaited<ReturnType<typeof getServerDataClient>>/,
+  );
   assert.doesNotMatch(bffSource, /Parameters<ServerDataClient/);
   assert.doesNotMatch(bffSource, /DeepReadOnlyObject/);
 });
@@ -269,16 +273,23 @@ test("deploy verification uses a cold app typecheck", () => {
     scripts?: Record<string, string>;
   };
 
-  assert.match(packageJson.scripts?.["typecheck:app"] ?? "", /--incremental false/);
+  assert.match(
+    packageJson.scripts?.["typecheck:app"] ?? "",
+    /--incremental false/,
+  );
 });
 
 test("app data access exposes explicit read endpoints and no generic model proxy", () => {
   assert.equal(
-    existsSync(join(repoRoot, "app", "api", "app", "models", "[name]", "route.ts")),
+    existsSync(
+      join(repoRoot, "app", "api", "app", "models", "[name]", "route.ts"),
+    ),
     false,
   );
   assert.equal(
-    existsSync(join(repoRoot, "app", "api", "app", "reads", "[name]", "route.ts")),
+    existsSync(
+      join(repoRoot, "app", "api", "app", "reads", "[name]", "route.ts"),
+    ),
     true,
   );
 });
@@ -345,7 +356,10 @@ test("synth-time backend files do not import root lib helpers", () => {
   ];
 
   const synthTimeFiles = listSourceFiles(amplifyRoot).filter((sourceFile) => {
-    const relativePath = relative(amplifyRoot, sourceFile).replaceAll("\\", "/");
+    const relativePath = relative(amplifyRoot, sourceFile).replaceAll(
+      "\\",
+      "/",
+    );
 
     return (
       relativePath === "backend.ts" ||
@@ -365,7 +379,10 @@ test("synth-time backend files do not import root lib helpers", () => {
 test("synth-time backend files only read process.env through the shared synth env helper", () => {
   const amplifyRoot = join(repoRoot, "amplify");
   const synthTimeFiles = listSourceFiles(amplifyRoot).filter((sourceFile) => {
-    const relativePath = relative(amplifyRoot, sourceFile).replaceAll("\\", "/");
+    const relativePath = relative(amplifyRoot, sourceFile).replaceAll(
+      "\\",
+      "/",
+    );
 
     return (
       relativePath === "backend.ts" ||
@@ -375,7 +392,10 @@ test("synth-time backend files only read process.env through the shared synth en
   });
 
   for (const sourceFile of synthTimeFiles) {
-    const relativePath = relative(amplifyRoot, sourceFile).replaceAll("\\", "/");
+    const relativePath = relative(amplifyRoot, sourceFile).replaceAll(
+      "\\",
+      "/",
+    );
     if (relativePath === "_shared/synth-env.ts") {
       continue;
     }
@@ -463,7 +483,9 @@ test("deployable source never colocates or imports test modules", () => {
     /require\s*\(\s*["'`][^"'`]*\.(?:test|spec)\.[^"'`]*/,
   ];
 
-  for (const rootPath of deployableRoots.filter((rootPath) => !rootPath.endsWith("/public"))) {
+  for (const rootPath of deployableRoots.filter(
+    (rootPath) => !rootPath.endsWith("/public"),
+  )) {
     for (const sourceFile of listSourceFiles(rootPath)) {
       const source = readFileSync(sourceFile, "utf8");
       for (const pattern of importPatterns) {

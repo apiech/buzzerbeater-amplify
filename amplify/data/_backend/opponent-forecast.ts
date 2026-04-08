@@ -24,6 +24,10 @@ import {
   buildExecutionName,
   startStateMachineExecution,
 } from "./step-functions";
+import {
+  assertMaintenanceInactive,
+  toMaintenanceAwareErrorMessage,
+} from "./maintenance";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -46,6 +50,7 @@ type OpponentForecastAnalogGame = OpponentForecastResult["analogGames"][number];
 type OpponentForecastSignal = OpponentForecastResult["featureSignals"][number];
 
 type SubmitOpponentForecastDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
   createOpponentForecastJob: typeof createOpponentForecastJob;
   requireFeatureAccess: typeof requireFeatureAccess;
   startWorkflowExecution: (
@@ -56,7 +61,11 @@ type SubmitOpponentForecastDependencies = {
   updateOpponentForecastJob: typeof updateOpponentForecastJob;
 };
 
+type SubmitOpponentForecastDependencyOverrides =
+  Partial<SubmitOpponentForecastDependencies>;
+
 const defaultSubmitDependencies: SubmitOpponentForecastDependencies = {
+  assertMaintenanceInactive,
   createOpponentForecastJob,
   requireFeatureAccess,
   startWorkflowExecution: async (stateMachineArn, executionName, message) => {
@@ -76,8 +85,15 @@ export async function submitOpponentForecastJob(
     stateMachineArn: string;
     teamId: string;
   },
-  dependencies: SubmitOpponentForecastDependencies = defaultSubmitDependencies,
+  dependencies: SubmitOpponentForecastDependencyOverrides =
+    defaultSubmitDependencies,
 ): Promise<{ executionArn: string; jobId: string }> {
+  const deps: SubmitOpponentForecastDependencies = {
+    ...defaultSubmitDependencies,
+    ...dependencies,
+  };
+  await deps.assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -85,14 +101,14 @@ export async function submitOpponentForecastJob(
 
   const teamId = normalizeRequiredString(args.teamId, "A scout team id");
 
-  await dependencies.requireFeatureAccess({
+  await deps.requireFeatureAccess({
     env: args.env,
     featureKey: "predictions",
     userId,
   });
 
   const jobId = randomUUID();
-  await dependencies.createOpponentForecastJob(args.env, {
+  await deps.createOpponentForecastJob(args.env, {
     id: jobId,
     userId,
     teamId,
@@ -109,18 +125,18 @@ export async function submitOpponentForecastJob(
   });
 
   try {
-    const executionArn = await dependencies.startWorkflowExecution(
+    const executionArn = await deps.startWorkflowExecution(
       args.stateMachineArn,
       buildExecutionName("opponent-forecast", jobId),
       { jobId, userId },
     );
-    await dependencies.updateOpponentForecastJob(args.env, {
+    await deps.updateOpponentForecastJob(args.env, {
       id: jobId,
       executionArn,
     });
     return { executionArn, jobId };
   } catch (error) {
-    await dependencies.updateOpponentForecastJob(args.env, {
+    await deps.updateOpponentForecastJob(args.env, {
       id: jobId,
       status: "FAILED",
       error: error instanceof Error ? error.message : String(error),
@@ -135,6 +151,8 @@ export async function getLatestOpponentForecast(args: {
   identity: unknown;
   teamId: string;
 }): Promise<OpponentForecastSnapshot | null> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -153,9 +171,29 @@ export async function processOpponentForecastJob(args: {
   endpointName: string;
   message?: { jobId: string; userId: string };
   messageBody?: string;
-}): Promise<void> {
+},
+dependencies: {
+  assertMaintenanceInactive?: () => Promise<void>;
+  getOpponentForecastJob?: typeof getOpponentForecastJob;
+  getOrRefreshWorkspace?: typeof getOrRefreshWorkspace;
+  getScoutWorkspaceForTeam?: typeof getScoutWorkspaceForTeam;
+  invokeOpponentForecastEndpoint?: typeof invokeOpponentForecastEndpoint;
+  updateOpponentForecastJob?: typeof updateOpponentForecastJob;
+} = {}): Promise<void> {
+  const runtimeDependencies = {
+    assertMaintenanceInactive,
+    getOpponentForecastJob,
+    getOrRefreshWorkspace,
+    getScoutWorkspaceForTeam,
+    invokeOpponentForecastEndpoint,
+    updateOpponentForecastJob,
+    ...dependencies,
+  };
   const message = resolveOpponentForecastJobMessage(args);
-  const job = await getOpponentForecastJob(args.env, message.jobId);
+  const job = await runtimeDependencies.getOpponentForecastJob(
+    args.env,
+    message.jobId,
+  );
   if (!job || job.userId !== message.userId) {
     throw new Error(
       "Opponent forecast job is missing or no longer belongs to the enqueued user.",
@@ -166,7 +204,9 @@ export async function processOpponentForecastJob(args: {
   const startedAt = new Date().toISOString();
 
   try {
-    await updateOpponentForecastJob(args.env, {
+    await runtimeDependencies.assertMaintenanceInactive();
+
+    await runtimeDependencies.updateOpponentForecastJob(args.env, {
       id: job.id,
       status: "RESOLVING_CONTEXT",
       startedAt,
@@ -174,11 +214,13 @@ export async function processOpponentForecastJob(args: {
       error: null,
     });
 
-    const workspace = await getOrRefreshWorkspace({
+    await runtimeDependencies.assertMaintenanceInactive();
+
+    const workspace = await runtimeDependencies.getOrRefreshWorkspace({
       env: args.env,
       identity,
     });
-    const { scout } = await getScoutWorkspaceForTeam({
+    const { scout } = await runtimeDependencies.getScoutWorkspaceForTeam({
       env: args.env,
       identity,
       teamId: job.teamId,
@@ -194,7 +236,7 @@ export async function processOpponentForecastJob(args: {
       workspace,
     });
 
-    await updateOpponentForecastJob(args.env, {
+    await runtimeDependencies.updateOpponentForecastJob(args.env, {
       id: job.id,
       status: "INVOKING_MODEL",
       teamName: scout.summary.teamName ?? null,
@@ -202,12 +244,17 @@ export async function processOpponentForecastJob(args: {
       error: null,
     });
 
+    await runtimeDependencies.assertMaintenanceInactive();
+
     const result = normalizeOpponentForecastResult(
-      await invokeOpponentForecastEndpoint(args.endpointName, resolvedContext),
+      await runtimeDependencies.invokeOpponentForecastEndpoint(
+        args.endpointName,
+        resolvedContext,
+      ),
     );
     const completedAt = new Date().toISOString();
 
-    await updateOpponentForecastJob(args.env, {
+    await runtimeDependencies.updateOpponentForecastJob(args.env, {
       id: job.id,
       status: "SUCCEEDED",
       teamName: scout.summary.teamName ?? null,
@@ -218,11 +265,11 @@ export async function processOpponentForecastJob(args: {
       error: null,
     });
   } catch (error) {
-    await updateOpponentForecastJob(args.env, {
+    await runtimeDependencies.updateOpponentForecastJob(args.env, {
       id: job.id,
       status: "FAILED",
       completedAt: new Date().toISOString(),
-      error: error instanceof Error ? error.message : String(error),
+      error: toMaintenanceAwareErrorMessage(error),
     });
     throw error;
   }

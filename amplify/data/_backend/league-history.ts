@@ -19,6 +19,10 @@ import {
   buildExecutionName,
   startStateMachineExecution,
 } from "./step-functions";
+import {
+  assertMaintenanceInactive,
+  toMaintenanceAwareErrorMessage,
+} from "./maintenance";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -34,7 +38,8 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 type LeagueHistoryResult = ResolverResult<"getLeagueHistory">;
 type LeagueHistoryRow = LeagueHistoryResult["rows"][number];
 type LeagueHistoryStatus = NonNullable<LeagueHistoryResult["status"]>;
-type SubmitLeagueHistoryBackfillResult = ResolverResult<"submitLeagueHistoryBackfill">;
+type SubmitLeagueHistoryBackfillResult =
+  ResolverResult<"submitLeagueHistoryBackfill">;
 
 type LeagueHistoryMessage = {
   leagueId: string;
@@ -47,6 +52,7 @@ type CreateBbClient = (
 ) => Pick<BBXmlApiClient, "getSeasons" | "getStandings">;
 
 type SubmitDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
   createBbClient: CreateBbClient;
   getBbConnection: typeof getBbConnection;
   getLeagueHistoryBackfill: typeof getLeagueHistoryBackfill;
@@ -62,6 +68,7 @@ type SubmitDependencies = {
 };
 
 type GetDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
   createBbClient: CreateBbClient;
   getBbConnection: typeof getBbConnection;
   getLeagueHistoryBackfill: typeof getLeagueHistoryBackfill;
@@ -70,6 +77,7 @@ type GetDependencies = {
 };
 
 type ProcessDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
   createBbClient: CreateBbClient;
   getBbConnection: typeof getBbConnection;
   getLeagueHistoryBackfill: typeof getLeagueHistoryBackfill;
@@ -79,6 +87,10 @@ type ProcessDependencies = {
   upsertLeagueHistoryBackfill: typeof upsertLeagueHistoryBackfill;
   upsertLeagueHistoryStandingCache: typeof upsertLeagueHistoryStandingCache;
 };
+
+type SubmitDependencyOverrides = Partial<SubmitDependencies>;
+type GetDependencyOverrides = Partial<GetDependencies>;
+type ProcessDependencyOverrides = Partial<ProcessDependencies>;
 
 type ResolvedLeagueRequest = {
   connection: BbConnectionRecord;
@@ -100,6 +112,7 @@ const ACTIVE_BACKFILL_STATES = new Set([
 ]);
 
 const defaultSubmitDependencies: SubmitDependencies = {
+  assertMaintenanceInactive,
   createBbClient: (options) => new BBXmlApiClient(options),
   getBbConnection,
   getLeagueHistoryBackfill,
@@ -117,6 +130,7 @@ const defaultSubmitDependencies: SubmitDependencies = {
 };
 
 const defaultGetDependencies: GetDependencies = {
+  assertMaintenanceInactive,
   createBbClient: (options) => new BBXmlApiClient(options),
   getBbConnection,
   getLeagueHistoryBackfill,
@@ -125,6 +139,7 @@ const defaultGetDependencies: GetDependencies = {
 };
 
 const defaultProcessDependencies: ProcessDependencies = {
+  assertMaintenanceInactive,
   createBbClient: (options) => new BBXmlApiClient(options),
   getBbConnection,
   getLeagueHistoryBackfill,
@@ -150,12 +165,23 @@ export async function submitLeagueHistoryBackfill(
     leagueId?: string | null;
     stateMachineArn: string;
   },
-  dependencies: SubmitDependencies = defaultSubmitDependencies,
+  dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
 ): Promise<SubmitLeagueHistoryBackfillResult> {
-  const request = await resolveLeagueRequest(args.env, args.identity, args.leagueId, {
-    getBbConnection: dependencies.getBbConnection,
-  });
-  const existingStatus = await dependencies.getLeagueHistoryBackfill(
+  const deps: SubmitDependencies = {
+    ...defaultSubmitDependencies,
+    ...dependencies,
+  };
+  await deps.assertMaintenanceInactive();
+
+  const request = await resolveLeagueRequest(
+    args.env,
+    args.identity,
+    args.leagueId,
+    {
+      getBbConnection: deps.getBbConnection,
+    },
+  );
+  const existingStatus = await deps.getLeagueHistoryBackfill(
     args.env,
     request.leagueId,
   );
@@ -167,18 +193,19 @@ export async function submitLeagueHistoryBackfill(
     args.env,
     request,
     {
-      createBbClient: dependencies.createBbClient,
+      createBbClient: deps.createBbClient,
       listLeagueHistoryStandingCachesByLeagueId:
-        dependencies.listLeagueHistoryStandingCachesByLeagueId,
-      resolveBbAccessKey: dependencies.resolveBbAccessKey,
+        deps.listLeagueHistoryStandingCachesByLeagueId,
+      resolveBbAccessKey: deps.resolveBbAccessKey,
     },
   );
-  const historicalSeasonsExpected = historicalSeasonSummary.historicalSeasons.length;
+  const historicalSeasonsExpected =
+    historicalSeasonSummary.historicalSeasons.length;
   const historicalSeasonsStored =
     historicalSeasonSummary.storedHistoricalSeasons.length;
 
   if (historicalSeasonsExpected === historicalSeasonsStored) {
-    const completedAt = dependencies.now().toISOString();
+    const completedAt = deps.now().toISOString();
     const completedStatus: LeagueHistoryBackfillRecord = {
       completedAt,
       error: null,
@@ -200,11 +227,11 @@ export async function submitLeagueHistoryBackfill(
       status: "SUCCEEDED",
       updatedAt: completedAt,
     };
-    await dependencies.upsertLeagueHistoryBackfill(args.env, completedStatus);
+    await deps.upsertLeagueHistoryBackfill(args.env, completedStatus);
     return toSubmitResult(completedStatus, false);
   }
 
-  const requestedAt = dependencies.now().toISOString();
+  const requestedAt = deps.now().toISOString();
   const queuedStatus: LeagueHistoryBackfillRecord = {
     completedAt: null,
     error: null,
@@ -212,11 +239,11 @@ export async function submitLeagueHistoryBackfill(
     historicalSeasonsStored,
     lastCompletedSeason: existingStatus?.lastCompletedSeason ?? null,
     leagueId: request.leagueId,
-      leagueName:
-        existingStatus?.leagueName ??
-        (request.leagueId === request.connection.leagueId
-          ? request.connection.leagueName
-          : null),
+    leagueName:
+      existingStatus?.leagueName ??
+      (request.leagueId === request.connection.leagueId
+        ? request.connection.leagueName
+        : null),
     executionArn: null,
     requestedAt,
     startedAt: null,
@@ -224,29 +251,29 @@ export async function submitLeagueHistoryBackfill(
     updatedAt: requestedAt,
   };
 
-  await dependencies.upsertLeagueHistoryBackfill(args.env, queuedStatus);
+  await deps.upsertLeagueHistoryBackfill(args.env, queuedStatus);
 
   try {
-    const executionArn = await dependencies.startWorkflowExecution(
+    const executionArn = await deps.startWorkflowExecution(
       args.stateMachineArn,
       buildExecutionName(
         "league-history",
         `${request.leagueId}:${request.userId}:${requestedAt}`,
       ),
       {
-      leagueId: request.leagueId,
-      requestedAt,
-      userId: request.userId,
+        leagueId: request.leagueId,
+        requestedAt,
+        userId: request.userId,
       },
     );
     const runningStatus: LeagueHistoryBackfillRecord = {
       ...queuedStatus,
       executionArn,
     };
-    await dependencies.upsertLeagueHistoryBackfill(args.env, runningStatus);
+    await deps.upsertLeagueHistoryBackfill(args.env, runningStatus);
     return toSubmitResult(runningStatus, true);
   } catch (error) {
-    const failedAt = dependencies.now().toISOString();
+    const failedAt = deps.now().toISOString();
     const failedStatus: LeagueHistoryBackfillRecord = {
       ...queuedStatus,
       completedAt: failedAt,
@@ -254,7 +281,7 @@ export async function submitLeagueHistoryBackfill(
       status: "FAILED",
       updatedAt: failedAt,
     };
-    await dependencies.upsertLeagueHistoryBackfill(args.env, failedStatus);
+    await deps.upsertLeagueHistoryBackfill(args.env, failedStatus);
     throw error;
   }
 }
@@ -265,17 +292,28 @@ export async function getLeagueHistory(
     identity: unknown;
     leagueId?: string | null;
   },
-  dependencies: GetDependencies = defaultGetDependencies,
+  dependencies: GetDependencyOverrides = defaultGetDependencies,
 ): Promise<LeagueHistoryResult> {
-  const request = await resolveLeagueRequest(args.env, args.identity, args.leagueId, {
-    getBbConnection: dependencies.getBbConnection,
-  });
+  const deps: GetDependencies = {
+    ...defaultGetDependencies,
+    ...dependencies,
+  };
+  await deps.assertMaintenanceInactive();
+
+  const request = await resolveLeagueRequest(
+    args.env,
+    args.identity,
+    args.leagueId,
+    {
+      getBbConnection: deps.getBbConnection,
+    },
+  );
   const [status, cachedRows] = await Promise.all([
-    dependencies.getLeagueHistoryBackfill(args.env, request.leagueId),
+    deps.getLeagueHistoryBackfill(args.env, request.leagueId),
     listAllLeagueHistoryStandingCaches(
       args.env,
       request.leagueId,
-      dependencies.listLeagueHistoryStandingCachesByLeagueId,
+      deps.listLeagueHistoryStandingCachesByLeagueId,
     ),
   ]);
 
@@ -287,8 +325,8 @@ export async function getLeagueHistory(
       request.connection,
       request.userId,
       {
-        createBbClient: dependencies.createBbClient,
-        resolveBbAccessKey: dependencies.resolveBbAccessKey,
+        createBbClient: deps.createBbClient,
+        resolveBbAccessKey: deps.resolveBbAccessKey,
       },
     );
     liveStandings = await bb.getStandings(request.leagueId);
@@ -335,33 +373,34 @@ export async function processLeagueHistoryBackfill(
     message?: LeagueHistoryMessage;
     messageBody?: string;
   },
-  dependencies: ProcessDependencies = defaultProcessDependencies,
+  dependencies: ProcessDependencyOverrides = defaultProcessDependencies,
 ): Promise<void> {
+  const deps: ProcessDependencies = {
+    ...defaultProcessDependencies,
+    ...dependencies,
+  };
   const message = resolveLeagueHistoryMessage(args);
-  const connection = await dependencies.getBbConnection(args.env, message.userId);
+  const connection = await deps.getBbConnection(
+    args.env,
+    message.userId,
+  );
   if (!connection) {
-    throw new Error("A connected BuzzerBeater account is required for league history backfill.");
+    throw new Error(
+      "A connected BuzzerBeater account is required for league history backfill.",
+    );
   }
 
-  const bb = await createLeagueHistoryBbClient(
-    args.env,
-    connection,
-    message.userId,
-    {
-      createBbClient: dependencies.createBbClient,
-      resolveBbAccessKey: dependencies.resolveBbAccessKey,
-    },
-  );
-  const now = dependencies.now().toISOString();
-  const existingStatus = await dependencies.getLeagueHistoryBackfill(
+  const now = deps.now().toISOString();
+  const existingStatus = await deps.getLeagueHistoryBackfill(
     args.env,
     message.leagueId,
   );
-  await dependencies.upsertLeagueHistoryBackfill(args.env, {
+  await deps.upsertLeagueHistoryBackfill(args.env, {
     completedAt: null,
     error: null,
     executionArn: existingStatus?.executionArn ?? null,
-    historicalSeasonsExpected: existingStatus?.historicalSeasonsExpected ?? null,
+    historicalSeasonsExpected:
+      existingStatus?.historicalSeasonsExpected ?? null,
     historicalSeasonsStored: existingStatus?.historicalSeasonsStored ?? null,
     lastCompletedSeason: existingStatus?.lastCompletedSeason ?? null,
     leagueId: message.leagueId,
@@ -374,10 +413,24 @@ export async function processLeagueHistoryBackfill(
 
   let historicalSeasonsExpected: number | null = null;
   let historicalSeasonsStored: number | null = null;
-  let lastCompletedSeason: number | null = existingStatus?.lastCompletedSeason ?? null;
+  let lastCompletedSeason: number | null =
+    existingStatus?.lastCompletedSeason ?? null;
   let leagueName: string | null = existingStatus?.leagueName ?? null;
 
   try {
+    await deps.assertMaintenanceInactive();
+
+    const bb = await createLeagueHistoryBbClient(
+      args.env,
+      connection,
+      message.userId,
+      {
+        createBbClient: deps.createBbClient,
+        resolveBbAccessKey: deps.resolveBbAccessKey,
+      },
+    );
+    await deps.assertMaintenanceInactive();
+
     const seasonsResponse = await bb.getSeasons();
     const availableSeasons = seasonsResponse.seasons
       .map((season) => season.id)
@@ -386,7 +439,7 @@ export async function processLeagueHistoryBackfill(
     const cachedRows = await listAllLeagueHistoryStandingCaches(
       args.env,
       message.leagueId,
-      dependencies.listLeagueHistoryStandingCachesByLeagueId,
+      deps.listLeagueHistoryStandingCachesByLeagueId,
     );
     const currentSeason = availableSeasons.at(-1) ?? null;
     const historicalSeasons = availableSeasons.filter(
@@ -401,14 +454,15 @@ export async function processLeagueHistoryBackfill(
     historicalSeasonsStored = countDistinctStoredSeasons(cachedRows);
 
     if (!missingSeasons.length) {
-      const completedAt = dependencies.now().toISOString();
-      await dependencies.upsertLeagueHistoryBackfill(args.env, {
+      const completedAt = deps.now().toISOString();
+      await deps.upsertLeagueHistoryBackfill(args.env, {
         completedAt,
         error: null,
         historicalSeasonsExpected,
         historicalSeasonsStored,
         lastCompletedSeason:
-          historicalSeasons[historicalSeasons.length - 1] ?? lastCompletedSeason,
+          historicalSeasons[historicalSeasons.length - 1] ??
+          lastCompletedSeason,
         leagueId: message.leagueId,
         leagueName,
         executionArn: existingStatus?.executionArn ?? null,
@@ -421,18 +475,19 @@ export async function processLeagueHistoryBackfill(
     }
 
     for (const season of missingSeasons) {
+      await deps.assertMaintenanceInactive();
       const standings = await bb.getStandings(message.leagueId, season);
       const seasonRows = standingsToHistoryRecords(standings, message.leagueId);
       leagueName = standings.league?.name ?? leagueName;
 
       for (const row of seasonRows) {
-        await dependencies.upsertLeagueHistoryStandingCache(args.env, row);
+        await deps.upsertLeagueHistoryStandingCache(args.env, row);
       }
 
       historicalSeasonsStored = (historicalSeasonsStored ?? 0) + 1;
       lastCompletedSeason = season;
-      const updatedAt = dependencies.now().toISOString();
-      await dependencies.upsertLeagueHistoryBackfill(args.env, {
+      const updatedAt = deps.now().toISOString();
+      await deps.upsertLeagueHistoryBackfill(args.env, {
         completedAt: null,
         error: null,
         historicalSeasonsExpected,
@@ -448,8 +503,8 @@ export async function processLeagueHistoryBackfill(
       });
     }
 
-    const completedAt = dependencies.now().toISOString();
-    await dependencies.upsertLeagueHistoryBackfill(args.env, {
+    const completedAt = deps.now().toISOString();
+    await deps.upsertLeagueHistoryBackfill(args.env, {
       completedAt,
       error: null,
       historicalSeasonsExpected,
@@ -464,10 +519,10 @@ export async function processLeagueHistoryBackfill(
       updatedAt: completedAt,
     });
   } catch (error) {
-    const failedAt = dependencies.now().toISOString();
-    await dependencies.upsertLeagueHistoryBackfill(args.env, {
+    const failedAt = deps.now().toISOString();
+    await deps.upsertLeagueHistoryBackfill(args.env, {
       completedAt: failedAt,
-      error: toErrorMessage(error),
+      error: toMaintenanceAwareErrorMessage(error),
       historicalSeasonsExpected,
       historicalSeasonsStored,
       lastCompletedSeason,
@@ -488,13 +543,20 @@ async function summarizeHistoricalSeasons(
   request: ResolvedLeagueRequest,
   dependencies: Pick<
     SubmitDependencies,
-    "createBbClient" | "listLeagueHistoryStandingCachesByLeagueId" | "resolveBbAccessKey"
+    | "createBbClient"
+    | "listLeagueHistoryStandingCachesByLeagueId"
+    | "resolveBbAccessKey"
   >,
 ): Promise<HistoricalSeasonSummary> {
-  const bb = await createLeagueHistoryBbClient(env, request.connection, request.userId, {
-    createBbClient: dependencies.createBbClient,
-    resolveBbAccessKey: dependencies.resolveBbAccessKey,
-  });
+  const bb = await createLeagueHistoryBbClient(
+    env,
+    request.connection,
+    request.userId,
+    {
+      createBbClient: dependencies.createBbClient,
+      resolveBbAccessKey: dependencies.resolveBbAccessKey,
+    },
+  );
   const [cachedRows, seasonsResponse] = await Promise.all([
     listAllLeagueHistoryStandingCaches(
       env,
@@ -554,7 +616,9 @@ async function resolveLeagueRequest(
 
   const connection = await dependencies.getBbConnection(env, userId);
   if (!connection) {
-    throw new Error("Connect a BuzzerBeater account before loading league history.");
+    throw new Error(
+      "Connect a BuzzerBeater account before loading league history.",
+    );
   }
 
   const requestedLeagueId = normalizeLeagueId(leagueId);
@@ -575,7 +639,10 @@ async function createLeagueHistoryBbClient(
   env: GraphqlEnv,
   connection: BbConnectionRecord,
   userId: string,
-  dependencies: Pick<SubmitDependencies, "createBbClient" | "resolveBbAccessKey">,
+  dependencies: Pick<
+    SubmitDependencies,
+    "createBbClient" | "resolveBbAccessKey"
+  >,
 ): Promise<ReturnType<CreateBbClient>> {
   const accessKey = await dependencies.resolveBbAccessKey(env, userId);
   return dependencies.createBbClient({
@@ -692,17 +759,15 @@ export function aggregateLeagueHistoryRows(
       continue;
     }
 
-    const current =
-      aggregated.get(row.teamId) ??
-      {
-        losses: 0,
-        pa: 0,
-        pf: 0,
-        seasons: new Set<number>(),
-        teamId: row.teamId,
-        teamName: row.teamName ?? `Team ${row.teamId}`,
-        wins: 0,
-      };
+    const current = aggregated.get(row.teamId) ?? {
+      losses: 0,
+      pa: 0,
+      pf: 0,
+      seasons: new Set<number>(),
+      teamId: row.teamId,
+      teamName: row.teamName ?? `Team ${row.teamId}`,
+      wins: 0,
+    };
 
     if (typeof row.season === "number") {
       current.seasons.add(row.season);

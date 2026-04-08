@@ -5,9 +5,19 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import publicAppOrigin from "../lib/env/public-app-origin.ts";
+import * as maintenanceEnvironmentModule from "../lib/maintenance/environment.ts";
 import { loadProjectEnvFiles } from "./project-env.mjs";
 
 const { deriveAmplifyAppOrigin } = publicAppOrigin;
+const resolveMaintenanceEnvironmentName =
+  maintenanceEnvironmentModule.resolveMaintenanceEnvironmentName ??
+  maintenanceEnvironmentModule.default?.resolveMaintenanceEnvironmentName;
+
+if (typeof resolveMaintenanceEnvironmentName !== "function") {
+  throw new Error(
+    "Unable to resolve resolveMaintenanceEnvironmentName from maintenance/environment.ts.",
+  );
+}
 
 const require = createRequire(import.meta.url);
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +33,7 @@ loadLocalEnv();
 const derivedEnv = {
   ...process.env,
   AMPLIFY_APP_ORIGIN: deriveAmplifyAppOrigin(process.env),
+  MAINTENANCE_ENVIRONMENT_NAME: resolveMaintenanceEnvironmentName(process.env),
 };
 
 const child = spawn(process.execPath, [nextCli, ...process.argv.slice(2)], {

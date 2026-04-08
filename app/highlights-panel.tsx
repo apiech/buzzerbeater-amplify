@@ -42,13 +42,16 @@ type HighlightsFilterPerspective = "against" | "both" | "for";
 type LoadHighlightsOptions = {
   append?: boolean;
   cursor?: string | null;
+  silent?: boolean;
 };
 
 const ACTIVE_SCAN_STATUSES = new Set([
   "ENQUEUING_MATCHES",
   "QUEUED",
   "RESOLVING_HISTORY",
+  "WAITING_FOR_MATCH_JOBS",
 ]);
+const STALE_SCAN_MILLISECONDS = 15 * 60 * 1000;
 
 export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const [perspective, setPerspective] =
@@ -60,8 +63,8 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const loadHighlightsEffect = useEffectEvent(() => {
-    void loadHighlights();
+  const loadHighlightsEffect = useEffectEvent((options: LoadHighlightsOptions = {}) => {
+    void loadHighlights(options);
   });
 
   useEffect(() => {
@@ -73,10 +76,12 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   ): Promise<void> {
     if (options.append) {
       setIsLoadingMore(true);
-    } else {
+    } else if (!options.silent) {
       setIsLoading(true);
     }
-    setPanelError(null);
+    if (!options.silent) {
+      setPanelError(null);
+    }
 
     const response = await client.queries.getMyTeamHighlights({
       cursor: options.cursor,
@@ -86,7 +91,9 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
 
     if (response.errors?.length || !response.data) {
       setPanelError(formatAmplifyErrors(response.errors));
-      setIsLoading(false);
+      if (!options.silent) {
+        setIsLoading(false);
+      }
       setIsLoadingMore(false);
       return;
     }
@@ -102,7 +109,9 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
         items: [...current.items, ...nextPayload.items],
       };
     });
-    setIsLoading(false);
+    if (!options.silent) {
+      setIsLoading(false);
+    }
     setIsLoadingMore(false);
   }
 
@@ -135,6 +144,12 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const focusTeamName =
     payload?.team.teamName ?? workspace.home.team.teamName ?? "Your club";
   const scanStatus = payload?.scanStatus ?? null;
+  const isScanStale = isTeamHighlightsScanStale(scanStatus);
+  const hasActiveScan = hasActiveTeamHighlightsScan(scanStatus) && !isScanStale;
+  const scanActionLabel = getTeamHighlightsScanActionLabel(scanStatus, {
+    hasActiveScan,
+    isScanStale,
+  });
   const summary = payload?.summary ?? {
     againstMoments: 0,
     filteredMoments: 0,
@@ -143,22 +158,38 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     totalMoments: 0,
   };
 
+  useEffect(() => {
+    if (!hasActiveScan) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      loadHighlightsEffect({ silent: true });
+    }, 4000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [hasActiveScan]);
+
+  const submittedMatches =
+    (scanStatus?.matchesEnqueuedForIngest ?? 0) +
+    (scanStatus?.matchesEnqueuedForMaterialize ?? 0);
+  const failedMatches = scanStatus?.matchesFailed ?? 0;
+  const brokenMatches = scanStatus?.brokenMatches ?? [];
+  const hasBrokenMatches = brokenMatches.length > 0;
+
   return (
     <Panel>
       <SectionHeading
         actions={
-          <>
-            <Button
-              loading={isLoading}
-              onClick={() => void loadHighlights()}
-              variant="secondary"
-            >
-              Refresh
-            </Button>
-            <Button loading={isSubmitting} onClick={() => void handleSubmit()}>
-              {scanStatus ? "Scan again" : "Scan history"}
-            </Button>
-          </>
+          <Button
+            disabled={hasActiveScan}
+            loading={isSubmitting}
+            onClick={() => void handleSubmit()}
+          >
+            {scanActionLabel}
+          </Button>
         }
         description="Scan your connected club's history for late-game moments and review them from both team perspectives."
         eyebrow="Highlights"
@@ -170,7 +201,32 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
         changed the result for your club.
       </p>
 
-      {panelError ? <Alert>{panelError}</Alert> : null}
+      {panelError ? (
+        <Alert>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="grid gap-1">
+              <p>Couldn&apos;t load the latest moments right now.</p>
+              <p className="text-xs leading-5 text-current/80">
+                Technical details: {panelError}
+              </p>
+            </div>
+            <Button
+              loading={isLoading}
+              onClick={() => void loadHighlights()}
+              size="sm"
+              variant="secondary"
+            >
+              Try again
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+      {isScanStale ? (
+        <Alert>
+          The latest scan stopped updating more than 15 minutes ago. Retry the
+          scan to start a fresh run.
+        </Alert>
+      ) : null}
 
       <div className={summaryGridClassName}>
         <StatCard
@@ -283,22 +339,99 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
                     ? ` Last update ${formatTimestamp(scanStatus.updatedAt)}.`
                     : null}
               </p>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 <StatCard
-                  detail="Completed matches found during the history scan."
-                  label="Discovered"
+                  detail="Completed games found during the history scan."
+                  label="Found"
                   value={scanStatus.matchesDiscovered ?? 0}
                 />
                 <StatCard
-                  detail="Existing matches that already had moments ready."
-                  label="Reused"
+                  detail="Discovered games that already had moments ready before this run."
+                  label="Already ready"
                   value={scanStatus.matchesReused ?? 0}
+                />
+                <StatCard
+                  detail="Discovered games that needed fresh moment preparation in this run."
+                  label="Needed work"
+                  value={submittedMatches}
+                />
+                <StatCard
+                  detail="Games from this run that already finished preparing moments."
+                  label="Prepared this run"
+                  value={scanStatus.matchesCompleted ?? 0}
                 />
               </div>
               <p className={statusCopyClassName}>
                 {describeScanStatus(scanStatus)}
               </p>
-              {scanStatus.error ? <Alert>{scanStatus.error}</Alert> : null}
+              {typeof scanStatus.currentSeason === "number" && hasActiveScan ? (
+                <p className={statusCopyClassName}>
+                  Currently scanning season {scanStatus.currentSeason}.
+                </p>
+              ) : null}
+              {failedMatches > 0 && scanStatus.status !== "COMPLETED_WITH_GAPS" ? (
+                <Alert>
+                  {failedMatches} match-processing job
+                  {failedMatches === 1 ? " failed" : "s failed"} during this
+                  scan.
+                </Alert>
+              ) : null}
+              {scanStatus.status === "COMPLETED_WITH_GAPS" ? (
+                <Alert>
+                  <div className="grid gap-3">
+                    <div className="grid gap-1">
+                      <p>
+                        Moments are ready for the rest of your history, but{" "}
+                        {brokenMatches.length} game
+                        {brokenMatches.length === 1 ? "" : "s"} could not be
+                        prepared from BuzzerBeater data.
+                      </p>
+                      {scanStatus.error ? (
+                        <p className="text-xs leading-5 text-current/80">
+                          Technical details: {scanStatus.error}
+                        </p>
+                      ) : null}
+                    </div>
+                    {hasBrokenMatches ? (
+                      <ul className="grid gap-2 text-sm leading-6">
+                        {brokenMatches.map((match) => (
+                          <li key={match.matchId}>
+                            <a
+                              className="font-semibold underline underline-offset-2"
+                              href={match.boxscoreUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              {formatBrokenMatchLabel(match)}
+                            </a>
+                            <span className="text-current/80">
+                              {" "}
+                              {match.issue}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </Alert>
+              ) : null}
+              {scanStatus.status === "FAILED" ? (
+                <Alert>
+                  <div className="grid gap-1">
+                    <p>
+                      The latest team history scan ended before all moments were
+                      ready. Retry it to start a fresh run.
+                    </p>
+                    {scanStatus.error ? (
+                      <p className="text-xs leading-5 text-current/80">
+                        Technical details: {scanStatus.error}
+                      </p>
+                    ) : null}
+                  </div>
+                </Alert>
+              ) : scanStatus.error ? (
+                <Alert>{scanStatus.error}</Alert>
+              ) : null}
             </div>
           ) : (
             <p className={statusCopyClassName}>
@@ -312,6 +445,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
         <SectionHeading
           description={describeHighlightsEmptyState(payload, {
             isLoading,
+            isScanStale,
             onlyOutcomeChange,
           })}
           title="Moments"
@@ -361,6 +495,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
           <p className={statusCopyClassName}>
             {describeHighlightsEmptyState(payload, {
               isLoading,
+              isScanStale,
               onlyOutcomeChange,
             })}
           </p>
@@ -376,10 +511,52 @@ export function hasActiveTeamHighlightsScan(
   return Boolean(status && ACTIVE_SCAN_STATUSES.has(status.status));
 }
 
+export function isTeamHighlightsScanStale(
+  status: TeamHighlightsScanStatus | null,
+): boolean {
+  if (!status || !hasActiveTeamHighlightsScan(status)) {
+    return false;
+  }
+
+  const referenceTimestamp = status.updatedAt ?? status.requestedAt;
+  const parsedReference = Date.parse(referenceTimestamp);
+  if (!Number.isFinite(parsedReference)) {
+    return false;
+  }
+
+  return Date.now() - parsedReference >= STALE_SCAN_MILLISECONDS;
+}
+
+export function getTeamHighlightsScanActionLabel(
+  status: TeamHighlightsScanStatus | null,
+  options: {
+    hasActiveScan: boolean;
+    isScanStale: boolean;
+  },
+): string {
+  if (options.hasActiveScan) {
+    return "Scan running";
+  }
+
+  if (options.isScanStale || status?.status === "FAILED") {
+    return "Retry scan";
+  }
+
+  if (
+    status?.status === "COMPLETED_WITH_GAPS" ||
+    status?.status === "SUCCEEDED"
+  ) {
+    return "Rescan history";
+  }
+
+  return "Scan history";
+}
+
 export function describeHighlightsEmptyState(
   payload: TeamHighlightsPayload | null,
   options: {
     isLoading: boolean;
+    isScanStale: boolean;
     onlyOutcomeChange: boolean;
   },
 ): string {
@@ -395,8 +572,19 @@ export function describeHighlightsEmptyState(
     return "Run a team history scan to build your all-time moments list.";
   }
 
+  if (options.isScanStale) {
+    return "The latest team history scan stopped updating. Retry it to continue preparing moments.";
+  }
+
   if (hasActiveTeamHighlightsScan(payload.scanStatus)) {
-    return "Scanning team history now. This list refreshes automatically.";
+    return "Scanning team history now. Older clubs can take several minutes, and this panel refreshes automatically.";
+  }
+
+  if (
+    payload.scanStatus.status === "COMPLETED_WITH_GAPS" &&
+    (payload.scanStatus.brokenMatches?.length ?? 0) > 0
+  ) {
+    return "Some games could not be prepared from BuzzerBeater data, but moments are ready for the rest of your history.";
   }
 
   if (payload.summary.totalMoments > 0) {
@@ -470,18 +658,56 @@ function formatMomentMeta(moment: TeamHighlightsMoment): string {
 
 export function describeScanStatus(status: TeamHighlightsScanStatus): string {
   const discovered = status.matchesDiscovered ?? 0;
+  const completed = status.matchesCompleted ?? 0;
+  const failed = status.matchesFailed ?? 0;
+  const submitted =
+    (status.matchesEnqueuedForIngest ?? 0) +
+    (status.matchesEnqueuedForMaterialize ?? 0);
   const reused = status.matchesReused ?? 0;
+  const brokenMatches = status.brokenMatches ?? [];
   const intro =
-    status.status === "SUCCEEDED" ? "Scanned" : "Scanning";
+    status.status === "COMPLETED_WITH_GAPS" ||
+    status.status === "SUCCEEDED" ||
+    status.status === "FAILED"
+      ? "Scanned"
+      : "Scanning";
 
   if (status.seasonsFrom !== null && status.seasonsTo !== null) {
     const reusedCopy = reused
-      ? ` ${reused} game${reused === 1 ? " was" : "s were"} already ready.`
+      ? ` ${reused} game${reused === 1 ? " was" : "s were"} already ready before this run.`
       : "";
-    return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}`;
+    const submittedCopy = submitted
+      ? ` ${submitted} game${submitted === 1 ? " needed" : "s needed"} fresh preparation in this run.`
+      : "";
+    const completedCopy = completed
+      ? ` ${completed} game${completed === 1 ? " finished" : "s finished"} preparing moments${status.status === "WAITING_FOR_MATCH_JOBS" ? " so far" : " in this run"}.`
+      : "";
+    const brokenCopy = brokenMatches.length
+      ? ` ${brokenMatches.length} game${brokenMatches.length === 1 ? " could" : "s could"} not be prepared from BuzzerBeater data.`
+      : "";
+    if (status.status === "WAITING_FOR_MATCH_JOBS") {
+      const failureCopy = failed
+        ? ` ${failed} submitted job${failed === 1 ? " has" : "s have"} failed.`
+        : "";
+      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy}${failureCopy} Older clubs can take several minutes.`;
+    }
+
+    if (status.status === "FAILED") {
+      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo} before the run failed. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy}`;
+    }
+
+    if (status.status === "COMPLETED_WITH_GAPS") {
+      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy}${brokenCopy}`;
+    }
+
+    return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy} Older clubs can take several minutes.`;
   }
 
-  return "Scanning your club's history and preparing new moments.";
+  if (status.status === "WAITING_FOR_MATCH_JOBS") {
+    return `Preparing moments from ${submitted} submitted match jobs. ${completed} finished so far. Older clubs can take several minutes.`;
+  }
+
+  return "Scanning your club's history and preparing new moments. Older clubs can take several minutes.";
 }
 
 function normalizeShotLabel(value: string | null | undefined): string | null {
@@ -516,4 +742,20 @@ function formatAmplifyErrors(
     .filter((message): message is string => Boolean(message));
 
   return messages[0] ?? "The request failed.";
+}
+
+function formatBrokenMatchLabel(
+  match: NonNullable<TeamHighlightsScanStatus["brokenMatches"]>[number],
+): string {
+  const matchup =
+    match.homeTeamName && match.awayTeamName
+      ? `${match.awayTeamName} at ${match.homeTeamName}`
+      : `Match ${match.matchId}`;
+  const parts = [
+    typeof match.season === "number" ? `Season ${match.season}` : null,
+    matchup,
+    match.startTime ? formatTimestamp(match.startTime) : null,
+  ].filter(Boolean);
+
+  return parts.join(" | ");
 }

@@ -7,7 +7,9 @@ import {
 } from "../app/amplify-outputs";
 import {
   __testing as realtimeTesting,
+  enableTemporaryAmplifyDebugLogging,
   getRealtimeClient,
+  logRealtimeError,
 } from "../app/amplify-realtime";
 import {
   __testing as serverTesting,
@@ -84,6 +86,152 @@ test("getRealtimeClient loads outputs only on first real use and memoizes the cl
   assert.strictEqual(second, fakeClient);
   assert.deepStrictEqual(configuredOutputs, [fakeOutputs]);
   assert.equal(createCalls, 1);
+});
+
+test("logRealtimeError extracts nested GraphQL error details", (t) => {
+  const calls: unknown[][] = [];
+  const originalConsoleError = console.error;
+  realtimeTesting.resetDiagnostics();
+  console.error = (...args: unknown[]) => {
+    calls.push(args);
+  };
+  t.after(() => {
+    console.error = originalConsoleError;
+    realtimeTesting.resetDiagnostics();
+  });
+
+  logRealtimeError("OpponentForecastJob.onCreate")({
+    errors: [
+      {
+        errorType: "UnauthorizedException",
+        message: "Not authorized to access onCreateOpponentForecastJob",
+      },
+    ],
+  });
+
+  assert.equal(calls.length, 1);
+  assert.match(
+    String(calls[0]?.[0]),
+    /UnauthorizedException: Not authorized to access onCreateOpponentForecastJob/i,
+  );
+});
+
+test("temporary realtime diagnostics enable DEBUG logs and restore the prior log level", (t) => {
+  realtimeTesting.resetDiagnostics();
+  const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "window",
+  );
+  const originalConsoleInfo = console.info;
+  const infoCalls: unknown[][] = [];
+  console.info = (...args: unknown[]) => {
+    infoCalls.push(args);
+  };
+
+  const fakeWindow = {
+    LOG_LEVEL: "WARN",
+    clearTimeout,
+    setTimeout,
+  } as unknown as Window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: fakeWindow,
+    writable: true,
+  });
+
+  t.after(() => {
+    console.info = originalConsoleInfo;
+    realtimeTesting.resetDiagnostics();
+    if (originalWindowDescriptor) {
+      Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+      return;
+    }
+
+    delete (globalThis as { window?: Window }).window;
+  });
+
+  const restore = enableTemporaryAmplifyDebugLogging(
+    "OpponentForecastJob.subscription.setup",
+    {
+      durationMs: 60_000,
+      metadata: { teamId: "123" },
+    },
+  );
+
+  assert.equal((globalThis.window as Window & { LOG_LEVEL?: string }).LOG_LEVEL, "DEBUG");
+  assert.equal(infoCalls.length, 1);
+
+  restore();
+
+  assert.equal((globalThis.window as Window & { LOG_LEVEL?: string }).LOG_LEVEL, "WARN");
+});
+
+test("realtime error summarizer returns null when no message is available", () => {
+  assert.equal(realtimeTesting.summarizeRealtimeError({}), null);
+});
+
+test("realtime logger appends recent Amplify diagnostics to the error string", (t) => {
+  realtimeTesting.resetDiagnostics();
+  const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "window",
+  );
+  const originalConsoleError = console.error;
+  const originalConsoleInfo = console.info;
+  const errorCalls: unknown[][] = [];
+  console.error = (...args: unknown[]) => {
+    errorCalls.push(args);
+  };
+  console.info = () => {};
+
+  const fakeWindow = {
+    LOG_LEVEL: "WARN",
+    clearTimeout,
+    setTimeout,
+  } as unknown as Window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: fakeWindow,
+    writable: true,
+  });
+
+  t.after(() => {
+    console.error = originalConsoleError;
+    console.info = originalConsoleInfo;
+    realtimeTesting.resetDiagnostics();
+    if (originalWindowDescriptor) {
+      Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+      return;
+    }
+
+    delete (globalThis as { window?: Window }).window;
+  });
+
+  const restore = enableTemporaryAmplifyDebugLogging(
+    "OpponentForecastJob.subscription.setup",
+    {
+      durationMs: 60_000,
+    },
+  );
+  console.log(
+    "[DEBUG] 10:00.0 AWSAppSyncRealTimeProvider - subscription failed with authMode: userPool",
+  );
+
+  logRealtimeError("OpponentForecastJob.onCreate")(
+    { message: "Connection failed: {}" },
+    {
+      diagnosticContext: "OpponentForecastJob.subscription.setup",
+    },
+  );
+
+  restore();
+
+  assert.equal(errorCalls.length, 1);
+  assert.match(String(errorCalls[0]?.[0]), /Recent Amplify logs:/);
+  assert.match(
+    String(errorCalls[0]?.[0]),
+    /subscription failed with authMode: userPool/i,
+  );
 });
 
 test("server runtime initializes lazily and memoizes the resolved runtime", async (t) => {

@@ -39,6 +39,10 @@ import {
   type GameDayRecapStatus,
 } from "./repository";
 import { requireFeatureAccess } from "./billing";
+import {
+  assertMaintenanceInactive,
+  toMaintenanceAwareErrorMessage,
+} from "./maintenance";
 import type { PlanId } from "../../../lib/billing/plans";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -209,12 +213,15 @@ type LeagueSlateResolutionDiagnostics = {
 };
 
 type BedrockGameDayRecapProvider = {
-  generate: (payload: GameDayRecapPromptPayload) => Promise<GameDayRecapResultPayload>;
+  generate: (
+    payload: GameDayRecapPromptPayload,
+  ) => Promise<GameDayRecapResultPayload>;
   modelId: string;
   providerName: "bedrock";
 };
 
 type SubmitDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
   startWorkflowExecution: (
     stateMachineArn: string,
     executionName: string,
@@ -234,16 +241,18 @@ type SubmitDependencies = {
 };
 
 type ProcessDependencies = {
-  createBbClient: (options: BBXmlApiClientOptions) => Pick<
+  assertMaintenanceInactive: () => Promise<void>;
+  createBbClient: (
+    options: BBXmlApiClientOptions,
+  ) => Pick<
     BBXmlApiClient,
-    "getBoxScore" | "getSchedule" | "getSeasons" | "getStandings" | "getTeamInfo"
+    | "getBoxScore"
+    | "getSchedule"
+    | "getSeasons"
+    | "getStandings"
+    | "getTeamInfo"
   > &
-    Partial<
-      Pick<
-        BBXmlApiClient,
-      "getSeasonsXml"
-      >
-    >;
+    Partial<Pick<BBXmlApiClient, "getSeasonsXml">>;
   createProvider: (args: {
     modelId: string;
     region: string | undefined;
@@ -374,6 +383,7 @@ const GAME_DAY_RECAP_LOG_PREFIX = "[game-day-recap]";
 type GameDayRecapEvidenceTag = (typeof GAME_DAY_RECAP_EVIDENCE_TAGS)[number];
 
 const defaultSubmitDependencies: SubmitDependencies = {
+  assertMaintenanceInactive,
   startWorkflowExecution: async (stateMachineArn, executionName, message) => {
     return startStateMachineExecution({
       input: message,
@@ -395,6 +405,7 @@ const defaultSubmitDependencies: SubmitDependencies = {
 };
 
 const defaultProcessDependencies: ProcessDependencies = {
+  assertMaintenanceInactive,
   createBbClient: (options) => new BBXmlApiClient(options),
   createProvider: ({ modelId, region }) =>
     createBedrockGameDayRecapProvider({
@@ -430,6 +441,7 @@ export async function submitGameDayRecap(
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
+  await deps.assertMaintenanceInactive();
 
   logGameDayRecapInfo("submit.received", {
     gameDate: args.gameDate,
@@ -447,7 +459,10 @@ export async function submitGameDayRecap(
     gameDate: args.gameDate,
     leagueId: args.leagueId,
   });
-  const targetKey = buildGameDayRecapTargetKey(request.leagueId, request.gameDate);
+  const targetKey = buildGameDayRecapTargetKey(
+    request.leagueId,
+    request.gameDate,
+  );
   const existing = await deps.getGameDayRecap(args.env, userId, targetKey);
 
   logGameDayRecapInfo("submit.normalized", {
@@ -520,11 +535,11 @@ export async function submitGameDayRecap(
         `${userId}:${targetKey}:${requestedAt}`,
       ),
       {
-      kind: "LEAGUE_DATE",
-      modelId,
-      requestedAt,
-      targetKey,
-      userId,
+        kind: "LEAGUE_DATE",
+        modelId,
+        requestedAt,
+        targetKey,
+        userId,
       },
     );
     await deps.updateGameDayRecap(args.env, {
@@ -556,7 +571,6 @@ export async function submitGameDayRecap(
     });
     throw error;
   }
-
 }
 
 export async function submitLeagueGameDayRecap(
@@ -578,6 +592,7 @@ export async function submitLeagueGameDayRecap(
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
+  await deps.assertMaintenanceInactive();
 
   const planId = await deps.requireFeatureAccess({
     env: args.env,
@@ -642,11 +657,11 @@ export async function submitLeagueGameDayRecap(
         `${userId}:${targetKey}:${requestedAt}`,
       ),
       {
-      kind: "LEAGUE_GAME_DAY",
-      modelId,
-      requestedAt,
-      targetKey,
-      userId,
+        kind: "LEAGUE_GAME_DAY",
+        modelId,
+        requestedAt,
+        targetKey,
+        userId,
       },
     );
     await deps.updateLeagueGameDayRecap(args.env, {
@@ -685,6 +700,7 @@ export async function submitSingleGameSummary(
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
   }
+  await deps.assertMaintenanceInactive();
 
   const planId = await deps.requireFeatureAccess({
     env: args.env,
@@ -696,11 +712,7 @@ export async function submitSingleGameSummary(
     matchId: args.matchId,
   });
   const targetKey = buildSingleGameSummaryTargetKey(request.matchId);
-  const existing = await deps.getSingleGameSummary(
-    args.env,
-    userId,
-    targetKey,
-  );
+  const existing = await deps.getSingleGameSummary(args.env, userId, targetKey);
   if (existing && !TERMINAL_RECAP_STATUSES.has(existing.status)) {
     return {
       executionArn: existing.executionArn ?? null,
@@ -742,11 +754,11 @@ export async function submitSingleGameSummary(
         `${userId}:${targetKey}:${requestedAt}`,
       ),
       {
-      kind: "SINGLE_GAME",
-      modelId,
-      requestedAt,
-      targetKey,
-      userId,
+        kind: "SINGLE_GAME",
+        modelId,
+        requestedAt,
+        targetKey,
+        userId,
       },
     );
     await deps.updateSingleGameSummary(args.env, {
@@ -827,6 +839,7 @@ export async function processGameDayRecap(
   let coverage: GameDayRecapCoveragePayload | null = null;
 
   try {
+    await deps.assertMaintenanceInactive();
     logGameDayRecapInfo("process.status_transition", {
       nextStatus: "RESOLVING_SLATE",
       targetKey: recap.targetKey,
@@ -842,11 +855,8 @@ export async function processGameDayRecap(
       userId: recap.userId,
     });
 
-    const connection = await requireBbConnection(
-      args.env,
-      recap.userId,
-      deps,
-    );
+    await deps.assertMaintenanceInactive();
+    const connection = await requireBbConnection(args.env, recap.userId, deps);
     const accessKey = await deps.resolveBbAccessKey(args.env, recap.userId);
     const bb = deps.createBbClient({
       securityCode: accessKey,
@@ -862,14 +872,15 @@ export async function processGameDayRecap(
       userId: recap.userId,
     });
 
-    const { season, slate, standings } = await resolveSeasonedLeagueSlateForRecap({
-      bb,
-      connection,
-      gameDate: recap.gameDate,
-      leagueId: recap.leagueId,
-      targetKey: recap.targetKey,
-      userId: recap.userId,
-    });
+    const { season, slate, standings } =
+      await resolveSeasonedLeagueSlateForRecap({
+        bb,
+        connection,
+        gameDate: recap.gameDate,
+        leagueId: recap.leagueId,
+        targetKey: recap.targetKey,
+        userId: recap.userId,
+      });
 
     logGameDayRecapInfo("process.status_transition", {
       nextStatus: "BUILDING_CONTEXT",
@@ -942,6 +953,7 @@ export async function processGameDayRecap(
       userId: recap.userId,
     });
 
+    await deps.assertMaintenanceInactive();
     const provider = deps.createProvider({
       modelId,
       region: args.region,
@@ -991,7 +1003,7 @@ export async function processGameDayRecap(
     await deps.updateGameDayRecap(args.env, {
       completedAt: deps.now().toISOString(),
       coverageJson: coverage,
-      error: error instanceof Error ? error.message : String(error),
+      error: toMaintenanceAwareErrorMessage(error),
       modelId,
       modelProvider: "bedrock",
       promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
@@ -1063,6 +1075,7 @@ export async function processLeagueGameDayRecap(
   let coverage: GameDayRecapCoveragePayload | null = null;
 
   try {
+    await deps.assertMaintenanceInactive();
     await deps.updateLeagueGameDayRecap(args.env, {
       error: null,
       modelId,
@@ -1073,6 +1086,7 @@ export async function processLeagueGameDayRecap(
       userId: recap.userId,
     });
 
+    await deps.assertMaintenanceInactive();
     const connection = await requireBbConnection(args.env, recap.userId, deps);
     const accessKey = await deps.resolveBbAccessKey(args.env, recap.userId);
     const bb = deps.createBbClient({
@@ -1086,7 +1100,9 @@ export async function processLeagueGameDayRecap(
         : await bb.getStandings(recap.leagueId);
     const season = standings.season ?? recap.season;
     if (season === null || season === undefined) {
-      throw new Error(`Unable to resolve a season for league ${recap.leagueId}.`);
+      throw new Error(
+        `Unable to resolve a season for league ${recap.leagueId}.`,
+      );
     }
 
     const slate = await resolveLeagueGameDaySlate({
@@ -1149,6 +1165,7 @@ export async function processLeagueGameDayRecap(
       userId: recap.userId,
     });
 
+    await deps.assertMaintenanceInactive();
     const provider = deps.createProvider({
       modelId,
       region: args.region,
@@ -1173,7 +1190,7 @@ export async function processLeagueGameDayRecap(
     await deps.updateLeagueGameDayRecap(args.env, {
       completedAt: deps.now().toISOString(),
       coverageJson: coverage,
-      error: error instanceof Error ? error.message : String(error),
+      error: toMaintenanceAwareErrorMessage(error),
       modelId,
       modelProvider: "bedrock",
       promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
@@ -1221,6 +1238,7 @@ export async function processSingleGameSummary(
   let coverage: GameDayRecapCoveragePayload | null = null;
 
   try {
+    await deps.assertMaintenanceInactive();
     await deps.updateSingleGameSummary(args.env, {
       error: null,
       modelId,
@@ -1231,7 +1249,12 @@ export async function processSingleGameSummary(
       userId: summary.userId,
     });
 
-    const connection = await requireBbConnection(args.env, summary.userId, deps);
+    await deps.assertMaintenanceInactive();
+    const connection = await requireBbConnection(
+      args.env,
+      summary.userId,
+      deps,
+    );
     const accessKey = await deps.resolveBbAccessKey(args.env, summary.userId);
     const bb = deps.createBbClient({
       securityCode: accessKey,
@@ -1239,7 +1262,9 @@ export async function processSingleGameSummary(
     });
     const boxScore = await bb.getBoxScore(summary.matchId);
     if (boxScore.homeTeam.score === null || boxScore.awayTeam.score === null) {
-      throw new Error(`Match ${summary.matchId} does not have a final box score yet.`);
+      throw new Error(
+        `Match ${summary.matchId} does not have a final box score yet.`,
+      );
     }
 
     const promptPayload = await buildSingleGameSummaryPromptPayload({
@@ -1261,6 +1286,7 @@ export async function processSingleGameSummary(
       userId: summary.userId,
     });
 
+    await deps.assertMaintenanceInactive();
     const provider = deps.createProvider({
       modelId,
       region: args.region,
@@ -1287,7 +1313,7 @@ export async function processSingleGameSummary(
     await deps.updateSingleGameSummary(args.env, {
       completedAt: deps.now().toISOString(),
       coverageJson: coverage,
-      error: error instanceof Error ? error.message : String(error),
+      error: toMaintenanceAwareErrorMessage(error),
       modelId,
       modelProvider: "bedrock",
       promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
@@ -1339,7 +1365,9 @@ export function normalizeLeagueGameDayRecapRequest(
     gameDayNumber < 1 ||
     gameDayNumber > 22
   ) {
-    throw new Error("League game day recaps require a gameDayNumber from 1 to 22.");
+    throw new Error(
+      "League game day recaps require a gameDayNumber from 1 to 22.",
+    );
   }
   if (season !== null && (!Number.isInteger(season) || season < 1)) {
     throw new Error("League game day recap season must be a positive integer.");
@@ -1386,7 +1414,10 @@ export function buildSingleGameSummaryTargetKey(matchId: string): string {
 export function parseGameDayRecapQueueMessage(
   messageBody: string,
 ): RecapQueueMessage {
-  const payload = requireRecord(JSON.parse(messageBody), "Game day recap queue message");
+  const payload = requireRecord(
+    JSON.parse(messageBody),
+    "Game day recap queue message",
+  );
   const rawKind = asOptionalString(payload.kind)?.trim();
   const modelId = asOptionalString(payload.modelId)?.trim();
   const userId = asOptionalString(payload.userId)?.trim();
@@ -1439,7 +1470,9 @@ function resolveConfiguredRecapModelId(
     true,
   );
   if (!defaultModelId) {
-    throw new Error(`${GAME_DAY_RECAP_MODEL_ENV_NAME} must be set for recap generation.`);
+    throw new Error(
+      `${GAME_DAY_RECAP_MODEL_ENV_NAME} must be set for recap generation.`,
+    );
   }
   const premiumModelId = normalizeConfiguredRecapModelId(
     env[GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME],
@@ -1591,7 +1624,10 @@ async function resolveLeagueDaySlateWithDiagnostics(args: {
 
       diagnostics.leagueMatchCount += 1;
 
-      const matchDate = resolveCalendarDateKey(match.startTime, diagnostics.timeZone);
+      const matchDate = resolveCalendarDateKey(
+        match.startTime,
+        diagnostics.timeZone,
+      );
       if (!matchId || matchDate !== args.gameDate) {
         if (diagnostics.nearMisses.length < 3) {
           diagnostics.nearMisses.push({
@@ -1612,9 +1648,15 @@ async function resolveLeagueDaySlateWithDiagnostics(args: {
       if (!slateByMatchId.has(matchId)) {
         slateByMatchId.set(matchId, {
           awayTeamId,
-          awayTeamName: match.awayTeam.teamName ?? standingTeams.get(awayTeamId)?.teamName ?? "Away team",
+          awayTeamName:
+            match.awayTeam.teamName ??
+            standingTeams.get(awayTeamId)?.teamName ??
+            "Away team",
           homeTeamId,
-          homeTeamName: match.homeTeam.teamName ?? standingTeams.get(homeTeamId)?.teamName ?? "Home team",
+          homeTeamName:
+            match.homeTeam.teamName ??
+            standingTeams.get(homeTeamId)?.teamName ??
+            "Home team",
           matchId,
           startTime: match.startTime,
           type: match.type,
@@ -1657,7 +1699,9 @@ export async function resolveLeagueGameDaySlate(args: {
   for (const schedule of schedules) {
     const regularSeasonMatches = schedule.matches
       .filter((match) => isRegularSeasonLeagueMatchType(match.type))
-      .sort((left, right) => compareTimestamps(left.startTime, right.startTime));
+      .sort((left, right) =>
+        compareTimestamps(left.startTime, right.startTime),
+      );
 
     regularSeasonMatches.forEach((match, index) => {
       const gameDayNumber = index + 1;
@@ -1709,17 +1753,19 @@ function isLeagueScheduleMatchType(type: string | null | undefined): boolean {
   const normalizedType = type?.trim().toLowerCase();
   return Boolean(
     normalizedType &&
-      (normalizedType === "league" || normalizedType.startsWith("league.")),
+    (normalizedType === "league" || normalizedType.startsWith("league.")),
   );
 }
 
-function isRegularSeasonLeagueMatchType(type: string | null | undefined): boolean {
+function isRegularSeasonLeagueMatchType(
+  type: string | null | undefined,
+): boolean {
   const normalizedType = type?.trim().toLowerCase();
   return Boolean(
     normalizedType &&
-      (normalizedType === "league" ||
-        normalizedType === "league.rs" ||
-        normalizedType === "league.regularseason"),
+    (normalizedType === "league" ||
+      normalizedType === "league.rs" ||
+      normalizedType === "league.regularseason"),
   );
 }
 
@@ -1810,7 +1856,10 @@ export function assertSupportedBedrockRecapModel(
   assertSupportedBedrockRecapModelId(modelId);
 
   const normalizedRegion = region?.trim();
-  if (!normalizedRegion || !SUPPORTED_COMMERCIAL_REGION_PATTERN.test(normalizedRegion)) {
+  if (
+    !normalizedRegion ||
+    !SUPPORTED_COMMERCIAL_REGION_PATTERN.test(normalizedRegion)
+  ) {
     throw new Error(
       `Game day recap structured output currently requires a supported commercial Bedrock region. Received ${normalizedRegion ?? "unknown"}.`,
     );
@@ -1827,10 +1876,10 @@ async function buildGameDayRecapPromptPayload(args: {
 }): Promise<GameDayRecapPromptPayload> {
   const standingsIndex = extractStandingTeams(args.standings);
   const schedules = await Promise.all(
-    Array.from(standingsIndex.keys()).map(async (teamId) => [
-      teamId,
-      await args.bb.getSchedule(teamId, args.season),
-    ] as const),
+    Array.from(standingsIndex.keys()).map(
+      async (teamId) =>
+        [teamId, await args.bb.getSchedule(teamId, args.season)] as const,
+    ),
   );
   const scheduleByTeamId = new Map<string, BBApiSchedule>(schedules);
   const boxScoreCache = new Map<string, Promise<BBApiBoxScore | null>>();
@@ -1838,7 +1887,11 @@ async function buildGameDayRecapPromptPayload(args: {
   const promptGames: GameDayRecapPromptPayload["games"] = [];
 
   for (const requestedGame of args.requestedGames) {
-    const boxScore = await loadBoxScore(args.bb, boxScoreCache, requestedGame.matchId);
+    const boxScore = await loadBoxScore(
+      args.bb,
+      boxScoreCache,
+      requestedGame.matchId,
+    );
     if (
       !boxScore ||
       boxScore.homeTeam.score === null ||
@@ -1848,7 +1901,9 @@ async function buildGameDayRecapPromptPayload(args: {
         awayTeamName: requestedGame.awayTeamName,
         homeTeamName: requestedGame.homeTeamName,
         matchId: requestedGame.matchId,
-        reason: boxScore ? "final box score was incomplete" : "final box score was unavailable",
+        reason: boxScore
+          ? "final box score was incomplete"
+          : "final box score was unavailable",
       });
       continue;
     }
@@ -1862,7 +1917,8 @@ async function buildGameDayRecapPromptPayload(args: {
         awayTeamName: requestedGame.awayTeamName,
         homeTeamName: requestedGame.homeTeamName,
         matchId: requestedGame.matchId,
-        reason: "team context could not be resolved from standings or schedules",
+        reason:
+          "team context could not be resolved from standings or schedules",
       });
       continue;
     }
@@ -2009,7 +2065,9 @@ function buildPromptGame(args: {
   };
 }
 
-function buildNeutralTeamSeasonContext(team: BBApiBoxScoreTeam): TeamSeasonContext {
+function buildNeutralTeamSeasonContext(
+  team: BBApiBoxScoreTeam,
+): TeamSeasonContext {
   return {
     conferenceIndex: 0,
     conferencePosition: 0,
@@ -2081,21 +2139,38 @@ function buildEvidenceSignals(args: {
     signals.add("effort_gap");
   }
   if (
-    args.homeContext.recentSignalFlags.includes("possible_strategic_deemphasis") ||
+    args.homeContext.recentSignalFlags.includes(
+      "possible_strategic_deemphasis",
+    ) ||
     args.awayContext.recentSignalFlags.includes("possible_strategic_deemphasis")
   ) {
     signals.add("possible_strategic_deemphasis");
   }
-  if (args.homeContext.currentStreak.startsWith("W") || args.awayContext.currentStreak.startsWith("W")) {
+  if (
+    args.homeContext.currentStreak.startsWith("W") ||
+    args.awayContext.currentStreak.startsWith("W")
+  ) {
     signals.add("winning_streak_context");
   }
-  if (args.homeContext.currentStreak.startsWith("L") || args.awayContext.currentStreak.startsWith("L")) {
+  if (
+    args.homeContext.currentStreak.startsWith("L") ||
+    args.awayContext.currentStreak.startsWith("L")
+  ) {
     signals.add("losing_streak_context");
   }
 
-  const homeQuarterRun = computeBestQuarterMargin(args.boxScore.homeTeam.partialScores, args.boxScore.awayTeam.partialScores);
-  const awayQuarterRun = computeBestQuarterMargin(args.boxScore.awayTeam.partialScores, args.boxScore.homeTeam.partialScores);
-  if ((homeQuarterRun && homeQuarterRun.margin >= 8) || (awayQuarterRun && awayQuarterRun.margin >= 8)) {
+  const homeQuarterRun = computeBestQuarterMargin(
+    args.boxScore.homeTeam.partialScores,
+    args.boxScore.awayTeam.partialScores,
+  );
+  const awayQuarterRun = computeBestQuarterMargin(
+    args.boxScore.awayTeam.partialScores,
+    args.boxScore.homeTeam.partialScores,
+  );
+  if (
+    (homeQuarterRun && homeQuarterRun.margin >= 8) ||
+    (awayQuarterRun && awayQuarterRun.margin >= 8)
+  ) {
     signals.add("decisive_quarter_run");
   }
 
@@ -2118,7 +2193,9 @@ function buildStandingsContext(args: {
     args.homeContext.conferencePosition - args.awayContext.conferencePosition,
   );
   if (standingGap <= 2) {
-    context.push("The matchup was between clubs occupying nearby conference positions.");
+    context.push(
+      "The matchup was between clubs occupying nearby conference positions.",
+    );
   }
 
   return context;
@@ -2149,20 +2226,25 @@ async function loadRecentCompletedBoxScores(args: {
   limit: number;
   schedule: BBApiSchedule;
 }): Promise<BBApiBoxScore[]> {
-  const recentMatches = listCompletedMatchesBefore(args.schedule, args.gameStartTime)
+  const recentMatches = listCompletedMatchesBefore(
+    args.schedule,
+    args.gameStartTime,
+  )
     .slice(0, args.limit)
     .map((match) => match.id)
     .filter((matchId): matchId is string => Boolean(matchId));
 
   const loaded = await Promise.all(
-    recentMatches.map((matchId) => loadBoxScore(args.bb, args.boxScoreCache, matchId)),
+    recentMatches.map((matchId) =>
+      loadBoxScore(args.bb, args.boxScoreCache, matchId),
+    ),
   );
 
   return loaded.filter((boxScore): boxScore is BBApiBoxScore =>
     Boolean(
       boxScore &&
-        boxScore.homeTeam.score !== null &&
-        boxScore.awayTeam.score !== null,
+      boxScore.homeTeam.score !== null &&
+      boxScore.awayTeam.score !== null,
     ),
   );
 }
@@ -2173,7 +2255,10 @@ function buildTeamSeasonContext(args: {
   schedule: BBApiSchedule;
   standing: TeamStandingSummary;
 }): TeamSeasonContext {
-  const completedMatches = listCompletedMatchesBefore(args.schedule, args.gameStartTime);
+  const completedMatches = listCompletedMatchesBefore(
+    args.schedule,
+    args.gameStartTime,
+  );
   const recentMatches = completedMatches.slice(0, 5);
   const recentMargins = recentMatches
     .map((match) => getMarginForTeam(match, args.standing.teamId))
@@ -2181,19 +2266,21 @@ function buildTeamSeasonContext(args: {
   const streak = formatCurrentStreak(completedMatches, args.standing.teamId);
   const recentAverageMargin = recentMargins.length
     ? roundToOneDecimal(
-        recentMargins.reduce((sum, margin) => sum + margin, 0) / recentMargins.length,
+        recentMargins.reduce((sum, margin) => sum + margin, 0) /
+          recentMargins.length,
       )
     : null;
 
-  const blowoutLosses = args.boxScores.filter(
-    (boxScore) => {
-      const teamBoxScore = resolveBoxScoreTeam(boxScore, args.standing.teamId);
-      const opponentBoxScore = resolveOpponentBoxScoreTeam(boxScore, args.standing.teamId);
-      return teamBoxScore && opponentBoxScore
-        ? (teamBoxScore.score ?? 0) - (opponentBoxScore.score ?? 0) <= -15
-        : false;
-    },
-  ).length;
+  const blowoutLosses = args.boxScores.filter((boxScore) => {
+    const teamBoxScore = resolveBoxScoreTeam(boxScore, args.standing.teamId);
+    const opponentBoxScore = resolveOpponentBoxScoreTeam(
+      boxScore,
+      args.standing.teamId,
+    );
+    return teamBoxScore && opponentBoxScore
+      ? (teamBoxScore.score ?? 0) - (opponentBoxScore.score ?? 0) <= -15
+      : false;
+  }).length;
 
   const recentSignalFlags = new Set<string>();
   if (blowoutLosses >= 2) {
@@ -2262,9 +2349,9 @@ function listCompletedMatchesBefore(
     .filter((match) =>
       Boolean(
         match.id &&
-          match.homeTeam.score !== null &&
-          match.awayTeam.score !== null &&
-          (!Number.isFinite(cutoff) || parseTimestamp(match.startTime) < cutoff),
+        match.homeTeam.score !== null &&
+        match.awayTeam.score !== null &&
+        (!Number.isFinite(cutoff) || parseTimestamp(match.startTime) < cutoff),
       ),
     )
     .sort((left, right) => compareTimestamps(right.startTime, left.startTime));
@@ -2274,7 +2361,10 @@ function extractTopPlayers(
   players: BBApiBoxScorePlayer[],
 ): GameDayRecapPromptTeam["topPlayers"] {
   return [...players]
-    .sort((left, right) => scorePlayerPerformance(right) - scorePlayerPerformance(left))
+    .sort(
+      (left, right) =>
+        scorePlayerPerformance(right) - scorePlayerPerformance(left),
+    )
     .slice(0, 3)
     .map((player) => ({
       assists: asNumberFromUnknown(player.performance.ast),
@@ -2299,7 +2389,9 @@ function scorePlayerPerformance(player: BBApiBoxScorePlayer): number {
   const blocks = asNumberFromUnknown(player.performance.blk);
   const turnovers = asNumberFromUnknown(player.performance.to);
 
-  return points + rebounds * 0.7 + assists * 0.7 + steals + blocks - turnovers * 0.5;
+  return (
+    points + rebounds * 0.7 + assists * 0.7 + steals + blocks - turnovers * 0.5
+  );
 }
 
 function resolveBoxScoreTeam(
@@ -2398,10 +2490,7 @@ function formatCurrentStreak(
   return streakLength ? `${streakPrefix}${streakLength}` : "No streak";
 }
 
-function formatLastFive(
-  matches: BBApiScheduleMatch[],
-  teamId: string,
-): string {
+function formatLastFive(matches: BBApiScheduleMatch[], teamId: string): string {
   if (!matches.length) {
     return "0-0";
   }
@@ -2548,11 +2637,16 @@ function summarizeSeasonDiagnostics(
     )
     .sort((left, right) => {
       if (left.startTimestamp !== right.startTimestamp) {
-        return (left.startTimestamp ?? Number.POSITIVE_INFINITY) -
-          (right.startTimestamp ?? Number.POSITIVE_INFINITY);
+        return (
+          (left.startTimestamp ?? Number.POSITIVE_INFINITY) -
+          (right.startTimestamp ?? Number.POSITIVE_INFINITY)
+        );
       }
 
-      return (left.id ?? Number.POSITIVE_INFINITY) - (right.id ?? Number.POSITIVE_INFINITY);
+      return (
+        (left.id ?? Number.POSITIVE_INFINITY) -
+        (right.id ?? Number.POSITIVE_INFINITY)
+      );
     });
   const nextStartByIndex = new Map<number, number | null>();
   orderedStarts.forEach((season, index) => {
@@ -2577,9 +2671,11 @@ function summarizeSeasonDiagnostics(
       (openEnded || nextStartTimestamp !== null || finishTimestamp !== null);
     const matchesGameDate = hasUsableBounds
       ? nextStartTimestamp !== null
-        ? startTimestamp <= matchTimestamp && matchTimestamp < nextStartTimestamp
+        ? startTimestamp <= matchTimestamp &&
+          matchTimestamp < nextStartTimestamp
         : finishTimestamp !== null
-          ? startTimestamp <= matchTimestamp && matchTimestamp <= finishTimestamp
+          ? startTimestamp <= matchTimestamp &&
+            matchTimestamp <= finishTimestamp
           : startTimestamp <= matchTimestamp
       : false;
 
@@ -2589,7 +2685,8 @@ function summarizeSeasonDiagnostics(
       hasUsableBounds,
       id: season.id,
       invalidBounds:
-        Boolean(season.normalizedStart || season.normalizedFinish) && !hasUsableBounds,
+        Boolean(season.normalizedStart || season.normalizedFinish) &&
+        !hasUsableBounds,
       matchesGameDate,
       normalizedFinish: season.normalizedFinish,
       normalizedStart: season.normalizedStart,
@@ -2600,10 +2697,7 @@ function summarizeSeasonDiagnostics(
 }
 
 async function resolveSeasonedLeagueSlateForRecap(args: {
-  bb: Pick<
-    BBXmlApiClient,
-    "getSchedule" | "getSeasons" | "getStandings"
-  > &
+  bb: Pick<BBXmlApiClient, "getSchedule" | "getSeasons" | "getStandings"> &
     Partial<Pick<BBXmlApiClient, "getSeasonsXml">>;
   connection: BbConnectionRecord;
   gameDate: string;
@@ -2636,7 +2730,10 @@ async function resolveSeasonedLeagueSlateForRecap(args: {
     userId: args.userId,
   });
 
-  if (currentStandings.season !== null && currentStandings.season !== undefined) {
+  if (
+    currentStandings.season !== null &&
+    currentStandings.season !== undefined
+  ) {
     logGameDayRecapInfo("process.resolve_current_slate.start", {
       gameDate: args.gameDate,
       season: currentStandings.season,
@@ -2680,12 +2777,15 @@ async function resolveSeasonedLeagueSlateForRecap(args: {
       userId: args.userId,
     });
   } else {
-    logGameDayRecapWarn("process.resolve_current_slate.skipped_missing_season", {
-      gameDate: args.gameDate,
-      leagueId: args.leagueId,
-      targetKey: args.targetKey,
-      userId: args.userId,
-    });
+    logGameDayRecapWarn(
+      "process.resolve_current_slate.skipped_missing_season",
+      {
+        gameDate: args.gameDate,
+        leagueId: args.leagueId,
+        targetKey: args.targetKey,
+        userId: args.userId,
+      },
+    );
   }
 
   logGameDayRecapInfo("process.fetch_seasons.start", {
@@ -2729,7 +2829,10 @@ async function resolveSeasonedLeagueSlateForRecap(args: {
     });
   }
 
-  const candidateSeasons = resolveSeasonCandidatesForDate(seasons, args.gameDate);
+  const candidateSeasons = resolveSeasonCandidatesForDate(
+    seasons,
+    args.gameDate,
+  );
   logGameDayRecapInfo("process.resolve_historical_candidates", {
     candidateSeasons,
     currentSeason: currentStandings.season ?? null,
@@ -2739,7 +2842,10 @@ async function resolveSeasonedLeagueSlateForRecap(args: {
   });
 
   const triedSeasons = new Set<number>();
-  if (currentStandings.season !== null && currentStandings.season !== undefined) {
+  if (
+    currentStandings.season !== null &&
+    currentStandings.season !== undefined
+  ) {
     triedSeasons.add(currentStandings.season);
   }
 
@@ -2813,7 +2919,9 @@ async function resolveSeasonedLeagueSlateForRecap(args: {
       targetKey: args.targetKey,
       userId: args.userId,
     });
-    throw new Error(`Unable to resolve a BuzzerBeater season for ${args.gameDate}.`);
+    throw new Error(
+      `Unable to resolve a BuzzerBeater season for ${args.gameDate}.`,
+    );
   }
 
   throw new Error(
@@ -2846,7 +2954,10 @@ async function logRawSeasonsXmlDiagnostics(args: {
     logGameDayRecapWarn("process.fetch_seasons_xml.unavailable", {
       gameDate: args.gameDate,
       leagueId: args.leagueId,
-      parsedSeasons: summarizeSeasonDiagnostics(args.parsedSeasons, args.gameDate),
+      parsedSeasons: summarizeSeasonDiagnostics(
+        args.parsedSeasons,
+        args.gameDate,
+      ),
       reason: args.reason,
       targetKey: args.targetKey,
       userId: args.userId,
@@ -2859,7 +2970,10 @@ async function logRawSeasonsXmlDiagnostics(args: {
     logGameDayRecapInfo("process.fetch_seasons_xml.succeeded", {
       gameDate: args.gameDate,
       leagueId: args.leagueId,
-      parsedSeasons: summarizeSeasonDiagnostics(args.parsedSeasons, args.gameDate),
+      parsedSeasons: summarizeSeasonDiagnostics(
+        args.parsedSeasons,
+        args.gameDate,
+      ),
       rawXmlHasFinishElement: xml.includes("<finish>"),
       rawXmlHasSeasonTag: xml.includes("<season"),
       rawXmlHasStartElement: xml.includes("<start>"),
@@ -2894,15 +3008,24 @@ function toFiniteNumberOrNull(value: number): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function logGameDayRecapInfo(event: string, details: Record<string, unknown>): void {
+function logGameDayRecapInfo(
+  event: string,
+  details: Record<string, unknown>,
+): void {
   console.info(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
 }
 
-function logGameDayRecapWarn(event: string, details: Record<string, unknown>): void {
+function logGameDayRecapWarn(
+  event: string,
+  details: Record<string, unknown>,
+): void {
   console.warn(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
 }
 
-function logGameDayRecapError(event: string, details: Record<string, unknown>): void {
+function logGameDayRecapError(
+  event: string,
+  details: Record<string, unknown>,
+): void {
   console.error(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
 }
 
@@ -3023,7 +3146,9 @@ async function requireBbConnection(
     throw new Error("Connect a BuzzerBeater account before requesting recaps.");
   }
   if (!connection.bbLoginName) {
-    throw new Error("The saved BuzzerBeater connection is missing a login name.");
+    throw new Error(
+      "The saved BuzzerBeater connection is missing a login name.",
+    );
   }
   return connection;
 }
@@ -3065,9 +3190,8 @@ function createBedrockGameDayRecapProvider(args: {
       );
 
       const output = response.output;
-      const content = output && "message" in output
-        ? output.message?.content ?? []
-        : [];
+      const content =
+        output && "message" in output ? (output.message?.content ?? []) : [];
       const text = content
         .map((block) => ("text" in block ? block.text : ""))
         .join("")
@@ -3110,7 +3234,9 @@ function validateGameDayRecapResult(
       : null;
 
     if (!matchId || !headline || !writeup || !evidenceTags) {
-      throw new Error("Game day recap result contained an incomplete game entry.");
+      throw new Error(
+        "Game day recap result contained an incomplete game entry.",
+      );
     }
 
     const validatedTags = evidenceTags.map((tag) => {
@@ -3142,7 +3268,9 @@ function validateGameDayRecapResult(
     );
   }
 
-  const gamesByMatchId = new Map(validatedGames.map((game) => [game.matchId, game]));
+  const gamesByMatchId = new Map(
+    validatedGames.map((game) => [game.matchId, game]),
+  );
 
   const headline = asOptionalString(summary.headline)?.trim();
   const lede = asOptionalString(summary.lede)?.trim();

@@ -2,10 +2,16 @@ import { NextResponse } from "next/server";
 
 import { isThemeId } from "@/app/theme";
 import { requireServerCurrentUser } from "@/app/server/amplify-server";
+import { createMaintenanceApiResponse, getServerMaintenanceState } from "@/app/server/maintenance";
 import { upsertServerThemePreference } from "@/app/server/theme-preferences";
 
 export async function PUT(request: Request) {
   try {
+    const maintenanceState = await getServerMaintenanceState();
+    if (maintenanceState.active && maintenanceState.document) {
+      return createMaintenanceApiResponse(maintenanceState.document);
+    }
+
     const currentUser = await requireServerCurrentUser();
     const body = (await request.json()) as {
       themeId?: string;

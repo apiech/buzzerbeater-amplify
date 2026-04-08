@@ -69,7 +69,13 @@ test("workspace requests are routed through server-authenticated Next entry poin
     proxySource,
     /export async function proxy\(request: NextRequest\)/,
   );
-  assert.match(proxySource, /matcher:\s*\["\/workspace\/:path\*"\]/);
+  assert.match(
+    proxySource,
+    /matcher:\s*\["\/", "\/login", "\/store", "\/workspace\/:path\*", "\/api\/auth\/:path\*"\]/,
+  );
+  assert.match(proxySource, /maybeCreateMaintenanceRedirectResponse/);
+  assert.match(proxySource, /pathname === "\/api\/auth\/sign-in-callback"/);
+  assert.match(proxySource, /pathname === "\/api\/auth\/sign-out-callback"/);
   assert.match(proxySource, /new URL\("\/login", request\.url\)/);
   assert.match(homePageSource, /getServerCurrentUser/);
   assert.match(
@@ -87,6 +93,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
   assert.match(loginPageSource, /href="\/store"/);
   assert.match(storePageSource, /<Storefront/);
   assert.match(authRouteSource, /createAuthRouteHandlers/);
+  assert.match(authRouteSource, /!slug\.endsWith\("-callback"\)/);
   assert.match(
     authRouteSource,
     /redirectOnSignInComplete:\s*"\/workspace\/home"/,
@@ -118,6 +125,8 @@ test("client theme updates and data access go through internal app routes", () =
   assert.match(clientSource, /\/api\/app\/reads\//);
   assert.match(clientSource, /\/api\/app\/queries\//);
   assert.match(clientSource, /\/api\/app\/mutations\//);
+  assert.match(clientSource, /window\.location\.assign\("\/status"\)/);
+  assert.doesNotMatch(clientSource, /setInterval/);
   assert.doesNotMatch(clientSource, /\/api\/app\/models\//);
   assert.doesNotMatch(clientSource, /generateClient</);
   assert.doesNotMatch(clientSource, /Amplify\.configure/);

@@ -26,4 +26,16 @@ test("sandbox scripts expose the happy path and raw escape hatch", () => {
     scripts["sandbox:raw"],
     "node ./scripts/ampx-with-env.mjs sandbox",
   );
+  assert.equal(
+    scripts["lint:deploy:sandbox"],
+    "node --max-old-space-size=6144 ./node_modules/eslint/bin/eslint.js --cache --cache-location ./.eslintcache.deploy-sandbox app amplify tests scripts lib proxy.ts next.config.ts eslint.config.mjs",
+  );
+  assert.equal(
+    scripts["typecheck:app:deploy:sandbox"],
+    "tsc -p tsconfig.app.json --noEmit --incremental --tsBuildInfoFile ./.tsbuildinfo.deploy-sandbox",
+  );
+  assert.equal(
+    scripts["verify:deploy:sandbox"],
+    "npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox",
+  );
 });

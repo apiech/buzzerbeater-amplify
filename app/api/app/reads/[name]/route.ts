@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isReadName, runReadOperation } from "@/app/server/read-bff";
 import { requireServerCurrentUser } from "@/app/server/amplify-server";
+import { createMaintenanceApiResponse, getServerMaintenanceState } from "@/app/server/maintenance";
 
 type RouteContext = {
   params: Promise<{
@@ -11,6 +12,11 @@ type RouteContext = {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
+    const maintenanceState = await getServerMaintenanceState();
+    if (maintenanceState.active && maintenanceState.document) {
+      return createMaintenanceApiResponse(maintenanceState.document);
+    }
+
     const currentUser = await requireServerCurrentUser();
 
     const { name } = await context.params;

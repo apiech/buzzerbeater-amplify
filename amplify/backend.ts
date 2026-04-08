@@ -5,6 +5,7 @@ import { configureBillingIntegration } from "./_backend/billing-integration.js";
 import { configureCostVisibility } from "./_backend/cost-visibility.js";
 import { configureGameDayRecapJobs } from "./_backend/game-day-recap-jobs.js";
 import { configureLeagueHistoryJobs } from "./_backend/league-history-jobs.js";
+import { configureMaintenanceControlPlane } from "./_backend/maintenance-control-plane.js";
 import { configureMatchStoreIntegration } from "./_backend/match-store-integration.js";
 import { configureOpponentForecastJobs } from "./_backend/opponent-forecast-jobs.js";
 import { configureOperationalRetention } from "./_backend/operational-retention.js";
@@ -46,11 +47,13 @@ import {
   listMyBillingPayments,
   pruneOperationalData,
   refreshWorkspace,
+  revokeSharedPlayerCard,
   setBbLeagueTimeZone,
   submitLeagueHistoryBackfill,
   submitLeagueGameDayRecap,
   submitMyTeamHighlightsScan,
   submitSingleGameSummary,
+  lookupSharedPlayerCard,
 } from "./data/resource.js";
 import { getAccessibleMatch } from "./get-accessible-match/resource.js";
 import { getAccessiblePlayByPlay } from "./get-accessible-play-by-play/resource.js";
@@ -58,6 +61,8 @@ import { gameDayRecapSubmit } from "./game-day-recap-submit/resource.js";
 import { gameDayRecapWorker } from "./game-day-recap-worker/resource.js";
 import { getMatchBoxscoreDetails } from "./get-match-boxscore-details/resource.js";
 import { listAccessibleMatches } from "./list-accessible-matches/resource.js";
+import { maintenanceAdmin } from "./maintenance-admin/resource.js";
+import { maintenanceAlarmTrip } from "./maintenance-alarm-trip/resource.js";
 import { opponentForecastSubmit } from "./opponent-forecast-submit/resource.js";
 import { opponentForecastWorker } from "./opponent-forecast-worker/resource.js";
 import { predictionSubmit } from "./prediction-submit/resource.js";
@@ -89,6 +94,8 @@ const backend = defineBackend({
   getSalaryProjection,
   leagueHistoryWorker,
   generateSharedPlayerCard,
+  revokeSharedPlayerCard,
+  lookupSharedPlayerCard,
   pruneOperationalData,
   setBbLeagueTimeZone,
   getAccessibleMatch,
@@ -107,6 +114,8 @@ const backend = defineBackend({
   submitSingleGameSummary,
   billingWebhook,
   billingAdminOverride,
+  maintenanceAdmin,
+  maintenanceAlarmTrip,
 });
 
 const sharedInfraBindings = resolveSharedInfraBindings();
@@ -114,6 +123,48 @@ const appResourceRemovalPolicy = resolveAppResourceRemovalPolicy();
 
 configureAuthControls(backend);
 configureBillingIntegration(backend, resolveBillingConfig());
+configureMaintenanceControlPlane(backend, [
+  backend.connectBbAccount,
+  backend.disconnectBbAccount,
+  backend.refreshWorkspace,
+  backend.getHomeWorkspace,
+  backend.getTeamHub,
+  backend.getScoutWorkspace,
+  backend.getLatestOpponentForecast,
+  backend.getLeagueIntel,
+  backend.getLeagueHistory,
+  backend.getPlayerLab,
+  backend.getRivalsWorkspace,
+  backend.getLineupHelperWorkspace,
+  backend.evaluateLineupHelper,
+  backend.getPlayerTrend,
+  backend.submitMyTeamHighlightsScan,
+  backend.submitLeagueHistoryBackfill,
+  backend.getMyTeamHighlights,
+  backend.getBillingSummary,
+  backend.createBillingCheckoutSession,
+  backend.createBillingLifetimeCheckoutSession,
+  backend.createBillingPortalSession,
+  backend.listMyBillingPayments,
+  backend.getSalaryProjection,
+  backend.submitLeagueGameDayRecap,
+  backend.submitSingleGameSummary,
+  backend.setBbLeagueTimeZone,
+  backend.listAccessibleMatches,
+  backend.getAccessibleMatch,
+  backend.getAccessiblePlayByPlay,
+  backend.getMatchBoxscoreDetails,
+  backend.generateSharedPlayerCard,
+  backend.revokeSharedPlayerCard,
+  backend.lookupSharedPlayerCard,
+  backend.leagueHistoryWorker,
+  backend.gameDayRecapSubmit,
+  backend.gameDayRecapWorker,
+  backend.opponentForecastSubmit,
+  backend.opponentForecastWorker,
+  backend.predictionSubmit,
+  backend.predictionWorker,
+]);
 configureCostVisibility(
   backend,
   resolveCostVisibilityConfig(),

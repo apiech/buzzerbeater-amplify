@@ -63,6 +63,7 @@ import {
   normalizeScheduleType,
   type CompetitiveRecentSample,
 } from "./match-importance";
+import { assertMaintenanceInactive } from "./maintenance";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -155,6 +156,8 @@ export async function connectAccount(args: {
   bbLoginName: string;
   accessKey: string;
 }): Promise<BbConnectionRecord> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -226,6 +229,8 @@ export async function disconnectAccount(args: {
   env: GraphqlEnv;
   identity: unknown;
 }): Promise<BbConnectionRecord> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -257,6 +262,8 @@ export async function setLeagueTimeZone(args: {
   identity: unknown;
   leagueTimeZone: string;
 }): Promise<BbConnectionRecord> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -287,6 +294,8 @@ export async function getOrRefreshWorkspace(args: {
   force?: boolean;
   syncActiveTrackedTeams?: boolean;
 }): Promise<WorkspaceBundle> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -307,6 +316,8 @@ export async function generatePlayerCard(args: {
   title?: string | null;
   note?: string | null;
 }): Promise<SharedPlayerCardResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -360,6 +371,8 @@ export async function revokePlayerCard(
   },
   dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
 ): Promise<SharedPlayerCardResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -399,6 +412,8 @@ export async function getScoutWorkspaceForTeam(args: {
   identity: unknown;
   teamId?: string | null;
 }): Promise<{ connection: BbConnectionRecord; scout: ScoutWorkspaceResult }> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -477,6 +492,8 @@ export async function lookupSharedPlayerCardByToken(
   },
   dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
 ): Promise<SharedPlayerCardResult | null> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -522,6 +539,8 @@ export async function getPlayerTrend(
   },
   dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
 ): Promise<PlayerTrendResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -577,6 +596,8 @@ export async function getSalaryProjection(
   },
   dependencies: WorkspaceDependencies = defaultWorkspaceDependencies,
 ): Promise<SalaryProjectionResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");

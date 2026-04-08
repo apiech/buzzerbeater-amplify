@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  __testing as hostedCheckTesting,
-} from "../scripts/check-hosted-shared-infra";
+import { __testing as hostedCheckTesting } from "../scripts/check-hosted-shared-infra";
 
 test("hosted readiness maps Amplify branches with the same prod logic as synth", () => {
   const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
@@ -19,16 +17,16 @@ test("hosted readiness maps Amplify branches with the same prod logic as synth",
         },
       },
       "amplify:list-branches": {
-        branches: [
-          { branchName: "dev" },
-          { branchName: "main" },
-        ],
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
       "iam:simulate-principal-policy": {
         EvaluationResults: [
           { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
           { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParametersByPath", EvalDecision: "allowed" },
+          {
+            EvalActionName: "ssm:GetParametersByPath",
+            EvalDecision: "allowed",
+          },
         ],
       },
       "service-quotas:get-service-quota": {
@@ -66,16 +64,16 @@ test("hosted readiness reports missing shared-infra parameters", () => {
         },
       },
       "amplify:list-branches": {
-        branches: [
-          { branchName: "dev" },
-          { branchName: "main" },
-        ],
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
       "iam:simulate-principal-policy": {
         EvaluationResults: [
           { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
           { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParametersByPath", EvalDecision: "allowed" },
+          {
+            EvalActionName: "ssm:GetParametersByPath",
+            EvalDecision: "allowed",
+          },
         ],
       },
       "service-quotas:get-service-quota": {
@@ -125,16 +123,16 @@ test("hosted readiness warns when the optional opponent forecast endpoint bindin
         },
       },
       "amplify:list-branches": {
-        branches: [
-          { branchName: "dev" },
-          { branchName: "main" },
-        ],
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
       "iam:simulate-principal-policy": {
         EvaluationResults: [
           { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
           { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParametersByPath", EvalDecision: "allowed" },
+          {
+            EvalActionName: "ssm:GetParametersByPath",
+            EvalDecision: "allowed",
+          },
         ],
       },
       "service-quotas:get-service-quota": {
@@ -187,16 +185,16 @@ test("hosted readiness reports quota blockers when sandbox exceeds its intended 
         },
       },
       "amplify:list-branches": {
-        branches: [
-          { branchName: "dev" },
-          { branchName: "main" },
-        ],
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
       },
       "iam:simulate-principal-policy": {
         EvaluationResults: [
           { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
           { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
-          { EvalActionName: "ssm:GetParametersByPath", EvalDecision: "allowed" },
+          {
+            EvalActionName: "ssm:GetParametersByPath",
+            EvalDecision: "allowed",
+          },
         ],
       },
       "service-quotas:get-service-quota": {
@@ -207,7 +205,8 @@ test("hosted readiness reports quota blockers when sandbox exceeds its intended 
       "sagemaker:list-endpoints": {
         Endpoints: [
           {
-            EndpointName: "buzzerbeater-machine-learning-predictor-sandbox-karey",
+            EndpointName:
+              "buzzerbeater-machine-learning-predictor-sandbox-karey",
             EndpointStatus: "InService",
           },
         ],
@@ -233,6 +232,23 @@ test("hosted readiness reports quota blockers when sandbox exceeds its intended 
   );
 });
 
+test("hosted readiness guidance includes maintenance control plane SSM access", () => {
+  const policy = hostedCheckTesting.buildRequiredPolicyDocument(
+    "us-east-1",
+  ) as {
+    Statement?: Array<{ Resource?: unknown }>;
+  };
+  const firstStatement = policy.Statement?.[0];
+  const resources = Array.isArray(firstStatement?.Resource)
+    ? (firstStatement.Resource as string[])
+    : [];
+
+  assert.deepEqual(resources, [
+    "arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*",
+    "arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/site-control/*",
+  ]);
+});
+
 function createRuntime(fixtures: Record<string, unknown | unknown[]>) {
   const callCounts = new Map<string, number>();
 
@@ -249,7 +265,9 @@ function createRuntime(fixtures: Record<string, unknown | unknown[]>) {
         callCounts.set(key, currentCount + 1);
         const value = fixture[currentCount];
         if (value === undefined) {
-          throw new Error(`Missing fixture value for ${key} call ${currentCount + 1}`);
+          throw new Error(
+            `Missing fixture value for ${key} call ${currentCount + 1}`,
+          );
         }
         return value;
       }

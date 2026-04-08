@@ -11,82 +11,25 @@ import { PolicyStatement, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import {
   EmailSubscription,
+  LambdaSubscription,
   SmsSubscription,
 } from "aws-cdk-lib/aws-sns-subscriptions";
 import type { Stack } from "aws-cdk-lib";
+import type { IFunction } from "aws-cdk-lib/aws-lambda";
 
 import type { CostVisibilitySynthConfig } from "../_shared/synth-env.js";
+import { SERVICE_COST_GUARDRAILS } from "./cost-guardrails.js";
+
+type FunctionResource = {
+  resources: {
+    lambda: IFunction;
+  };
+};
 
 type CostVisibilityBackend = {
   createStack(name: string): Stack;
+  maintenanceAlarmTrip: FunctionResource;
 };
-
-type ServiceCostGuardrail = {
-  alarmThresholdUsd: number;
-  budgetThresholdUsd: number;
-  budgetServiceName: string;
-  id: string;
-  label: string;
-};
-
-const SERVICE_GUARDRAILS: readonly ServiceCostGuardrail[] = [
-  {
-    id: "cognito",
-    label: "Cognito",
-    budgetServiceName: "Amazon Cognito",
-    budgetThresholdUsd: 50,
-    alarmThresholdUsd: 50,
-  },
-  {
-    id: "amplify",
-    label: "Amplify Hosting",
-    budgetServiceName: "AWS Amplify",
-    budgetThresholdUsd: 50,
-    alarmThresholdUsd: 50,
-  },
-  {
-    id: "fargate",
-    label: "Fargate",
-    budgetServiceName: "AWS Fargate",
-    budgetThresholdUsd: 25,
-    alarmThresholdUsd: 25,
-  },
-  {
-    id: "sagemaker",
-    label: "SageMaker",
-    budgetServiceName: "Amazon SageMaker",
-    budgetThresholdUsd: 50,
-    alarmThresholdUsd: 50,
-  },
-  {
-    id: "dynamodb",
-    label: "DynamoDB",
-    budgetServiceName: "Amazon DynamoDB",
-    budgetThresholdUsd: 25,
-    alarmThresholdUsd: 25,
-  },
-  {
-    id: "appsync",
-    label: "AppSync",
-    budgetServiceName: "AWS AppSync",
-    budgetThresholdUsd: 20,
-    alarmThresholdUsd: 20,
-  },
-  {
-    id: "lambda",
-    label: "Lambda",
-    budgetServiceName: "AWS Lambda",
-    budgetThresholdUsd: 20,
-    alarmThresholdUsd: 20,
-  },
-  {
-    id: "cloudwatch",
-    label: "CloudWatch Logs",
-    budgetServiceName: "AmazonCloudWatch",
-    budgetThresholdUsd: 20,
-    alarmThresholdUsd: 20,
-  },
-] as const;
 
 export function configureCostVisibility(
   backend: CostVisibilityBackend,
@@ -121,7 +64,11 @@ export function configureCostVisibility(
     topic.addSubscription(new SmsSubscription(phoneNumber));
   }
 
-  for (const guardrail of SERVICE_GUARDRAILS) {
+  topic.addSubscription(
+    new LambdaSubscription(backend.maintenanceAlarmTrip.resources.lambda),
+  );
+
+  for (const guardrail of SERVICE_COST_GUARDRAILS) {
     new CfnBudget(stack, `${guardrail.id}MonthlyBudget`, {
       budget: {
         budgetName: `bb-${guardrail.id}-monthly-cost`,
@@ -165,7 +112,8 @@ export function configureCostVisibility(
 
   new CfnOutput(stack, "CostAlertsTopicArn", {
     value: topic.topicArn,
-    description: "SNS topic that receives service cost guardrail notifications.",
+    description:
+      "SNS topic that receives service cost guardrail notifications.",
   });
 }
 

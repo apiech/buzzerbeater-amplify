@@ -17,3 +17,11 @@ declare module "$amplify/env/opponent-forecast-worker" {
 declare module "$amplify/env/submit-league-history-backfill" {
   export const env: Record<string, string | undefined>;
 }
+
+declare module "$amplify/env/maintenance-admin" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/maintenance-alarm-trip" {
+  export const env: Record<string, string | undefined>;
+}

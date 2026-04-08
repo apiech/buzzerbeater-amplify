@@ -5,6 +5,7 @@ import {
 } from "../../../lib/bbapi";
 import type { Schema } from "../resource";
 import { resolveBbAccessKey } from "./credentials";
+import { assertMaintenanceInactive } from "./maintenance";
 import { getOrRefreshWorkspace } from "./workspace";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -67,6 +68,8 @@ export async function getRivalsWorkspace(
   },
   dependencies: RivalsDependencies = defaultDependencies,
 ): Promise<RivalsWorkspaceResult> {
+  await assertMaintenanceInactive();
+
   const workspace = await getOrRefreshWorkspace({
     env: args.env,
     identity: args.identity,

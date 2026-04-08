@@ -11,7 +11,6 @@ import {
 } from "react";
 
 import { client } from "@/app/amplify-client";
-import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import { fetchBillingSummary } from "@/app/billing-client";
 import { HighlightsPanel } from "@/app/highlights-panel";
@@ -111,6 +110,7 @@ const ownerRosterSkillColumns = [
   key: OwnerRosterSkillKey;
   label: string;
 }>;
+const terminalOpponentForecastStatuses = new Set(["SUCCEEDED", "FAILED"]);
 
 export default function DashboardHomePage() {
   return <DashboardApp activeSection="home" viewerLabel={null} />;
@@ -689,46 +689,21 @@ function WorkspaceDashboard({
       return;
     }
 
-    let isActive = true;
-    let subscriptions: Array<{ unsubscribe(): void }> = [];
-    const commitSubscriptions = (
-      nextSubscriptions: Array<{ unsubscribe(): void }>,
-    ) => {
-      if (!isActive) {
-        for (const subscription of nextSubscriptions) {
-          subscription.unsubscribe();
-        }
-        return;
-      }
+    if (
+      !opponentForecast ||
+      isOpponentForecastTerminalStatus(opponentForecast.status)
+    ) {
+      return;
+    }
 
-      subscriptions = nextSubscriptions;
-    };
-
-    void (async () => {
-      try {
-        const realtimeClient = await getRealtimeClient();
-        commitSubscriptions([
-          realtimeClient.models.OpponentForecastJob.onCreate().subscribe({
-            error: logRealtimeError("OpponentForecastJob.onCreate"),
-            next: () => loadLatestOpponentForecastEffect(teamId),
-          }),
-          realtimeClient.models.OpponentForecastJob.onUpdate().subscribe({
-            error: logRealtimeError("OpponentForecastJob.onUpdate"),
-            next: () => loadLatestOpponentForecastEffect(teamId),
-          }),
-        ]);
-      } catch (error) {
-        logRealtimeError("OpponentForecastJob.subscription.setup")(error);
-      }
-    })();
+    const intervalId = window.setInterval(() => {
+      loadLatestOpponentForecastEffect(teamId);
+    }, 4000);
 
     return () => {
-      isActive = false;
-      for (const subscription of subscriptions) {
-        subscription.unsubscribe();
-      }
+      window.clearInterval(intervalId);
     };
-  }, [scout]);
+  }, [opponentForecast, scout]);
 
   useEffect(() => {
     setPredictionDraft((current) =>
@@ -1898,6 +1873,10 @@ function formatOpponentForecastStatus(value: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+function isOpponentForecastTerminalStatus(value: string): boolean {
+  return terminalOpponentForecastStatuses.has(value);
+}
+
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "N/A";
@@ -2388,6 +2367,7 @@ function readPayload<T>(response: { payload: T | string }): T {
 export const __testing = {
   compareOwnerRosterValues,
   formatPlayerMeta,
+  isOpponentForecastTerminalStatus,
   readGameShapeSortValue,
   readOwnerRosterSortValue,
   readPayload,

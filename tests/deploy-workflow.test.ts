@@ -358,6 +358,176 @@ test("sandbox up forwards raw sandbox flags to the underlying sandbox process", 
   ]);
 });
 
+test("sandbox up fast uses sandbox verification, skips shared infra deploy, and strips the fast flag before launching ampx", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+
+  const exitCode = workflowTesting.runSandboxUp(
+    ["--once", "--fast"],
+    createRuntime({
+      env: {
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "ssm") {
+          return {
+            Parameters: [
+              {
+                Name: "/buzzerbeater/ml-data-infra/sandbox-karey/prediction-endpoint-name",
+                Value: "predictor-endpoint",
+              },
+            ],
+          };
+        }
+
+        if (args[0] === "sagemaker") {
+          return {
+            EndpointStatus: "InService",
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      spawnSync(command, args, options) {
+        calls.push({ args, command, options });
+
+        if (
+          command === "npm" &&
+          args[0] === "run" &&
+          args[1] === "verify:deploy:sandbox"
+        ) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+        if (args.includes("list")) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "BB_CONNECTION_ENCRYPTION_SECRET\n",
+          };
+        }
+
+        if (command === process.execPath) {
+          return {
+            status: 0,
+            stderr: "",
+            stdout: "",
+          };
+        }
+
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].command, "npm");
+  assert.deepEqual(calls[0].args, ["run", "verify:deploy:sandbox"]);
+  const launchedSandboxArgs = calls[2].args;
+  assert.deepEqual(launchedSandboxArgs.slice(1), [
+    "sandbox",
+    "--identifier",
+    "karey",
+    "--once",
+  ]);
+  assert.ok(!launchedSandboxArgs.includes("--fast"));
+});
+
+test("sandbox up fast fails when the predictor endpoint is missing even if a sandbox pin exists", () => {
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options?: Record<string, unknown>;
+  }> = [];
+  const predictorTargetsPath =
+    `${workspaceRoot}/bb-machine-learning/dist/matchup-predictor/targets.local.json`;
+  const artifactPrefix =
+    `${workspaceRoot}/bb-machine-learning/dist/matchup-predictor/ratings_universal_xgb_all`;
+
+  assert.throws(
+    () =>
+      workflowTesting.runSandboxUp(
+        ["--fast"],
+        createRuntime({
+          env: {
+            BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+          },
+          execAwsJson(args) {
+            if (args[0] === "ssm") {
+              return {
+                Parameters: [],
+              };
+            }
+
+            throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+          },
+          fileExists(path) {
+            return (
+              path === predictorTargetsPath ||
+              path === `${artifactPrefix}_model.ubj` ||
+              path === `${artifactPrefix}_config.json`
+            );
+          },
+          readFile(path) {
+            if (path !== predictorTargetsPath) {
+              throw new Error(`Unexpected file read: ${path}`);
+            }
+
+            return JSON.stringify({
+              sandboxes: {
+                karey: {
+                  artifactPrefix,
+                  releaseId: "ratings-universal-xgb-2026-03-19",
+                  updatedAt: "2026-03-19T12:00:00.000Z",
+                },
+              },
+            });
+          },
+          spawnSync(command, args, options) {
+            calls.push({ args, command, options });
+
+            if (
+              command === "npm" &&
+              args[0] === "run" &&
+              args[1] === "verify:deploy:sandbox"
+            ) {
+              return {
+                status: 0,
+                stderr: "",
+                stdout: "",
+              };
+            }
+            if (args.includes("list")) {
+              return {
+                status: 0,
+                stderr: "",
+                stdout: "BB_CONNECTION_ENCRYPTION_SECRET\n",
+              };
+            }
+
+            throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+          },
+        }),
+      ),
+    /Fast sandbox deploy requires a ready predictor endpoint\..*npm run sandbox:predictor -- --identifier karey --use-pin/,
+  );
+
+  assert.deepEqual(
+    calls.map((call) => [call.command, call.args[0], call.args[1]]),
+    [
+      ["npm", "run", "verify:deploy:sandbox"],
+      ["npx", "ampx", "sandbox"],
+    ],
+  );
+});
+
 test("sandbox up stops before side effects when deploy verification fails", () => {
   const calls: Array<{
     args: string[];

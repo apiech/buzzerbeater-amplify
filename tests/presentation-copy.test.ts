@@ -25,8 +25,17 @@ test("status labels use plain-language preview, writeup, and highlights copy", (
   assert.equal(formatWriteupStatus("FAILED"), "Writeup failed");
 
   assert.equal(formatHighlightsStatus("RESOLVING_HISTORY"), "Scanning team history");
+  assert.equal(formatHighlightsStatus("WAITING_FOR_MATCH_JOBS"), "Preparing moments");
+  assert.equal(
+    formatHighlightsStatus("COMPLETED_WITH_GAPS"),
+    "Moments ready with gaps",
+  );
   assert.equal(formatHighlightsStatus("SUCCEEDED"), "Moments ready");
   assert.equal(formatHighlightsStatus("FAILED"), "Scan failed");
+  assert.notEqual(formatHighlightsStatus("QUEUED"), "Moments ready");
+  assert.notEqual(formatHighlightsStatus("COMPLETED_WITH_GAPS"), "Moments ready");
+  assert.notEqual(formatHighlightsStatus("WAITING_FOR_MATCH_JOBS"), "Moments ready");
+  assert.notEqual(formatHighlightsStatus("FAILED"), "Moments ready");
 });
 
 test("sync labels hide backend kind names", () => {

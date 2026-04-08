@@ -27,6 +27,10 @@ import {
   buildExecutionName,
   startStateMachineExecution,
 } from "./step-functions";
+import {
+  assertMaintenanceInactive,
+  toMaintenanceAwareErrorMessage,
+} from "./maintenance";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -55,6 +59,7 @@ type PredictionSubmissionRequest = {
 };
 
 type SubmitPredictionDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
   deletePredictionGridCellsByUserAndRequestId:
     typeof deletePredictionGridCellsByUserAndRequestId;
   getPredictionJob: typeof getPredictionJob;
@@ -69,6 +74,7 @@ type SubmitPredictionDependencies = {
 };
 
 type ProcessPredictionDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
   deletePredictionGridCellsByUserAndRequestId:
     typeof deletePredictionGridCellsByUserAndRequestId;
   getPredictionJob: typeof getPredictionJob;
@@ -97,6 +103,7 @@ const REQUIRED_NUMERIC_FIELDS = [
 ] as const;
 
 const defaultSubmitDependencies: SubmitPredictionDependencies = {
+  assertMaintenanceInactive,
   deletePredictionGridCellsByUserAndRequestId,
   getPredictionJob,
   requireFeatureAccess,
@@ -111,6 +118,7 @@ const defaultSubmitDependencies: SubmitPredictionDependencies = {
 };
 
 const defaultProcessDependencies: ProcessPredictionDependencies = {
+  assertMaintenanceInactive,
   deletePredictionGridCellsByUserAndRequestId,
   getPredictionJob,
   invokePredictionEndpoint,
@@ -131,6 +139,8 @@ export async function submitPredictionJob(
     ...defaultSubmitDependencies,
     ...dependencies,
   };
+  await runtimeDependencies.assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -214,6 +224,8 @@ export async function processPredictionJob(
   }
 
   try {
+    await runtimeDependencies.assertMaintenanceInactive();
+
     const canResolve = await runtimeDependencies.updatePredictionJobIfRequestMatches(
       args.env,
       {
@@ -243,6 +255,8 @@ export async function processPredictionJob(
     if (!canInvoke) {
       return;
     }
+
+    await runtimeDependencies.assertMaintenanceInactive();
 
     const rawResult = await runtimeDependencies.invokePredictionEndpoint(
       args.endpointName,
@@ -312,7 +326,7 @@ export async function processPredictionJob(
       userId: job.userId,
       requestId: job.requestId,
       status: "FAILED",
-      error: error instanceof Error ? error.message : String(error),
+      error: toMaintenanceAwareErrorMessage(error),
     });
     throw error;
   }

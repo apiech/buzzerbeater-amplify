@@ -7,12 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import { RemovalPolicy } from "aws-cdk-lib";
 
-import {
-  getParametersByName,
-} from "./aws-cli-ssm.js";
-import {
-  resolvePublicAppOrigin,
-} from "./public-app-origin.js";
+import { getParametersByName } from "./aws-cli-ssm.js";
+import { resolvePublicAppOrigin } from "./public-app-origin.js";
 import {
   branchToEnvironmentName,
   buildSharedInfraParameterPaths,
@@ -32,9 +28,11 @@ const optionalSharedInfraBindingKeys = new Set<keyof SharedInfraBindings>([
 ]);
 
 let localEnvLoaded = false;
-let cachedSharedInfraBindings:
-  | { environmentName: string; region: string; value: SharedInfraBindings }
-  | null = null;
+let cachedSharedInfraBindings: {
+  environmentName: string;
+  region: string;
+  value: SharedInfraBindings;
+} | null = null;
 
 type AwsCliRuntime = {
   execAwsJson: (args: string[]) => unknown;
@@ -56,6 +54,11 @@ export type CostVisibilitySynthConfig = {
   alertEmails?: string;
   alertSmsNumbers?: string;
   enabled: boolean;
+};
+
+export type MaintenanceControlPlaneSynthConfig = {
+  environmentName: string;
+  parameterName: string;
 };
 
 export type GameDayRecapSynthConfig = {
@@ -141,7 +144,8 @@ export function resolveCostVisibilityConfig(): CostVisibilitySynthConfig {
   loadLocalSynthEnv();
 
   return {
-    alertEmails: normalizeOptionalString(process.env.COST_ALERT_EMAILS) ?? undefined,
+    alertEmails:
+      normalizeOptionalString(process.env.COST_ALERT_EMAILS) ?? undefined,
     alertSmsNumbers:
       normalizeOptionalString(process.env.COST_ALERT_SMS_NUMBERS) ?? undefined,
     enabled: parseBooleanEnv(process.env.ENABLE_COST_VISIBILITY),
@@ -158,7 +162,8 @@ export function resolveGameDayRecapConfig(): GameDayRecapSynthConfig {
       "GAME_DAY_RECAP_MODEL_ID must be set for recap generation.",
     ),
     premiumModelId:
-      normalizeOptionalString(process.env.GAME_DAY_RECAP_MODEL_ID_PREMIUM) ?? null,
+      normalizeOptionalString(process.env.GAME_DAY_RECAP_MODEL_ID_PREMIUM) ??
+      null,
   };
 }
 
@@ -189,7 +194,9 @@ export function resolveSharedEnvironmentName(
     return branchToEnvironmentName(branchName);
   }
 
-  const sandboxIdentifier = normalizeOptionalString(env[sandboxIdentifierEnvName]);
+  const sandboxIdentifier = normalizeOptionalString(
+    env[sandboxIdentifierEnvName],
+  );
   if (sandboxIdentifier) {
     return normalizeEnvironmentName(
       `sandbox-${normalizeSandboxIdentifier(sandboxIdentifier)}`,
@@ -198,6 +205,55 @@ export function resolveSharedEnvironmentName(
 
   return normalizeEnvironmentName(
     `sandbox-${normalizeSandboxIdentifier(runtime.userName())}`,
+  );
+}
+
+export function resolveMaintenanceControlPlaneConfig(
+  env: Record<string, string | undefined> = process.env,
+  runtime: Pick<AwsCliRuntime, "userName"> = createDefaultRuntime(),
+): MaintenanceControlPlaneSynthConfig {
+  loadLocalSynthEnv();
+
+  const configuredEnvironment = normalizeOptionalString(
+    env.MAINTENANCE_ENVIRONMENT_NAME,
+  );
+  if (configuredEnvironment) {
+    return createMaintenanceControlPlaneConfig(
+      normalizeEnvironmentName(configuredEnvironment),
+    );
+  }
+
+  const sharedEnvironment = normalizeOptionalString(
+    env.BB_SHARED_ENVIRONMENT_NAME,
+  );
+  if (sharedEnvironment) {
+    return createMaintenanceControlPlaneConfig(
+      normalizeEnvironmentName(sharedEnvironment),
+    );
+  }
+
+  const branchName = normalizeOptionalString(env.AWS_BRANCH);
+  if (branchName) {
+    return createMaintenanceControlPlaneConfig(
+      branchToEnvironmentName(branchName),
+    );
+  }
+
+  const sandboxIdentifier = normalizeOptionalString(
+    env[sandboxIdentifierEnvName],
+  );
+  if (sandboxIdentifier) {
+    return createMaintenanceControlPlaneConfig(
+      normalizeEnvironmentName(
+        `sandbox-${normalizeSandboxIdentifier(sandboxIdentifier)}`,
+      ),
+    );
+  }
+
+  return createMaintenanceControlPlaneConfig(
+    normalizeEnvironmentName(
+      `sandbox-${normalizeSandboxIdentifier(runtime.userName())}`,
+    ),
   );
 }
 
@@ -216,7 +272,11 @@ export function resolveSharedInfraBindings(
     return cachedSharedInfraBindings.value;
   }
 
-  const bindings = readSharedInfraBindingsFromRuntime(environmentName, region, runtime);
+  const bindings = readSharedInfraBindingsFromRuntime(
+    environmentName,
+    region,
+    runtime,
+  );
   cachedSharedInfraBindings = { environmentName, region, value: bindings };
   return bindings;
 }
@@ -225,6 +285,15 @@ export function resolveAppResourceRemovalPolicy(): RemovalPolicy {
   return resolveSharedEnvironmentName() === "prod"
     ? RemovalPolicy.RETAIN
     : RemovalPolicy.DESTROY;
+}
+
+function createMaintenanceControlPlaneConfig(
+  environmentName: string,
+): MaintenanceControlPlaneSynthConfig {
+  return {
+    environmentName,
+    parameterName: `/buzzerbeater/site-control/${environmentName}/current`,
+  };
 }
 
 function readSharedInfraBindingsFromRuntime(
@@ -292,24 +361,38 @@ function readSharedInfraBindingsFromRuntime(
   }
 
   return {
-    activeTrackedTeamsTableName:
-      valuesByPath.get(parameterPaths.activeTrackedTeamsTableName)!,
-    matchCatalogTableName: valuesByPath.get(parameterPaths.matchCatalogTableName)!,
-    matchProcessingStateMachineArn:
-      valuesByPath.get(parameterPaths.matchProcessingStateMachineArn)!,
-    matchStoreBucketName: valuesByPath.get(parameterPaths.matchStoreBucketName)!,
+    activeTrackedTeamsTableName: valuesByPath.get(
+      parameterPaths.activeTrackedTeamsTableName,
+    )!,
+    matchCatalogTableName: valuesByPath.get(
+      parameterPaths.matchCatalogTableName,
+    )!,
+    matchProcessingStateMachineArn: valuesByPath.get(
+      parameterPaths.matchProcessingStateMachineArn,
+    )!,
+    matchStoreBucketName: valuesByPath.get(
+      parameterPaths.matchStoreBucketName,
+    )!,
     opponentForecastEndpointName:
       valuesByPath.get(parameterPaths.opponentForecastEndpointName) ?? null,
-    playerSkillSnapshotTableName:
-      valuesByPath.get(parameterPaths.playerSkillSnapshotTableName)!,
-    predictionEndpointName: valuesByPath.get(parameterPaths.predictionEndpointName)!,
-    teamHighlightsScanStateMachineArn:
-      valuesByPath.get(parameterPaths.teamHighlightsScanStateMachineArn)!,
-    teamHighlightsStatusTableName:
-      valuesByPath.get(parameterPaths.teamHighlightsStatusTableName)!,
-    teamMatchProjectionTableName:
-      valuesByPath.get(parameterPaths.teamMatchProjectionTableName)!,
-    teamMomentsTableName: valuesByPath.get(parameterPaths.teamMomentsTableName)!,
+    playerSkillSnapshotTableName: valuesByPath.get(
+      parameterPaths.playerSkillSnapshotTableName,
+    )!,
+    predictionEndpointName: valuesByPath.get(
+      parameterPaths.predictionEndpointName,
+    )!,
+    teamHighlightsScanStateMachineArn: valuesByPath.get(
+      parameterPaths.teamHighlightsScanStateMachineArn,
+    )!,
+    teamHighlightsStatusTableName: valuesByPath.get(
+      parameterPaths.teamHighlightsStatusTableName,
+    )!,
+    teamMatchProjectionTableName: valuesByPath.get(
+      parameterPaths.teamMatchProjectionTableName,
+    )!,
+    teamMomentsTableName: valuesByPath.get(
+      parameterPaths.teamMomentsTableName,
+    )!,
   };
 }
 
@@ -336,8 +419,7 @@ function buildSharedInfraLookupError(
   error: unknown,
 ): Error {
   const cliError = extractAwsCliErrorMessage(error);
-  const policyResource =
-    `arn:aws:ssm:${region}:427377913956:parameter/buzzerbeater/ml-data-infra/*`;
+  const policyResource = `arn:aws:ssm:${region}:427377913956:parameter/buzzerbeater/ml-data-infra/*`;
 
   if (isSharedInfraAccessDenied(cliError)) {
     return new Error(
@@ -379,8 +461,7 @@ function extractAwsCliErrorMessage(error: unknown): string {
 function isSharedInfraAccessDenied(errorMessage: string): boolean {
   const normalized = errorMessage.toLowerCase();
   return (
-    normalized.includes("accessdenied") &&
-    normalized.includes("getparameters")
+    normalized.includes("accessdenied") && normalized.includes("getparameters")
   );
 }
 

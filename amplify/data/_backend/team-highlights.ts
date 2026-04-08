@@ -9,6 +9,7 @@ import {
 import type { Schema } from "../resource";
 import { TeamHighlightsPerspective } from "../schema-enums";
 import { requireFeatureAccess } from "./billing";
+import { assertMaintenanceInactive } from "./maintenance";
 import {
   getBbConnection,
   listTrackedTeamsForUser,
@@ -37,6 +38,8 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 >;
 
 type TeamHighlightsResult = ResolverResult<"getMyTeamHighlights">;
+type TeamHighlightsScanSubmitResult = ResolverResult<"submitMyTeamHighlightsScan">;
+type TeamHighlightsScanState = TeamHighlightsScanSubmitResult["status"];
 type TeamHighlightsSummary = TeamHighlightsResult["summary"];
 
 type SubmitDependencies = {
@@ -71,19 +74,34 @@ type TeamHighlightsScanMessage = {
   userId: string;
 };
 
+type TeamHighlightsBrokenMatchItem = {
+  awayTeamName?: string | null;
+  boxscoreUrl: string;
+  homeTeamName?: string | null;
+  issue: string;
+  matchId: string;
+  matchType?: string | null;
+  season?: number | null;
+  startTime?: string | null;
+};
+
 type TeamHighlightsStatusItem = {
+  brokenMatches?: TeamHighlightsBrokenMatchItem[] | null;
   completedAt?: string | null;
+  currentSeason?: number | null;
   executionArn?: string | null;
   error?: string | null;
+  matchesCompleted?: number | null;
   matchesDiscovered?: number | null;
   matchesEnqueuedForIngest?: number | null;
   matchesEnqueuedForMaterialize?: number | null;
+  matchesFailed?: number | null;
   matchesReused?: number | null;
   requestedAt: string;
   seasonsFrom?: number | null;
   seasonsTo?: number | null;
   startedAt?: string | null;
-  status: string;
+  status: TeamHighlightsScanState;
   teamId: string;
   teamName?: string | null;
   updatedAt?: string | null;
@@ -135,7 +153,12 @@ type TeamMomentItem = {
 };
 
 const PAGE_SIZE = 25;
-const TERMINAL_SCAN_STATUSES = new Set(["FAILED", "SUCCEEDED"]);
+const TERMINAL_SCAN_STATUSES = new Set<TeamHighlightsScanState>([
+  "COMPLETED_WITH_GAPS",
+  "FAILED",
+  "SUCCEEDED",
+]);
+const STALE_SCAN_MILLISECONDS = 15 * 60 * 1000;
 
 const ddbDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -182,14 +205,9 @@ export async function submitMyTeamHighlightsScan(
     stateMachineArn: string;
   },
   dependencies: SubmitDependencies = defaultSubmitDependencies,
-): Promise<{
-  executionArn: string | null;
-  queued: boolean;
-  requestedAt: string;
-  status: string;
-  teamId: string;
-  teamName: string | null;
-}> {
+): Promise<TeamHighlightsScanSubmitResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -212,7 +230,11 @@ export async function submitMyTeamHighlightsScan(
     userId,
     team.teamId,
   );
-  if (existingStatus && !TERMINAL_SCAN_STATUSES.has(existingStatus.status)) {
+  if (
+    existingStatus &&
+    !TERMINAL_SCAN_STATUSES.has(existingStatus.status) &&
+    !isTeamHighlightsScanStale(existingStatus, dependencies.now())
+  ) {
     return {
       executionArn: existingStatus.executionArn ?? null,
       queued: false,
@@ -284,6 +306,8 @@ export async function getMyTeamHighlights(
   },
   dependencies: GetDependencies = defaultGetDependencies,
 ): Promise<TeamHighlightsResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -370,13 +394,26 @@ export async function getMyTeamHighlights(
     nextCursor,
     scanStatus: scanStatus
       ? {
+          brokenMatches: (scanStatus.brokenMatches ?? []).map((item) => ({
+            awayTeamName: item.awayTeamName ?? null,
+            boxscoreUrl: item.boxscoreUrl,
+            homeTeamName: item.homeTeamName ?? null,
+            issue: item.issue,
+            matchId: item.matchId,
+            matchType: item.matchType ?? null,
+            season: item.season ?? null,
+            startTime: item.startTime ?? null,
+          })),
           completedAt: scanStatus.completedAt ?? null,
+          currentSeason: scanStatus.currentSeason ?? null,
           executionArn: scanStatus.executionArn ?? null,
           error: scanStatus.error ?? null,
+          matchesCompleted: scanStatus.matchesCompleted ?? null,
           matchesDiscovered: scanStatus.matchesDiscovered ?? null,
           matchesEnqueuedForIngest: scanStatus.matchesEnqueuedForIngest ?? null,
           matchesEnqueuedForMaterialize:
             scanStatus.matchesEnqueuedForMaterialize ?? null,
+          matchesFailed: scanStatus.matchesFailed ?? null,
           matchesReused: scanStatus.matchesReused ?? null,
           requestedAt: scanStatus.requestedAt,
           seasonsFrom: scanStatus.seasonsFrom ?? null,
@@ -624,6 +661,19 @@ function asBoolean(value: unknown): boolean {
     return value.trim().toLowerCase() === "true";
   }
   return false;
+}
+
+function isTeamHighlightsScanStale(
+  status: TeamHighlightsStatusItem,
+  now: Date,
+): boolean {
+  const referenceTimestamp = status.updatedAt ?? status.requestedAt;
+  const parsedReference = Date.parse(referenceTimestamp);
+  if (!Number.isFinite(parsedReference)) {
+    return false;
+  }
+
+  return now.getTime() - parsedReference >= STALE_SCAN_MILLISECONDS;
 }
 
 function toErrorMessage(error: unknown): string {

@@ -19,6 +19,7 @@ import {
   listWorkspacePlayerHistory,
   type WorkspacePlayerHistoryRecord,
 } from "./player-snapshot-access";
+import { assertMaintenanceInactive } from "./maintenance";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
 import { getBbConnection, getMatchBoxscore } from "./repository";
 
@@ -108,6 +109,8 @@ export async function getLineupHelperWorkspace(args: {
 },
 dependencies: LineupHelperDependencies = defaultLineupHelperDependencies,
 ): Promise<LineupHelperWorkspaceResult> {
+  await assertMaintenanceInactive();
+
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
@@ -152,6 +155,8 @@ export async function evaluateLineupHelper(args: {
   assignments: unknown;
   context: unknown;
 }): Promise<LineupHelperEvaluationResult> {
+  await assertMaintenanceInactive();
+
   const rosterPlayers = parseHelperRoster(args.roster);
   const assignments = parseAssignments(args.assignments);
   const context = normalizeContext(toContextRecord(args.context));

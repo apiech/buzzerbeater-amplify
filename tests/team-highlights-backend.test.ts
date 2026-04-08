@@ -187,6 +187,7 @@ test("submitMyTeamHighlightsScan reuses an active scan instead of duplicating it
         status: "RESOLVING_HISTORY",
         teamId: "team-1",
         teamName: "Alpha",
+        updatedAt: "2026-03-15T11:55:00.000Z",
         userId: "user-1",
       }),
       listTrackedTeamsForUser: async () => [createTrackedTeam()],
@@ -211,6 +212,45 @@ test("submitMyTeamHighlightsScan reuses an active scan instead of duplicating it
   });
 });
 
+test("submitMyTeamHighlightsScan replaces a stale active scan", async () => {
+  const writtenStatuses: Array<Record<string, unknown>> = [];
+
+  const result = await submitMyTeamHighlightsScan(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:team-highlights",
+    },
+    {
+      getBbConnection: async () => ({
+        teamId: "team-1",
+        teamName: "Alpha",
+      }) as any,
+      getTeamHighlightsStatus: async () => ({
+        requestedAt: "2026-03-15T09:00:00.000Z",
+        status: "WAITING_FOR_MATCH_JOBS",
+        teamId: "team-1",
+        teamName: "Alpha",
+        updatedAt: "2026-03-15T09:10:00.000Z",
+        userId: "user-1",
+      }),
+      listTrackedTeamsForUser: async () => [createTrackedTeam()],
+      now: () => new Date("2026-03-15T12:00:00.000Z"),
+      putTeamHighlightsStatus: async (_env, record) => {
+        writtenStatuses.push(record as unknown as Record<string, unknown>);
+      },
+      requireFeatureAccess: async () => "premium",
+      startWorkflowExecution: async () =>
+        "arn:aws:states:us-east-1:123456789012:execution:team-highlights:scan-2",
+    },
+  );
+
+  assert.equal(result.queued, true);
+  assert.equal(writtenStatuses.length, 2);
+  assert.equal(writtenStatuses[0].status, "QUEUED");
+});
+
 test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async () => {
   const allMoments = Array.from({ length: 26 }, (_, index) => createMoment(index));
 
@@ -228,10 +268,25 @@ test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async
         teamName: "Alpha",
       }) as any,
       getTeamHighlightsStatus: async () => ({
+        brokenMatches: [
+          {
+            awayTeamName: "Great 8",
+            boxscoreUrl:
+              "https://www.buzzerbeater.com/match/1006000001/boxscore.aspx",
+            homeTeamName: "Big 8",
+            issue: "BBXmlApiError: ServerError (boxscore.aspx)",
+            matchId: "1006000001",
+            season: 8,
+            startTime: "2009-04-16T00:00:00.000Z",
+          },
+        ],
+        currentSeason: 52,
+        matchesCompleted: 4,
         requestedAt: "2026-03-15T09:00:00.000Z",
         status: "SUCCEEDED",
         teamId: "team-1",
         teamName: "Alpha",
+        updatedAt: "2026-03-15T09:12:00.000Z",
         userId: "user-1",
       }),
       listTrackedTeamsForUser: async () => [createTrackedTeam()],
@@ -250,6 +305,16 @@ test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async
   assert.equal(result.summary.againstMoments, 13);
   assert.equal(result.summary.outcomeChangeMoments, 9);
   assert.equal(result.team.teamId, "team-1");
+  assert.equal((result as { scanStatus: { currentSeason: number | null } }).scanStatus.currentSeason, 52);
+  assert.equal((result as { scanStatus: { matchesCompleted: number | null } }).scanStatus.matchesCompleted, 4);
+  assert.equal(
+    (
+      result as {
+        scanStatus: { brokenMatches: Array<{ boxscoreUrl: string }> };
+      }
+    ).scanStatus.brokenMatches[0].boxscoreUrl,
+    "https://www.buzzerbeater.com/match/1006000001/boxscore.aspx",
+  );
   assert.ok(result.nextCursor);
 
   const nextPage = (await getMyTeamHighlights(

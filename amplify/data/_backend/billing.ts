@@ -16,6 +16,7 @@ import {
   type FeatureKey,
   type PlanId,
 } from "../../../lib/billing/plans";
+import { assertMaintenanceInactive } from "./maintenance";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -185,6 +186,8 @@ export async function getBillingSummary(args: {
   env: GraphqlEnv;
   identity: unknown;
 }, runtime: StripeRuntime = defaultRuntime): Promise<BillingSummary> {
+  await assertMaintenanceInactive();
+
   const userId = requireUserId(args.identity);
   const billingAccount = await runtime.getBillingAccount(args.env, userId);
   return buildBillingSummary(billingAccount, {
@@ -199,6 +202,8 @@ export async function listBillingPayments(args: {
   limit?: number | null;
   nextToken?: string | null;
 }, runtime: StripeRuntime = defaultRuntime): Promise<BillingPaymentsPage> {
+  await assertMaintenanceInactive();
+
   const userId = requireUserId(args.identity);
   const page = await runtime.listBillingPaymentsByUserId(args.env, userId, {
     limit: clampBillingPaymentLimit(args.limit),
@@ -219,6 +224,8 @@ export async function createBillingCheckoutSession(args: {
   returnPath?: string | null;
   stripeSecretKey: string;
 }, runtime: StripeRuntime = defaultRuntime): Promise<{ url: string }> {
+  await assertMaintenanceInactive();
+
   const offerFlags = resolveBillingOfferFlags(args.env);
   if (!offerFlags.premiumSubscriptionOfferEnabled) {
     throw new Error("Premium subscriptions are not available right now.");
@@ -264,6 +271,8 @@ export async function createBillingLifetimeCheckoutSession(args: {
   returnPath?: string | null;
   stripeSecretKey: string;
 }, runtime: StripeRuntime = defaultRuntime): Promise<{ url: string }> {
+  await assertMaintenanceInactive();
+
   const offerFlags = resolveBillingOfferFlags(args.env);
   if (!offerFlags.lifetimePurchaseOfferEnabled) {
     throw new Error("Lifetime purchases are not available right now.");
@@ -307,6 +316,8 @@ export async function createBillingPortalSession(args: {
   returnPath?: string | null;
   stripeSecretKey: string;
 }, runtime: StripeRuntime = defaultRuntime): Promise<{ url: string }> {
+  await assertMaintenanceInactive();
+
   const userId = requireUserId(args.identity);
   const billingAccount = await runtime.getBillingAccount(args.env, userId);
   const customerId = billingAccount?.stripeCustomerId?.trim();

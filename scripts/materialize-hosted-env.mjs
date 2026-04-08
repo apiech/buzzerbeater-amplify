@@ -4,16 +4,25 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import * as publicAppOriginModule from "../lib/env/public-app-origin.ts";
+import * as maintenanceEnvironmentModule from "../lib/maintenance/environment.ts";
 import { envContract } from "./env-contract.mjs";
 import { normalizeOptionalString } from "./project-env.mjs";
 
 const deriveAmplifyAppOrigin =
   publicAppOriginModule.deriveAmplifyAppOrigin ??
   publicAppOriginModule.default?.deriveAmplifyAppOrigin;
+const resolveMaintenanceEnvironmentName =
+  maintenanceEnvironmentModule.resolveMaintenanceEnvironmentName ??
+  maintenanceEnvironmentModule.default?.resolveMaintenanceEnvironmentName;
 
 if (typeof deriveAmplifyAppOrigin !== "function") {
   throw new Error(
     "Unable to resolve deriveAmplifyAppOrigin from public-app-origin.ts.",
+  );
+}
+if (typeof resolveMaintenanceEnvironmentName !== "function") {
+  throw new Error(
+    "Unable to resolve resolveMaintenanceEnvironmentName from maintenance/environment.ts.",
   );
 }
 
@@ -64,6 +73,10 @@ export function resolveHostedRuntimeEnvEntries(
   entries.set(
     "AMPLIFY_APP_ORIGIN",
     deriveAmplifyAppOrigin({ APP_BASE_URL: appBaseUrl }),
+  );
+  entries.set(
+    "MAINTENANCE_ENVIRONMENT_NAME",
+    resolveMaintenanceEnvironmentName(env),
   );
 
   for (const name of Object.keys(env).sort()) {

@@ -37,15 +37,19 @@
     "format:check": "prettier --check .",
     "start": "node --import tsx ./scripts/next-with-env.mjs start",
     "lint": "node --max-old-space-size=6144 ./node_modules/eslint/bin/eslint.js app amplify tests scripts lib proxy.ts next.config.ts eslint.config.mjs",
+    "lint:deploy:sandbox": "node --max-old-space-size=6144 ./node_modules/eslint/bin/eslint.js --cache --cache-location ./.eslintcache.deploy-sandbox app amplify tests scripts lib proxy.ts next.config.ts eslint.config.mjs",
     "typecheck:app": "tsc -p tsconfig.app.json --noEmit --incremental false",
+    "typecheck:app:deploy:sandbox": "tsc -p tsconfig.app.json --noEmit --incremental --tsBuildInfoFile ./.tsbuildinfo.deploy-sandbox",
     "typecheck:amplify": "node ./scripts/typecheck-amplify.mjs",
     "test": "node --test --import tsx ./tests/*.test.ts",
     "test:docs": "node --test --import tsx ./tests/docs/*.test.ts",
     "test:privacy": "node --test --import tsx ./tests/player-snapshot-access.test.ts ./tests/workspace-backend.test.ts ./tests/amplify-architecture.test.ts ./tests/deploy-workflow.test.ts ./tests/private-alpha-auth.test.ts",
     "verify:deploy": "npm test && npm run test:privacy && npm run lint && npm run typecheck:app",
+    "verify:deploy:sandbox": "npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox",
     "test:bbapi": "node --test --import tsx ./tests/bbapi-parser.test.ts",
     "generate:bbapi-goldens": "node --import tsx ./scripts/generate-bbapi-goldens.ts",
-    "billing:override": "node --import tsx ./scripts/set-billing-override.ts"
+    "billing:override": "node --import tsx ./scripts/set-billing-override.ts",
+    "maintenance:set": "node --import tsx ./scripts/set-maintenance-mode.ts"
   },
   "dependencies": {
     "@aws-amplify/adapter-nextjs": "^1.7.2",
@@ -57,6 +61,7 @@
     "@aws-sdk/client-secrets-manager": "^3.1009.0",
     "@aws-sdk/client-sfn": "^3.1024.0",
     "@aws-sdk/client-sqs": "^3.1009.0",
+    "@aws-sdk/client-ssm": "^3.1026.0",
     "@aws-sdk/lib-dynamodb": "^3.1009.0",
     "aws-amplify": "^6.16.3",
     "clsx": "^2.1.1",

@@ -46,6 +46,7 @@ import { normalizeOptionalString } from "./project-env.mjs";
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const ampxWithEnvScriptPath = join(currentDir, "ampx-with-env.mjs");
 const skipDeployVerifyEnvName = "BB_SKIP_DEPLOY_VERIFY";
+const sandboxFastFlag = "--fast";
 type SharedInfraRuntime = Pick<WorkflowRuntime, "env" | "userName">;
 
 type WorkflowCommand =
@@ -586,31 +587,59 @@ function runVerifyDeploy(
   }
 }
 
+function runSandboxVerifyDeploy(
+  runtime: WorkflowRuntime = createDefaultRuntime(),
+): void {
+  const result = runtime.spawnSync(
+    resolveNpmCommand(),
+    ["run", "verify:deploy:sandbox"],
+    {
+      cwd: projectRoot,
+      env: runtime.env,
+      stdio: "inherit",
+    },
+  );
+  if ((result.status ?? 1) !== 0) {
+    throw new Error("Sandbox deploy verification failed.");
+  }
+}
+
 function runSandboxUp(
   sandboxArgs: string[],
   runtime: WorkflowRuntime = createDefaultRuntime(),
 ): number {
+  const argsWithoutFast = removeFlag(sandboxArgs, sandboxFastFlag);
+  const fastMode = argsWithoutFast.length !== sandboxArgs.length;
   const sandboxIdentifier = resolveSandboxIdentifier(
-    ["sandbox", ...sandboxArgs],
+    ["sandbox", ...argsWithoutFast],
     asSharedInfraRuntime(runtime),
   );
   const environmentName = resolveSandboxEnvironmentName(
-    ["sandbox", ...sandboxArgs],
+    ["sandbox", ...argsWithoutFast],
     asSharedInfraRuntime(runtime),
   );
-  const explicitSandboxArgs = withResolvedSandboxIdentifier(sandboxArgs, sandboxIdentifier);
+  const explicitSandboxArgs = withResolvedSandboxIdentifier(
+    argsWithoutFast,
+    sandboxIdentifier,
+  );
   runtime.write(
-    `Preparing sandbox '${sandboxIdentifier}' with shared environment '${environmentName}'.`,
+    `Preparing sandbox '${sandboxIdentifier}' with shared environment '${environmentName}'${fastMode ? " using fast deploy mode." : "."}`,
   );
   assertNoConflictingSandboxProcesses(runtime);
 
   if (normalizeOptionalString(runtime.env[skipDeployVerifyEnvName])) {
     runtime.write("Skipping deploy verification because BB_SKIP_DEPLOY_VERIFY is set.");
+  } else if (fastMode) {
+    runSandboxVerifyDeploy(runtime);
   } else {
     runVerifyDeploy(runtime);
   }
   runSandboxSecretSync(explicitSandboxArgs, runtime);
-  runSandboxData(explicitSandboxArgs, runtime);
+  if (fastMode) {
+    runtime.write("Skipping shared infra deploy because --fast was requested.");
+  } else {
+    runSandboxData(explicitSandboxArgs, runtime);
+  }
 
   const predictorStatus = inspectPredictorEndpoint({
     environmentName,
@@ -624,11 +653,24 @@ function runSandboxUp(
       runtime,
       { sandboxIdentifier },
     );
+    const remediationCommand =
+      pinInspection.status === "ready"
+        ? buildSandboxPredictorNpmCommand(sandboxIdentifier, true)
+        : buildSandboxPredictorNpmCommand(sandboxIdentifier, false);
+    if (fastMode) {
+      throw new Error(
+        [
+          predictorStatus.detail,
+          "Fast sandbox deploy requires a ready predictor endpoint.",
+          `From ${projectRoot} run: ${remediationCommand}`,
+        ].join(" "),
+      );
+    }
     if (pinInspection.status !== "ready") {
       throw new Error(
         [
           predictorStatus.detail,
-          `From ${projectRoot} run: ${buildSandboxPredictorNpmCommand(sandboxIdentifier, false)}`,
+          `From ${projectRoot} run: ${remediationCommand}`,
         ].join(" "),
       );
     }
@@ -645,10 +687,20 @@ function runSandboxUp(
       runtime,
     });
   } else if (predictorStatus.status === "not-ready") {
+    const remediationCommand = buildSandboxPredictorNpmCommand(sandboxIdentifier, true);
+    if (fastMode) {
+      throw new Error(
+        [
+          predictorStatus.detail,
+          "Fast sandbox deploy requires a ready predictor endpoint.",
+          `From ${projectRoot} run: ${remediationCommand}`,
+        ].join(" "),
+      );
+    }
     throw new Error(
       [
         predictorStatus.detail,
-        `From ${projectRoot} run: ${buildSandboxPredictorNpmCommand(sandboxIdentifier, true)}`,
+        `From ${projectRoot} run: ${remediationCommand}`,
       ].join(" "),
     );
   }
