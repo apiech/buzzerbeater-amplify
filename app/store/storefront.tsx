@@ -112,21 +112,19 @@ export function Storefront({
     }
   }
 
-  const subscriptionEnabled =
-    summary?.premiumSubscriptionOfferEnabled ?? true;
-  const lifetimeEnabled =
-    summary?.lifetimePurchaseOfferEnabled ?? false;
+  const subscriptionEnabled = summary?.premiumSubscriptionOfferEnabled ?? true;
+  const lifetimeEnabled = summary?.lifetimePurchaseOfferEnabled ?? false;
   const hasLifetimeAccess = Boolean(summary?.hasLifetimeAccess);
   const shouldOfferSubscription = Boolean(
     isSignedIn &&
-      summary?.premiumSubscriptionOfferEnabled &&
-      !summary.hasLifetimeAccess &&
-      (summary.planId !== "premium" || summary.accessSource === "environment"),
+    summary?.premiumSubscriptionOfferEnabled &&
+    !summary.hasLifetimeAccess &&
+    (summary.planId !== "premium" || summary.accessSource === "environment"),
   );
   const shouldOfferLifetime = Boolean(
     isSignedIn &&
-      summary?.lifetimePurchaseOfferEnabled &&
-      !summary.hasLifetimeAccess,
+    summary?.lifetimePurchaseOfferEnabled &&
+    !summary.hasLifetimeAccess,
   );
   const showNoOffers = !subscriptionEnabled && !lifetimeEnabled;
 
@@ -149,7 +147,8 @@ export function Storefront({
           </p>
           {viewerLabel ? (
             <p className={bodyCopyClassName}>
-              Signed in as <span className="font-semibold text-ink">{viewerLabel}</span>.
+              Signed in as{" "}
+              <span className="text-ink font-semibold">{viewerLabel}</span>.
             </p>
           ) : (
             <p className={bodyCopyClassName}>
@@ -160,8 +159,8 @@ export function Storefront({
 
         {billingNotice === "success" ? (
           <Alert>
-            Stripe returned to the store after a successful billing action.
-            Your account access will reflect the webhook sync shortly.
+            Stripe returned to the store after a successful billing action. Your
+            account access will reflect the webhook sync shortly.
           </Alert>
         ) : null}
         {billingNotice === "cancelled" ? (
@@ -191,9 +190,10 @@ export function Storefront({
               <Link className={storeLinkClassName} href="/login">
                 Sign in to buy
               </Link>
-              <Link className={storeLinkClassName} href="/api/auth/sign-up">
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+              <a className={storeLinkClassName} href="/api/auth/sign-up">
                 Create account
-              </Link>
+              </a>
             </>
           )}
         </div>
@@ -207,15 +207,17 @@ export function Storefront({
             title="Current access"
           />
           {isLoadingSummary ? (
-            <p className={bodyCopyClassName}>Checking your current billing access.</p>
+            <p className={bodyCopyClassName}>
+              Checking your current billing access.
+            </p>
           ) : summary ? (
             <p className={bodyCopyClassName}>
               Current plan:{" "}
-              <span className="font-semibold text-ink">
+              <span className="text-ink font-semibold">
                 {summary.planId === "premium" ? "Premium" : "Free"}
               </span>
               {" • "}Access source:{" "}
-              <span className="font-semibold text-ink">
+              <span className="text-ink font-semibold">
                 {describeAccessSource(summary.accessSource)}
               </span>
               {summary.hasLifetimeAccess && summary.lifetimeGrantedAt
@@ -358,7 +360,9 @@ function OfferCard({
   );
 }
 
-function describeAccessSource(accessSource: BillingSummary["accessSource"]): string {
+function describeAccessSource(
+  accessSource: BillingSummary["accessSource"],
+): string {
   switch (accessSource) {
     case "environment":
       return "sandbox/dev default";

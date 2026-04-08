@@ -13,12 +13,17 @@ function readRepoFile(...segments: string[]) {
 
 test("public pages define route-aware metadata and workspace pages stay noindex", () => {
   const siteConfigSource = readRepoFile("app", "site-config.ts");
+  const layoutSource = readRepoFile("app", "layout.tsx");
   const loginPageSource = readRepoFile("app", "login", "page.tsx");
   const storePageSource = readRepoFile("app", "store", "page.tsx");
   const workspaceLayoutSource = readRepoFile("app", "workspace", "layout.tsx");
 
   assert.match(siteConfigSource, /metadataBase: siteUrl/);
-  assert.match(siteConfigSource, /manifest: "\/manifest\.webmanifest"/);
+  assert.doesNotMatch(siteConfigSource, /manifest: "\/manifest\.webmanifest"/);
+  assert.match(
+    layoutSource,
+    /<link[\s\S]*?rel="manifest"[\s\S]*?href="\/manifest\.webmanifest"[\s\S]*?crossOrigin="use-credentials"/,
+  );
   assert.match(siteConfigSource, /url: "\/opengraph-image"/);
   assert.match(loginPageSource, /noindex: true/);
   assert.match(storePageSource, /path: "\/store"/);

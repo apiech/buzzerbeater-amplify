@@ -43,12 +43,14 @@ export default function LoginPage() {
         </div>
 
         <div className="flex flex-wrap gap-3">
-          <Link className={authLinkClassName} href="/api/auth/sign-in">
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+          <a className={authLinkClassName} href="/api/auth/sign-in">
             Sign in
-          </Link>
-          <Link className={secondaryLinkClassName} href="/api/auth/sign-up">
+          </a>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+          <a className={secondaryLinkClassName} href="/api/auth/sign-up">
             Create account
-          </Link>
+          </a>
           <Link className={secondaryLinkClassName} href="/store">
             Browse store
           </Link>

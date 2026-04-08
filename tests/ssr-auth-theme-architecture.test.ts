@@ -56,6 +56,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
   );
   const loginPageSource = readRepoFile("app", "login", "page.tsx");
   const storePageSource = readRepoFile("app", "store", "page.tsx");
+  const storefrontSource = readRepoFile("app", "store", "storefront.tsx");
   const authRouteSource = readRepoFile(
     "app",
     "api",
@@ -90,8 +91,23 @@ test("workspace requests are routed through server-authenticated Next entry poin
   );
   assert.match(loginPageSource, /href="\/api\/auth\/sign-in"/);
   assert.match(loginPageSource, /href="\/api\/auth\/sign-up"/);
+  assert.match(loginPageSource, /<a[\s\S]*?href="\/api\/auth\/sign-in"/);
+  assert.match(loginPageSource, /<a[\s\S]*?href="\/api\/auth\/sign-up"/);
+  assert.doesNotMatch(
+    loginPageSource,
+    /<Link[\s\S]*?href="\/api\/auth\/sign-in"/,
+  );
+  assert.doesNotMatch(
+    loginPageSource,
+    /<Link[\s\S]*?href="\/api\/auth\/sign-up"/,
+  );
   assert.match(loginPageSource, /href="\/store"/);
   assert.match(storePageSource, /<Storefront/);
+  assert.match(storefrontSource, /<a[\s\S]*?href="\/api\/auth\/sign-up"/);
+  assert.doesNotMatch(
+    storefrontSource,
+    /<Link[^>]*href="\/api\/auth\/sign-up"/,
+  );
   assert.match(authRouteSource, /createAuthRouteHandlers/);
   assert.match(authRouteSource, /!slug\.endsWith\("-callback"\)/);
   assert.match(
@@ -100,6 +116,11 @@ test("workspace requests are routed through server-authenticated Next entry poin
   );
   assert.match(authRouteSource, /redirectOnSignOutComplete:\s*"\/login"/);
   assert.match(dashboardSource, /href="\/api\/auth\/sign-out"/);
+  assert.match(dashboardSource, /<a[\s\S]*?href="\/api\/auth\/sign-out"/);
+  assert.doesNotMatch(
+    dashboardSource,
+    /<Link[\s\S]*?href="\/api\/auth\/sign-out"/,
+  );
 });
 
 test("client theme updates and data access go through internal app routes", () => {

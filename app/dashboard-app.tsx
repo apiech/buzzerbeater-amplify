@@ -307,12 +307,13 @@ function AuthenticatedWorkspace({
               </p>
               <strong className="text-ink text-sm">{viewerLabelText}</strong>
             </div>
-            <Link
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+            <a
               className="border-border-soft bg-surface-strong text-ink hover:border-accent/25 hover:text-accent inline-flex min-h-11 items-center justify-center rounded-full border px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px"
               href="/api/auth/sign-out"
             >
               Sign out
-            </Link>
+            </a>
           </>
         }
         activeSection={activeSection}
@@ -1119,10 +1120,13 @@ function WorkspaceDashboard({
                         <StatusBadge
                           tone={statusToneFromValue(opponentForecast.status)}
                         >
-                          {formatOpponentForecastStatus(opponentForecast.status)}
+                          {formatOpponentForecastStatus(
+                            opponentForecast.status,
+                          )}
                         </StatusBadge>
                         <span className={mutedMetaClassName}>
-                          Requested {formatTimestamp(opponentForecast.requestedAt)}
+                          Requested{" "}
+                          {formatTimestamp(opponentForecast.requestedAt)}
                         </span>
                         {opponentForecast.completedAt ? (
                           <span className={mutedMetaClassName}>
@@ -1234,7 +1238,9 @@ function WorkspaceDashboard({
                                               <strong className="text-ink text-sm">
                                                 {player.fullName}
                                               </strong>
-                                              <span className={statusCopyClassName}>
+                                              <span
+                                                className={statusCopyClassName}
+                                              >
                                                 {formatForecastPlayerProjection(
                                                   player,
                                                 )}
@@ -1266,7 +1272,9 @@ function WorkspaceDashboard({
                                               <strong className="text-ink text-sm">
                                                 {player.fullName}
                                               </strong>
-                                              <span className={statusCopyClassName}>
+                                              <span
+                                                className={statusCopyClassName}
+                                              >
                                                 {formatForecastPlayerProjection(
                                                   player,
                                                 )}
@@ -1280,7 +1288,9 @@ function WorkspaceDashboard({
                                         )}
                                       </ul>
                                       {scenario.evidence.length ? (
-                                        <p className={`${statusCopyClassName} mt-3`}>
+                                        <p
+                                          className={`${statusCopyClassName} mt-3`}
+                                        >
                                           {scenario.evidence.join(" • ")}
                                         </p>
                                       ) : null}
@@ -1298,7 +1308,8 @@ function WorkspaceDashboard({
                                 titleAs="h4"
                               />
                               <div className="flex flex-wrap gap-2">
-                                {opponentForecast.result.featureSignals.length ? (
+                                {opponentForecast.result.featureSignals
+                                  .length ? (
                                   opponentForecast.result.featureSignals.map(
                                     (signal) => (
                                       <span
@@ -1349,9 +1360,8 @@ function WorkspaceDashboard({
                                               ? `Def ${game.defense}`
                                               : null,
                                           ]
-                                            .filter(
-                                              (value): value is string =>
-                                                Boolean(value),
+                                            .filter((value): value is string =>
+                                              Boolean(value),
                                             )
                                             .join(" • ")}
                                         </span>
@@ -1855,9 +1865,7 @@ function renderTrendChips(prefix: string, values: TrendCountEntry[]) {
   ));
 }
 
-function resolveForecastTeamId(
-  scout: ScoutWorkspacePayload,
-): string | null {
+function resolveForecastTeamId(scout: ScoutWorkspacePayload): string | null {
   return (
     scout.summary?.matchupPerspective.opponentTeamId ??
     scout.requestedTeamId ??
@@ -2015,9 +2023,7 @@ function HomeOwnerRosterTable({
           sortedRoster.map((player) => (
             <tr
               className={cn(
-                player.injuryWeeks
-                  ? "bg-[rgba(193,90,47,0.08)]"
-                  : undefined,
+                player.injuryWeeks ? "bg-[rgba(193,90,47,0.08)]" : undefined,
               )}
               key={player.playerId}
             >
@@ -2026,13 +2032,13 @@ function HomeOwnerRosterTable({
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold">{player.fullName}</span>
                     {player.injuryWeeks ? (
-                      <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[0.7rem] font-semibold text-accent-strong">
+                      <span className="bg-accent/12 text-accent-strong inline-flex rounded-full px-2 py-0.5 text-[0.7rem] font-semibold">
                         {player.injuryWeeks}w
                       </span>
                     ) : null}
                   </div>
                   {!player.available && player.snapshotWarning ? (
-                    <span className="text-xs text-ink-muted">
+                    <span className="text-ink-muted text-xs">
                       {player.snapshotWarning}
                     </span>
                   ) : null}
@@ -2099,14 +2105,16 @@ function SortableHeadCell({
     <TableHeadCell className={className}>
       <button
         className={cn(
-          "inline-flex w-full items-center gap-1 font-inherit uppercase tracking-inherit",
+          "font-inherit tracking-inherit inline-flex w-full items-center gap-1 uppercase",
           className?.includes("text-right") ? "justify-end" : "justify-start",
         )}
         onClick={() => onSort(sortKey)}
         type="button"
       >
         <span>{label}</span>
-        <span aria-hidden="true">{active ? (currentDirection === "asc" ? "↑" : "↓") : "↕"}</span>
+        <span aria-hidden="true">
+          {active ? (currentDirection === "asc" ? "↑" : "↓") : "↕"}
+        </span>
       </button>
     </TableHeadCell>
   );
@@ -2320,7 +2328,9 @@ function readOwnerRosterSortValue(
   }
 }
 
-function readGameShapeSortValue(value: string | null | undefined): number | null {
+function readGameShapeSortValue(
+  value: string | null | undefined,
+): number | null {
   switch ((value ?? "").toLowerCase()) {
     case "proficient":
       return 5;

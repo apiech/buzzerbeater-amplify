@@ -24,7 +24,13 @@ export default async function RootLayout({
 
   return (
     <html lang="en" data-theme={themeId}>
-      <head />
+      <head>
+        <link
+          rel="manifest"
+          href="/manifest.webmanifest"
+          crossOrigin="use-credentials"
+        />
+      </head>
       <body className={`${spaceGrotesk.variable} font-sans`}>{children}</body>
     </html>
   );

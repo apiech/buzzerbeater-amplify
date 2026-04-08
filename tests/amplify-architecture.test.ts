@@ -562,6 +562,18 @@ test("typed handlers no longer cast GraphQL return payloads", () => {
   }
 });
 
+test("team highlights submitter receives the shared credential secret", () => {
+  const resourceSource = readFileSync(
+    join(repoRoot, "amplify", "data", "resource.ts"),
+    "utf8",
+  );
+
+  assert.match(
+    resourceSource,
+    /export const submitMyTeamHighlightsScan = defineFunction\(\{[\s\S]*environment: secureFunctionEnvironment,[\s\S]*\}\);/,
+  );
+});
+
 test("scheduled maintenance rules live only in the retained data lambda stack", () => {
   const retentionSource = readFileSync(
     join(repoRoot, "amplify", "_backend", "operational-retention.ts"),

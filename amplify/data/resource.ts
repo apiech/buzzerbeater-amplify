@@ -192,6 +192,7 @@ export const submitMyTeamHighlightsScan = defineFunction({
   entry: "./submit-my-team-highlights-scan/handler.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
+  environment: secureFunctionEnvironment,
 });
 
 export const submitLeagueHistoryBackfill = defineFunction({

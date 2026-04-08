@@ -37,7 +37,6 @@ export const sharedMetadata: Metadata = {
   description: siteDescription,
   keywords: [...siteKeywords],
   category: "sports",
-  manifest: "/manifest.webmanifest",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },
