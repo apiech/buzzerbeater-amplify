@@ -115,6 +115,9 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `GAME_DAY_RECAP_MODEL_ID_PREMIUM`
   - Premium recap override model. Premium recap jobs fall back to `GAME_DAY_RECAP_MODEL_ID` when this is unset.
   - Default or recommended value: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
+- `COMMERCIAL_MODE_ENABLED`
+  - Site-wide commerce toggle. When false, the store and billing UI disappear, checkout offers stay off, and premium-gated features run without paywalls.
+  - Default or recommended value: `true`.
 - `BILLING_DEFAULT_PLAN`
   - Optional override for the environment-wide default plan. When unset, non-prod environments default to premium and prod leaves the default unset.
   - Default or recommended value: Unset by default; non-prod environments fall back to premium while prod stays unset.

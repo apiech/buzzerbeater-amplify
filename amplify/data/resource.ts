@@ -31,6 +31,7 @@ const stripeSecretFunctionEnvironment = {
 
 const billingSynthConfig = resolveBillingConfig();
 const billingOfferFunctionEnvironment = {
+  COMMERCIAL_MODE_ENABLED: String(billingSynthConfig.commercialModeEnabled),
   BILLING_ENABLE_LIFETIME_PURCHASE: String(
     billingSynthConfig.lifetimePurchaseOfferEnabled,
   ),
@@ -47,16 +48,16 @@ const billingCheckoutFunctionEnvironment = {
   ...billingPortalFunctionEnvironment,
   ...(billingSynthConfig.premiumPriceId
     ? {
-        STRIPE_PREMIUM_PRICE_ID: billingSynthConfig.premiumPriceId,
-      }
+      STRIPE_PREMIUM_PRICE_ID: billingSynthConfig.premiumPriceId,
+    }
     : {}),
 };
 const billingLifetimeCheckoutFunctionEnvironment = {
   ...billingPortalFunctionEnvironment,
   ...(billingSynthConfig.lifetimePriceId
     ? {
-        STRIPE_LIFETIME_PRICE_ID: billingSynthConfig.lifetimePriceId,
-      }
+      STRIPE_LIFETIME_PRICE_ID: billingSynthConfig.lifetimePriceId,
+    }
     : {}),
 };
 
@@ -1307,7 +1308,9 @@ const schema = a
 
     BillingAccount: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         email: a.string(),
         stripeCustomerId: a.string(),
         stripeSubscriptionId: a.string(),
@@ -1330,7 +1333,9 @@ const schema = a
       .model({
         providerObjectType: a.string().required(),
         providerObjectId: a.string().required(),
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         paymentKind: a.string().required(),
         status: a.string().required(),
         amountTotal: a.integer(),
@@ -1367,7 +1372,9 @@ const schema = a
 
     BbConnection: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         bbLoginName: a.string().required(),
         status: a.ref("ConnectionStatus").required(),
         accessKeyLast4: a.string(),
@@ -1391,7 +1398,9 @@ const schema = a
 
     BbCredential: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         cipherText: a.string().required(),
         iv: a.string().required(),
         authTag: a.string().required(),
@@ -1402,7 +1411,9 @@ const schema = a
 
     TrackedTeam: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         teamId: a.string().required(),
         name: a.string().required(),
         shortName: a.string(),
@@ -1426,7 +1437,9 @@ const schema = a
 
     TrackedPlayer: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         playerId: a.string().required(),
         teamId: a.string().required(),
         teamName: a.string(),
@@ -1449,7 +1462,9 @@ const schema = a
 
     PlayerSkillObservation: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         playerId: a.string().required(),
         capturedAt: a.datetime().required(),
         playerCapturedAtKey: a.string().required(),
@@ -1475,7 +1490,9 @@ const schema = a
 
     TrackedMatch: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         matchId: a.string().required(),
         teamId: a.string().required(),
         opponentTeamId: a.string(),
@@ -1496,7 +1513,9 @@ const schema = a
 
     MatchBoxscore: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         matchId: a.string().required(),
         boxscoreJson: a.json(),
         fetchedAt: a.datetime(),
@@ -1506,7 +1525,9 @@ const schema = a
 
     LeagueStanding: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         season: a.integer().required(),
         teamId: a.string().required(),
         leagueId: a.string(),
@@ -1567,7 +1588,9 @@ const schema = a
 
     SyncRun: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         kind: a.string().required(),
         status: a.ref("SyncStatus").required(),
         startedAt: a.datetime().required(),
@@ -1590,7 +1613,9 @@ const schema = a
     SharedPlayerCard: a
       .model({
         shareToken: a.string().required(),
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         playerId: a.string().required(),
         title: a.string(),
         note: a.string(),
@@ -1603,7 +1628,9 @@ const schema = a
 
     PredictionJob: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         requestId: a.string().required(),
         status: a.ref("PredictionJobStatus").required(),
         requestedAt: a.datetime().required(),
@@ -1645,7 +1672,9 @@ const schema = a
 
     PredictionGridCell: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         requestId: a.string().required(),
         awayDefense: a.string().required(),
         homeOffense: a.string().required(),
@@ -1663,7 +1692,9 @@ const schema = a
 
     OpponentForecastJob: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         teamId: a.string().required(),
         teamName: a.string(),
         status: a.ref("OpponentForecastJobStatus").required(),
@@ -1691,7 +1722,9 @@ const schema = a
 
     GameDayRecap: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         targetKey: a.string().required(),
         leagueId: a.string().required(),
         leagueName: a.string(),
@@ -1719,7 +1752,9 @@ const schema = a
 
     LeagueGameDayRecap: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         targetKey: a.string().required(),
         leagueId: a.string().required(),
         leagueName: a.string(),
@@ -1747,7 +1782,9 @@ const schema = a
 
     SingleGameSummary: a
       .model({
-        userId: a.string().required(),
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
         targetKey: a.string().required(),
         matchId: a.string().required(),
         gameDate: a.date(),
@@ -1929,6 +1966,7 @@ const schema = a
 
     // Keep this owner-scoped history query distinct from the BillingPayment
     // model's generated listBillingPayments operation.
+    // AP: not sure why AI made/did this exactly, it's probably unnecessary, but seems ok for now
     listMyBillingPayments: a
       .query()
       .arguments({

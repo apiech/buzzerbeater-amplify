@@ -40,6 +40,13 @@ export const envContract = {
         templateValue: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       },
       {
+        name: "COMMERCIAL_MODE_ENABLED",
+        purpose:
+          "Site-wide commerce toggle. When false, the store and billing UI disappear, checkout offers stay off, and premium-gated features run without paywalls.",
+        defaultValue: "true",
+        templateValue: "true",
+      },
+      {
         name: "BILLING_DEFAULT_PLAN",
         purpose:
           "Optional override for the environment-wide default plan. When unset, non-prod environments default to premium and prod leaves the default unset.",

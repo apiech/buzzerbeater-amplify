@@ -430,6 +430,7 @@ test("auth origin fails fast when APP_BASE_URL is missing", () => {
 
 test("billing config resolves offer flags and optional lifetime pricing", () => {
   const originalAppBaseUrl = process.env.APP_BASE_URL;
+  const originalCommercialModeEnabled = process.env.COMMERCIAL_MODE_ENABLED;
   const originalSharedEnvironmentName = process.env.BB_SHARED_ENVIRONMENT_NAME;
   const originalPremiumPriceId = process.env.STRIPE_PREMIUM_PRICE_ID;
   const originalLifetimePriceId = process.env.STRIPE_LIFETIME_PRICE_ID;
@@ -443,10 +444,12 @@ test("billing config resolves offer flags and optional lifetime pricing", () => 
     process.env.STRIPE_LIFETIME_PRICE_ID = "price_lifetime";
     process.env.BILLING_ENABLE_PREMIUM_SUBSCRIPTION = "false";
     process.env.BILLING_ENABLE_LIFETIME_PURCHASE = "true";
+    process.env.COMMERCIAL_MODE_ENABLED = "true";
     synthEnvTesting.resetCachedState();
 
     assert.deepStrictEqual(resolveBillingConfig(), {
       appBaseUrl: "https://app.example.com",
+      commercialModeEnabled: true,
       defaultPlanId: "premium",
       lifetimePriceId: "price_lifetime",
       lifetimePurchaseOfferEnabled: true,
@@ -455,7 +458,51 @@ test("billing config resolves offer flags and optional lifetime pricing", () => 
     });
   } finally {
     restoreEnv("APP_BASE_URL", originalAppBaseUrl);
+    restoreEnv("COMMERCIAL_MODE_ENABLED", originalCommercialModeEnabled);
     restoreEnv("BB_SHARED_ENVIRONMENT_NAME", originalSharedEnvironmentName);
+    restoreEnv("STRIPE_PREMIUM_PRICE_ID", originalPremiumPriceId);
+    restoreEnv("STRIPE_LIFETIME_PRICE_ID", originalLifetimePriceId);
+    restoreEnv("BILLING_ENABLE_PREMIUM_SUBSCRIPTION", originalPremiumOffer);
+    restoreEnv("BILLING_ENABLE_LIFETIME_PURCHASE", originalLifetimeOffer);
+    synthEnvTesting.resetCachedState();
+  }
+});
+
+test("billing config disables commerce offers and environment premium defaults when commercial mode is off", () => {
+  const originalAppBaseUrl = process.env.APP_BASE_URL;
+  const originalCommercialModeEnabled = process.env.COMMERCIAL_MODE_ENABLED;
+  const originalSharedEnvironmentName = process.env.BB_SHARED_ENVIRONMENT_NAME;
+  const originalPremiumPriceId = process.env.STRIPE_PREMIUM_PRICE_ID;
+  const originalLifetimePriceId = process.env.STRIPE_LIFETIME_PRICE_ID;
+  const originalPremiumOffer = process.env.BILLING_ENABLE_PREMIUM_SUBSCRIPTION;
+  const originalLifetimeOffer = process.env.BILLING_ENABLE_LIFETIME_PURCHASE;
+  const originalDefaultPlan = process.env.BILLING_DEFAULT_PLAN;
+
+  try {
+    process.env.APP_BASE_URL = "https://app.example.com";
+    process.env.COMMERCIAL_MODE_ENABLED = "false";
+    process.env.BB_SHARED_ENVIRONMENT_NAME = "sandbox-karey";
+    process.env.BILLING_DEFAULT_PLAN = "premium";
+    process.env.STRIPE_PREMIUM_PRICE_ID = "price_premium";
+    process.env.STRIPE_LIFETIME_PRICE_ID = "price_lifetime";
+    process.env.BILLING_ENABLE_PREMIUM_SUBSCRIPTION = "true";
+    process.env.BILLING_ENABLE_LIFETIME_PURCHASE = "true";
+    synthEnvTesting.resetCachedState();
+
+    assert.deepStrictEqual(resolveBillingConfig(), {
+      appBaseUrl: "https://app.example.com",
+      commercialModeEnabled: false,
+      defaultPlanId: null,
+      lifetimePriceId: "price_lifetime",
+      lifetimePurchaseOfferEnabled: false,
+      premiumPriceId: "price_premium",
+      premiumSubscriptionOfferEnabled: false,
+    });
+  } finally {
+    restoreEnv("APP_BASE_URL", originalAppBaseUrl);
+    restoreEnv("COMMERCIAL_MODE_ENABLED", originalCommercialModeEnabled);
+    restoreEnv("BB_SHARED_ENVIRONMENT_NAME", originalSharedEnvironmentName);
+    restoreEnv("BILLING_DEFAULT_PLAN", originalDefaultPlan);
     restoreEnv("STRIPE_PREMIUM_PRICE_ID", originalPremiumPriceId);
     restoreEnv("STRIPE_LIFETIME_PRICE_ID", originalLifetimePriceId);
     restoreEnv("BILLING_ENABLE_PREMIUM_SUBSCRIPTION", originalPremiumOffer);

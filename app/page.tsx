@@ -8,6 +8,7 @@ import { createPageMetadata, siteDescription } from "@/app/site-config";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { BrandMark } from "@/app/ui/brand/brand-mark";
+import { commercialModeEnabled } from "@/config/commercial-mode";
 
 const primaryLinkClassName =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-accent bg-accent px-4 py-2.5 text-sm font-semibold text-accent-contrast shadow-sm transition duration-150 hover:border-accent-strong hover:bg-accent-strong";
@@ -94,9 +95,11 @@ export default async function HomePage() {
             <Link className={secondaryLinkClassName} href={secondaryHref}>
               {secondaryLabel}
             </Link>
-            <Link className={tertiaryLinkClassName} href="/store">
-              Visit the store
-            </Link>
+            {commercialModeEnabled ? (
+              <Link className={tertiaryLinkClassName} href="/store">
+                Visit the store
+              </Link>
+            ) : null}
           </div>
         </Panel>
 
@@ -110,15 +113,17 @@ export default async function HomePage() {
             </h2>
           </div>
           <p className="text-ink-muted m-0 text-sm leading-7">
-            Sign-in and account creation stay public. The store exists for
-            direct support, but it is secondary to the main app.
+            {commercialModeEnabled
+              ? "Sign-in and account creation stay public. The store exists for direct support, but it is secondary to the main app."
+              : "Sign-in and account creation stay public. The rest of the product lives behind your private workspace."}
           </p>
           <div className="rounded-card border-border-soft grid gap-3 border bg-white/65 p-4">
             <strong className="text-ink text-sm">Private by default</strong>
             <p className="text-ink-muted m-0 text-sm leading-6">
               Workspace data, account settings, and billing details stay behind
               your app session. Public pages are limited to the homepage,
-              sign-in helper, and store.
+              sign-in helper
+              {commercialModeEnabled ? ", and store." : "."}
             </p>
           </div>
         </Panel>

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 
 import { createPageMetadata } from "@/app/site-config";
 import { Storefront } from "@/app/store/storefront";
@@ -6,6 +7,7 @@ import {
   getServerCurrentUser,
   resolveServerViewerLabel,
 } from "@/app/server/amplify-server";
+import { commercialModeEnabled } from "@/config/commercial-mode";
 
 type StorePageProps = {
   searchParams?: Promise<{
@@ -21,6 +23,10 @@ export const metadata: Metadata = createPageMetadata({
 });
 
 export default async function StorePage({ searchParams }: StorePageProps) {
+  if (!commercialModeEnabled) {
+    notFound();
+  }
+
   const currentUser = await getServerCurrentUser();
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const billingValue = resolvedSearchParams?.billing;

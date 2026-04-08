@@ -8,6 +8,7 @@ import {
   createBillingLifetimeCheckoutSession,
   handleStripeWebhook,
   listBillingPayments,
+  requireFeatureAccess,
   setBillingOverride,
 } from "../amplify/data/_backend/billing";
 import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
@@ -62,6 +63,16 @@ test("resolveConfiguredDefaultPlan rejects invalid plan ids", () => {
         BILLING_DEFAULT_PLAN: "enterprise",
       }),
     /BILLING_DEFAULT_PLAN/i,
+  );
+});
+
+test("resolveConfiguredDefaultPlan ignores billing defaults when commercial mode is disabled", () => {
+  assert.equal(
+    billingTesting.resolveConfiguredDefaultPlan({
+      BILLING_DEFAULT_PLAN: "premium",
+      COMMERCIAL_MODE_ENABLED: "false",
+    }),
+    null,
   );
 });
 
@@ -399,6 +410,86 @@ test("setBillingOverride can force free access even when the environment default
   assert.equal(summary.accessSource, "override");
 });
 
+test("requireFeatureAccess bypasses premium gates when commercial mode is disabled", async () => {
+  const planId = await requireFeatureAccess(
+    {
+      env: {
+        COMMERCIAL_MODE_ENABLED: "false",
+      },
+      featureKey: "predictions",
+      userId: "user-1",
+    },
+    {
+      createPaymentCheckoutSession: async () => ({
+        url: "https://example.com/lifetime-checkout",
+      }),
+      createPortalSession: async () => ({ url: "https://example.com/portal" }),
+      createSubscriptionCheckoutSession: async () => ({
+        url: "https://example.com/checkout",
+      }),
+      getBillingAccount: async () => {
+        throw new Error("getBillingAccount should not be called");
+      },
+      getStripeSubscription: async () => ({
+        id: "sub_unused",
+      }),
+      listBillingPaymentsByUserId: async () => ({
+        nextToken: null,
+        records: [],
+      }),
+      upsertBillingAccount: async () => {},
+      upsertBillingPayment: async () => {},
+    },
+  );
+
+  assert.equal(planId, "free");
+});
+
+test("createBillingCheckoutSession rejects checkout when commercial mode is disabled", async () => {
+  await assert.rejects(
+    () =>
+      createBillingCheckoutSession(
+        {
+          appBaseUrl: "https://app.example.com",
+          env: {
+            BILLING_ENABLE_PREMIUM_SUBSCRIPTION: "true",
+            COMMERCIAL_MODE_ENABLED: "false",
+          },
+          identity: {
+            claims: {
+              email: "coach@example.com",
+            },
+            sub: "user-1",
+          },
+          premiumPriceId: "price_premium",
+          stripeSecretKey: "sk_test",
+        },
+        {
+          createPaymentCheckoutSession: async () => ({
+            url: "https://example.com/lifetime-checkout",
+          }),
+          createPortalSession: async () => ({
+            url: "https://example.com/portal",
+          }),
+          createSubscriptionCheckoutSession: async () => ({
+            url: "https://example.com/checkout",
+          }),
+          getBillingAccount: async () => null,
+          getStripeSubscription: async () => ({
+            id: "sub_unused",
+          }),
+          listBillingPaymentsByUserId: async () => ({
+            nextToken: null,
+            records: [],
+          }),
+          upsertBillingAccount: async () => {},
+          upsertBillingPayment: async () => {},
+        },
+      ),
+    /premium subscriptions are not available right now/i,
+  );
+});
+
 test("createBillingCheckoutSession sanitizes return paths", async () => {
   let checkoutInput: Record<string, unknown> | null = null;
 
@@ -504,6 +595,51 @@ test("createBillingLifetimeCheckoutSession uses the store return path and premiu
     successUrl: "https://app.example.com/store?billing=success",
     userId: "user-1",
   });
+});
+
+test("createBillingLifetimeCheckoutSession rejects checkout when commercial mode is disabled", async () => {
+  await assert.rejects(
+    () =>
+      createBillingLifetimeCheckoutSession(
+        {
+          appBaseUrl: "https://app.example.com",
+          env: {
+            BILLING_ENABLE_LIFETIME_PURCHASE: "true",
+            COMMERCIAL_MODE_ENABLED: "false",
+          },
+          identity: {
+            claims: {
+              email: "coach@example.com",
+            },
+            sub: "user-1",
+          },
+          lifetimePriceId: "price_lifetime",
+          stripeSecretKey: "sk_test",
+        },
+        {
+          createPaymentCheckoutSession: async () => ({
+            url: "https://example.com/lifetime-checkout",
+          }),
+          createPortalSession: async () => ({
+            url: "https://example.com/portal",
+          }),
+          createSubscriptionCheckoutSession: async () => ({
+            url: "https://example.com/checkout",
+          }),
+          getBillingAccount: async () => null,
+          getStripeSubscription: async () => ({
+            id: "sub_unused",
+          }),
+          listBillingPaymentsByUserId: async () => ({
+            nextToken: null,
+            records: [],
+          }),
+          upsertBillingAccount: async () => {},
+          upsertBillingPayment: async () => {},
+        },
+      ),
+    /lifetime purchases are not available right now/i,
+  );
 });
 
 test("listBillingPayments returns owner-scoped payment history", async () => {

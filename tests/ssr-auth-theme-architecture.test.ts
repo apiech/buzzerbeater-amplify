@@ -79,12 +79,17 @@ test("workspace requests are routed through server-authenticated Next entry poin
   assert.match(proxySource, /pathname === "\/api\/auth\/sign-out-callback"/);
   assert.match(proxySource, /new URL\("\/login", request\.url\)/);
   assert.match(homePageSource, /getServerCurrentUser/);
+  assert.match(homePageSource, /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/);
   assert.match(
     homePageSource,
     /const primaryHref = currentUser \? "\/workspace\/home" : "\/login";/,
   );
   assert.match(homePageSource, /href="\/store"/);
   assert.match(workspacePageSource, /redirect\("\/login"\)/);
+  assert.match(
+    workspacePageSource,
+    /commercialModeEnabled=\{commercialModeEnabled\}/,
+  );
   assert.match(
     workspacePageSource,
     /viewerLabel=\{await resolveServerViewerLabel\(currentUser\)\}/,
@@ -101,8 +106,17 @@ test("workspace requests are routed through server-authenticated Next entry poin
     loginPageSource,
     /<Link[\s\S]*?href="\/api\/auth\/sign-up"/,
   );
+  assert.match(
+    loginPageSource,
+    /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
+  );
   assert.match(loginPageSource, /href="\/store"/);
   assert.match(storePageSource, /<Storefront/);
+  assert.match(
+    storePageSource,
+    /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
+  );
+  assert.match(storePageSource, /notFound\(\)/);
   assert.match(storefrontSource, /<a[\s\S]*?href="\/api\/auth\/sign-up"/);
   assert.doesNotMatch(
     storefrontSource,

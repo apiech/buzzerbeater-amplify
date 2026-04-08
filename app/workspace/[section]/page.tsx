@@ -10,6 +10,7 @@ import {
   normalizeWorkspaceSection,
   workspaceSections,
 } from "@/app/workspace-sections";
+import { commercialModeEnabled } from "@/config/commercial-mode";
 
 type WorkspaceSectionPageProps = {
   params: Promise<{
@@ -45,6 +46,7 @@ export default async function WorkspaceSectionPage({
   return (
     <DashboardApp
       activeSection={normalizeWorkspaceSection(section)}
+      commercialModeEnabled={commercialModeEnabled}
       viewerLabel={await resolveServerViewerLabel(currentUser)}
     />
   );

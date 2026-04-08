@@ -15,6 +15,8 @@ test("public pages define route-aware metadata and workspace pages stay noindex"
   const siteConfigSource = readRepoFile("app", "site-config.ts");
   const layoutSource = readRepoFile("app", "layout.tsx");
   const loginPageSource = readRepoFile("app", "login", "page.tsx");
+  const robotsSource = readRepoFile("app", "robots.ts");
+  const sitemapSource = readRepoFile("app", "sitemap.ts");
   const storePageSource = readRepoFile("app", "store", "page.tsx");
   const workspaceLayoutSource = readRepoFile("app", "workspace", "layout.tsx");
 
@@ -27,6 +29,15 @@ test("public pages define route-aware metadata and workspace pages stay noindex"
   assert.match(siteConfigSource, /url: "\/opengraph-image"/);
   assert.match(loginPageSource, /noindex: true/);
   assert.match(storePageSource, /path: "\/store"/);
+  assert.match(storePageSource, /notFound\(\)/);
+  assert.match(
+    robotsSource,
+    /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
+  );
+  assert.match(
+    sitemapSource,
+    /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
+  );
   assert.match(workspaceLayoutSource, /index: false/);
   assert.match(workspaceLayoutSource, /follow: false/);
 });

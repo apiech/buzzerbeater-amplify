@@ -4,6 +4,7 @@ import Link from "next/link";
 import { createPageMetadata } from "@/app/site-config";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
+import { commercialModeEnabled } from "@/config/commercial-mode";
 
 const authLinkClassName =
   "inline-flex min-h-11 items-center justify-center rounded-full border border-accent bg-accent px-4 py-2.5 text-sm font-semibold text-accent-contrast shadow-sm transition duration-150 hover:border-accent-strong hover:bg-accent-strong";
@@ -51,9 +52,11 @@ export default function LoginPage() {
           <a className={secondaryLinkClassName} href="/api/auth/sign-up">
             Create account
           </a>
-          <Link className={secondaryLinkClassName} href="/store">
-            Browse store
-          </Link>
+          {commercialModeEnabled ? (
+            <Link className={secondaryLinkClassName} href="/store">
+              Browse store
+            </Link>
+          ) : null}
         </div>
       </Panel>
     </main>

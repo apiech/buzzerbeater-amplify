@@ -33,6 +33,35 @@ export function configureBillingIntegration(
   backend: BillingBackend,
   config: BillingSynthConfig,
 ): void {
+  backend.getBillingSummary.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.predictionSubmit.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.gameDayRecapSubmit.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.opponentForecastSubmit.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.submitLeagueGameDayRecap.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.submitSingleGameSummary.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.submitMyTeamHighlightsScan.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+
   if (config.defaultPlanId) {
     backend.getBillingSummary.addEnvironment(
       "BILLING_DEFAULT_PLAN",

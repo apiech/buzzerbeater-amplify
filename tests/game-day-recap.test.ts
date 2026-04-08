@@ -826,6 +826,66 @@ test("resolveConfiguredRecapModelId falls back to the default model when no prem
   assert.equal(modelId, DEFAULT_RECAP_MODEL_ID);
 });
 
+test("submitLeagueGameDayRecap uses the default model when commercial mode disables premium gating", async () => {
+  let queuedMessage: {
+    modelId?: string;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  } | null = null;
+  let savedModelId: string | null = null;
+
+  const result = await submitLeagueGameDayRecap(
+    {
+      env: createRecapEnv({
+        COMMERCIAL_MODE_ENABLED: "false",
+        GAME_DAY_RECAP_MODEL_ID_PREMIUM: PREMIUM_RECAP_MODEL_ID,
+      }),
+      gameDayNumber: 3,
+      identity: { sub: "user-1" },
+      leagueId: "100",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+      season: 71,
+    },
+    {
+      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
+        queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-day";
+      },
+      getLeagueGameDayRecap: async () => null,
+      now: () => new Date("2026-03-15T22:30:00Z"),
+      requireFeatureAccess: (args) =>
+        requireFeatureAccess(args, {
+          createPortalSession: async () => ({ url: "https://example.com/portal" }),
+          createSubscriptionCheckoutSession: async () => ({
+            url: "https://example.com/checkout",
+          }),
+          getBillingAccount: async () => null,
+          getStripeSubscription: async () => ({
+            id: "sub_123",
+          }),
+          upsertBillingAccount: async () => {},
+        }),
+      updateLeagueGameDayRecap: async () => {},
+      upsertLeagueGameDayRecap: async (_env, record: any) => {
+        savedModelId = record.modelId ?? null;
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-day",
+    targetKey: "100#71#gameday-3",
+  });
+  assert.equal(savedModelId, DEFAULT_RECAP_MODEL_ID);
+  assert.equal(
+    (queuedMessage as { modelId?: string } | null)?.modelId,
+    DEFAULT_RECAP_MODEL_ID,
+  );
+});
+
 test("resolveQueuedRecapModelId prefers the model on the queue message", () => {
   const modelId = __testing.resolveQueuedRecapModelId(
     {

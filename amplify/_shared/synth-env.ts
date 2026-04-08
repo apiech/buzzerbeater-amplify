@@ -43,6 +43,7 @@ type AwsCliRuntime = {
 
 export type BillingSynthConfig = {
   appBaseUrl: string;
+  commercialModeEnabled: boolean;
   defaultPlanId: string | null;
   lifetimePriceId: string | null;
   lifetimePurchaseOfferEnabled: boolean;
@@ -113,21 +114,27 @@ export function resolveAuthAppOrigin(
 export function resolveBillingConfig(): BillingSynthConfig {
   loadLocalSynthEnv();
 
-  const premiumSubscriptionOfferEnabled = resolveBillingOfferEnabled(
-    process.env,
-    "BILLING_ENABLE_PREMIUM_SUBSCRIPTION",
-    true,
-  );
-  const lifetimePurchaseOfferEnabled = resolveBillingOfferEnabled(
-    process.env,
-    "BILLING_ENABLE_LIFETIME_PURCHASE",
-    false,
-  );
+  const commercialModeEnabled = resolveCommercialModeEnabled(process.env);
+  const premiumSubscriptionOfferEnabled = commercialModeEnabled
+    ? resolveBillingOfferEnabled(
+        process.env,
+        "BILLING_ENABLE_PREMIUM_SUBSCRIPTION",
+        true,
+      )
+    : false;
+  const lifetimePurchaseOfferEnabled = commercialModeEnabled
+    ? resolveBillingOfferEnabled(
+        process.env,
+        "BILLING_ENABLE_LIFETIME_PURCHASE",
+        false,
+      )
+    : false;
 
   return {
     appBaseUrl: resolvePublicAppOrigin(process.env, {
       errorMessage: "APP_BASE_URL must be configured for Stripe billing.",
     }),
+    commercialModeEnabled,
     defaultPlanId: resolveBillingDefaultPlan(process.env),
     lifetimePriceId: lifetimePurchaseOfferEnabled
       ? resolveRequiredEnv(
@@ -515,9 +522,23 @@ function resolveAwsRegion(env: Record<string, string | undefined>): string {
   );
 }
 
+function resolveCommercialModeEnabled(
+  env: Record<string, string | undefined>,
+): boolean {
+  if (!Object.hasOwn(env, "COMMERCIAL_MODE_ENABLED")) {
+    return true;
+  }
+
+  return parseBooleanEnv(env.COMMERCIAL_MODE_ENABLED);
+}
+
 function resolveBillingDefaultPlan(
   env: Record<string, string | undefined>,
 ): string | null {
+  if (!resolveCommercialModeEnabled(env)) {
+    return null;
+  }
+
   if (Object.hasOwn(env, "BILLING_DEFAULT_PLAN")) {
     return normalizeOptionalString(env.BILLING_DEFAULT_PLAN) ?? null;
   }

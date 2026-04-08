@@ -91,6 +91,7 @@ const boxscoreLinkClassName =
   "inline-flex min-h-9 items-center justify-center rounded-full border border-border-soft bg-white/70 px-3.5 text-xs font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90";
 const numericTableCellClassName = "text-right tabular-nums";
 const numericTableHeadClassName = "text-right";
+const commercialModeDisabledSentinel = "__commercial-mode-disabled__";
 const ownerRosterSkillColumns = [
   { key: "js", label: "JS" },
   { key: "jr", label: "JR" },
@@ -118,15 +119,18 @@ export default function DashboardHomePage() {
 
 export function DashboardApp({
   activeSection,
+  commercialModeEnabled = true,
   viewerLabel,
 }: {
   activeSection: WorkspaceSection;
+  commercialModeEnabled?: boolean;
   viewerLabel: string | null;
 }) {
   return (
     <main className="grid min-h-screen gap-6 p-4 sm:p-6">
       <AuthenticatedWorkspace
         activeSection={activeSection}
+        commercialModeEnabled={commercialModeEnabled}
         viewerLabel={viewerLabel}
       />
     </main>
@@ -135,9 +139,11 @@ export function DashboardApp({
 
 function AuthenticatedWorkspace({
   activeSection,
+  commercialModeEnabled,
   viewerLabel,
 }: {
   activeSection: WorkspaceSection;
+  commercialModeEnabled: boolean;
   viewerLabel: string | null;
 }) {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(
@@ -145,8 +151,10 @@ function AuthenticatedWorkspace({
   );
   const [connection, setConnection] = useState<BbConnectionRecord | null>(null);
   const [workspace, setWorkspace] = useState<DashboardWorkspace | null>(null);
-  const [billingError, setBillingError] = useState<string | null>(null);
-  const [isLoadingBilling, setIsLoadingBilling] = useState(true);
+  const [billingError, setBillingError] = useState<string | null>(
+    commercialModeEnabled ? null : commercialModeDisabledSentinel,
+  );
+  const [isLoadingBilling, setIsLoadingBilling] = useState(commercialModeEnabled);
   const [isLoadingConnection, setIsLoadingConnection] = useState(true);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
@@ -174,6 +182,13 @@ function AuthenticatedWorkspace({
   }
 
   async function loadBilling(): Promise<BillingSummary | null> {
+    if (!commercialModeEnabled) {
+      setBillingSummary(null);
+      setBillingError(commercialModeDisabledSentinel);
+      setIsLoadingBilling(false);
+      return null;
+    }
+
     setIsLoadingBilling(true);
     setBillingError(null);
 
@@ -248,12 +263,10 @@ function AuthenticatedWorkspace({
     setIsLoadingWorkspace(false);
   }
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initialize() {
+  const initializeWorkspaceEffect = useEffectEvent(
+    async (isCancelled: () => boolean) => {
       const [record] = await Promise.all([loadConnection(), loadBilling()]);
-      if (cancelled) {
+      if (isCancelled()) {
         return;
       }
 
@@ -262,9 +275,12 @@ function AuthenticatedWorkspace({
       } else {
         setWorkspace(null);
       }
-    }
+    },
+  );
 
-    void initialize();
+  useEffect(() => {
+    let cancelled = false;
+    void initializeWorkspaceEffect(() => cancelled);
 
     return () => {
       cancelled = true;
@@ -729,17 +745,25 @@ function WorkspaceDashboard({
     ...workspace,
     scout,
   };
+  const commercialModeDisabled =
+    billingError === commercialModeDisabledSentinel;
   const billingPlanId =
     billingSummary?.planId === "premium" ? "premium" : "free";
-  const canUsePredictions = billingSummary
-    ? hasFeature(billingPlanId, "predictions")
-    : false;
-  const canUseLeagueWriteups = billingSummary
-    ? hasFeature(billingPlanId, "leagueWriteups")
-    : false;
-  const canUseTeamHighlights = billingSummary
-    ? hasFeature(billingPlanId, "teamHighlights")
-    : false;
+  const canUsePredictions = commercialModeDisabled
+    ? true
+    : billingSummary
+      ? hasFeature(billingPlanId, "predictions")
+      : false;
+  const canUseLeagueWriteups = commercialModeDisabled
+    ? true
+    : billingSummary
+      ? hasFeature(billingPlanId, "leagueWriteups")
+      : false;
+  const canUseTeamHighlights = commercialModeDisabled
+    ? true
+    : billingSummary
+      ? hasFeature(billingPlanId, "teamHighlights")
+      : false;
 
   function handleUseScenarioInPreview(
     scenario: NonNullable<
@@ -1811,11 +1835,13 @@ function WorkspaceDashboard({
 
       {activeSection === "ops" ? (
         <>
-          <BillingPanel
-            error={billingError}
-            isLoading={isLoadingBilling}
-            summary={billingSummary}
-          />
+          {!commercialModeDisabled ? (
+            <BillingPanel
+              error={billingError}
+              isLoading={isLoadingBilling}
+              summary={billingSummary}
+            />
+          ) : null}
           <Panel>
             <SectionHeading
               description="Choose the look you want for your companion app. The selection is saved to your account."

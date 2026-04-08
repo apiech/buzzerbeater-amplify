@@ -16,6 +16,7 @@ import {
   type FeatureKey,
   type PlanId,
 } from "../../../lib/billing/plans";
+import { resolveCommercialModeEnabled } from "../../../lib/billing/commercial-mode";
 import { assertMaintenanceInactive } from "./maintenance";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -339,6 +340,10 @@ export async function requireFeatureAccess(args: {
   featureKey: FeatureKey;
   userId: string;
 }, runtime: StripeRuntime = defaultRuntime): Promise<PlanId> {
+  if (!resolveCommercialModeEnabled(args.env)) {
+    return "free";
+  }
+
   const billingAccount = await runtime.getBillingAccount(args.env, args.userId);
   const { planId } = resolvePlan(billingAccount, {
     defaultPlanId: resolveConfiguredDefaultPlan(args.env),
@@ -503,6 +508,10 @@ export function buildBillingSummary(
 }
 
 function resolveConfiguredDefaultPlan(env: GraphqlEnv): PlanId | null {
+  if (!resolveCommercialModeEnabled(env)) {
+    return null;
+  }
+
   const configuredValue = normalizeOptionalString(env.BILLING_DEFAULT_PLAN ?? null);
   if (!configuredValue) {
     return null;
@@ -516,6 +525,13 @@ function resolveConfiguredDefaultPlan(env: GraphqlEnv): PlanId | null {
 }
 
 function resolveBillingOfferFlags(env: GraphqlEnv): BillingOfferFlags {
+  if (!resolveCommercialModeEnabled(env)) {
+    return {
+      lifetimePurchaseOfferEnabled: false,
+      premiumSubscriptionOfferEnabled: false,
+    };
+  }
+
   return {
     lifetimePurchaseOfferEnabled: parseBooleanEnv(
       env.BILLING_ENABLE_LIFETIME_PURCHASE,

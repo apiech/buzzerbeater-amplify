@@ -13,6 +13,10 @@ test("dashboard app gates premium sections through the shared feature registry",
   assert.match(source, /hasFeature\(billingPlanId, "predictions"\)/);
   assert.match(source, /hasFeature\(billingPlanId, "leagueWriteups"\)/);
   assert.match(source, /hasFeature\(billingPlanId, "teamHighlights"\)/);
+  assert.match(source, /const commercialModeDisabled =/);
+  assert.match(source, /const canUsePredictions = commercialModeDisabled/);
+  assert.match(source, /const canUseLeagueWriteups = commercialModeDisabled/);
+  assert.match(source, /const canUseTeamHighlights = commercialModeDisabled/);
   assert.match(source, /<BillingPanel/);
   assert.match(source, /<PremiumFeatureGatePanel/);
 });
@@ -38,6 +42,11 @@ test("store route is public and drives billing through the new store-facing APIs
   );
 
   assert.match(pageSource, /getServerCurrentUser/);
+  assert.match(
+    pageSource,
+    /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
+  );
+  assert.match(pageSource, /notFound\(\)/);
   assert.match(storefrontSource, /createBillingCheckoutUrl\("\/store"\)/);
   assert.match(storefrontSource, /createBillingLifetimeCheckoutUrl\("\/store"\)/);
   assert.match(storefrontSource, /createBillingPortalUrl\("\/store"\)/);
@@ -45,12 +54,17 @@ test("store route is public and drives billing through the new store-facing APIs
   assert.match(storefrontSource, /href="\/workspace\/ops"/);
 });
 
-test("billing integration wires the environment default into premium-gated lambdas", () => {
+test("billing integration wires commercial mode and environment defaults into premium-gated lambdas", () => {
   const source = readFileSync(
     join(repoRoot, "amplify", "_backend", "billing-integration.ts"),
     "utf8",
   );
 
+  assert.match(source, /getBillingSummary\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
+  assert.match(source, /opponentForecastSubmit\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
+  assert.match(source, /predictionSubmit\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
+  assert.match(source, /gameDayRecapSubmit\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
+  assert.match(source, /submitMyTeamHighlightsScan\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
   assert.match(source, /getBillingSummary\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
   assert.match(source, /opponentForecastSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
   assert.match(source, /predictionSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);

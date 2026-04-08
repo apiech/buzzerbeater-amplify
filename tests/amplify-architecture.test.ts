@@ -363,6 +363,7 @@ test("synth-time backend files do not import root lib helpers", () => {
 
     return (
       relativePath === "backend.ts" ||
+      relativePath.startsWith("_shared/") ||
       relativePath.startsWith("_backend/") ||
       /(?:^|\/)resource\.ts$/.test(relativePath)
     );
