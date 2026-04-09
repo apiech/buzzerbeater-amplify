@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { client } from "@/app/amplify-client";
 import {
+  LINEUP_MINUTE_OPTIONS,
   LINEUP_POSITIONS,
   assignmentMatrixFromLineup,
   assignmentsFromMatrix,
   coerceEnthusiasm,
-  coerceMinuteValue,
   createEmptyMinuteRow,
+  lineupRuleSummary,
   normalizeHelperContext,
   type LineupMinuteMatrix,
   validateLineupMatrix,
@@ -29,7 +30,8 @@ import type {
 import { Alert } from "@/app/ui/primitives/alert";
 import { BuzzerBeaterRatingText } from "@/app/ui/primitives/buzzerbeater-rating-text";
 import { Button } from "@/app/ui/primitives/button";
-import { Field, Input, Select } from "@/app/ui/primitives/field";
+import { cn } from "@/app/ui/primitives/cn";
+import { Field, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
@@ -59,6 +61,7 @@ const twoColumnGridClassName =
 const rankingsGridClassName = "grid gap-4 lg:grid-cols-2 xl:grid-cols-3";
 const EMPTY_ROSTER: LineupHelperRosterPlayer[] = [];
 const ENTHUSIASM_OPTIONS = [...allScaleValues("enthusiasm")].reverse();
+const minuteSummaryGridClassName = "grid gap-3 md:grid-cols-3 xl:grid-cols-6";
 
 export function LineupHelper() {
   const [workspace, setWorkspace] =
@@ -74,7 +77,9 @@ export function LineupHelper() {
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [workspaceLoadVersion, setWorkspaceLoadVersion] = useState(0);
+  const suppressNextEvaluationRef = useRef(false);
 
   const roster = workspace?.roster ?? EMPTY_ROSTER;
   const validation = validateLineupMatrix(roster, minuteMatrix);
@@ -114,6 +119,7 @@ export function LineupHelper() {
       setWorkspace(nextWorkspace);
       setEvaluation(nextWorkspace.evaluation);
       setContext(nextWorkspace.defaultContext);
+      suppressNextEvaluationRef.current = true;
       setMinuteMatrix(
         assignmentMatrixFromLineup(
           nextWorkspace.roster,
@@ -137,6 +143,13 @@ export function LineupHelper() {
     }
 
     const nextRoster = workspace.roster;
+    if (suppressNextEvaluationRef.current) {
+      suppressNextEvaluationRef.current = false;
+      setIsEvaluating(false);
+      setEvaluationError(null);
+      return;
+    }
+
     const nextValidation = validateLineupMatrix(nextRoster, minuteMatrix);
     if (!nextRoster.length || !nextRoster.some((player) => player.available)) {
       setIsEvaluating(false);
@@ -188,7 +201,7 @@ export function LineupHelper() {
     position: PositionCode,
     value: string,
   ) {
-    const nextMinutes = coerceMinuteValue(value);
+    const nextMinutes = Number(value);
     setMinuteMatrix((current) => ({
       ...current,
       [playerId]: {
@@ -198,7 +211,7 @@ export function LineupHelper() {
     }));
   }
 
-  function handleAutofill() {
+  function handleRestoreDefaultLineup() {
     if (!workspace) {
       return;
     }
@@ -208,8 +221,40 @@ export function LineupHelper() {
         workspace.defaultAssignments,
       ),
     );
-    setEvaluation(workspace.evaluation);
     setEvaluationError(null);
+  }
+
+  async function handleOptimize() {
+    if (!workspace) {
+      return;
+    }
+
+    setIsOptimizing(true);
+    setEvaluationError(null);
+    const response = await client.queries.optimizeLineupHelper({
+      roster: workspace.roster.map(encodeLineupHelperRosterPlayer),
+      context,
+    });
+
+    if (response.errors?.length || !response.data) {
+      setEvaluationError(formatAmplifyErrors(response.errors));
+      setIsOptimizing(false);
+      return;
+    }
+
+    const nextEvaluation = decodeLineupHelperEvaluation(response.data);
+    if (!nextEvaluation) {
+      setEvaluationError("The optimizer did not return a usable lineup.");
+      setIsOptimizing(false);
+      return;
+    }
+
+    suppressNextEvaluationRef.current = true;
+    setEvaluation(nextEvaluation);
+    setMinuteMatrix(
+      assignmentMatrixFromLineup(workspace.roster, nextEvaluation.normalizedLineup),
+    );
+    setIsOptimizing(false);
   }
 
   return (
@@ -226,14 +271,23 @@ export function LineupHelper() {
             </Button>
             <Button
               disabled={!workspace || !hasGeneratedLineup}
-              onClick={handleAutofill}
+              onClick={handleRestoreDefaultLineup}
               variant="secondary"
             >
-              {hasGeneratedLineup ? "Autofill lineup" : "No generated lineup"}
+              {hasGeneratedLineup
+                ? "Restore default lineup"
+                : "No default lineup"}
+            </Button>
+            <Button
+              disabled={!workspace || availableRosterCount === 0}
+              loading={isOptimizing}
+              onClick={() => void handleOptimize()}
+            >
+              Optimize
             </Button>
           </div>
         }
-        description="Lineup ratings from your saved roster data with minute planning and tactic context."
+        description="Lineup ratings from your saved roster data with legal minute planning, rotation checks, and tactic context."
         title="Lineup Helper"
         titleAs="h4"
       />
@@ -258,13 +312,13 @@ export function LineupHelper() {
         <>
           {availableRosterCount === 0 ? (
             <Alert>
-              Player data is not ready yet. Ratings and autofill stay disabled
+              Player data is not ready yet. Ratings and optimization stay disabled
               until a fresh roster update completes.
             </Alert>
           ) : null}
-          {validation.errors.length ? (
-            <Alert>{validation.errors.join(" ")}</Alert>
-          ) : null}
+          {validation.errors.length
+            ? validation.errors.map((error) => <Alert key={error}>{error}</Alert>)
+            : null}
           {evaluationError ? <Alert>{evaluationError}</Alert> : null}
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -383,58 +437,75 @@ export function LineupHelper() {
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Minute grid" titleAs="h5" />
-                <TableShell>
-                  <thead>
-                    <tr>
-                      <TableHeadCell>Player</TableHeadCell>
-                      <TableHeadCell>Role</TableHeadCell>
-                      <TableHeadCell>Player data</TableHeadCell>
-                      {LINEUP_POSITIONS.map((position) => (
-                        <TableHeadCell key={position}>{position}</TableHeadCell>
-                      ))}
-                      <TableHeadCell>Total</TableHeadCell>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {roster.map((player) => {
-                      const rowMinutes = minuteMatrix[player.playerId] ?? createEmptyMinuteRow();
-                      const totalMinutes = LINEUP_POSITIONS.reduce(
-                        (sum, position) => sum + rowMinutes[position],
-                        0,
-                      );
-                      return (
-                        <tr key={player.playerId}>
-                          <TableCell>
-                            <div className="grid gap-1">
-                              <strong>{player.fullName}</strong>
-                              <span className={statusCopyClassName}>
-                                {player.bestPosition ?? "Flex"} •{" "}
-                                {formatCurrency(player.salary)} •{" "}
-                                {skillHeadline(player)}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="grid gap-2">
-                              <StatusBadge
-                                tone={player.available ? "success" : "danger"}
+                <SectionHeading
+                  description={lineupRuleSummary()}
+                  title="Minute plan"
+                  titleAs="h5"
+                />
+                <div className={minuteSummaryGridClassName}>
+                  {LINEUP_POSITIONS.map((position) => (
+                    <MinuteSummaryTile
+                      current={validation.positionTotals[position]}
+                      key={`summary-${position}`}
+                      label={position}
+                      target={48}
+                    />
+                  ))}
+                  <MinuteSummaryTile
+                    current={validation.teamTotal}
+                    label="Team"
+                    target={240}
+                  />
+                </div>
+                <div className="grid gap-3">
+                  {roster.map((player) => {
+                    const rowMinutes = minuteMatrix[player.playerId] ?? createEmptyMinuteRow();
+                    const totalMinutes = LINEUP_POSITIONS.reduce(
+                      (sum, position) => sum + rowMinutes[position],
+                      0,
+                    );
+                    const roleMap =
+                      validation.rolesByPlayerPosition[player.playerId] ?? {};
+
+                    return (
+                      <article
+                        className={cn(
+                          "rounded-card grid gap-4 border border-black/8 bg-white/65 p-4 shadow-sm",
+                          !player.available && "opacity-70",
+                        )}
+                        key={player.playerId}
+                      >
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                          <div className="grid gap-2 xl:max-w-[22rem]">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <strong className="text-ink text-base">
+                                {player.fullName}
+                              </strong>
+                              <span
+                                className={cn(
+                                  "inline-flex rounded-full border px-3 py-1 text-xs font-semibold",
+                                  player.available
+                                    ? "border-success/20 bg-success/10 text-success"
+                                    : "border-danger-border bg-danger-bg text-accent-strong",
+                                )}
                               >
                                 {player.available ? "Ready" : "Unavailable"}
-                              </StatusBadge>
-                              <span className="text-ink-muted text-xs">
-                                <BuzzerBeaterRatingText
-                                  label={player.gameShape}
-                                  scale="game_shape"
-                                >
-                                  {player.gameShape ?? "No shape"}
-                                </BuzzerBeaterRatingText>{" "}
-                                • Age{" "}
-                                {player.age ?? "N/A"}
                               </span>
                             </div>
-                          </TableCell>
-                          <TableCell>
+                            <span className={statusCopyClassName}>
+                              {player.bestPosition ?? "Flex"} •{" "}
+                              {formatCurrency(player.salary)} •{" "}
+                              {skillHeadline(player)}
+                            </span>
+                            <span className="text-ink-muted text-xs">
+                              <BuzzerBeaterRatingText
+                                label={player.gameShape}
+                                scale="game_shape"
+                              >
+                                {player.gameShape ?? "No shape"}
+                              </BuzzerBeaterRatingText>{" "}
+                              • Age {player.age ?? "N/A"}
+                            </span>
                             <div className="grid gap-1">
                               <span className="text-ink text-sm">
                                 {player.snapshotCapturedAt
@@ -445,51 +516,87 @@ export function LineupHelper() {
                                 {player.snapshotWarning ?? "Latest saved player update"}
                               </span>
                             </div>
-                          </TableCell>
-                          {LINEUP_POSITIONS.map((position) => (
-                            <TableCell key={`${player.playerId}-${position}`}>
-                              <Input
-                                disabled={!player.available}
-                                inputMode="numeric"
-                                max={48}
-                                min={0}
-                                onChange={(event) =>
-                                  updateMinute(
-                                    player.playerId,
-                                    position,
-                                    event.target.value,
-                                  )
-                                }
-                                step={1}
-                                type="number"
-                                value={rowMinutes[position]}
-                              />
-                            </TableCell>
-                          ))}
-                          <TableCell>
-                            <strong>{totalMinutes}</strong>
-                          </TableCell>
-                        </tr>
-                      );
-                    })}
-                    <tr>
-                      <TableCell className="text-ink font-semibold" colSpan={3}>
-                        Position totals
-                      </TableCell>
-                      {LINEUP_POSITIONS.map((position) => (
-                        <TableCell
-                          className="font-semibold"
-                          key={`totals-${position}`}
-                        >
-                          {validation.positionTotals[position]}
-                        </TableCell>
-                      ))}
-                      <TableCell className="font-semibold">
-                        {validation.teamTotal}
-                      </TableCell>
-                    </tr>
-                  </tbody>
-                </TableShell>
+                            {Object.keys(roleMap).length ? (
+                              <div className="flex flex-wrap gap-2">
+                                {LINEUP_POSITIONS.flatMap((position) => {
+                                  const role = roleMap[position];
+                                  return role ? (
+                                    <MinuteRolePill
+                                      key={`${player.playerId}-${position}-${role}`}
+                                      label={`${position} ${formatRoleLabel(role)}`}
+                                      role={role}
+                                    />
+                                  ) : [];
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                            {LINEUP_POSITIONS.map((position) => (
+                              <Field
+                                className="gap-1"
+                                key={`${player.playerId}-${position}`}
+                                label={position}
+                              >
+                                <Select
+                                  className="min-h-10 rounded-[0.9rem] px-3 py-2 text-center text-sm font-semibold"
+                                  disabled={!player.available || isOptimizing}
+                                  onChange={(event) =>
+                                    updateMinute(
+                                      player.playerId,
+                                      position,
+                                      event.target.value,
+                                    )
+                                  }
+                                  value={String(rowMinutes[position])}
+                                >
+                                  {LINEUP_MINUTE_OPTIONS.map((minuteValue) => (
+                                    <option key={minuteValue} value={minuteValue}>
+                                      {minuteValue} min
+                                    </option>
+                                  ))}
+                                </Select>
+                                <div className="flex items-center justify-between gap-2 text-xs">
+                                  <span className="text-ink-muted">
+                                    Output{" "}
+                                    {formatDecimal(
+                                      evaluation?.playerPositionOutputs[player.playerId]?.[
+                                        position
+                                      ] ?? null,
+                                    )}
+                                  </span>
+                                  {roleMap[position] ? (
+                                    <MinuteRolePill
+                                      label={formatRoleLabel(roleMap[position])}
+                                      role={roleMap[position]}
+                                    />
+                                  ) : (
+                                    <span className="text-ink-muted">Open</span>
+                                  )}
+                                </div>
+                              </Field>
+                            ))}
+                          </div>
+
+                          <div className="grid min-w-24 gap-1 xl:justify-items-end">
+                            <span className="text-ink-muted text-[0.72rem] font-bold uppercase tracking-[0.16em]">
+                              Total
+                            </span>
+                            <strong className="text-ink text-3xl leading-none">
+                              {totalMinutes}
+                            </strong>
+                            <span className="text-ink-muted text-xs">
+                              {totalMinutes === 42
+                                ? "At exhaustion limit"
+                                : `${Math.max(0, 42 - totalMinutes)} min left`}
+                            </span>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
               </Panel>
             </div>
 
@@ -823,6 +930,67 @@ function skillHeadline(player: LineupHelperRosterPlayer) {
       {`${key.toUpperCase()} ${value}`}
     </BuzzerBeaterRatingText>,
   ]);
+}
+
+function MinuteSummaryTile({
+  current,
+  label,
+  target,
+}: {
+  current: number;
+  label: string;
+  target: number;
+}) {
+  const exact = current === target;
+  const over = current > target;
+
+  return (
+    <div
+      className={cn(
+        "rounded-card grid gap-1 border px-4 py-3",
+        exact
+          ? "border-success/20 bg-success/10"
+          : over
+            ? "border-danger-border bg-danger-bg"
+            : "border-note-border bg-note-bg",
+      )}
+    >
+      <span className="text-ink-muted text-[0.72rem] font-bold uppercase tracking-[0.16em]">
+        {label}
+      </span>
+      <strong className="text-ink text-2xl leading-none">{current}</strong>
+      <span className="text-xs text-ink-muted">
+        {exact ? "On target" : `${current}/${target} minutes`}
+      </span>
+    </div>
+  );
+}
+
+function MinuteRolePill({
+  label,
+  role,
+}: {
+  label: string;
+  role: "backup" | "reserve" | "starter";
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex rounded-full border px-2.5 py-1 text-[0.72rem] font-semibold",
+        role === "starter"
+          ? "border-success/20 bg-success/10 text-success"
+          : role === "backup"
+            ? "border-note-border bg-note-bg text-note"
+            : "border-black/10 bg-black/5 text-ink",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function formatRoleLabel(role: "backup" | "reserve" | "starter") {
+  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 function formatDecimal(value: number | null) {

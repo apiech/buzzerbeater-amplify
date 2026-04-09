@@ -3,10 +3,14 @@ import test from "node:test";
 
 import {
   buildRawPlayerSkills,
+  checkRotationFeasibility,
   evaluateLineup,
   evaluateRoster,
+  LINEUP_MAX_MINUTES_PER_PLAYER,
+  LINEUP_MINUTE_INCREMENT,
   rankRoster,
   sampleFixture,
+  validateOptimizedLineup,
   coachParrotArtifacts,
   type CoachParrotRoster,
   type LineupAssignment,
@@ -92,7 +96,7 @@ test("CoachParrot rankings match the sample positional outputs", () => {
   }
 });
 
-test("CoachParrot roster-only autofill allocates 48 minutes at every position", () => {
+test("CoachParrot roster-only optimization honors the GM lab legality profile", () => {
   const { roster, context } = buildSampleInputs();
   const evaluation = evaluateRoster({
     roster,
@@ -114,6 +118,41 @@ test("CoachParrot roster-only autofill allocates 48 minutes at every position", 
     PF: 48,
     C: 48,
   });
+
+  const legality = validateOptimizedLineup({
+    lineup: evaluation.chosenLineup,
+    players: roster,
+  });
+  assert.deepEqual(legality.errors, []);
+
+  const playerMinutes = new Map<string, number>();
+  for (const assignment of evaluation.chosenLineup) {
+    playerMinutes.set(
+      assignment.playerId,
+      (playerMinutes.get(assignment.playerId) ?? 0) + assignment.minutes,
+    );
+    assert.equal(assignment.minutes % LINEUP_MINUTE_INCREMENT, 0);
+  }
+  for (const minutes of Array.from(playerMinutes.values())) {
+    assert.equal(minutes <= LINEUP_MAX_MINUTES_PER_PLAYER, true);
+  }
+
+  const starters = (["PG", "SG", "SF", "PF", "C"] as Position[]).map(
+    (position) => legality.roleAssignments[position][0]?.playerId,
+  );
+  assert.equal(new Set(starters).size, 5);
+
+  for (const position of ["PG", "SG", "SF", "PF", "C"] as Position[]) {
+    const roles = legality.roleAssignments[position].map((assignment) => assignment.role);
+    assert.equal(roles[0], "starter");
+    assert.equal(roles[1], "backup");
+    assert.equal(roles.length <= 3, true);
+  }
+
+  assert.equal(
+    checkRotationFeasibility(legality.roleAssignments),
+    true,
+  );
 });
 
 test("CoachParrot context changes alter the generated ratings", () => {

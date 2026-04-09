@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   __testing as lineupHelperTesting,
   getLineupHelperWorkspace,
+  optimizeLineupHelper,
 } from "../amplify/data/_backend/lineup-helper";
 import { WORKSPACE_CACHE_VERSION } from "../amplify/data/_backend/workspace-cache";
 import type {
@@ -553,7 +554,25 @@ test("lineup helper workspace payload includes defaults, evaluation, and snapsho
         gs: 11,
       }),
       {
-        ...createHelperPlayer("p6", "Missing Snapshot", "SG", {}),
+        ...createHelperPlayer("p6", "Sixth Man", "SG", {
+          js: 10,
+          jr: 8,
+          od: 9,
+          ha: 8,
+          dr: 8,
+          pa: 9,
+          is: 7,
+          id: 7,
+          rb: 6,
+          sb: 4,
+          st: 8,
+          ft: 7,
+          ex: 6,
+          gs: 11,
+        }),
+      },
+      {
+        ...createHelperPlayer("p7", "Missing Snapshot", "SG", {}),
         available: false,
         snapshotWarning:
           "No canonical skill snapshot is available for this player.",
@@ -563,10 +582,11 @@ test("lineup helper workspace payload includes defaults, evaluation, and snapsho
 
   assert.equal(Array.isArray(payload.defaultAssignments), true);
   assert.equal(Array.isArray(payload.roster), true);
-  assert.equal((payload.roster as Array<unknown>).length, 6);
+  assert.equal((payload.roster as Array<unknown>).length, 7);
   assert.equal(Array.isArray(payload.snapshotWarnings), true);
   assert.equal((payload.snapshotWarnings as Array<unknown>).length, 1);
   assert.equal(typeof payload.evaluation, "object");
+  assert.equal((payload.defaultAssignments as Array<unknown>).length > 0, true);
 });
 
 test("lineup helper workspace payload keeps the roster when no usable snapshots exist", () => {
@@ -712,14 +732,132 @@ test("lineup helper ignores shared snapshot payload bait when no owner profile e
   ]);
 });
 
-test("lineup helper evaluation payload preserves warnings for invalid minutes", () => {
-  const payload = lineupHelperTesting.buildLineupHelperEvaluationPayload({
-    context: {
-      offense: "Base Offense",
-      defense: "Man to man",
-      enthusiasm: 5,
-      homeCourt: "Away or Neutral",
-    },
+test("lineup helper evaluation payload rejects invalid minutes", () => {
+  assert.throws(
+    () =>
+      lineupHelperTesting.buildLineupHelperEvaluationPayload({
+        context: {
+          offense: "Base Offense",
+          defense: "Man to man",
+          enthusiasm: 5,
+          homeCourt: "Away or Neutral",
+        },
+        roster: [
+          createHelperPlayer("p1", "Lead Guard", "PG", {
+            js: 12,
+            jr: 11,
+            od: 10,
+            ha: 13,
+            dr: 12,
+            pa: 14,
+            is: 5,
+            id: 4,
+            rb: 4,
+            sb: 2,
+            st: 8,
+            ft: 7,
+            ex: 6,
+            gs: 11,
+          }),
+          createHelperPlayer("p2", "Shooter", "SG", {
+            js: 13,
+            jr: 12,
+            od: 10,
+            ha: 10,
+            dr: 10,
+            pa: 9,
+            is: 6,
+            id: 5,
+            rb: 5,
+            sb: 3,
+            st: 8,
+            ft: 8,
+            ex: 6,
+            gs: 11,
+          }),
+          createHelperPlayer("p3", "Wing", "SF", {
+            js: 11,
+            jr: 9,
+            od: 10,
+            ha: 9,
+            dr: 10,
+            pa: 8,
+            is: 8,
+            id: 8,
+            rb: 8,
+            sb: 5,
+            st: 8,
+            ft: 7,
+            ex: 6,
+            gs: 11,
+          }),
+          createHelperPlayer("p4", "Big", "PF", {
+            js: 8,
+            jr: 5,
+            od: 7,
+            ha: 6,
+            dr: 7,
+            pa: 6,
+            is: 11,
+            id: 10,
+            rb: 11,
+            sb: 8,
+            st: 8,
+            ft: 6,
+            ex: 6,
+            gs: 11,
+          }),
+          createHelperPlayer("p5", "Anchor", "C", {
+            js: 6,
+            jr: 2,
+            od: 5,
+            ha: 4,
+            dr: 5,
+            pa: 5,
+            is: 12,
+            id: 12,
+            rb: 13,
+            sb: 10,
+            st: 8,
+            ft: 5,
+            ex: 6,
+            gs: 11,
+          }),
+          createHelperPlayer("p6", "Sixth Man", "SG", {
+            js: 10,
+            jr: 8,
+            od: 9,
+            ha: 8,
+            dr: 8,
+            pa: 9,
+            is: 7,
+            id: 7,
+            rb: 6,
+            sb: 4,
+            st: 8,
+            ft: 7,
+            ex: 6,
+            gs: 11,
+          }),
+        ] as any,
+        assignments: [
+          { playerId: "p1", position: "PG", minutes: 48 },
+          { playerId: "p2", position: "SG", minutes: 42 },
+          { playerId: "p6", position: "SG", minutes: 6 },
+          { playerId: "p3", position: "SF", minutes: 42 },
+          { playerId: "p6", position: "SF", minutes: 6 },
+          { playerId: "p4", position: "PF", minutes: 42 },
+          { playerId: "p6", position: "PF", minutes: 6 },
+          { playerId: "p5", position: "C", minutes: 42 },
+          { playerId: "p6", position: "C", minutes: 6 },
+        ] as any,
+      }),
+    /Lead Guard exceeds 42 total minutes\./,
+  );
+});
+
+test("optimizeLineupHelper returns a legal lineup and excludes unavailable players", async () => {
+  const payload = await optimizeLineupHelper({
     roster: [
       createHelperPlayer("p1", "Lead Guard", "PG", {
         js: 12,
@@ -801,15 +939,56 @@ test("lineup helper evaluation payload preserves warnings for invalid minutes", 
         ex: 6,
         gs: 11,
       }),
+      createHelperPlayer("p6", "Sixth Man", "SG", {
+        js: 10,
+        jr: 8,
+        od: 9,
+        ha: 8,
+        dr: 8,
+        pa: 9,
+        is: 7,
+        id: 7,
+        rb: 6,
+        sb: 4,
+        st: 8,
+        ft: 7,
+        ex: 6,
+        gs: 11,
+      }),
+      {
+        ...createHelperPlayer("p7", "Unavailable", "PF", {}),
+        available: false,
+        snapshotWarning: "No canonical skill snapshot is available for this player.",
+      },
     ] as any,
-    assignments: [
-      { playerId: "p1", position: "PG", minutes: 60 },
-      { playerId: "p2", position: "SG", minutes: 48 },
-    ] as any,
+    context: {
+      offense: "Base Offense",
+      defense: "Man to man",
+      enthusiasm: 5,
+      homeCourt: "Away or Neutral",
+    },
   });
 
-  assert.equal(Array.isArray(payload.warnings), true);
-  assert.equal(payload.warnings.length > 0, true);
+  assert.equal(Array.isArray(payload.normalizedLineup), true);
+  assert.equal(payload.normalizedLineup.length > 0, true);
+  assert.equal(
+    payload.normalizedLineup.every((assignment) => assignment.playerId !== "p7"),
+    true,
+  );
+  const positionMinutes = payload.normalizedLineup.reduce<Record<string, number>>(
+    (totals, assignment) => {
+      totals[assignment.position] = (totals[assignment.position] ?? 0) + assignment.minutes;
+      return totals;
+    },
+    {},
+  );
+  assert.deepStrictEqual(positionMinutes, {
+    PG: 48,
+    SG: 48,
+    SF: 48,
+    PF: 48,
+    C: 48,
+  });
 });
 
 test("buildConnectionRecord preserves explicit null updates when clearing stale state", () => {

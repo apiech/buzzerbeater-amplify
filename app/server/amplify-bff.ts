@@ -74,6 +74,10 @@ const queryOperations = {
     (await getServerDataClient()).queries.listMyBillingPayments(
       optionalInput(input) as never,
     ),
+  optimizeLineupHelper: async (input) =>
+    (await getServerDataClient()).queries.optimizeLineupHelper(
+      requiredInput(input) as never,
+    ),
   getTeamHub: async () => (await getServerDataClient()).queries.getTeamHub(),
 } satisfies Record<string, QueryOperation>;
 

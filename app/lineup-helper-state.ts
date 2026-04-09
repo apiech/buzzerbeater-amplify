@@ -4,14 +4,39 @@ import type {
   LineupHelperRosterPlayer,
   PositionCode,
 } from "@/app/types";
+import {
+  LINEUP_ALLOWED_MINUTES,
+  LINEUP_MAX_MINUTES_PER_PLAYER,
+  LINEUP_MINUTE_INCREMENT,
+  LINEUP_TEAM_TOTAL_MINUTES,
+  LINEUP_MINUTES_PER_POSITION,
+  POSITION_SEQUENCE,
+  type LineupRole,
+  validateOptimizedLineup,
+} from "@/lib/coach-parrot";
 
-export const LINEUP_POSITIONS: PositionCode[] = ["PG", "SG", "SF", "PF", "C"];
+export const LINEUP_POSITIONS: PositionCode[] = [...POSITION_SEQUENCE] as PositionCode[];
+export const LINEUP_MINUTE_OPTIONS = [...LINEUP_ALLOWED_MINUTES];
 
 export type LineupMinuteMatrix = Record<string, Record<PositionCode, number>>;
 
 export type LineupValidation = {
   playerTotals: Record<string, number>;
   positionTotals: Record<PositionCode, number>;
+  roleAssignments: Record<
+    PositionCode,
+    Array<{
+      playerId: string;
+      position: PositionCode;
+      minutes: number;
+      role: LineupRole;
+    }>
+  >;
+  rolesByPlayerPosition: Record<
+    string,
+    Partial<Record<PositionCode, LineupRole>>
+  >;
+  rotationFeasible: boolean;
   teamTotal: number;
   errors: string[];
 };
@@ -65,62 +90,28 @@ export function validateLineupMatrix(
   players: LineupHelperRosterPlayer[],
   matrix: LineupMinuteMatrix,
 ): LineupValidation {
-  const playerTotals = Object.fromEntries(
-    players.map((player) => [
-      player.playerId,
-      LINEUP_POSITIONS.reduce(
-        (sum, position) =>
-          sum +
-          coerceMinuteValue(
-            (matrix[player.playerId] ?? createEmptyMinuteRow())[position],
-          ),
-        0,
-      ),
-    ]),
-  ) as Record<string, number>;
-
-  const positionTotals = Object.fromEntries(
-    LINEUP_POSITIONS.map((position) => [
-      position,
-      players.reduce(
-        (sum, player) =>
-          sum +
-          coerceMinuteValue(
-            (matrix[player.playerId] ?? createEmptyMinuteRow())[position],
-          ),
-        0,
-      ),
-    ]),
-  ) as Record<PositionCode, number>;
-
-  const teamTotal = Object.values(playerTotals).reduce(
-    (sum, minutes) => sum + minutes,
-    0,
-  );
-  const errors: string[] = [];
-
-  for (const [playerId, total] of Object.entries(playerTotals)) {
-    const player = players.find((entry) => entry.playerId === playerId);
-    if (total > 48) {
-      errors.push(`${player?.fullName ?? playerId} exceeds 48 total minutes.`);
-    }
-  }
-
-  for (const position of LINEUP_POSITIONS) {
-    if (positionTotals[position] !== 48) {
-      errors.push(`${position} must total 48 minutes.`);
-    }
-  }
-
-  if (teamTotal !== 240) {
-    errors.push("The lineup must total 240 team minutes.");
-  }
+  const report = validateOptimizedLineup({
+    lineup: assignmentsFromMatrix(matrix).map((assignment) => ({
+      ...assignment,
+      position: assignment.position,
+    })),
+    players: players
+      .filter((player) => player.available)
+      .map((player) => ({
+        playerId: player.playerId,
+        name: player.fullName,
+      })),
+  });
 
   return {
-    playerTotals,
-    positionTotals,
-    teamTotal,
-    errors,
+    playerTotals: report.playerTotals,
+    positionTotals: report.positionTotals as Record<PositionCode, number>,
+    roleAssignments: report.roleAssignments as LineupValidation["roleAssignments"],
+    rolesByPlayerPosition:
+      report.rolesByPlayerPosition as LineupValidation["rolesByPlayerPosition"],
+    rotationFeasible: report.rotationFeasible,
+    teamTotal: report.teamTotal,
+    errors: report.errors,
   };
 }
 
@@ -135,6 +126,10 @@ export function coerceMinuteValue(value: unknown): number {
     return 0;
   }
   return Math.max(0, Math.round(numeric));
+}
+
+export function lineupRuleSummary(): string {
+  return `Use ${LINEUP_MINUTE_INCREMENT}-minute increments, cap every player at ${LINEUP_MAX_MINUTES_PER_PLAYER} minutes, and fill ${LINEUP_MINUTES_PER_POSITION} minutes at each position for ${LINEUP_TEAM_TOTAL_MINUTES} team minutes.`;
 }
 
 export function normalizeHelperContext(

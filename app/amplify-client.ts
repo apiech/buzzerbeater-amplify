@@ -53,6 +53,7 @@ type QueryOperationName =
   | "getSalaryProjection"
   | "getScoutWorkspace"
   | "listMyBillingPayments"
+  | "optimizeLineupHelper"
   | "getTeamHub";
 type MutationOperationName =
   | "clearMyTeamHighlightsData"
@@ -272,6 +273,8 @@ export const client = {
       requestQuery("getScoutWorkspace", input),
     listMyBillingPayments: (input?: JsonObject) =>
       requestQuery("listMyBillingPayments", input),
+    optimizeLineupHelper: (input: JsonObject) =>
+      requestQuery("optimizeLineupHelper", input),
     getTeamHub: () => requestQuery("getTeamHub"),
   },
 };

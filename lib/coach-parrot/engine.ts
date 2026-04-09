@@ -6,6 +6,12 @@ import {
   normalizeOffense,
   resolveHomeCourtFlag,
 } from "./artifacts";
+import {
+  LINEUP_MAX_MINUTES_PER_PLAYER,
+  LINEUP_MINUTES_PER_POSITION,
+  normalizeLineupAssignments,
+  optimizeLineupByOutputs,
+} from "./optimizer";
 import { resolveBuzzerBeaterNumericValue } from "../buzzerbeater/rating-scale";
 import type {
   CoachParrotContext,
@@ -298,26 +304,6 @@ export function rankRoster(args: {
   };
 }
 
-function chooseMinutes(starterOutput: number, backupOutput: number | null): [number, number] {
-  if (backupOutput == null || starterOutput <= 0) {
-    return [48, 0];
-  }
-  const ratio = backupOutput / starterOutput;
-  if (ratio >= 0.97) {
-    return [24, 24];
-  }
-  if (ratio >= 0.94) {
-    return [30, 18];
-  }
-  if (ratio >= 0.9) {
-    return [36, 12];
-  }
-  if (ratio >= 0.86) {
-    return [42, 6];
-  }
-  return [48, 0];
-}
-
 export function buildLineup(args: {
   roster: CoachParrotRoster;
   context: CoachParrotContext;
@@ -328,63 +314,21 @@ export function buildLineup(args: {
   warnings: string[];
 } {
   const { playerOutputs, rankings } = rankRoster(args);
-  const usedPlayerIds = new Set<string>();
-  const assignments: LineupAssignment[] = [];
-  const warnings: string[] = [];
-
-  for (const position of POSITION_SEQUENCE) {
-    const candidates = rankings[position];
-    if (!candidates.length) {
-      warnings.push(`no candidates available for ${position}`);
-      continue;
-    }
-    const starter =
-      candidates.find((candidate) => !usedPlayerIds.has(candidate.playerId)) ?? candidates[0];
-    if (!starter) {
-      warnings.push(`no starter available for ${position}`);
-      continue;
-    }
-    usedPlayerIds.add(starter.playerId);
-
-    const backup =
-      candidates.find(
-        (candidate) =>
-          candidate.playerId !== starter.playerId && !usedPlayerIds.has(candidate.playerId),
-      ) ?? null;
-    const [starterMinutes, backupMinutes] = chooseMinutes(
-      starter.output,
-      backup?.output ?? null,
+  const optimized = optimizeLineupByOutputs({
+    playerOutputs,
+    players: args.roster,
+  });
+  if (!optimized) {
+    throw new Error(
+      "Unable to build a legal lineup with 6-minute increments and 42-minute exhaustion limits.",
     );
-
-    assignments.push({
-      position,
-      playerId: starter.playerId,
-      minutes: starterMinutes,
-    });
-    if (backup && backupMinutes > 0) {
-      usedPlayerIds.add(backup.playerId);
-      assignments.push({
-        position,
-        playerId: backup.playerId,
-        minutes: backupMinutes,
-      });
-    }
-  }
-
-  for (const position of POSITION_SEQUENCE) {
-    const total = assignments
-      .filter((assignment) => assignment.position === position)
-      .reduce((sum, assignment) => sum + assignment.minutes, 0);
-    if (total !== 48) {
-      warnings.push(`auto-lineup did not allocate 48 minutes at ${position}`);
-    }
   }
 
   return {
-    assignments,
+    assignments: optimized.assignments,
     rankings,
     playerOutputs,
-    warnings,
+    warnings: [],
   };
 }
 
@@ -443,31 +387,13 @@ function contextAdjustment(args: {
   );
 }
 
-function normalizeAssignments(assignments: LineupAssignment[]): LineupAssignment[] {
-  const merged = new Map<string, LineupAssignment>();
-  for (const assignment of assignments) {
-    const minutes = Math.max(0, Math.round(assignment.minutes));
-    if (!POSITION_SEQUENCE.includes(assignment.position)) {
-      continue;
-    }
-    const key = `${assignment.playerId}:${assignment.position}`;
-    const current = merged.get(key);
-    merged.set(key, {
-      position: assignment.position,
-      playerId: assignment.playerId,
-      minutes: minutes + (current?.minutes ?? 0),
-    });
-  }
-  return Array.from(merged.values()).filter((assignment) => assignment.minutes > 0);
-}
-
 export function evaluateLineup(args: {
   roster: CoachParrotRoster;
   lineup: LineupAssignment[];
   context: Partial<CoachParrotContext>;
 }): CoachParrotEvaluation {
   const context = normalizeContext(args.context);
-  const lineup = normalizeAssignments(args.lineup);
+  const lineup = normalizeLineupAssignments(args.lineup);
   const playerIndex = new Map(args.roster.players.map((player) => [player.playerId, player]));
   const totalMinutesByPlayer = new Map<string, number>();
   const warnings: string[] = [];
@@ -481,8 +407,10 @@ export function evaluateLineup(args: {
   }
 
   for (const [playerId, minutes] of Array.from(totalMinutesByPlayer.entries())) {
-    if (minutes > 48) {
-      warnings.push(`${playerId} allocated ${minutes} minutes instead of 48 or fewer`);
+    if (minutes > LINEUP_MAX_MINUTES_PER_PLAYER) {
+      warnings.push(
+        `${playerId} allocated ${minutes} minutes instead of ${LINEUP_MAX_MINUTES_PER_PLAYER} or fewer`,
+      );
     }
   }
 
@@ -517,7 +445,7 @@ export function evaluateLineup(args: {
       });
       for (const rating of RATING_SEQUENCE) {
         perPositionContributions[rating][position] +=
-          components[rating] * (assignment.minutes / 48);
+          components[rating] * (assignment.minutes / LINEUP_MINUTES_PER_POSITION);
       }
     }
   }

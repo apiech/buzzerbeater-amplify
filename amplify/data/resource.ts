@@ -177,6 +177,15 @@ export const evaluateLineupHelper = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const optimizeLineupHelper = defineFunction({
+  resourceGroupName: "data",
+  name: "optimize-lineup-helper",
+  entry: "./optimize-lineup-helper/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: secureFunctionEnvironment,
+});
+
 export const getPlayerTrend = defineFunction({
   resourceGroupName: "data",
   name: "get-player-trend",
@@ -1942,6 +1951,16 @@ const schema = a
       .returns(a.ref("LineupHelperEvaluation"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(evaluateLineupHelper)),
+
+    optimizeLineupHelper: a
+      .query()
+      .arguments({
+        roster: a.ref("LineupHelperRosterPlayer").required().array().required(),
+        context: a.ref("LineupHelperContext").required(),
+      })
+      .returns(a.ref("LineupHelperEvaluation"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(optimizeLineupHelper)),
 
     getPlayerTrend: a
       .query()

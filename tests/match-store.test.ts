@@ -360,18 +360,25 @@ test("getMatchBoxscoreDetails tolerates malformed cached optional metrics and le
     source: string;
   };
   assert.equal(typedPayload.source, "MATCH_BOXSCORE_CACHE");
-  assert.equal(typedPayload.homeTeam?.teamId, "T8");
-  assert.equal(typedPayload.awayTeam?.teamId, "T9");
-  assert.deepStrictEqual(typedPayload.homeTeam?.teamTotals, [
+  if (!typedPayload.homeTeam || !typedPayload.awayTeam) {
+    assert.fail("Expected both cached teams to be present.");
+  }
+  const homePlayer = typedPayload.homeTeam.players[0];
+  if (!homePlayer) {
+    assert.fail("Expected cached home player details.");
+  }
+  assert.equal(typedPayload.homeTeam.teamId, "T8");
+  assert.equal(typedPayload.awayTeam.teamId, "T9");
+  assert.deepStrictEqual(typedPayload.homeTeam.teamTotals, [
     { key: "fg", numberValue: 40 },
   ]);
-  assert.deepStrictEqual(typedPayload.homeTeam?.efficiency, [
+  assert.deepStrictEqual(typedPayload.homeTeam.efficiency, [
     { key: "pp100", numberValue: 101.2 },
   ]);
-  assert.deepStrictEqual(typedPayload.homeTeam?.players[0]?.performance, [
+  assert.deepStrictEqual(homePlayer.performance, [
     { key: "points", numberValue: 18 },
   ]);
-  assert.equal(typedPayload.homeTeam?.players[0]?.minutes, 24);
+  assert.equal(homePlayer.minutes, 24);
 });
 
 test("getMatchBoxscoreDetails fetches live BB data when both caches miss", async () => {

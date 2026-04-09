@@ -4,7 +4,9 @@ import {
   OFFENSE_OPTIONS,
   evaluateLineup,
   evaluateRoster,
+  normalizeLineupAssignments,
   normalizeContext,
+  validateOptimizedLineup,
   type CoachParrotContext,
   type CoachParrotEvaluation,
   type LineupAssignment,
@@ -37,6 +39,7 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 
 type LineupHelperWorkspaceResult = ResolverResult<"getLineupHelperWorkspace">;
 type LineupHelperEvaluationResult = ResolverResult<"evaluateLineupHelper">;
+type LineupHelperOptimizeResult = ResolverResult<"optimizeLineupHelper">;
 type HelperRosterSkills = LineupHelperWorkspaceResult["roster"][number]["skills"];
 type LineupHelperPositionOutput =
   LineupHelperEvaluationResult["playerPositionOutputs"][number]["output"];
@@ -101,6 +104,7 @@ export const __testing = {
   buildHelperRosterPlayer,
   buildLineupHelperWorkspacePayload,
   buildLineupHelperEvaluationPayload,
+  buildOptimizedLineupHelperEvaluationPayload,
   selectLatestHistory,
 };
 
@@ -169,6 +173,21 @@ export async function evaluateLineupHelper(args: {
   });
 }
 
+export async function optimizeLineupHelper(args: {
+  roster: unknown;
+  context: unknown;
+}): Promise<LineupHelperOptimizeResult> {
+  await assertMaintenanceInactive();
+
+  const rosterPlayers = parseHelperRoster(args.roster);
+  const context = normalizeContext(toContextRecord(args.context));
+
+  return buildOptimizedLineupHelperEvaluationPayload({
+    roster: rosterPlayers,
+    context,
+  });
+}
+
 export function buildLineupHelperWorkspacePayload(input: {
   generatedAt: string;
   syncedAt: string | null;
@@ -177,11 +196,9 @@ export function buildLineupHelperWorkspacePayload(input: {
 }): LineupHelperWorkspaceResult {
   const availableRoster = input.roster.filter((player) => player.available);
   const evaluation = availableRoster.length
-    ? evaluateRoster({
-        roster: {
-          players: availableRoster.map(toRawPlayerSkills),
-        },
+    ? buildOptimizedEvaluation({
         context: input.defaultContext,
+        roster: availableRoster,
       })
     : null;
 
@@ -219,13 +236,44 @@ export function buildLineupHelperEvaluationPayload(input: {
   context: CoachParrotContext;
 }): LineupHelperEvaluationResult {
   const availableRoster = input.roster.filter((player) => player.available);
+  const normalizedAssignments = normalizeLineupAssignments(input.assignments);
+  const legality = validateOptimizedLineup({
+    lineup: normalizedAssignments,
+    players: availableRoster.map((player) => ({
+      playerId: player.playerId,
+      name: player.fullName,
+    })),
+  });
+  if (legality.errors.length) {
+    throw new Error(legality.errors.join(" "));
+  }
+
   const evaluation = evaluateLineup({
     roster: {
       players: availableRoster.map(toRawPlayerSkills),
     },
-    lineup: input.assignments,
+    lineup: normalizedAssignments,
     context: input.context,
   });
+
+  return serializeEvaluation(evaluation);
+}
+
+export function buildOptimizedLineupHelperEvaluationPayload(input: {
+  roster: HelperRosterPlayer[];
+  context: CoachParrotContext;
+}): LineupHelperOptimizeResult {
+  const availableRoster = input.roster.filter((player) => player.available);
+  const evaluation = buildOptimizedEvaluation({
+    context: input.context,
+    roster: availableRoster,
+  });
+
+  if (!evaluation) {
+    throw new Error(
+      "No legal lineup could be built with 6-minute increments and 42-minute player caps.",
+    );
+  }
 
   return serializeEvaluation(evaluation);
 }
@@ -404,6 +452,30 @@ function serializeEvaluation(
     },
     totalOutput: evaluation.totalOutput,
   };
+}
+
+function buildOptimizedEvaluation(args: {
+  context: CoachParrotContext;
+  roster: HelperRosterPlayer[];
+}): CoachParrotEvaluation | null {
+  if (!args.roster.length) {
+    return null;
+  }
+
+  try {
+    return evaluateRoster({
+      roster: {
+        players: args.roster.map(toRawPlayerSkills),
+      },
+      context: args.context,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Unable to build a legal lineup")) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function toPositionOutput(

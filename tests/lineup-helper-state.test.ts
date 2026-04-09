@@ -10,20 +10,42 @@ import {
 } from "../app/lineup-helper-state";
 
 const players = [
-  { playerId: "p1", fullName: "PG", available: true },
-  { playerId: "p2", fullName: "SG", available: true },
-  { playerId: "p3", fullName: "SF", available: true },
-  { playerId: "p4", fullName: "PF", available: true },
-  { playerId: "p5", fullName: "C", available: true },
+  { playerId: "p1", fullName: "Lead Guard", available: true },
+  { playerId: "p2", fullName: "Shooter", available: true },
+  { playerId: "p3", fullName: "Wing", available: true },
+  { playerId: "p4", fullName: "Big", available: true },
+  { playerId: "p5", fullName: "Anchor", available: true },
+  { playerId: "p6", fullName: "Sixth Man", available: true },
+  { playerId: "p7", fullName: "Bench Wing", available: true },
 ] as any;
 
-test("lineup helper matrix conversion preserves explicit assignments", () => {
+function buildLegalMatrix() {
+  const matrix = emptyMinuteMatrix(players);
+  matrix.p1.PG = 42;
+  matrix.p2.SG = 42;
+  matrix.p3.SF = 42;
+  matrix.p4.PF = 42;
+  matrix.p5.C = 42;
+  matrix.p6.PG = 6;
+  matrix.p6.SG = 6;
+  matrix.p6.SF = 6;
+  matrix.p6.PF = 6;
+  matrix.p6.C = 6;
+  return matrix;
+}
+
+test("lineup helper matrix conversion preserves explicit legal assignments", () => {
   const assignments = [
-    { playerId: "p1", position: "PG", minutes: 48 },
-    { playerId: "p2", position: "SG", minutes: 48 },
-    { playerId: "p3", position: "SF", minutes: 48 },
-    { playerId: "p4", position: "PF", minutes: 48 },
-    { playerId: "p5", position: "C", minutes: 48 },
+    { playerId: "p1", position: "PG", minutes: 42 },
+    { playerId: "p2", position: "SG", minutes: 42 },
+    { playerId: "p3", position: "SF", minutes: 42 },
+    { playerId: "p4", position: "PF", minutes: 42 },
+    { playerId: "p5", position: "C", minutes: 42 },
+    { playerId: "p6", position: "PG", minutes: 6 },
+    { playerId: "p6", position: "SG", minutes: 6 },
+    { playerId: "p6", position: "SF", minutes: 6 },
+    { playerId: "p6", position: "PF", minutes: 6 },
+    { playerId: "p6", position: "C", minutes: 6 },
   ] as const;
 
   const matrix = assignmentMatrixFromLineup(players, assignments as any);
@@ -31,45 +53,87 @@ test("lineup helper matrix conversion preserves explicit assignments", () => {
   assert.deepEqual(roundTrip, assignments);
 });
 
-test("lineup helper validation flags incomplete position totals and player overload", () => {
-  const matrix = emptyMinuteMatrix(players);
-  const pointGuardRow = matrix.p1;
-  const shootingGuardRow = matrix.p2;
-  assert.ok(pointGuardRow);
-  assert.ok(shootingGuardRow);
-  pointGuardRow.PG = 50;
-  shootingGuardRow.SG = 20;
+test("lineup helper validation rejects non-6-minute inputs", () => {
+  const matrix = buildLegalMatrix();
+  matrix.p1.PG = 41;
+  matrix.p6.PG = 7;
 
   const validation = validateLineupMatrix(players, matrix);
-  assert.equal(validation.errors.includes("PG must total 48 minutes."), true);
-  assert.equal(validation.errors.includes("PG exceeds 48 total minutes."), true);
   assert.equal(
-    validation.errors.includes("The lineup must total 240 team minutes."),
+    validation.errors.includes(
+      "Lead Guard has illegal PG minutes. Use 6-minute increments up to 42.",
+    ),
+    true,
+  );
+  assert.equal(
+    validation.errors.includes(
+      "Sixth Man has illegal PG minutes. Use 6-minute increments up to 42.",
+    ),
     true,
   );
 });
 
-test("lineup helper validation accepts a complete five-player allocation", () => {
+test("lineup helper validation rejects 48 minutes on one player", () => {
+  const matrix = buildLegalMatrix();
+  matrix.p1.PG = 48;
+  matrix.p6.PG = 0;
+
+  const validation = validateLineupMatrix(players, matrix);
+  assert.equal(
+    validation.errors.includes("Lead Guard exceeds 42 total minutes."),
+    true,
+  );
+  assert.equal(
+    validation.errors.includes(
+      "PG must use one of the legal minute splits: 42/6, 36/12, 30/18, 30/12/6, or 24/18/6.",
+    ),
+    true,
+  );
+});
+
+test("lineup helper validation rejects duplicate starters across positions", () => {
   const matrix = emptyMinuteMatrix(players);
-  const pointGuardRow = matrix.p1;
-  const shootingGuardRow = matrix.p2;
-  const smallForwardRow = matrix.p3;
-  const powerForwardRow = matrix.p4;
-  const centerRow = matrix.p5;
-  assert.ok(pointGuardRow);
-  assert.ok(shootingGuardRow);
-  assert.ok(smallForwardRow);
-  assert.ok(powerForwardRow);
-  assert.ok(centerRow);
-  pointGuardRow.PG = 48;
-  shootingGuardRow.SG = 48;
-  smallForwardRow.SF = 48;
-  powerForwardRow.PF = 48;
-  centerRow.C = 48;
+  matrix.p1.PG = 24;
+  matrix.p2.PG = 18;
+  matrix.p6.PG = 6;
+  matrix.p1.SG = 24;
+  matrix.p3.SG = 18;
+  matrix.p7.SG = 6;
+  matrix.p3.SF = 42;
+  matrix.p6.SF = 6;
+  matrix.p4.PF = 42;
+  matrix.p6.PF = 6;
+  matrix.p5.C = 42;
+  matrix.p6.C = 6;
+
+  const validation = validateLineupMatrix(players, matrix);
+  assert.equal(
+    validation.errors.includes("A player cannot start at multiple positions."),
+    true,
+  );
+});
+
+test("lineup helper validation accepts a legal three-player split and derives roles", () => {
+  const matrix = buildLegalMatrix();
+  matrix.p1.PG = 30;
+  matrix.p6.PG = 12;
+  matrix.p7.PG = 6;
 
   const validation = validateLineupMatrix(players, matrix);
   assert.deepEqual(validation.errors, []);
   assert.equal(validation.teamTotal, 240);
+  assert.deepEqual(
+    validation.roleAssignments.PG.map((assignment) => ({
+      minutes: assignment.minutes,
+      playerId: assignment.playerId,
+      role: assignment.role,
+    })),
+    [
+      { playerId: "p1", minutes: 30, role: "starter" },
+      { playerId: "p6", minutes: 12, role: "backup" },
+      { playerId: "p7", minutes: 6, role: "reserve" },
+    ],
+  );
 });
 
 test("lineup helper enthusiasm coercion now accepts the documented 1..15 range", () => {
