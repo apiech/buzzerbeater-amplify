@@ -265,7 +265,8 @@ export type OpponentForecastSignal =
   OpponentForecastResult["featureSignals"][number];
 export type PlayerTrendPoint = PlayerTrendPayload["history"][number];
 export type MatchBoxscoreTeam = NonNullable<MatchBoxscorePayload["homeTeam"]>;
-export type MatchMetricEntry = MatchBoxscoreTeam["ratings"][number];
+export type MatchMetricEntry = MatchBoxscoreTeam["teamTotals"][number];
+export type MatchBoxscoreTeamRatings = NonNullable<MatchBoxscoreTeam["ratings"]>;
 export type MatchBoxscorePlayerLine = MatchBoxscoreTeam["players"][number];
 
 export type GameDayRecapCoveragePayload = {

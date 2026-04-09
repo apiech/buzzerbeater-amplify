@@ -37,8 +37,21 @@
       "blk": 3,
       "pf": 14
     },
-    "ratings": {},
-    "efficiency": {},
+    "ratings": {
+      "outsideScoring": 6.3,
+      "insideScoring": 7,
+      "outsideDefense": 5.6,
+      "insideDefense": 6,
+      "rebounding": 4,
+      "offensiveFlow": 5.3
+    },
+    "efficiency": {
+      "PG": 89.5,
+      "SG": 121.4,
+      "SF": 79.2,
+      "PF": 88.8,
+      "C": 108.8
+    },
     "gdp": {},
     "players": [
       {
@@ -103,8 +116,21 @@
       "blk": 4,
       "pf": 15
     },
-    "ratings": {},
-    "efficiency": {},
+    "ratings": {
+      "outsideScoring": 5.3,
+      "insideScoring": 7.3,
+      "outsideDefense": 6.3,
+      "insideDefense": 7.6,
+      "rebounding": 6,
+      "offensiveFlow": 5
+    },
+    "efficiency": {
+      "PG": 67.3,
+      "SG": 87.2,
+      "SF": 99.3,
+      "PF": 96.9,
+      "C": 89
+    },
     "gdp": {},
     "players": [
       {

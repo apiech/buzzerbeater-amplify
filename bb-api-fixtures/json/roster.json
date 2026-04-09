@@ -2,37 +2,78 @@
   "version": "1",
   "retrievedAt": "2026-03-15T00:00:00Z",
   "teamId": "29656",
-  "teamName": "Visionaries",
   "players": [
     {
-      "id": "2001",
-      "firstName": "Alan",
-      "lastName": "Big",
-      "fullName": "Alan Big",
-      "salary": 12000,
-      "bestPosition": "C",
-      "age": null,
-      "height": null,
-      "dmi": null,
-      "injuryWeeks": null,
-      "nationality": null,
-      "skills": {},
-      "fields": {}
+      "id": "54901056",
+      "firstName": "Charles",
+      "lastName": "Desroches",
+      "fullName": "Charles Desroches",
+      "salary": 6408,
+      "bestPosition": "PG",
+      "age": 19,
+      "height": 75,
+      "dmi": 79200,
+      "injuryWeeks": 2,
+      "nationality": {
+        "id": "1",
+        "name": "USA",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "skills": {
+        "gameShape": 8,
+        "potential": 10,
+        "jumpShot": 9,
+        "range": 7,
+        "outsideDef": 10,
+        "handling": 11,
+        "driving": 11,
+        "passing": 8,
+        "insideShot": 11,
+        "insideDef": 7,
+        "rebound": 6,
+        "block": 7,
+        "stamina": 7,
+        "freeThrow": 7,
+        "experience": 1
+      }
     },
     {
-      "id": "2002",
-      "firstName": "Chris",
-      "lastName": "Quick",
-      "fullName": "Chris Quick",
-      "salary": 9000,
-      "bestPosition": "PG",
-      "age": null,
-      "height": null,
-      "dmi": null,
-      "injuryWeeks": null,
-      "nationality": null,
-      "skills": {},
-      "fields": {}
+      "id": "54903043",
+      "firstName": "Raymond",
+      "lastName": "Seals",
+      "fullName": "Raymond Seals",
+      "salary": 10048,
+      "bestPosition": "SF",
+      "age": 20,
+      "height": 75,
+      "dmi": 217600,
+      "injuryWeeks": 0,
+      "nationality": {
+        "id": "1",
+        "name": "USA",
+        "attributes": {
+          "id": "1"
+        }
+      },
+      "skills": {
+        "gameShape": 9,
+        "potential": 10,
+        "jumpShot": 11,
+        "range": 9,
+        "outsideDef": 12,
+        "handling": 12,
+        "driving": 9,
+        "passing": 7,
+        "insideShot": 11,
+        "insideDef": 9,
+        "rebound": 9,
+        "block": 9,
+        "stamina": 4,
+        "freeThrow": 2,
+        "experience": 2
+      }
     }
   ]
 }

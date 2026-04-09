@@ -1,13 +1,8 @@
 import type { Schema } from "../../amplify/data/resource";
-
-export const PREDICTION_RATING_SUFFIXES = [
-  "outsideScoring",
-  "insideScoring",
-  "outsideDefense",
-  "insideDefense",
-  "rebounding",
-  "offensiveFlow",
-] as const;
+import {
+  TEAM_RATING_KEYS,
+  type TeamRatings,
+} from "../buzzerbeater/team-ratings";
 
 export const PREDICTION_HOME_OFFENSE_OPTIONS = [
   "Base",
@@ -37,13 +32,12 @@ export const FIXED_AWAY_OFFENSE = "Base";
 export const FIXED_AWAY_DEFENSE = "ManToMan";
 export const PREDICTION_HOME_COURT_FACTOR = 1.06;
 
-type RatingSuffix = (typeof PREDICTION_RATING_SUFFIXES)[number];
 type TeamPrefix = "home" | "away";
 type MatchBoxscorePayload = NonNullable<Schema["getMatchBoxscoreDetails"]["returnType"]>;
 export type PredictionInputShape = Schema["PredictionManualInput"]["type"];
 type TeamSide = NonNullable<MatchBoxscorePayload["homeTeam"]>;
 type TeamLocation = "HOME" | "AWAY";
-type TeamRatingMap = Record<RatingSuffix, number>;
+type TeamRatingMap = TeamRatings;
 type TacticCoefficients = Record<string, TeamRatingMap>;
 
 const OFFENSE_TACTIC_COEFFICIENTS: TacticCoefficients = {
@@ -201,7 +195,7 @@ export function normalizePredictionRatingsFromBoxscore(args: {
     args.sourceTeam.defStrategy,
   );
 
-  for (const suffix of PREDICTION_RATING_SUFFIXES) {
+  for (const suffix of TEAM_RATING_KEYS) {
     normalized[suffix] = normalized[suffix] / offenseCoefficients[suffix];
     normalized[suffix] = normalized[suffix] / defenseCoefficients[suffix];
   }
@@ -230,7 +224,7 @@ export function applyBoxscoreRatingsToPredictionInput(args: {
   });
   const nextInput = { ...args.input };
 
-  for (const suffix of PREDICTION_RATING_SUFFIXES) {
+  for (const suffix of TEAM_RATING_KEYS) {
     nextInput[`${args.side}_${suffix}`] = roundPredictionValue(
       normalizedRatings[suffix],
     );
@@ -252,24 +246,11 @@ export function buildModelInputFromPredictionInput(
 }
 
 function readTeamRatings(team: TeamSide): TeamRatingMap {
-  const entries = new Map<string, number | null | undefined>(
-    team.ratings.map((entry) => [entry.key, entry.numberValue]),
-  );
-
-  return Object.fromEntries(
-    PREDICTION_RATING_SUFFIXES.map((suffix) => [
-      suffix,
-      requireFiniteNumber(entries.get(suffix), `ratings.${suffix}`),
-    ]),
-  ) as TeamRatingMap;
-}
-
-function requireFiniteNumber(value: number | null | undefined, label: string): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+  if (team.ratings) {
+    return team.ratings;
   }
 
-  throw new Error(`Source boxscore is missing ${label}.`);
+  throw new Error("Source boxscore is missing ratings.");
 }
 
 function roundPredictionValue(value: number): number {

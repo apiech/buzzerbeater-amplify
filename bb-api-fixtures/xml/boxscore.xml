@@ -5,6 +5,21 @@
       <teamName>Away Team</teamName>
       <offStrategy>Push The Ball</offStrategy>
       <defStrategy>3-2 Zone</defStrategy>
+      <ratings>
+        <outsideScoring>6.3</outsideScoring>
+        <insideScoring>7.0</insideScoring>
+        <outsideDefense>5.6</outsideDefense>
+        <insideDefense>6.0</insideDefense>
+        <rebounding>4.0</rebounding>
+        <offensiveFlow>5.3</offensiveFlow>
+      </ratings>
+      <efficiency>
+        <PG>89.5</PG>
+        <SG>121.4</SG>
+        <SF>79.2</SF>
+        <PF>88.8</PF>
+        <C>108.8</C>
+      </efficiency>
       <score partials='20,18,24,22'>84</score>
       <boxscore>
         <teamTotals>
@@ -56,6 +71,21 @@
       <teamName>Home Team</teamName>
       <offStrategy>Motion</offStrategy>
       <defStrategy>Man To Man</defStrategy>
+      <ratings>
+        <outsideScoring>5.3</outsideScoring>
+        <insideScoring>7.3</insideScoring>
+        <outsideDefense>6.3</outsideDefense>
+        <insideDefense>7.6</insideDefense>
+        <rebounding>6.0</rebounding>
+        <offensiveFlow>5.0</offensiveFlow>
+      </ratings>
+      <efficiency>
+        <PG>67.3</PG>
+        <SG>87.2</SG>
+        <SF>99.3</SF>
+        <PF>96.9</PF>
+        <C>89.0</C>
+      </efficiency>
       <score partials='18,20,21,24'>83</score>
       <boxscore>
         <teamTotals>

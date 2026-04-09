@@ -2540,10 +2540,10 @@ function computeBestQuarterMargin(
 }
 
 function compactScalarRecord(
-  input: Record<string, number | string | null>,
+  input: Record<string, number | string | null> | null | undefined,
 ): Record<string, number | string> {
   return Object.fromEntries(
-    Object.entries(input)
+    Object.entries(input ?? {})
       .filter((entry): entry is [string, number | string] => {
         const value = entry[1];
         return value !== null && value !== "";

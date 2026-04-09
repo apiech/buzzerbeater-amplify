@@ -6,20 +6,12 @@ import {
   getOwnerTrackedPlayerProfile,
   listWorkspacePlayerHistory,
 } from "../amplify/data/_backend/player-snapshot-access";
+import { WORKSPACE_CACHE_VERSION } from "../amplify/data/_backend/workspace-cache";
 
 test("listWorkspacePlayerHistory rejects players outside the caller workspace cache", async () => {
   await withSnapshotAccessRuntime(
     {
-      getBbConnection: async () => ({
-        workspaceCacheJson: {
-          teamHub: {
-            roster: [{ playerId: "other-player" }],
-          },
-          playerLab: {
-            players: [],
-          },
-        },
-      }),
+      getBbConnection: async () => createWorkspaceConnection("other-player"),
     },
     async () => {
       await assert.rejects(
@@ -111,9 +103,39 @@ test("getOwnerTrackedPlayerProfile returns the owner-scoped tracked profile", as
       getBbConnection: async () => createWorkspaceConnection("p1"),
       getTrackedPlayer: async () => ({
         profileJson: {
+          id: "p1",
+          firstName: "Lead",
+          lastName: "Guard",
+          fullName: "Lead Guard",
+          salary: 50000,
+          bestPosition: "PG",
           age: 26,
+          height: 74,
+          dmi: 1500,
+          injuryWeeks: 0,
+          nationality: {
+            id: "1",
+            name: "USA",
+            attributes: {
+              id: "1",
+            },
+          },
           skills: {
+            gameShape: 8,
+            potential: 10,
             jumpShot: 7,
+            range: 6,
+            outsideDef: 5,
+            handling: 8,
+            driving: 7,
+            passing: 9,
+            insideShot: 4,
+            insideDef: 3,
+            rebound: 4,
+            block: 2,
+            stamina: 8,
+            freeThrow: 7,
+            experience: 6,
           },
         },
       }),
@@ -121,9 +143,39 @@ test("getOwnerTrackedPlayerProfile returns the owner-scoped tracked profile", as
     async () => {
       const profile = await getOwnerTrackedPlayerProfile({} as any, "user-1", "p1");
       assert.deepStrictEqual(profile, {
+        id: "p1",
+        firstName: "Lead",
+        lastName: "Guard",
+        fullName: "Lead Guard",
+        salary: 50000,
+        bestPosition: "PG",
         age: 26,
+        height: 74,
+        dmi: 1500,
+        injuryWeeks: 0,
+        nationality: {
+          id: "1",
+          name: "USA",
+          attributes: {
+            id: "1",
+          },
+        },
         skills: {
+          gameShape: 8,
+          potential: 10,
           jumpShot: 7,
+          range: 6,
+          outsideDef: 5,
+          handling: 8,
+          driving: 7,
+          passing: 9,
+          insideShot: 4,
+          insideDef: 3,
+          rebound: 4,
+          block: 2,
+          stamina: 8,
+          freeThrow: 7,
+          experience: 6,
         },
       });
     },
@@ -151,9 +203,13 @@ function createWorkspaceConnection(playerId: string) {
     status: "CONNECTED",
     refreshSortAt: "2026-03-15T00:00:00.000Z",
     workspaceCacheJson: {
+      version: WORKSPACE_CACHE_VERSION,
+      home: {},
       teamHub: {
         roster: [{ playerId }],
       },
+      scout: {},
+      leagueIntel: {},
       playerLab: {
         players: [],
       },

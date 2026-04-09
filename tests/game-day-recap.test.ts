@@ -105,6 +105,17 @@ function createStandings(season = 64, leagueId = "100"): BBApiStandings {
   };
 }
 
+function createCompleteTeamRatings(base: number) {
+  return {
+    outsideScoring: base,
+    insideScoring: base - 0.8,
+    outsideDefense: base - 1.2,
+    insideDefense: base - 0.6,
+    rebounding: base - 1.7,
+    offensiveFlow: base - 2,
+  };
+}
+
 function createBoxScore(args: {
   awayScore: number;
   awayTeamId: string;
@@ -143,7 +154,7 @@ function createBoxScore(args: {
           },
         },
       ],
-      ratings: { outsideScoring: 12.2 },
+      ratings: createCompleteTeamRatings(12.2),
       score: args.awayScore,
       shortName: null,
       teamName: args.awayTeamName,
@@ -178,7 +189,7 @@ function createBoxScore(args: {
           },
         },
       ],
-      ratings: { outsideScoring: 11.4 },
+      ratings: createCompleteTeamRatings(11.4),
       score: args.homeScore,
       shortName: null,
       teamName: args.homeTeamName,

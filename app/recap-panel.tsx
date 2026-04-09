@@ -3,7 +3,6 @@
 import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
-import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input } from "@/app/ui/primitives/field";
@@ -110,62 +109,18 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   }, []);
 
   useEffect(() => {
-    let isActive = true;
-    let subscriptions: Array<{ unsubscribe(): void }> = [];
-    const commitSubscriptions = (
-      nextSubscriptions: Array<{ unsubscribe(): void }>,
-    ) => {
-      if (!isActive) {
-        for (const subscription of nextSubscriptions) {
-          subscription.unsubscribe();
-        }
-        return;
-      }
+    if (!hasActiveRecapHistory(recaps)) {
+      return;
+    }
 
-      subscriptions = nextSubscriptions;
-    };
-
-    void (async () => {
-      try {
-        const realtimeClient = await getRealtimeClient();
-        commitSubscriptions([
-          realtimeClient.models.GameDayRecap.onCreate().subscribe({
-            error: logRealtimeError("GameDayRecap.onCreate"),
-            next: () => loadRecapsEffect(selectedRecapKey),
-          }),
-          realtimeClient.models.GameDayRecap.onUpdate().subscribe({
-            error: logRealtimeError("GameDayRecap.onUpdate"),
-            next: () => loadRecapsEffect(selectedRecapKey),
-          }),
-          realtimeClient.models.LeagueGameDayRecap.onCreate().subscribe({
-            error: logRealtimeError("LeagueGameDayRecap.onCreate"),
-            next: () => loadRecapsEffect(selectedRecapKey),
-          }),
-          realtimeClient.models.LeagueGameDayRecap.onUpdate().subscribe({
-            error: logRealtimeError("LeagueGameDayRecap.onUpdate"),
-            next: () => loadRecapsEffect(selectedRecapKey),
-          }),
-          realtimeClient.models.SingleGameSummary.onCreate().subscribe({
-            error: logRealtimeError("SingleGameSummary.onCreate"),
-            next: () => loadRecapsEffect(selectedRecapKey),
-          }),
-          realtimeClient.models.SingleGameSummary.onUpdate().subscribe({
-            error: logRealtimeError("SingleGameSummary.onUpdate"),
-            next: () => loadRecapsEffect(selectedRecapKey),
-          }),
-        ]);
-      } catch (error) {
-        logRealtimeError("Recap.subscription.setup")(error);
-      }
-    })();
+    const intervalId = window.setInterval(() => {
+      loadRecapsEffect(selectedRecapKey);
+    }, 4000);
 
     return () => {
-      isActive = false;
-      for (const subscription of subscriptions) {
-        subscription.unsubscribe();
-      }
+      window.clearInterval(intervalId);
     };
-  }, [selectedRecapKey]);
+  }, [recaps, selectedRecapKey]);
 
   async function loadRecaps(preferredKey: string | null = selectedRecapKey) {
     setIsLoadingRecaps(true);
@@ -751,6 +706,15 @@ export function hasActiveGameDayRecap(
 ): boolean {
   return recaps.some(
     (recap) => Boolean(recap.status) && !terminalStatuses.has(recap.status),
+  );
+}
+
+export function hasActiveRecapHistory(
+  recaps: readonly RecapHistoryRecord[],
+): boolean {
+  return recaps.some(
+    (recap) =>
+      typeof recap.status === "string" && !terminalStatuses.has(recap.status),
   );
 }
 

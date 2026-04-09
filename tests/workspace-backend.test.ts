@@ -8,6 +8,11 @@ import {
   __testing as lineupHelperTesting,
   getLineupHelperWorkspace,
 } from "../amplify/data/_backend/lineup-helper";
+import { WORKSPACE_CACHE_VERSION } from "../amplify/data/_backend/workspace-cache";
+import type {
+  BBApiOwnedRosterPlayer,
+  BBApiOwnedRosterPlayerSkills,
+} from "../lib/bbapi";
 import {
   __testing as workspaceTesting,
   buildSalaryProjectionPayload,
@@ -157,6 +162,7 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
     status: "CONNECTED",
     lastSyncAt: "2020-03-15T00:00:00.000Z",
     workspaceCacheJson: {
+      version: WORKSPACE_CACHE_VERSION,
       home: {},
       teamHub: {},
       scout: {},
@@ -185,6 +191,33 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
     workspaceTesting.shouldSyncWorkspace({
       force: false,
       cachedWorkspace: null,
+    }),
+    true,
+  );
+});
+
+test("workspace cache version mismatches force a refresh", () => {
+  const connection = {
+    userId: "user-1",
+    bbLoginName: "coach",
+    status: "CONNECTED",
+    lastSyncAt: "2020-03-15T00:00:00.000Z",
+    workspaceCacheJson: {
+      version: WORKSPACE_CACHE_VERSION - 1,
+      home: {},
+      teamHub: {},
+      scout: {},
+      leagueIntel: {},
+      playerLab: {},
+    },
+  } as any;
+
+  const cachedWorkspace = workspaceTesting.readCachedWorkspace(connection);
+  assert.equal(cachedWorkspace, null);
+  assert.equal(
+    workspaceTesting.shouldSyncWorkspace({
+      force: false,
+      cachedWorkspace,
     }),
     true,
   );
@@ -581,20 +614,21 @@ test("lineup helper uses owner tracked profiles instead of shared snapshot paylo
       getMatchBoxscore: async () => null,
       getOwnerTrackedPlayerProfile: async () =>
         createOwnerTrackedPlayerProfile({
+          gameShape: 8,
+          potential: 10,
           jumpShot: 7,
-          jumpRange: 6,
-          outsideDefense: 5,
+          range: 6,
+          outsideDef: 5,
           handling: 8,
           driving: 7,
           passing: 9,
           insideShot: 4,
-          insideDefense: 3,
-          rebounding: 4,
-          shotBlocking: 2,
+          insideDef: 3,
+          rebound: 4,
+          block: 2,
           stamina: 8,
           freeThrow: 7,
           experience: 6,
-          gameShape: "strong",
         }),
       listWorkspacePlayerHistory: async () => [
         {
@@ -629,7 +663,7 @@ test("lineup helper uses owner tracked profiles instead of shared snapshot paylo
   assert.equal(rosterSkills.pa, 9);
   assert.equal(rosterSkills.rb, 4);
   assert.equal(rosterSkills.sb, 2);
-  assert.equal(rosterSkills.gs, 7);
+  assert.equal(rosterSkills.gs, 8);
   assert.deepStrictEqual(workspace.snapshotWarnings, []);
 });
 
@@ -790,6 +824,7 @@ test("buildConnectionRecord preserves explicit null updates when clearing stale 
       teamName: "Legacy Team",
       lastSyncError: "Old sync failure",
       workspaceCacheJson: {
+        version: WORKSPACE_CACHE_VERSION,
         home: { stale: true },
       },
     } as any,
@@ -857,7 +892,6 @@ test("lookupSharedPlayerCardByToken unwraps only the sanitized share payload", a
       }),
       getTrackedPlayer: async () => null,
       listWorkspacePlayerHistory: async () => [],
-      getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async () => undefined,
     },
   );
@@ -908,7 +942,6 @@ test("lookupSharedPlayerCardByToken returns null for revoked shares", async () =
       }),
       getTrackedPlayer: async () => null,
       listWorkspacePlayerHistory: async () => [],
-      getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async () => undefined,
     },
   );
@@ -943,7 +976,7 @@ function createLineupHelperConnection() {
     teamId: "team-1",
     lastSyncAt: "2026-03-15T00:00:00.000Z",
     workspaceCacheJson: {
-      connection: {},
+      version: WORKSPACE_CACHE_VERSION,
       home: {
         recentMatches: [],
       },
@@ -968,12 +1001,29 @@ function createLineupHelperConnection() {
   } as any;
 }
 
-function createOwnerTrackedPlayerProfile(skills: Record<string, unknown>) {
+function createOwnerTrackedPlayerProfile(
+  skills: BBApiOwnedRosterPlayerSkills,
+): BBApiOwnedRosterPlayer {
   return {
-    age: 26,
+    id: "p1",
+    firstName: "Lead",
+    lastName: "Guard",
+    fullName: "Lead Guard",
     salary: 50000,
+    bestPosition: "PG",
+    age: 26,
+    height: 74,
+    dmi: 1500,
+    injuryWeeks: 0,
+    nationality: {
+      id: "1",
+      name: "USA",
+      attributes: {
+        id: "1",
+      },
+    },
     skills,
-  } as Record<string, unknown>;
+  };
 }
 
 test("lookupSharedPlayerCardByToken returns null for expired shares", async () => {
@@ -1000,7 +1050,6 @@ test("lookupSharedPlayerCardByToken returns null for expired shares", async () =
       }),
       getTrackedPlayer: async () => null,
       listWorkspacePlayerHistory: async () => [],
-      getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async () => undefined,
     },
   );
@@ -1035,7 +1084,6 @@ test("revokePlayerCard marks an owned share as revoked", async () => {
       }),
       getTrackedPlayer: async () => null,
       listWorkspacePlayerHistory: async () => [],
-      getMatchBoxscore: async () => null,
       updateSharedPlayerCard: async (_env, input) => {
         updatedInput = input;
       },

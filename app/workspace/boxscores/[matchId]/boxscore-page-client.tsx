@@ -17,6 +17,7 @@ import {
   TableHeadCell,
   TableShell,
 } from "@/app/ui/primitives/table-shell";
+import { TEAM_RATING_KEYS } from "@/lib/buzzerbeater/team-ratings";
 
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-4";
 const numericCellClassName = "text-right tabular-nums";
@@ -139,10 +140,10 @@ export function BoxscorePageClient({ matchId }: { matchId: string }) {
           </Panel>
 
           <div className="grid gap-4 xl:grid-cols-2">
-            <MetricComparisonPanel
-              left={payload.homeTeam?.ratings ?? []}
+            <RatingsComparisonPanel
+              left={payload.homeTeam?.ratings}
               leftLabel={payload.homeTeam?.teamName ?? "Home team"}
-              right={payload.awayTeam?.ratings ?? []}
+              right={payload.awayTeam?.ratings}
               rightLabel={payload.awayTeam?.teamName ?? "Away team"}
               title="Ratings"
             />
@@ -185,7 +186,7 @@ function SummaryBlock({
   );
 }
 
-function MetricComparisonPanel({
+function RatingsComparisonPanel({
   left,
   leftLabel,
   right,
@@ -195,6 +196,62 @@ function MetricComparisonPanel({
   left: MatchBoxscoreTeam["ratings"];
   leftLabel: string;
   right: MatchBoxscoreTeam["ratings"];
+  rightLabel: string;
+  title: string;
+}) {
+  const rows = buildRatingComparisonRows(left, right);
+
+  return (
+    <Panel as="article" padding="sm" variant="solid">
+      <SectionHeading title={title} titleAs="h4" />
+      <TableShell compact tableClassName="min-w-[24rem]">
+        <thead>
+          <tr>
+            <TableHeadCell>Metric</TableHeadCell>
+            <TableHeadCell className={numericCellClassName}>
+              {leftLabel}
+            </TableHeadCell>
+            <TableHeadCell className={numericCellClassName}>
+              {rightLabel}
+            </TableHeadCell>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length ? (
+            rows.map((row) => (
+              <tr key={row.key}>
+                <TableCell>{row.label}</TableCell>
+                <TableCell className={numericCellClassName}>
+                  {row.leftValue}
+                </TableCell>
+                <TableCell className={numericCellClassName}>
+                  {row.rightValue}
+                </TableCell>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <TableCell className="text-ink-muted" colSpan={3}>
+                No saved metrics are available for this match.
+              </TableCell>
+            </tr>
+          )}
+        </tbody>
+      </TableShell>
+    </Panel>
+  );
+}
+
+function MetricComparisonPanel({
+  left,
+  leftLabel,
+  right,
+  rightLabel,
+  title,
+}: {
+  left: MatchBoxscoreTeam["teamTotals"];
+  leftLabel: string;
+  right: MatchBoxscoreTeam["teamTotals"];
   rightLabel: string;
   title: string;
 }) {
@@ -341,9 +398,25 @@ function Tag({ children }: { children: ReactNode }) {
   );
 }
 
-function buildMetricComparisonRows(
+function buildRatingComparisonRows(
   left: MatchBoxscoreTeam["ratings"],
   right: MatchBoxscoreTeam["ratings"],
+) {
+  if (!left && !right) {
+    return [];
+  }
+
+  return TEAM_RATING_KEYS.map((key) => ({
+    key,
+    label: humanizeKey(key),
+    leftValue: formatMetricValue(left?.[key] ?? null),
+    rightValue: formatMetricValue(right?.[key] ?? null),
+  }));
+}
+
+function buildMetricComparisonRows(
+  left: MatchBoxscoreTeam["teamTotals"],
+  right: MatchBoxscoreTeam["teamTotals"],
 ) {
   const leftMap = new Map(left.map((entry) => [entry.key, entry]));
   const rightMap = new Map(right.map((entry) => [entry.key, entry]));
@@ -394,7 +467,7 @@ function readPlayerStat(
 
 function formatMetricEntry(
   entry:
-    | MatchBoxscoreTeam["ratings"][number]
+    | MatchBoxscoreTeam["teamTotals"][number]
     | MatchBoxscorePlayerLine["performance"][number]
     | undefined,
 ) {
@@ -402,7 +475,7 @@ function formatMetricEntry(
     return "N/A";
   }
 
-  return formatMetricValue(entry.numberValue ?? entry.textValue ?? null);
+  return formatMetricValue(entry.numberValue);
 }
 
 function buildScoreline(payload: MatchBoxscorePayload): string {

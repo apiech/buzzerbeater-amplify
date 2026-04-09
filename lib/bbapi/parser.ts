@@ -1,4 +1,9 @@
 import { XMLParser } from "fast-xml-parser";
+import {
+  TEAM_RATING_KEYS,
+  type TeamRatings,
+} from "../buzzerbeater/team-ratings";
+import { OWNED_ROSTER_SKILL_KEYS } from "./types";
 
 import type {
   BBApiArena,
@@ -16,6 +21,8 @@ import type {
   BBApiPlayer,
   BBApiRoster,
   BBApiRosterPlayer,
+  BBApiRosterPlayerSkills,
+  BBApiRequiredNamedReference,
   BBApiSchedule,
   BBApiScheduleMatch,
   BBApiScheduleMatchSide,
@@ -70,9 +77,11 @@ export function parseRoster(xml: string): BBApiRoster {
   const players = toArray(container.player).map(parseRosterPlayer);
   return {
     version: asString(root.bbapi["@_version"]) ?? "1",
-    retrievedAt: asString(container["@_retrieved"]),
-    teamId: asString(container["@_teamid"]),
-    teamName: readText(container.teamName),
+    retrievedAt: requireStringValue(
+      container["@_retrieved"],
+      "roster retrieved timestamp",
+    ),
+    teamId: requireStringValue(container["@_teamid"], "roster team id"),
     players,
   };
 }
@@ -327,34 +336,34 @@ export function parseLeagues(xml: string): BBApiLeagues {
 
 function parseRosterPlayer(player: unknown): BBApiRosterPlayer {
   const node = getObject(player);
-  const firstName = readText(node?.firstName);
-  const lastName = readText(node?.lastName);
+  if (!node) {
+    throw new Error("Expected roster player node.");
+  }
+
+  const firstName = requireNodeText(node.firstName, "roster player firstName");
+  const lastName = requireNodeText(node.lastName, "roster player lastName");
   return {
-    id: asString(node?.["@_id"]),
+    id: requireStringValue(node["@_id"], "roster player id"),
     firstName,
     lastName,
-    fullName: [firstName, lastName].filter(Boolean).join(" "),
-    salary: asNumber(readText(node?.salary)),
-    bestPosition: readText(node?.bestPosition),
-    age: asNumber(readText(node?.age)),
-    height: asNumber(readText(node?.height)),
-    dmi: asNumber(readText(node?.dmi)),
-    injuryWeeks: asNumber(readText(node?.injury)),
-    nationality: parseNamedReference(node?.nationality),
-    skills: mapScalarChildren(node?.skills),
-    fields: stripKeys(node, [
-      "@_id",
-      "firstName",
-      "lastName",
-      "salary",
-      "bestPosition",
-      "age",
-      "height",
-      "dmi",
-      "injury",
-      "nationality",
-      "skills",
-    ]),
+    fullName: `${firstName} ${lastName}`,
+    salary: requireNodeNumber(node.salary, "roster player salary"),
+    bestPosition: requireNodeText(
+      node.bestPosition,
+      "roster player bestPosition",
+    ),
+    age: requireNodeNumber(node.age, "roster player age"),
+    height: requireNodeNumber(node.height, "roster player height"),
+    dmi: requireNodeNumber(node.dmi, "roster player dmi"),
+    injuryWeeks:
+      node.injury === undefined
+        ? 0
+        : requireNodeNumber(node.injury, "roster player injury"),
+    nationality: requireNamedReference(
+      node.nationality,
+      "roster player nationality",
+    ),
+    skills: parseRosterPlayerSkills(node.skills),
   };
 }
 
@@ -417,9 +426,15 @@ function parseBoxScoreTeam(team: unknown): BBApiBoxScoreTeam {
     defStrategy: readText(node?.defStrategy),
     score: asNumber(readText(node?.score)),
     partialScores: partials,
-    teamTotals: mapScalarChildren(getObject(node?.boxscore)?.teamTotals),
-    ratings: mapScalarChildren(node?.ratings),
-    efficiency: mapScalarChildren(node?.efficiency),
+    teamTotals: mapRequiredNumberChildren(
+      getObject(node?.boxscore)?.teamTotals,
+      "boxscore teamTotals",
+    ),
+    ratings: parseBoxScoreTeamRatings(node?.ratings),
+    efficiency: mapRequiredNumberChildren(
+      node?.efficiency,
+      "boxscore efficiency",
+    ),
     gdp: mapScalarChildren(node?.gdp),
     players: toArray(getObject(node?.boxscore)?.player).map(parseBoxScorePlayer),
     details: stripKeys(node, [
@@ -446,15 +461,14 @@ function parseBoxScorePlayer(player: unknown): BBApiBoxScorePlayer {
     firstName,
     lastName,
     fullName: [firstName, lastName].filter(Boolean).join(" "),
-    performance: mapScalarChildren(node?.performance),
-    minutesByPosition: Object.entries(getObject(node?.minutes) ?? {}).reduce<
-      Record<string, number | null>
-    >((accumulator, [key, value]) => {
-      if (!key.startsWith("@_")) {
-        accumulator[key] = asNumber(readText(value));
-      }
-      return accumulator;
-    }, {}),
+    performance: mapRequiredNumberChildren(
+      node?.performance,
+      "boxscore player performance",
+    ),
+    minutesByPosition: mapRequiredNumberChildren(
+      node?.minutes,
+      "boxscore player minutes",
+    ),
     details: stripKeys(node, ["@_id", "firstName", "lastName", "performance", "minutes"]),
   };
 }
@@ -469,6 +483,115 @@ function parseNamedReference(node: unknown): BBApiNamedReference | null {
     name: readText(object),
     attributes: readAttributes(object),
   };
+}
+
+function requireNamedReference(
+  node: unknown,
+  label: string,
+): BBApiRequiredNamedReference {
+  const reference = parseNamedReference(node);
+  if (!reference?.id || !reference.name) {
+    throw new Error(`Expected ${label}.`);
+  }
+  return reference as BBApiRequiredNamedReference;
+}
+
+function parseRosterPlayerSkills(node: unknown): BBApiRosterPlayerSkills {
+  const skillsNode = requireObject(node, "roster player skills");
+  const gameShape = requireNodeNumber(
+    skillsNode.gameShape,
+    "roster player skills.gameShape",
+  );
+  const potential = requireNodeNumber(
+    skillsNode.potential,
+    "roster player skills.potential",
+  );
+
+  const hasOwnedSkills = OWNED_ROSTER_SKILL_KEYS.some((key) => {
+    if (key === "gameShape" || key === "potential") {
+      return false;
+    }
+    return skillsNode[key] !== undefined;
+  });
+
+  if (!hasOwnedSkills) {
+    return {
+      gameShape,
+      potential,
+    };
+  }
+
+  return {
+    gameShape,
+    potential,
+    jumpShot: requireNodeNumber(
+      skillsNode.jumpShot,
+      "roster player skills.jumpShot",
+    ),
+    range: requireNodeNumber(skillsNode.range, "roster player skills.range"),
+    outsideDef: requireNodeNumber(
+      skillsNode.outsideDef,
+      "roster player skills.outsideDef",
+    ),
+    handling: requireNodeNumber(
+      skillsNode.handling,
+      "roster player skills.handling",
+    ),
+    driving: requireNodeNumber(
+      skillsNode.driving,
+      "roster player skills.driving",
+    ),
+    passing: requireNodeNumber(
+      skillsNode.passing,
+      "roster player skills.passing",
+    ),
+    insideShot: requireNodeNumber(
+      skillsNode.insideShot,
+      "roster player skills.insideShot",
+    ),
+    insideDef: requireNodeNumber(
+      skillsNode.insideDef,
+      "roster player skills.insideDef",
+    ),
+    rebound: requireNodeNumber(
+      skillsNode.rebound,
+      "roster player skills.rebound",
+    ),
+    block: requireNodeNumber(skillsNode.block, "roster player skills.block"),
+    stamina: requireNodeNumber(
+      skillsNode.stamina,
+      "roster player skills.stamina",
+    ),
+    freeThrow: requireNodeNumber(
+      skillsNode.freeThrow,
+      "roster player skills.freeThrow",
+    ),
+    experience: requireNodeNumber(
+      skillsNode.experience,
+      "roster player skills.experience",
+    ),
+  };
+}
+
+function parseBoxScoreTeamRatings(node: unknown): TeamRatings | null {
+  const ratingsNode = getObject(node);
+  if (!ratingsNode) {
+    return null;
+  }
+
+  const keys = Object.keys(ratingsNode).filter((key) => !key.startsWith("@_"));
+  if (!keys.length) {
+    return null;
+  }
+
+  const ratings = {} as TeamRatings;
+  for (const key of TEAM_RATING_KEYS) {
+    ratings[key] = requireNodeNumber(
+      ratingsNode[key],
+      `boxscore ratings.${key}`,
+    );
+  }
+  return ratings;
 }
 
 function parseRoot(xml: string): { bbapi: XmlObject } {
@@ -532,6 +655,22 @@ function asString(value: unknown): string | null {
   return null;
 }
 
+function requireStringValue(value: unknown, label: string): string {
+  const text = asString(value);
+  if (!text) {
+    throw new Error(`Expected ${label}.`);
+  }
+  return text;
+}
+
+function requireNodeText(value: unknown, label: string): string {
+  const text = readText(value);
+  if (!text) {
+    throw new Error(`Expected ${label}.`);
+  }
+  return text;
+}
+
 function asNumber(value: unknown): number | null {
   const stringValue = asString(value);
   if (!stringValue) {
@@ -539,6 +678,14 @@ function asNumber(value: unknown): number | null {
   }
   const parsed = Number(stringValue);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function requireNodeNumber(value: unknown, label: string): number {
+  const numeric = asNumber(readText(value));
+  if (numeric === null) {
+    throw new Error(`Expected ${label}.`);
+  }
+  return numeric;
 }
 
 function asBoolean(value: unknown): boolean | null {
@@ -573,6 +720,21 @@ function mapNumberChildren(node: unknown): Record<string, number | null> {
     (accumulator, [key, value]) => {
       if (!key.startsWith("@_")) {
         accumulator[key] = asNumber(readText(value));
+      }
+      return accumulator;
+    },
+    {},
+  );
+}
+
+function mapRequiredNumberChildren(
+  node: unknown,
+  label: string,
+): Record<string, number> {
+  return Object.entries(getObject(node) ?? {}).reduce<Record<string, number>>(
+    (accumulator, [key, value]) => {
+      if (!key.startsWith("@_")) {
+        accumulator[key] = requireNodeNumber(value, `${label}.${key}`);
       }
       return accumulator;
     },

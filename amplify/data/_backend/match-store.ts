@@ -12,6 +12,7 @@ import {
   BBXmlApiClient,
   type BBXmlApiClientOptions,
 } from "../../../lib/bbapi";
+import { TEAM_RATING_KEYS } from "../../../lib/buzzerbeater/team-ratings";
 import { resolveBbAccessKey } from "./credentials";
 import {
   getBbConnection,
@@ -39,8 +40,11 @@ type MatchBoxscoreDetailsResult = NonNullable<
     : never
 >;
 type MatchMetricEntry = NonNullable<
-  NonNullable<MatchBoxscoreDetailsResult["homeTeam"]>["ratings"]
+  NonNullable<MatchBoxscoreDetailsResult["homeTeam"]>["teamTotals"]
 >[number];
+type MatchBoxscoreTeamRatingsResult = NonNullable<
+  NonNullable<MatchBoxscoreDetailsResult["homeTeam"]>["ratings"]
+>;
 type MatchContextResult = NonNullable<MatchBoxscoreDetailsResult["context"]>;
 type MatchBoxscoreTeamResult = NonNullable<
   MatchBoxscoreDetailsResult["homeTeam"]
@@ -356,18 +360,23 @@ export async function getMatchBoxscoreDetails(
 
   const matchStoreEnv = resolveMatchStoreEnv(args.env);
   const catalog = await dependencies.getCatalog(matchStoreEnv, matchId);
+  let fallbackPayload: MatchBoxscoreDetailsResult | null = null;
   if (catalog?.canonicalKey) {
     const matchPackage = await dependencies.getJsonObject(
       matchStoreEnv,
       catalog.canonicalKey,
     );
-    return buildMatchStoreBoxscorePayload(matchPackage);
+    const payload = buildMatchStoreBoxscorePayload(matchPackage);
+    if (hasCompletePredictionRatings(payload)) {
+      return payload;
+    }
+    fallbackPayload = payload;
   }
 
   const boxscore = await dependencies.getLegacyMatchBoxscore(args.env, userId, matchId);
   if (boxscore) {
     const boxscorePayload = asRecord(boxscore.boxscoreJson);
-    return buildNormalizedBoxscorePayload({
+    const payload = buildNormalizedBoxscorePayload({
       matchId,
       matchType: asOptionalString(boxscorePayload?.type),
       startTime: asOptionalString(boxscorePayload?.startTime),
@@ -375,9 +384,25 @@ export async function getMatchBoxscoreDetails(
       boxscore: boxscorePayload,
       source: "MATCH_BOXSCORE_CACHE",
     });
+    if (hasCompletePredictionRatings(payload)) {
+      return payload;
+    }
+    fallbackPayload = fallbackPayload ?? payload;
   }
 
-  return fetchLiveMatchBoxscoreDetails(args.env, userId, matchId, dependencies);
+  try {
+    return await fetchLiveMatchBoxscoreDetails(
+      args.env,
+      userId,
+      matchId,
+      dependencies,
+    );
+  } catch (error) {
+    if (fallbackPayload) {
+      return fallbackPayload;
+    }
+    throw error;
+  }
 }
 
 async function fetchLiveMatchBoxscoreDetails(
@@ -665,6 +690,24 @@ function buildNormalizedBoxscorePayload(input: {
   };
 }
 
+function hasCompletePredictionRatings(
+  payload: MatchBoxscoreDetailsResult,
+): boolean {
+  return (
+    hasCompletePredictionRatingSet(payload.homeTeam) &&
+    hasCompletePredictionRatingSet(payload.awayTeam)
+  );
+}
+
+function hasCompletePredictionRatingSet(
+  team: MatchBoxscoreTeamResult | null | undefined,
+): boolean {
+  if (!team?.ratings) {
+    return false;
+  }
+  return TEAM_RATING_KEYS.every((key) => Number.isFinite(team.ratings?.[key]));
+}
+
 function serializeBoxscoreTeam(
   team: Record<string, unknown> | null,
 ): MatchBoxscoreTeamResult | null {
@@ -680,11 +723,11 @@ function serializeBoxscoreTeam(
     defStrategy: asOptionalString(team.defStrategy),
     score: asOptionalNumber(team.score),
     partialScores: toIntegerList(team.partialScores),
-    teamTotals: toMetricEntries(
+    teamTotals: toNumericMetricEntries(
       asRecord(team.teamTotals) ?? asRecord(team.totals),
     ),
-    ratings: toMetricEntries(asRecord(team.ratings)),
-    efficiency: toMetricEntries(asRecord(team.efficiency)),
+    ratings: toMatchBoxscoreTeamRatings(asRecord(team.ratings)),
+    efficiency: toNumericMetricEntries(asRecord(team.efficiency)),
     players: toBoxscorePlayerLines(team.players),
   };
 }
@@ -693,7 +736,9 @@ function toBoxscorePlayerLines(
   value: unknown,
 ): MatchBoxscorePlayerLineResult[] {
   return toRecordArray(value).map((player) => {
-    const minutesByPosition = toMetricEntries(asRecord(player.minutesByPosition));
+    const minutesByPosition = toNumericMetricEntries(
+      asRecord(player.minutesByPosition),
+    );
 
     return {
       playerId: asOptionalString(player.id),
@@ -702,13 +747,13 @@ function toBoxscorePlayerLines(
       fullName: asOptionalString(player.fullName) ?? "Unknown player",
       isStarter: asOptionalBoolean(asRecord(player.details)?.isStarter) ?? false,
       minutes: sumMetricEntries(minutesByPosition),
-      performance: toMetricEntries(asRecord(player.performance)),
+      performance: toNumericMetricEntries(asRecord(player.performance)),
       minutesByPosition,
     };
   });
 }
 
-function toMetricEntries(
+function toNumericMetricEntries(
   values: Record<string, unknown> | null,
 ): MatchMetricEntry[] {
   if (!values) {
@@ -717,15 +762,51 @@ function toMetricEntries(
 
   return Object.entries(values)
     .filter(([key]) => !key.startsWith("__"))
-    .map(([key, rawValue]) => {
-      const numberValue = asOptionalNumber(rawValue);
-      return {
-        key,
-        numberValue,
-        textValue: numberValue === null ? asOptionalString(rawValue) : null,
-      };
-    })
+    .map(([key, rawValue]) => ({
+      key,
+      numberValue: requireNumber(rawValue, `boxscore metric ${key}`),
+    }))
     .sort((left, right) => String(left.key).localeCompare(String(right.key)));
+}
+
+function toMatchBoxscoreTeamRatings(
+  values: Record<string, unknown> | null,
+): MatchBoxscoreTeamRatingsResult | null {
+  if (!values) {
+    return null;
+  }
+
+  const keys = Object.keys(values).filter((key) => !key.startsWith("__"));
+  if (!keys.length) {
+    return null;
+  }
+
+  const outsideScoring = asFiniteNumber(values.outsideScoring);
+  const insideScoring = asFiniteNumber(values.insideScoring);
+  const outsideDefense = asFiniteNumber(values.outsideDefense);
+  const insideDefense = asFiniteNumber(values.insideDefense);
+  const rebounding = asFiniteNumber(values.rebounding);
+  const offensiveFlow = asFiniteNumber(values.offensiveFlow);
+
+  if (
+    outsideScoring === null ||
+    insideScoring === null ||
+    outsideDefense === null ||
+    insideDefense === null ||
+    rebounding === null ||
+    offensiveFlow === null
+  ) {
+    return null;
+  }
+
+  return {
+    outsideScoring,
+    insideScoring,
+    outsideDefense,
+    insideDefense,
+    rebounding,
+    offensiveFlow,
+  };
 }
 
 function toIntegerList(value: unknown): number[] {
@@ -739,7 +820,20 @@ function toIntegerList(value: unknown): number[] {
 }
 
 function sumMetricEntries(entries: MatchMetricEntry[]): number {
-  return entries.reduce((total, entry) => total + (entry.numberValue ?? 0), 0);
+  return entries.reduce((total, entry) => total + entry.numberValue, 0);
+}
+
+function requireNumber(value: unknown, label: string): number {
+  const numeric = asFiniteNumber(value);
+  if (numeric === null) {
+    throw new Error(`Expected ${label}.`);
+  }
+  return numeric;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  const numeric = asOptionalNumber(value);
+  return numeric !== null && Number.isFinite(numeric) ? numeric : null;
 }
 
 function buildMatchContext(

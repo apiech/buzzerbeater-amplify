@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   canDisplayLeagueHistoryRows,
@@ -12,6 +15,8 @@ import type {
   LeagueHistoryPayload,
   LeagueHistoryRow,
 } from "../app/types";
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
 
 test("hasActiveLeagueHistoryBackfill recognizes active worker states", () => {
   assert.equal(hasActiveLeagueHistoryBackfill(createStatus("QUEUED")), true);
@@ -99,6 +104,21 @@ test("describeLeagueHistoryStatus stays user-facing during progress and failure 
     }),
     /failed/i,
   );
+});
+
+test("league history silently polls active backfills without browser realtime subscriptions", () => {
+  const source = readFileSync(
+    join(currentDir, "..", "app", "league-history-panel.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /window\.setInterval/);
+  assert.match(source, /hasActiveLeagueHistoryBackfill\(payload\?\.status \?\? null\)/);
+  assert.match(source, /ensureBackfill: false/);
+  assert.match(source, /showSpinner: false/);
+  assert.doesNotMatch(source, /amplify-realtime/);
+  assert.doesNotMatch(source, /getRealtimeClient/);
+  assert.doesNotMatch(source, /\.subscribe\(/);
 });
 
 function createStatus(

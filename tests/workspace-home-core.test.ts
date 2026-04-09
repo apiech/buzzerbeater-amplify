@@ -3,8 +3,15 @@ import test from "node:test";
 
 import {
   buildCompetitiveRecentSample,
+  type CompetitiveSampleIncludedGame,
   type CompetitiveRecentSample,
 } from "../amplify/data/_backend/match-importance";
+import type {
+  BBApiBoxScore,
+  BBApiBoxScorePlayer,
+  BBApiScheduleMatch,
+} from "../lib/bbapi";
+import { resolveBuzzerBeaterNumericValue } from "../lib/buzzerbeater/rating-scale";
 import { __testing as workspaceTesting } from "../amplify/data/_backend/workspace";
 
 const TEAM_ID = "OUR";
@@ -670,7 +677,7 @@ function createCompetitiveSample(
 function createIncludedGame(
   matchId: string,
   players: Array<ReturnType<typeof createTeamBoxPlayer>>,
-) {
+): CompetitiveSampleIncludedGame {
   return {
     match: createScheduleMatch(matchId, "2026-03-01T19:00:00Z", "league.rs", 90, 82),
     boxScore: createGameBoxScore(matchId, players),
@@ -682,7 +689,7 @@ function createIncludedGame(
       stageKey: "REGULAR_SEASON",
       stageLabel: "Regular season",
     },
-  } as const;
+  };
 }
 
 function createScheduleMatch(
@@ -691,7 +698,7 @@ function createScheduleMatch(
   type: string,
   teamScore: number,
   opponentScore: number,
-) {
+): BBApiScheduleMatch {
   return {
     id: matchId,
     startTime,
@@ -706,13 +713,13 @@ function createScheduleMatch(
       teamName: "Visionaries",
       score: teamScore,
     },
-  } as const;
+  };
 }
 
 function createGameBoxScore(
   matchId: string,
   players: Array<ReturnType<typeof createTeamBoxPlayer>>,
-) {
+): BBApiBoxScore {
   return {
     version: "1",
     retrievedAt: "2026-03-15T00:00:00Z",
@@ -732,7 +739,7 @@ function createGameBoxScore(
       score: 82,
       partialScores: [20, 20, 20, 22],
       teamTotals: {},
-      ratings: {},
+      ratings: null,
       efficiency: {},
       gdp: {},
       players: [],
@@ -747,14 +754,14 @@ function createGameBoxScore(
       score: 90,
       partialScores: [23, 22, 21, 24],
       teamTotals: {},
-      ratings: {},
+      ratings: null,
       efficiency: {},
       gdp: {},
       players,
       details: {},
     },
     details: {},
-  } as const;
+  };
 }
 
 function createTeamBoxPlayer(
@@ -769,7 +776,7 @@ function createTeamBoxPlayer(
     to: number;
   }>,
   isStarter = true,
-) {
+): BBApiBoxScorePlayer {
   return {
     id: playerId,
     firstName: playerId,
@@ -793,7 +800,7 @@ function createTeamBoxPlayer(
     details: {
       isStarter,
     },
-  } as const;
+  };
 }
 
 function createRosterPlayer(
@@ -806,7 +813,7 @@ function createRosterPlayer(
     dmi: number;
     gameShape: string;
     injuryWeeks: number;
-    skills: Record<string, string>;
+    skills: Record<string, string | number>;
   }> = {},
 ) {
   return {
@@ -823,10 +830,92 @@ function createRosterPlayer(
     nationality: {
       id: "1",
       name: "USA",
+      attributes: {
+        id: "1",
+      },
     },
-    skills: overrides.skills ?? { gameShape: overrides.gameShape ?? "strong" },
-    fields: {},
+    skills: buildOwnedRosterSkills(
+      overrides.skills ?? {
+        gameShape: overrides.gameShape ?? "strong",
+        potential: 10,
+        jumpShot: 1,
+        range: 1,
+        outsideDef: 1,
+        handling: 1,
+        driving: 1,
+        passing: 1,
+        insideShot: 1,
+        insideDef: 1,
+        rebound: 1,
+        block: 1,
+        stamina: 1,
+        freeThrow: 1,
+        experience: 1,
+      },
+    ),
   };
+}
+
+function buildOwnedRosterSkills(
+  skills: Record<string, string | number>,
+): Record<string, number> {
+  const mapped = Object.entries(skills).reduce<Record<string, number>>(
+    (accumulator, [rawKey, rawValue]) => {
+      const key = normalizeRosterSkillKey(rawKey);
+      const numeric = normalizeRosterSkillValue(key, rawValue);
+      accumulator[key] = numeric;
+      return accumulator;
+    },
+    {},
+  );
+
+  return {
+    gameShape: mapped.gameShape ?? 8,
+    potential: mapped.potential ?? 10,
+    jumpShot: mapped.jumpShot ?? 1,
+    range: mapped.range ?? 1,
+    outsideDef: mapped.outsideDef ?? 1,
+    handling: mapped.handling ?? 1,
+    driving: mapped.driving ?? 1,
+    passing: mapped.passing ?? 1,
+    insideShot: mapped.insideShot ?? 1,
+    insideDef: mapped.insideDef ?? 1,
+    rebound: mapped.rebound ?? 1,
+    block: mapped.block ?? 1,
+    stamina: mapped.stamina ?? 1,
+    freeThrow: mapped.freeThrow ?? 1,
+    experience: mapped.experience ?? 1,
+  };
+}
+
+function normalizeRosterSkillKey(value: string): string {
+  switch (value) {
+    case "jumpRange":
+      return "range";
+    case "outsideDefense":
+      return "outsideDef";
+    case "insideDefense":
+      return "insideDef";
+    case "rebounding":
+      return "rebound";
+    case "shotBlocking":
+      return "block";
+    default:
+      return value;
+  }
+}
+
+function normalizeRosterSkillValue(key: string, value: string | number): number {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  const scale = key === "gameShape" ? "game_shape" : "player_rating";
+  const numeric = resolveBuzzerBeaterNumericValue(scale, value);
+  if (numeric === null) {
+    throw new Error(`Unexpected ${key} test value: ${value}`);
+  }
+  return numeric;
 }
 
 function createTeamStats(ppgByPlayerId: Record<string, number>) {

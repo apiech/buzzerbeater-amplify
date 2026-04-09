@@ -12,7 +12,6 @@ import {
 } from "react";
 
 import { client } from "@/app/amplify-client";
-import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import {
   findBestPredictionGridCell,
   hasRenderablePredictionGrid,
@@ -214,48 +213,6 @@ export function PredictionPanel({
 
   useEffect(() => {
     loadCurrentPredictionEffect();
-  }, []);
-
-  useEffect(() => {
-    let isActive = true;
-    let subscriptions: Array<{ unsubscribe(): void }> = [];
-    const commitSubscriptions = (
-      nextSubscriptions: Array<{ unsubscribe(): void }>,
-    ) => {
-      if (!isActive) {
-        for (const subscription of nextSubscriptions) {
-          subscription.unsubscribe();
-        }
-        return;
-      }
-
-      subscriptions = nextSubscriptions;
-    };
-
-    void (async () => {
-      try {
-        const realtimeClient = await getRealtimeClient();
-        commitSubscriptions([
-          realtimeClient.models.PredictionJob.onCreate().subscribe({
-            error: logRealtimeError("PredictionJob.onCreate"),
-            next: () => loadCurrentPredictionEffect(true),
-          }),
-          realtimeClient.models.PredictionJob.onUpdate().subscribe({
-            error: logRealtimeError("PredictionJob.onUpdate"),
-            next: () => loadCurrentPredictionEffect(true),
-          }),
-        ]);
-      } catch (error) {
-        logRealtimeError("PredictionJob.subscription.setup")(error);
-      }
-    })();
-
-    return () => {
-      isActive = false;
-      for (const subscription of subscriptions) {
-        subscription.unsubscribe();
-      }
-    };
   }, []);
 
   useEffect(() => {

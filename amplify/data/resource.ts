@@ -803,8 +803,16 @@ const schema = a
 
     MatchMetricEntry: a.customType({
       key: a.string().required(),
-      numberValue: a.float(),
-      textValue: a.string(),
+      numberValue: a.float().required(),
+    }),
+
+    MatchBoxscoreTeamRatings: a.customType({
+      outsideScoring: a.float().required(),
+      insideScoring: a.float().required(),
+      outsideDefense: a.float().required(),
+      insideDefense: a.float().required(),
+      rebounding: a.float().required(),
+      offensiveFlow: a.float().required(),
     }),
 
     MatchContext: a.customType({
@@ -1129,7 +1137,7 @@ const schema = a
       score: a.integer(),
       partialScores: a.integer().required().array().required(),
       teamTotals: a.ref("MatchMetricEntry").required().array().required(),
-      ratings: a.ref("MatchMetricEntry").required().array().required(),
+      ratings: a.ref("MatchBoxscoreTeamRatings"),
       efficiency: a.ref("MatchMetricEntry").required().array().required(),
       players: a.ref("MatchBoxscorePlayerLine").required().array().required(),
     }),

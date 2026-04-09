@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import { BBXmlApiClient, BBXmlApiError } from "../../../lib/bbapi";
+import {
+  BBXmlApiClient,
+  BBXmlApiError,
+  formatRosterGameShapeLabel,
+  ownedRosterPlayerToRawPlayerSkills,
+} from "../../../lib/bbapi";
 import type {
   BBApiBoxScore,
   BBApiBoxScorePlayer,
   BBApiBoxScoreTeam,
   BBApiCurrentWorkspace,
+  BBApiOwnedRosterPlayer,
   BBApiRosterPlayer,
   BBApiScheduleMatch,
   BBApiStandings,
@@ -13,7 +19,6 @@ import type {
   BBApiTeamStats,
 } from "../../../lib/bbapi";
 import {
-  buildRawPlayerSkills,
   rankRoster,
   type RawPlayerSkills,
 } from "../../../lib/coach-parrot";
@@ -64,6 +69,10 @@ import {
   type CompetitiveRecentSample,
 } from "./match-importance";
 import { assertMaintenanceInactive } from "./maintenance";
+import {
+  buildWorkspaceCachePayload,
+  readWorkspaceCachePayload,
+} from "./workspace-cache";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -852,13 +861,13 @@ async function syncWorkspace(args: {
       args.userId,
       connectionForViews,
       {
-        workspaceCacheJson: {
+        workspaceCacheJson: buildWorkspaceCachePayload({
           home,
           teamHub,
           scout,
           leagueIntel,
           playerLab,
-        },
+        }),
       },
     );
     await upsertBbConnection(args.env, updatedConnection);
@@ -1219,7 +1228,7 @@ function buildTeamHub(
       nationalityName: player.nationality?.name ?? null,
       salary: player.salary,
       age: player.age,
-      gameShape: asString(player.skills.gameShape),
+      gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
       dmi: player.dmi,
       injuryWeeks: player.injuryWeeks,
       projectedStarterCount: starterCounts[player.id ?? ""] ?? 0,
@@ -1313,7 +1322,7 @@ export function buildScoutWorkspace(
         bestPosition: player.bestPosition,
         age: player.age,
         salary: player.salary,
-        gameShape: asString(player.skills.gameShape),
+        gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
         dmi: player.dmi,
         injuryWeeks: player.injuryWeeks,
         projectedStarterCount: null,
@@ -1492,7 +1501,7 @@ function buildPlayerLab(
       nationalityName: player.nationality?.name ?? null,
       salary: player.salary,
       age: player.age,
-      gameShape: asString(player.skills.gameShape),
+      gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
       dmi: player.dmi,
       injuryWeeks: player.injuryWeeks,
       projectedStarterCount: starterCounts[player.id ?? ""] ?? 0,
@@ -1505,7 +1514,7 @@ function playerToCanonicalPlayerSnapshot(
   userId: string,
   teamId: string | null,
   teamName: string | null,
-  player: BBApiRosterPlayer,
+  player: BBApiOwnedRosterPlayer,
   fetchedAt: string,
 ): {
   playerId: string;
@@ -1518,9 +1527,9 @@ function playerToCanonicalPlayerSnapshot(
   lastName: string | null;
   salary: number | null;
   bestPosition: string | null;
-  gameShape: string | null;
-  dmi: number | null;
-  injuryWeeks: number | null;
+  gameShape: string;
+  dmi: number;
+  injuryWeeks: number;
   payload: Record<string, unknown>;
 } {
   if (!player.id || !teamId) {
@@ -1540,7 +1549,7 @@ function playerToCanonicalPlayerSnapshot(
     lastName: player.lastName,
     salary: player.salary,
     bestPosition: player.bestPosition,
-    gameShape: asString(player.skills.gameShape),
+    gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
     payload: {
@@ -1558,7 +1567,7 @@ function playerToHistoricalPlayerObservation(
   userId: string,
   teamId: string | null,
   teamName: string | null,
-  player: BBApiRosterPlayer,
+  player: BBApiOwnedRosterPlayer,
   fetchedAt: string,
 ): PlayerSkillObservationRecord {
   if (!player.id || !teamId) {
@@ -1581,7 +1590,7 @@ function playerToHistoricalPlayerObservation(
     fullName: player.fullName,
     bestPosition: player.bestPosition,
     salary: player.salary,
-    gameShape: asString(player.skills.gameShape),
+    gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
   };
@@ -1591,7 +1600,7 @@ function playerToTrackedPlayerRecord(
   userId: string,
   teamId: string | null,
   teamName: string | null,
-  player: BBApiRosterPlayer,
+  player: BBApiOwnedRosterPlayer,
   fetchedAt: string,
 ): Record<string, unknown> {
   if (!player.id || !teamId) {
@@ -1611,7 +1620,7 @@ function playerToTrackedPlayerRecord(
     age: player.age,
     height: player.height,
     nationalityName: player.nationality?.name ?? null,
-    gameShape: asString(player.skills.gameShape),
+    gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
     profileJson: player,
@@ -1766,7 +1775,7 @@ function buildTopPlayers(
 }
 
 function buildHomeCorePlayers(args: {
-  rosterPlayers: BBApiRosterPlayer[];
+  rosterPlayers: BBApiOwnedRosterPlayer[];
   teamStats: BBApiTeamStats | null;
   competitiveSample: CompetitiveRecentSample;
   teamId: string | null;
@@ -1795,17 +1804,15 @@ function buildHomeCorePlayers(args: {
   const gameShapeNorm = buildNormalizedValueMap(
     playerKeys.map(({ key, player }) => ({
       key,
-      value: player.skills.gameShape && typeof player.skills.gameShape === "string" ? gameShapeScore(player.skills.gameShape) : null,
+      value: player.skills.gameShape,
     })),
   );
   const scoredPlayers = playerKeys.map(({ key, player }) => {
-    const rawSkills = buildRawPlayerSkills({
+    const rawSkills = {
+      ...ownedRosterPlayerToRawPlayerSkills(player),
       playerId: key,
       name: player.fullName,
-      age: player.age,
-      salary: player.salary,
-      skills: player.skills,
-    });
+    };
     return {
       key,
       player,
@@ -1926,7 +1933,7 @@ function buildHomeCorePlayers(args: {
           nationalityName: player.nationality?.name ?? null,
           salary: player.salary,
           age: player.age,
-          gameShape: asString(player.skills.gameShape),
+          gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
           dmi: player.dmi,
           injuryWeeks: player.injuryWeeks,
           projectedStarterCount: null,
@@ -2168,8 +2175,8 @@ function roundToOneDecimal(value: number): number {
   return Number(value.toFixed(1));
 }
 
-function getPlayerKey(player: BBApiRosterPlayer): string {
-  return player.id ?? `player:${player.fullName}`;
+function getPlayerKey(player: BBApiOwnedRosterPlayer): string {
+  return player.id;
 }
 
 function extractPpg(
@@ -2548,21 +2555,11 @@ function resolveConnectionField<Key extends keyof BbConnectionRecord>(
 function readCachedWorkspace(
   connection: BbConnectionRecord,
 ): WorkspaceBundle | null {
-  const cache = connection.workspaceCacheJson;
-  if (!cache || typeof cache !== "object") {
+  const cache = readWorkspaceCachePayload(connection.workspaceCacheJson);
+  if (!cache) {
     return null;
   }
-
-  const typedCache = cache as Record<string, unknown>;
-  const home = toRecord(typedCache.home);
-  const teamHub = toRecord(typedCache.teamHub);
-  const scout = toRecord(typedCache.scout);
-  const leagueIntel = toRecord(typedCache.leagueIntel);
-  const playerLab = toRecord(typedCache.playerLab);
-
-  if (!home || !teamHub || !scout || !leagueIntel || !playerLab) {
-    return null;
-  }
+  const { home, teamHub, scout, leagueIntel, playerLab } = cache;
 
   const syncedAt = connection.lastSyncAt ?? null;
 
@@ -2614,23 +2611,6 @@ function toRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function gameShapeScore(value: string | null): number {
-  switch ((value ?? "").toLowerCase()) {
-    case "proficient":
-      return 4;
-    case "strong":
-      return 3.5;
-    case "respectable":
-      return 3;
-    case "mediocre":
-      return 2;
-    case "inept":
-      return 1;
-    default:
-      return 2.5;
-  }
 }
 
 function classifySalaryTrend(

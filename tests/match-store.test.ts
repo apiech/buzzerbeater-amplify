@@ -11,6 +11,17 @@ import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtim
 
 installInactiveMaintenanceRuntime();
 
+function createCompletePredictionRatings(base: number) {
+  return {
+    outsideScoring: base,
+    insideScoring: base - 0.5,
+    outsideDefense: base - 1,
+    insideDefense: base - 1.5,
+    rebounding: base - 2,
+    offensiveFlow: base - 2.5,
+  };
+}
+
 function createDependencies(overrides: Partial<any> = {}): any {
   return {
     listTrackedTeamsForUser: async () => [],
@@ -22,8 +33,18 @@ function createDependencies(overrides: Partial<any> = {}): any {
       getSchedule: async () => ({ matches: [] }),
       getBoxScore: async () => ({
         matchId: "m1",
-        homeTeam: { id: "T1", teamName: "Home", score: 80 },
-        awayTeam: { id: "T2", teamName: "Away", score: 70 },
+        homeTeam: {
+          id: "T1",
+          teamName: "Home",
+          score: 80,
+          ratings: createCompletePredictionRatings(9.5),
+        },
+        awayTeam: {
+          id: "T2",
+          teamName: "Away",
+          score: 70,
+          ratings: createCompletePredictionRatings(8.5),
+        },
       }),
       getBoxScoreXml: async () => "<boxscore />",
     }),
@@ -53,7 +74,7 @@ function createDependencies(overrides: Partial<any> = {}): any {
           teamName: "Home",
           offStrategy: "Base",
           defStrategy: "ManToMan",
-          ratings: { outsideScoring: 9.1 },
+          ratings: createCompletePredictionRatings(9.1),
           efficiency: { pp100: 101.2 },
         },
         awayTeam: {
@@ -61,7 +82,7 @@ function createDependencies(overrides: Partial<any> = {}): any {
           teamName: "Away",
           offStrategy: "Push",
           defStrategy: "23Zone",
-          ratings: { outsideScoring: 8.4 },
+          ratings: createCompletePredictionRatings(8.4),
           efficiency: { pp100: 95.3 },
         },
       },
@@ -178,7 +199,7 @@ test("getMatchBoxscoreDetails prefers canonical match-store payloads", async () 
             teamName: "Home",
             offStrategy: "Base",
             defStrategy: "ManToMan",
-            ratings: { outsideScoring: 9.1 },
+            ratings: createCompletePredictionRatings(9.1),
             efficiency: { pp100: 101.2 },
           },
           awayTeam: {
@@ -186,7 +207,7 @@ test("getMatchBoxscoreDetails prefers canonical match-store payloads", async () 
             teamName: "Away",
             offStrategy: "Push",
             defStrategy: "23Zone",
-            ratings: { outsideScoring: 8.4 },
+            ratings: createCompletePredictionRatings(8.4),
             efficiency: { pp100: 95.3 },
           },
         },
@@ -231,14 +252,14 @@ test("getMatchBoxscoreDetails falls back to neutral per-user cache for unrelated
             teamName: "Unrelated Home",
             offStrategy: "Motion",
             defStrategy: "32Zone",
-            ratings: { outsideScoring: 9.1 },
+            ratings: createCompletePredictionRatings(9.1),
           },
           awayTeam: {
             id: "T9",
             teamName: "Unrelated Away",
             offStrategy: "Push",
             defStrategy: "23Zone",
-            ratings: { outsideScoring: 8.4 },
+            ratings: createCompletePredictionRatings(8.4),
           },
           matchId: "m9",
           startTime: "2026-03-10T20:00:00.000Z",
@@ -291,7 +312,7 @@ test("getMatchBoxscoreDetails fetches live BB data when both caches miss", async
               teamName: "Road Club",
               offStrategy: "Push",
               defStrategy: "23Zone",
-              ratings: { outsideScoring: 8.7 },
+              ratings: createCompletePredictionRatings(8.7),
             },
             endTime: "2026-03-12T21:58:00.000Z",
             homeTeam: {
@@ -299,7 +320,7 @@ test("getMatchBoxscoreDetails fetches live BB data when both caches miss", async
               teamName: "Host Club",
               offStrategy: "Motion",
               defStrategy: "ManToMan",
-              ratings: { outsideScoring: 9.9 },
+              ratings: createCompletePredictionRatings(9.9),
             },
             matchId: "m42",
             startTime: "2026-03-12T20:00:00.000Z",
@@ -325,6 +346,84 @@ test("getMatchBoxscoreDetails fetches live BB data when both caches miss", async
   assert.equal(typedPayload.source, "LIVE_BB_API");
   assert.equal(typedPayload.homeTeam?.teamName, "Host Club");
   assert.equal(typedPayload.awayTeam?.teamName, "Road Club");
+});
+
+test("getMatchBoxscoreDetails skips incomplete cached ratings and refreshes from live BB data", async () => {
+  const payload = await getMatchBoxscoreDetails(
+    {
+      env: {
+        MATCH_STORE_BUCKET_NAME: "bucket",
+        MATCH_CATALOG_TABLE_NAME: "catalog",
+        TEAM_MATCH_PROJECTION_TABLE_NAME: "projection",
+        MATCH_INGEST_QUEUE_URL: "ingest",
+        MATCH_MATERIALIZE_QUEUE_URL: "materialize",
+      },
+      identity: { sub: "user-1" },
+      matchId: "m7",
+    },
+    createDependencies({
+      getCatalog: async () => ({
+        matchId: "m7",
+        homeTeamId: "T1",
+        awayTeamId: "T2",
+        ingestStatus: "SUCCEEDED",
+        canonicalKey: "canonical/m7.json",
+      }),
+      getJsonObject: async () => ({
+        matchId: "m7",
+        boxscore: {
+          homeTeam: {
+            id: "T1",
+            teamName: "Stale Home",
+            offStrategy: "Base",
+            defStrategy: "ManToMan",
+            ratings: { outsideScoring: 9.1 },
+          },
+          awayTeam: {
+            id: "T2",
+            teamName: "Stale Away",
+            offStrategy: "Push",
+            defStrategy: "23Zone",
+            ratings: { outsideScoring: 8.4 },
+          },
+        },
+      }),
+      getBbConnection: async () => ({
+        bbLoginName: "apiuser",
+        teamId: "T1",
+      }),
+      createBbClient: () => ({
+        getBoxScore: async () => ({
+          matchId: "m7",
+          homeTeam: {
+            id: "T1",
+            teamName: "Fresh Home",
+            offStrategy: "Base",
+            defStrategy: "ManToMan",
+            ratings: createCompletePredictionRatings(9.9),
+          },
+          awayTeam: {
+            id: "T2",
+            teamName: "Fresh Away",
+            offStrategy: "Push",
+            defStrategy: "23Zone",
+            ratings: createCompletePredictionRatings(8.8),
+          },
+        }),
+        getBoxScoreXml: async () => "<boxscore />",
+      }),
+      listTrackedTeamsForUser: async () => [{ teamId: "T1" }],
+    }),
+  );
+
+  const typedPayload = payload as {
+    awayTeam: { teamName: string | null } | null;
+    homeTeam: { teamName: string | null } | null;
+    source: string;
+  };
+  assert.equal(typedPayload.source, "LIVE_BB_API");
+  assert.equal(typedPayload.homeTeam?.teamName, "Fresh Home");
+  assert.equal(typedPayload.awayTeam?.teamName, "Fresh Away");
 });
 
 test("catalog and projection builders expose the expected canonical fields", () => {

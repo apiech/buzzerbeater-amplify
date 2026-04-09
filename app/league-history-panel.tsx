@@ -3,7 +3,6 @@
 import { useEffect, useEffectEvent, useState, type FormEvent } from "react";
 
 import { client } from "@/app/amplify-client";
-import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import type {
   DashboardWorkspace,
   LeagueHistoryBackfillStatus,
@@ -108,58 +107,21 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
   }, [requestedLeagueId]);
 
   useEffect(() => {
-    if (!requestedLeagueId) {
+    if (!hasActiveLeagueHistoryBackfill(payload?.status ?? null)) {
       return;
     }
 
-    let isActive = true;
-    let subscriptions: Array<{ unsubscribe(): void }> = [];
-    const commitSubscriptions = (
-      nextSubscriptions: Array<{ unsubscribe(): void }>,
-    ) => {
-      if (!isActive) {
-        for (const subscription of nextSubscriptions) {
-          subscription.unsubscribe();
-        }
-        return;
-      }
-
-      subscriptions = nextSubscriptions;
-    };
-
-    void (async () => {
-      try {
-        const realtimeClient = await getRealtimeClient();
-        commitSubscriptions([
-          realtimeClient.models.LeagueHistoryBackfill.onCreate().subscribe({
-            error: logRealtimeError("LeagueHistoryBackfill.onCreate"),
-            next: () =>
-              loadHistoryEffect({
-                ensureBackfill: false,
-                showSpinner: false,
-              }),
-          }),
-          realtimeClient.models.LeagueHistoryBackfill.onUpdate().subscribe({
-            error: logRealtimeError("LeagueHistoryBackfill.onUpdate"),
-            next: () =>
-              loadHistoryEffect({
-                ensureBackfill: false,
-                showSpinner: false,
-              }),
-          }),
-        ]);
-      } catch (error) {
-        logRealtimeError("LeagueHistoryBackfill.subscription.setup")(error);
-      }
-    })();
+    const intervalId = window.setInterval(() => {
+      loadHistoryEffect({
+        ensureBackfill: false,
+        showSpinner: false,
+      });
+    }, 4000);
 
     return () => {
-      isActive = false;
-      for (const subscription of subscriptions) {
-        subscription.unsubscribe();
-      }
+      window.clearInterval(intervalId);
     };
-  }, [requestedLeagueId]);
+  }, [payload?.status]);
 
   async function loadHistory(args: {
     ensureBackfill: boolean;

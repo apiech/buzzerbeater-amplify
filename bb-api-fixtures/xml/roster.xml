@@ -1,18 +1,71 @@
 <?xml version='1.0' encoding='utf-8'?>
 <bbapi version='1'>
   <roster teamid='29656' retrieved='2026-03-15T00:00:00Z'>
-    <teamName>Visionaries</teamName>
-    <player id='2001'>
-      <firstName>Alan</firstName>
-      <lastName>Big</lastName>
-      <salary>12000</salary>
-      <bestPosition>C</bestPosition>
-    </player>
-    <player id='2002'>
-      <firstName>Chris</firstName>
-      <lastName>Quick</lastName>
-      <salary>9000</salary>
+    <player id='54901056'>
+      <firstName>Charles</firstName>
+      <lastName>Desroches</lastName>
+      <nationality id='1'>USA</nationality>
+      <age>19</age>
+      <height>75</height>
+      <dmi>79200</dmi>
+      <injury>2</injury>
+      <jersey>1</jersey>
+      <salary>6408</salary>
       <bestPosition>PG</bestPosition>
+      <seasonDrafted>69</seasonDrafted>
+      <leagueDrafted>4</leagueDrafted>
+      <teamDrafted>22906</teamDrafted>
+      <draftPick>1</draftPick>
+      <forSale>0</forSale>
+      <skills>
+        <gameShape>8</gameShape>
+        <potential>10</potential>
+        <jumpShot>9</jumpShot>
+        <range>7</range>
+        <outsideDef>10</outsideDef>
+        <handling>11</handling>
+        <driving pop='+1'>11</driving>
+        <passing>8</passing>
+        <insideShot>11</insideShot>
+        <insideDef>7</insideDef>
+        <rebound>6</rebound>
+        <block>7</block>
+        <stamina>7</stamina>
+        <freeThrow>7</freeThrow>
+        <experience>1</experience>
+      </skills>
+    </player>
+    <player id='54903043'>
+      <firstName>Raymond</firstName>
+      <lastName>Seals</lastName>
+      <nationality id='1'>USA</nationality>
+      <age>20</age>
+      <height>75</height>
+      <dmi>217600</dmi>
+      <salary>10048</salary>
+      <bestPosition>SF</bestPosition>
+      <seasonDrafted>69</seasonDrafted>
+      <leagueDrafted>34</leagueDrafted>
+      <teamDrafted>29532</teamDrafted>
+      <draftPick>11</draftPick>
+      <forSale>0</forSale>
+      <skills>
+        <gameShape>9</gameShape>
+        <potential>10</potential>
+        <jumpShot pop='+1'>11</jumpShot>
+        <range>9</range>
+        <outsideDef>12</outsideDef>
+        <handling>12</handling>
+        <driving>9</driving>
+        <passing>7</passing>
+        <insideShot pop='+1'>11</insideShot>
+        <insideDef>9</insideDef>
+        <rebound>9</rebound>
+        <block>9</block>
+        <stamina>4</stamina>
+        <freeThrow>2</freeThrow>
+        <experience>2</experience>
+      </skills>
     </player>
   </roster>
 </bbapi>

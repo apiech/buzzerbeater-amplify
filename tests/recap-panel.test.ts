@@ -4,10 +4,15 @@ import test from "node:test";
 import {
   __testing as recapTesting,
   hasActiveGameDayRecap,
+  hasActiveRecapHistory,
   resolveDefaultRecapDate,
   sortGameDayRecaps,
 } from "../app/recap-panel";
-import type { DashboardWorkspace, GameDayRecapRecord } from "../app/types";
+import type {
+  DashboardWorkspace,
+  GameDayRecapRecord,
+  RecapHistoryRecord,
+} from "../app/types";
 
 function createWorkspace(): DashboardWorkspace {
   return {
@@ -89,6 +94,34 @@ function createRecapRecord(args: {
   };
 }
 
+function createRecapHistoryRecord(args: {
+  kind?: RecapHistoryRecord["kind"];
+  selectionKey: string;
+  status: RecapHistoryRecord["status"];
+  targetKey: string;
+  updatedAt: string;
+}): RecapHistoryRecord {
+  return {
+    completedAt: null,
+    coverageJson: null,
+    error: null,
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    kind: args.kind ?? "LEAGUE_DATE",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    requestJson: {},
+    requestedAt: args.updatedAt,
+    resultJson: null,
+    season: null,
+    selectionKey: args.selectionKey,
+    status: args.status,
+    targetKey: args.targetKey,
+    updatedAt: args.updatedAt,
+  };
+}
+
 test("resolveDefaultRecapDate uses the latest recent match date", () => {
   assert.equal(resolveDefaultRecapDate(createWorkspace()), "2026-03-15");
 });
@@ -129,6 +162,33 @@ test("hasActiveGameDayRecap detects non-terminal recap work", () => {
         requestedAt: "2026-03-15T23:00:00Z",
         status: "BUILDING_CONTEXT",
         targetKey: "working",
+      }),
+    ]),
+    true,
+  );
+});
+
+test("hasActiveRecapHistory detects non-terminal recap work", () => {
+  assert.equal(
+    hasActiveRecapHistory([
+      createRecapHistoryRecord({
+        selectionKey: "LEAGUE_DATE:done",
+        status: "SUCCEEDED",
+        targetKey: "done",
+        updatedAt: "2026-03-15T22:00:00Z",
+      }),
+    ]),
+    false,
+  );
+
+  assert.equal(
+    hasActiveRecapHistory([
+      createRecapHistoryRecord({
+        kind: "SINGLE_GAME",
+        selectionKey: "SINGLE_GAME:working",
+        status: "QUEUED",
+        targetKey: "working",
+        updatedAt: "2026-03-15T23:00:00Z",
       }),
     ]),
     true,

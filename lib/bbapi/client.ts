@@ -12,6 +12,7 @@ import type {
   BBApiTeamInfo,
   BBApiTeamStats,
 } from "./types";
+import { assertOwnedRoster } from "./roster-player";
 import {
   parseArena,
   parseBoxScore,
@@ -184,7 +185,7 @@ export class BBXmlApiClient {
 
     return {
       teamInfo,
-      roster,
+      roster: assertOwnedRoster(roster, "Owned roster.aspx response"),
       schedule,
       standings,
       teamStats,

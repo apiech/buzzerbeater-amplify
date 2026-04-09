@@ -2,7 +2,6 @@ import {
   DEFENSE_OPTIONS,
   LOCATION_OPTIONS,
   OFFENSE_OPTIONS,
-  buildRawPlayerSkills,
   evaluateLineup,
   evaluateRoster,
   normalizeContext,
@@ -12,6 +11,7 @@ import {
   type Position,
   type RawPlayerSkills,
 } from "../../../lib/coach-parrot";
+import { ownedRosterPlayerToRawPlayerSkills } from "../../../lib/bbapi";
 import type { Schema } from "../resource";
 import { PositionCode } from "../schema-enums";
 import {
@@ -22,6 +22,7 @@ import {
 import { assertMaintenanceInactive } from "./maintenance";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
 import { getBbConnection, getMatchBoxscore } from "./repository";
+import { readWorkspaceCachePayload } from "./workspace-cache";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -244,9 +245,8 @@ async function buildHelperRosterPlayer(
       ])
     : [[], null];
   const snapshot = selectLatestHistory(history);
-  const skills = toRecord(profile?.skills);
 
-  if (!playerId || !snapshot || !skills) {
+  if (!playerId || !snapshot || !profile) {
     return {
       playerId: playerId ?? fullName.toLowerCase().replace(/\s+/g, "-"),
       fullName,
@@ -265,17 +265,7 @@ async function buildHelperRosterPlayer(
     };
   }
 
-  const normalizedSkills = buildRawPlayerSkills({
-    playerId,
-    name: fullName,
-    age: player.age ?? profile?.age,
-    salary: player.salary ?? snapshot.salary ?? profile?.salary,
-    skills: {
-      ...skills,
-      gameShape:
-        snapshot.gameShape ?? asString(player.gameShape) ?? skills.gameShape,
-    },
-  });
+  const normalizedSkills = ownedRosterPlayerToRawPlayerSkills(profile);
 
   return {
     playerId,
@@ -511,28 +501,18 @@ function toContextRecord(value: unknown): Partial<CoachParrotContext> {
 function readCachedWorkspace(
   connection: Record<string, unknown> | null,
 ): CachedWorkspaceBundle | null {
-  const cache = toRecord(connection?.workspaceCacheJson);
+  const cache = readWorkspaceCachePayload(connection?.workspaceCacheJson);
   if (!cache) {
-    return null;
-  }
-
-  const home = toRecord(cache.home);
-  const teamHub = toRecord(cache.teamHub);
-  const scout = toRecord(cache.scout);
-  const leagueIntel = toRecord(cache.leagueIntel);
-  const playerLab = toRecord(cache.playerLab);
-
-  if (!home || !teamHub || !scout || !leagueIntel || !playerLab) {
     return null;
   }
 
   return {
     connection: connection ?? {},
-    home,
-    teamHub,
-    scout,
-    leagueIntel,
-    playerLab,
+    home: cache.home,
+    teamHub: cache.teamHub,
+    scout: cache.scout,
+    leagueIntel: cache.leagueIntel,
+    playerLab: cache.playerLab,
   };
 }
 

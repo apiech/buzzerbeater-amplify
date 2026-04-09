@@ -1,4 +1,8 @@
 import {
+  parseStoredOwnedRosterPlayer,
+  type BBApiOwnedRosterPlayer,
+} from "../../../lib/bbapi";
+import {
   listCanonicalPlayerSkillSnapshots,
   upsertCanonicalPlayerSkillSnapshot,
   type CanonicalPlayerSkillSnapshotRecord,
@@ -10,6 +14,7 @@ import {
   type BbConnectionRecord,
   type PlayerSkillObservationRecord,
 } from "./repository";
+import { readWorkspaceCachePayload } from "./workspace-cache";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -60,14 +65,14 @@ export async function getOwnerTrackedPlayerProfile(
   env: GraphqlEnv,
   userId: string,
   playerId: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<BBApiOwnedRosterPlayer | null> {
   const connection = await runtime.getBbConnection(env, userId);
   if (!resolveWorkspacePlayer(connection, playerId)) {
     throw new Error("The requested player is not available in the current workspace.");
   }
 
   const trackedPlayer = await runtime.getTrackedPlayer(env, userId, playerId);
-  return toRecord(trackedPlayer?.profileJson);
+  return parseStoredOwnedRosterPlayer(trackedPlayer?.profileJson);
 }
 
 export async function storeCanonicalPlayerSkillSnapshot(
@@ -134,9 +139,9 @@ function resolveWorkspacePlayer(
   connection: BbConnectionRecord | null,
   playerId: string,
 ): Record<string, unknown> | null {
-  const cache = toRecord(connection?.workspaceCacheJson);
-  const teamHub = toRecord(cache?.teamHub);
-  const playerLab = toRecord(cache?.playerLab);
+  const cache = readWorkspaceCachePayload(connection?.workspaceCacheJson);
+  const teamHub = cache?.teamHub;
+  const playerLab = cache?.playerLab;
   const candidates = [
     ...toRecordArray(teamHub?.roster),
     ...toRecordArray(playerLab?.players),
@@ -145,12 +150,6 @@ function resolveWorkspacePlayer(
   return (
     candidates.find((player) => asString(player.playerId) === playerId) ?? null
   );
-}
-
-function toRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function toRecordArray(value: unknown): Record<string, unknown>[] {

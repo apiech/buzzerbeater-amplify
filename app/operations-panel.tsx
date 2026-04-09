@@ -3,7 +3,6 @@
 import { useEffect, useEffectEvent, useState } from "react";
 
 import { client } from "@/app/amplify-client";
-import { getRealtimeClient, logRealtimeError } from "@/app/amplify-realtime";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
@@ -54,78 +53,32 @@ export function OperationsPanel() {
   }, []);
 
   useEffect(() => {
-    let isActive = true;
-    let subscriptions: Array<{ unsubscribe(): void }> = [];
-    const commitSubscriptions = (
-      nextSubscriptions: Array<{ unsubscribe(): void }>,
-    ) => {
-      if (!isActive) {
-        for (const subscription of nextSubscriptions) {
-          subscription.unsubscribe();
-        }
-        return;
-      }
+    if (
+      !hasActiveOperationsActivity({
+        currentPrediction,
+        gameDayRecaps,
+        leagueGameDayRecaps,
+        singleGameSummaries,
+        syncRuns,
+      })
+    ) {
+      return;
+    }
 
-      subscriptions = nextSubscriptions;
-    };
-
-    void (async () => {
-      try {
-        const realtimeClient = await getRealtimeClient();
-        commitSubscriptions([
-          realtimeClient.models.SyncRun.onCreate().subscribe({
-            error: logRealtimeError("SyncRun.onCreate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.SyncRun.onUpdate().subscribe({
-            error: logRealtimeError("SyncRun.onUpdate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.PredictionJob.onCreate().subscribe({
-            error: logRealtimeError("PredictionJob.onCreate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.PredictionJob.onUpdate().subscribe({
-            error: logRealtimeError("PredictionJob.onUpdate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.GameDayRecap.onCreate().subscribe({
-            error: logRealtimeError("GameDayRecap.onCreate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.GameDayRecap.onUpdate().subscribe({
-            error: logRealtimeError("GameDayRecap.onUpdate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.LeagueGameDayRecap.onCreate().subscribe({
-            error: logRealtimeError("LeagueGameDayRecap.onCreate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.LeagueGameDayRecap.onUpdate().subscribe({
-            error: logRealtimeError("LeagueGameDayRecap.onUpdate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.SingleGameSummary.onCreate().subscribe({
-            error: logRealtimeError("SingleGameSummary.onCreate"),
-            next: () => loadOperationsEffect(),
-          }),
-          realtimeClient.models.SingleGameSummary.onUpdate().subscribe({
-            error: logRealtimeError("SingleGameSummary.onUpdate"),
-            next: () => loadOperationsEffect(),
-          }),
-        ]);
-      } catch (error) {
-        logRealtimeError("Operations.subscription.setup")(error);
-      }
-    })();
+    const intervalId = window.setInterval(() => {
+      loadOperationsEffect();
+    }, 4000);
 
     return () => {
-      isActive = false;
-      for (const subscription of subscriptions) {
-        subscription.unsubscribe();
-      }
+      window.clearInterval(intervalId);
     };
-  }, []);
+  }, [
+    currentPrediction,
+    gameDayRecaps,
+    leagueGameDayRecaps,
+    singleGameSummaries,
+    syncRuns,
+  ]);
 
   async function loadOperations() {
     setIsLoading(true);
@@ -168,10 +121,10 @@ export function OperationsPanel() {
     setIsLoading(false);
   }
 
-  const activeSyncCount = syncRuns.filter((run) => !terminalSyncStatuses.has(run.status)).length;
+  const activeSyncCount = syncRuns.filter((run) => isActiveSyncStatus(run.status)).length;
   const failedSyncCount = syncRuns.filter((run) => run.status === "FAILED").length;
   const activePredictionCount =
-    currentPrediction && !terminalPredictionStatuses.has(currentPrediction.status)
+    currentPrediction && isActivePredictionStatus(currentPrediction.status)
       ? 1
       : 0;
   const recapActivity = combinedRecaps(
@@ -180,7 +133,7 @@ export function OperationsPanel() {
     singleGameSummaries,
   );
   const activeRecapCount = recapActivity.filter(
-    (recap) => !terminalRecapStatuses.has(recap.status),
+    (recap) => isActiveRecapStatus(recap.status),
   ).length;
 
   return (
@@ -372,6 +325,25 @@ function combinedRecaps(
   ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
+export function hasActiveOperationsActivity(input: {
+  currentPrediction: CurrentPredictionPreview | null;
+  gameDayRecaps: readonly GameDayRecapRecord[];
+  leagueGameDayRecaps: readonly LeagueGameDayRecapRecord[];
+  singleGameSummaries: readonly SingleGameSummaryRecord[];
+  syncRuns: readonly SyncRunRecord[];
+}): boolean {
+  return (
+    input.syncRuns.some((run) => isActiveSyncStatus(run.status)) ||
+    Boolean(
+      input.currentPrediction &&
+        isActivePredictionStatus(input.currentPrediction.status),
+    ) ||
+    input.gameDayRecaps.some((recap) => isActiveRecapStatus(recap.status)) ||
+    input.leagueGameDayRecaps.some((recap) => isActiveRecapStatus(recap.status)) ||
+    input.singleGameSummaries.some((recap) => isActiveRecapStatus(recap.status))
+  );
+}
+
 function describePredictionJob(job: CurrentPredictionPreview): string {
   if (
     job.homeScore !== null &&
@@ -416,4 +388,16 @@ function parseJsonRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function isActivePredictionStatus(status: string | null | undefined): boolean {
+  return typeof status === "string" && !terminalPredictionStatuses.has(status);
+}
+
+function isActiveRecapStatus(status: string | null | undefined): boolean {
+  return typeof status === "string" && !terminalRecapStatuses.has(status);
+}
+
+function isActiveSyncStatus(status: string | null | undefined): boolean {
+  return typeof status === "string" && !terminalSyncStatuses.has(status);
 }

@@ -1,8 +1,53 @@
+import type { TeamRatings } from "../buzzerbeater/team-ratings";
+
 export type BBApiNamedReference = {
   id: string | null;
   name: string | null;
   attributes?: Record<string, string | null>;
 };
+
+export type BBApiRequiredNamedReference = {
+  id: string;
+  name: string;
+  attributes?: Record<string, string | null>;
+};
+
+export const PUBLIC_ROSTER_SKILL_KEYS = [
+  "gameShape",
+  "potential",
+] as const;
+
+export const OWNED_ROSTER_SKILL_KEYS = [
+  "gameShape",
+  "potential",
+  "jumpShot",
+  "range",
+  "outsideDef",
+  "handling",
+  "driving",
+  "passing",
+  "insideShot",
+  "insideDef",
+  "rebound",
+  "block",
+  "stamina",
+  "freeThrow",
+  "experience",
+] as const;
+
+export type BBApiPublicRosterPlayerSkills = Record<
+  (typeof PUBLIC_ROSTER_SKILL_KEYS)[number],
+  number
+>;
+
+export type BBApiOwnedRosterPlayerSkills = Record<
+  (typeof OWNED_ROSTER_SKILL_KEYS)[number],
+  number
+>;
+
+export type BBApiRosterPlayerSkills =
+  | BBApiPublicRosterPlayerSkills
+  | BBApiOwnedRosterPlayerSkills;
 
 export type BBApiTeamInfo = {
   version: string;
@@ -19,27 +64,33 @@ export type BBApiTeamInfo = {
 };
 
 export type BBApiRosterPlayer = {
-  id: string | null;
-  firstName: string | null;
-  lastName: string | null;
+  id: string;
+  firstName: string;
+  lastName: string;
   fullName: string;
-  salary: number | null;
-  bestPosition: string | null;
-  age: number | null;
-  height: number | null;
-  dmi: number | null;
-  injuryWeeks: number | null;
-  nationality: BBApiNamedReference | null;
-  skills: Record<string, number | string | null>;
-  fields: Record<string, unknown>;
+  salary: number;
+  bestPosition: string;
+  age: number;
+  height: number;
+  dmi: number;
+  injuryWeeks: number;
+  nationality: BBApiRequiredNamedReference;
+  skills: BBApiRosterPlayerSkills;
 };
 
 export type BBApiRoster = {
   version: string;
-  retrievedAt: string | null;
-  teamId: string | null;
-  teamName: string | null;
+  retrievedAt: string;
+  teamId: string;
   players: BBApiRosterPlayer[];
+};
+
+export type BBApiOwnedRosterPlayer = Omit<BBApiRosterPlayer, "skills"> & {
+  skills: BBApiOwnedRosterPlayerSkills;
+};
+
+export type BBApiOwnedRoster = Omit<BBApiRoster, "players"> & {
+  players: BBApiOwnedRosterPlayer[];
 };
 
 export type BBApiPlayer = {
@@ -125,10 +176,12 @@ export type BBApiBoxScorePlayer = {
   firstName: string | null;
   lastName: string | null;
   fullName: string;
-  performance: Record<string, number | string | null>;
-  minutesByPosition: Record<string, number | null>;
+  performance: Record<string, number>;
+  minutesByPosition: Record<string, number>;
   details: Record<string, unknown>;
 };
+
+export type BBApiBoxScoreTeamRatings = TeamRatings;
 
 export type BBApiBoxScoreTeam = {
   id: string | null;
@@ -138,9 +191,9 @@ export type BBApiBoxScoreTeam = {
   defStrategy: string | null;
   score: number | null;
   partialScores: number[];
-  teamTotals: Record<string, number | string | null>;
-  ratings: Record<string, number | string | null>;
-  efficiency: Record<string, number | string | null>;
+  teamTotals: Record<string, number>;
+  ratings: BBApiBoxScoreTeamRatings | null;
+  efficiency: Record<string, number>;
   gdp: Record<string, number | string | null>;
   players: BBApiBoxScorePlayer[];
   details: Record<string, unknown>;
@@ -229,7 +282,7 @@ export type BBApiLeagues = {
 
 export type BBApiCurrentWorkspace = {
   teamInfo: BBApiTeamInfo;
-  roster: BBApiRoster;
+  roster: BBApiOwnedRoster;
   schedule: BBApiSchedule;
   standings: BBApiStandings | null;
   teamStats: BBApiTeamStats | null;
