@@ -566,10 +566,10 @@ function buildCatalogRecordFromPackage(
     startTime: asOptionalString(match.startTime),
     endTime: asOptionalString(match.endTime),
     neutral: asOptionalBoolean(match.neutral),
-    homeTeamId: asOptionalString(homeTeam.id),
+    homeTeamId: readTeamIdentifier(homeTeam),
     homeTeamName: asOptionalString(homeTeam.teamName),
     homeTeamScore: asOptionalNumber(homeTeam.score),
-    awayTeamId: asOptionalString(awayTeam.id),
+    awayTeamId: readTeamIdentifier(awayTeam),
     awayTeamName: asOptionalString(awayTeam.teamName),
     awayTeamScore: asOptionalNumber(awayTeam.score),
     ingestStatus: args.status,
@@ -716,7 +716,7 @@ function serializeBoxscoreTeam(
   }
 
   return {
-    teamId: asOptionalString(team.id),
+    teamId: readTeamIdentifier(team),
     teamName: asOptionalString(team.teamName),
     shortName: asOptionalString(team.shortName),
     offStrategy: asOptionalString(team.offStrategy),
@@ -762,10 +762,13 @@ function toNumericMetricEntries(
 
   return Object.entries(values)
     .filter(([key]) => !key.startsWith("__"))
-    .map(([key, rawValue]) => ({
-      key,
-      numberValue: requireNumber(rawValue, `boxscore metric ${key}`),
-    }))
+    .flatMap(([key, rawValue]) => {
+      const numberValue = asFiniteNumber(rawValue);
+      if (numberValue === null) {
+        return [];
+      }
+      return [{ key, numberValue }];
+    })
     .sort((left, right) => String(left.key).localeCompare(String(right.key)));
 }
 
@@ -823,17 +826,15 @@ function sumMetricEntries(entries: MatchMetricEntry[]): number {
   return entries.reduce((total, entry) => total + entry.numberValue, 0);
 }
 
-function requireNumber(value: unknown, label: string): number {
-  const numeric = asFiniteNumber(value);
-  if (numeric === null) {
-    throw new Error(`Expected ${label}.`);
-  }
-  return numeric;
-}
-
 function asFiniteNumber(value: unknown): number | null {
   const numeric = asOptionalNumber(value);
   return numeric !== null && Number.isFinite(numeric) ? numeric : null;
+}
+
+function readTeamIdentifier(
+  team: Record<string, unknown> | null | undefined,
+): string | null {
+  return asOptionalString(team?.id) ?? asOptionalString(team?.teamId);
 }
 
 function buildMatchContext(

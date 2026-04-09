@@ -80,11 +80,10 @@ export function selectBoxscorePerspective(
 } {
   const { boxscore, homeTeam, awayTeam } = getBoxscoreSides(value);
   const normalizedTeamId = teamId?.trim() || null;
+  const homeTeamId = readTeamIdentifier(homeTeam);
+  const awayTeamId = readTeamIdentifier(awayTeam);
 
-  if (
-    normalizedTeamId &&
-    asOptionalString(homeTeam?.id) === normalizedTeamId
-  ) {
+  if (normalizedTeamId && homeTeamId === normalizedTeamId) {
     return {
       boxscore,
       homeTeam,
@@ -95,10 +94,7 @@ export function selectBoxscorePerspective(
     };
   }
 
-  if (
-    normalizedTeamId &&
-    asOptionalString(awayTeam?.id) === normalizedTeamId
-  ) {
+  if (normalizedTeamId && awayTeamId === normalizedTeamId) {
     return {
       boxscore,
       homeTeam,
@@ -117,4 +113,8 @@ export function selectBoxscorePerspective(
     opponent: null,
     teamLocation: null,
   };
+}
+
+function readTeamIdentifier(team: JsonRecord | null): string | null {
+  return asOptionalString(team?.id) ?? asOptionalString(team?.teamId);
 }

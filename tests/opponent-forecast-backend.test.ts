@@ -8,6 +8,7 @@ import {
   normalizeOpponentForecastResult,
   submitOpponentForecastJob,
 } from "../amplify/data/_backend/opponent-forecast";
+import { selectBoxscorePerspective } from "../amplify/data/_backend/neutral-boxscore";
 import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
 
 installInactiveMaintenanceRuntime();
@@ -174,6 +175,26 @@ test("submitOpponentForecastJob queues work for premium users", async () => {
     jobId: result.jobId,
     userId: "user-1",
   });
+});
+
+test("selectBoxscorePerspective resolves legacy teamId keys", () => {
+  const perspective = selectBoxscorePerspective(
+    {
+      homeTeam: {
+        teamId: "HOME",
+        teamName: "Home Club",
+      },
+      awayTeam: {
+        teamId: "AWAY",
+        teamName: "Away Club",
+      },
+    },
+    "HOME",
+  );
+
+  assert.equal(perspective.teamLocation, "HOME");
+  assert.equal(perspective.team?.teamName, "Home Club");
+  assert.equal(perspective.opponent?.teamName, "Away Club");
 });
 
 test("opponent forecast worker keeps workspace-refresh prerequisites without active tracked team wiring", () => {

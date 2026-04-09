@@ -281,6 +281,99 @@ test("getMatchBoxscoreDetails falls back to neutral per-user cache for unrelated
   assert.equal(typedPayload.awayTeam?.teamName, "Unrelated Away");
 });
 
+test("getMatchBoxscoreDetails tolerates malformed cached optional metrics and legacy team ids", async () => {
+  const payload = await getMatchBoxscoreDetails(
+    {
+      env: {
+        MATCH_STORE_BUCKET_NAME: "bucket",
+        MATCH_CATALOG_TABLE_NAME: "catalog",
+        TEAM_MATCH_PROJECTION_TABLE_NAME: "projection",
+        MATCH_INGEST_QUEUE_URL: "ingest",
+        MATCH_MATERIALIZE_QUEUE_URL: "materialize",
+      },
+      identity: { sub: "user-1" },
+      matchId: "m10",
+    },
+    createDependencies({
+      getCatalog: async () => null,
+      getLegacyMatchBoxscore: async () => ({
+        matchId: "m10",
+        boxscoreJson: {
+          matchId: "m10",
+          homeTeam: {
+            teamId: "T8",
+            teamName: "Legacy Home",
+            offStrategy: "Motion",
+            defStrategy: "32Zone",
+            ratings: createCompletePredictionRatings(9.1),
+            teamTotals: {
+              fg: "40",
+              turnover: "N/A",
+            },
+            efficiency: {
+              pp100: "101.2",
+              ts: "bad",
+            },
+            players: [
+              {
+                id: "p1",
+                fullName: "Starter One",
+                performance: {
+                  points: "18",
+                  foulTrouble: "unknown",
+                },
+                minutesByPosition: {
+                  PG: "24",
+                  SG: "DNP",
+                },
+              },
+            ],
+          },
+          awayTeam: {
+            teamId: "T9",
+            teamName: "Legacy Away",
+            offStrategy: "Push",
+            defStrategy: "23Zone",
+            ratings: createCompletePredictionRatings(8.4),
+          },
+          startTime: "2026-03-10T20:00:00.000Z",
+          type: "League",
+        },
+      }),
+      listTrackedTeamsForUser: async () => [],
+      getBbConnection: async () => ({ teamId: "T1" }),
+    }),
+  );
+
+  const typedPayload = payload as {
+    awayTeam: { teamId: string | null; teamName: string | null } | null;
+    homeTeam: {
+      teamId: string | null;
+      teamName: string | null;
+      teamTotals: Array<{ key: string; numberValue: number }>;
+      efficiency: Array<{ key: string; numberValue: number }>;
+      players: Array<{
+        minutes: number | null;
+        performance: Array<{ key: string; numberValue: number }>;
+      }>;
+    } | null;
+    source: string;
+  };
+  assert.equal(typedPayload.source, "MATCH_BOXSCORE_CACHE");
+  assert.equal(typedPayload.homeTeam?.teamId, "T8");
+  assert.equal(typedPayload.awayTeam?.teamId, "T9");
+  assert.deepStrictEqual(typedPayload.homeTeam?.teamTotals, [
+    { key: "fg", numberValue: 40 },
+  ]);
+  assert.deepStrictEqual(typedPayload.homeTeam?.efficiency, [
+    { key: "pp100", numberValue: 101.2 },
+  ]);
+  assert.deepStrictEqual(typedPayload.homeTeam?.players[0]?.performance, [
+    { key: "points", numberValue: 18 },
+  ]);
+  assert.equal(typedPayload.homeTeam?.players[0]?.minutes, 24);
+});
+
 test("getMatchBoxscoreDetails fetches live BB data when both caches miss", async () => {
   let receivedOptions: { securityCode: string; username: string } | null = null;
 
