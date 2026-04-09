@@ -179,7 +179,7 @@ test("submitOpponentForecastJob queues work for premium users", async () => {
 test("opponent forecast worker keeps workspace-refresh prerequisites without active tracked team wiring", () => {
   assert.match(
     opponentForecastWorkerResourceSource,
-    /BB_CONNECTION_ENCRYPTION_SECRET/,
+    /buildBbConnectionSecretFunctionEnvironment/,
   );
   assert.match(
     opponentForecastJobsSource,

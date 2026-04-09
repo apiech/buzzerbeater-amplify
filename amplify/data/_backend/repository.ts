@@ -121,6 +121,7 @@ export type BbCredentialRecord = {
   iv: string;
   authTag: string;
   algorithm: CipherGCMTypes;
+  secretFingerprint?: string | null;
 };
 
 export type TrackedTeamRecord = {

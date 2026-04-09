@@ -1,4 +1,6 @@
-import { defineFunction, secret } from "@aws-amplify/backend";
+import { defineFunction } from "@aws-amplify/backend";
+
+import { buildBbConnectionSecretFunctionEnvironment } from "../_shared/bb-connection-secret";
 
 export const gameDayRecapWorker = defineFunction({
   resourceGroupName: "data",
@@ -6,7 +8,5 @@ export const gameDayRecapWorker = defineFunction({
   entry: "./handler.ts",
   timeoutSeconds: 120,
   memoryMB: 1024,
-  environment: {
-    BB_CONNECTION_ENCRYPTION_SECRET: secret("BB_CONNECTION_ENCRYPTION_SECRET"),
-  },
+  environment: buildBbConnectionSecretFunctionEnvironment(),
 });

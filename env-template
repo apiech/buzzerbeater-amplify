@@ -30,9 +30,10 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # published by bb-shared-infra. Do not set imported resource names in .env.
 #
 # Local sandbox runs:
-# - `npm run sandbox` is the primary local workflow. It syncs
-#   BB_CONNECTION_ENCRYPTION_SECRET from /Users/karey/projects/bb/.env.deploy.local
-#   when needed, sets BB_SHARED_ENVIRONMENT_NAME, and bootstraps ML Data Infra.
+# - `npm run sandbox` is the primary local workflow. It loads
+#   /Users/karey/projects/bb/.env.deploy.local, publishes the canonical
+#   BuzzerBeater encryption secret into shared-infra SSM when needed,
+#   sets BB_SHARED_ENVIRONMENT_NAME, and bootstraps ML Data Infra.
 # - Predictor endpoints are not bootstrapped implicitly. Release one explicitly
 #   before the first sandbox or dev deploy that needs predictions.
 # - Plain `npx ampx sandbox` expects shared infra and predictor resources for
@@ -45,10 +46,10 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 # Amplify secrets are required separately and should not be stored in .env.
 # Preferred local operator flow:
 # - Keep deployment-only local values in /Users/karey/projects/bb/.env.deploy.local
-# - `npm run sandbox` auto-syncs BB_CONNECTION_ENCRYPTION_SECRET into the
-#   Amplify sandbox secret store when it is missing.
-# - Run `npm run sandbox:secret:sync` only when you need to repair or force
-#   that sync manually.
+# - Shared-infra deploy scripts publish the canonical BuzzerBeater
+#   encryption secret into SSM and update its fingerprint.
+# - App/runtime functions read that secret from SSM via
+#   BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME instead of raw env.
 # - Other secrets still use `npm run ampx -- sandbox secret set <NAME>`.
 #
 # Shared ML Data Infra deploys:
@@ -58,7 +59,6 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 #   npm run dev:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>
 #
 # Amplify Hosting secrets:
-# - BB_CONNECTION_ENCRYPTION_SECRET
 # - STRIPE_SECRET_KEY
 # - STRIPE_WEBHOOK_SECRET
 # - BILLING_ADMIN_TOKEN

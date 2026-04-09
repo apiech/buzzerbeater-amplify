@@ -148,7 +148,7 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - Shared infra discovery
   - `bb-amplify` no longer provisions app-local match-store resources and no longer depends on a generated local env bridge file.
   - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.
-  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
+  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, publishes the canonical BuzzerBeater encryption secret into shared-infra SSM when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.
   - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.
   - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.
   - Hosted backend deploys require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.
@@ -165,9 +165,6 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 
 ### Required Secrets
 
-- `BB_CONNECTION_ENCRYPTION_SECRET`
-  - Encrypts and decrypts stored BuzzerBeater access keys across bb-amplify and shared ML Data Infra.
-  - Set this as an Amplify secret for sandbox/hosting, and use the same raw value when deploying `bb-shared-infra` so both systems can read the same encrypted credentials.
 - `STRIPE_SECRET_KEY`
   - Authenticates server-side Stripe API requests.
 - `STRIPE_WEBHOOK_SECRET`
@@ -200,6 +197,8 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 
 ### Local Script-Only Env
 
+- `BB_CONNECTION_ENCRYPTION_SECRET`
+  - Deployment-only raw secret used by shared-infra publish/rotate flows to write the canonical SSM SecureString and fingerprint for an environment.
 - `BILLING_ADMIN_OVERRIDE_URL`
   - Local helper script target URL for `npm run billing:override`.
 - `MAINTENANCE_ADMIN_URL`

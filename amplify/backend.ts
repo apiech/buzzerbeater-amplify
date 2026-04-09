@@ -1,6 +1,7 @@
 import { defineBackend } from "@aws-amplify/backend";
 
 import { configureAuthControls } from "./_backend/auth-controls.js";
+import { configureBbConnectionSecretAccess } from "./_backend/bb-connection-secret-access.js";
 import { configureBillingIntegration } from "./_backend/billing-integration.js";
 import { configureCostVisibility } from "./_backend/cost-visibility.js";
 import { configureGameDayRecapJobs } from "./_backend/game-day-recap-jobs.js";
@@ -123,6 +124,33 @@ const sharedInfraBindings = resolveSharedInfraBindings();
 const appResourceRemovalPolicy = resolveAppResourceRemovalPolicy();
 
 configureAuthControls(backend);
+configureBbConnectionSecretAccess([
+  backend.connectBbAccount,
+  backend.disconnectBbAccount,
+  backend.refreshWorkspace,
+  backend.getHomeWorkspace,
+  backend.getTeamHub,
+  backend.getScoutWorkspace,
+  backend.getLatestOpponentForecast,
+  backend.getLeagueIntel,
+  backend.getLeagueHistory,
+  backend.getPlayerLab,
+  backend.getRivalsWorkspace,
+  backend.getLineupHelperWorkspace,
+  backend.evaluateLineupHelper,
+  backend.getPlayerTrend,
+  backend.submitMyTeamHighlightsScan,
+  backend.submitLeagueHistoryBackfill,
+  backend.leagueHistoryWorker,
+  backend.getSalaryProjection,
+  backend.generateSharedPlayerCard,
+  backend.revokeSharedPlayerCard,
+  backend.lookupSharedPlayerCard,
+  backend.pruneOperationalData,
+  backend.getMatchBoxscoreDetails,
+  backend.gameDayRecapWorker,
+  backend.opponentForecastWorker,
+]);
 configureBillingIntegration(backend, resolveBillingConfig());
 configureMaintenanceControlPlane(backend, [
   backend.connectBbAccount,

@@ -9,7 +9,10 @@ import {
 import type { Schema } from "../resource";
 import { TeamHighlightsPerspective } from "../schema-enums";
 import { requireFeatureAccess } from "./billing";
-import { assertBbCredentialReadable } from "./credentials";
+import {
+  assertBbCredentialReadable,
+  resolveBbCredentialErrorCode,
+} from "./credentials";
 import { assertMaintenanceInactive } from "./maintenance";
 import {
   getBbConnection,
@@ -95,6 +98,7 @@ type TeamHighlightsStatusItem = {
   brokenMatches?: TeamHighlightsBrokenMatchItem[] | null;
   completedAt?: string | null;
   currentSeason?: number | null;
+  errorCode?: string | null;
   executionArn?: string | null;
   error?: string | null;
   matchesCompleted?: number | null;
@@ -297,6 +301,7 @@ export async function submitMyTeamHighlightsScan(
     await dependencies.putTeamHighlightsStatus(args.env, {
       ...queuedStatus,
       completedAt: failedAt,
+      errorCode: resolveTeamHighlightsErrorCode(error),
       error: toErrorMessage(error),
       status: "FAILED",
       updatedAt: failedAt,
@@ -415,6 +420,7 @@ export async function getMyTeamHighlights(
           })),
           completedAt: scanStatus.completedAt ?? null,
           currentSeason: scanStatus.currentSeason ?? null,
+          errorCode: scanStatus.errorCode ?? null,
           executionArn: scanStatus.executionArn ?? null,
           error: scanStatus.error ?? null,
           matchesCompleted: scanStatus.matchesCompleted ?? null,
@@ -687,4 +693,8 @@ function isTeamHighlightsScanStale(
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function resolveTeamHighlightsErrorCode(error: unknown): string {
+  return resolveBbCredentialErrorCode(error) ?? "unknown";
 }

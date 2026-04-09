@@ -7,6 +7,7 @@ import {
 } from "@aws-amplify/backend";
 
 import { PositionCode, TeamHighlightsPerspective } from "./schema-enums";
+import { buildBbConnectionSecretFunctionEnvironment } from "../_shared/bb-connection-secret";
 import { getAccessibleMatch } from "../get-accessible-match/resource";
 import { getAccessiblePlayByPlay } from "../get-accessible-play-by-play/resource";
 import { getMatchBoxscoreDetails } from "../get-match-boxscore-details/resource";
@@ -21,9 +22,7 @@ import { predictionSubmit } from "../prediction-submit/resource";
 import { predictionWorker } from "../prediction-worker/resource";
 import { resolveBillingConfig } from "../_shared/synth-env";
 
-const secureFunctionEnvironment = {
-  BB_CONNECTION_ENCRYPTION_SECRET: secret("BB_CONNECTION_ENCRYPTION_SECRET"),
-};
+const secureFunctionEnvironment = buildBbConnectionSecretFunctionEnvironment();
 
 const stripeSecretFunctionEnvironment = {
   STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
@@ -1157,6 +1156,7 @@ const schema = a
       brokenMatches: a.ref("TeamHighlightsBrokenMatch").required().array(),
       completedAt: a.datetime(),
       currentSeason: a.integer(),
+      errorCode: a.string(),
       executionArn: a.string(),
       error: a.string(),
       matchesCompleted: a.integer(),
@@ -1405,6 +1405,7 @@ const schema = a
         iv: a.string().required(),
         authTag: a.string().required(),
         algorithm: a.string().required(),
+        secretFingerprint: a.string(),
       })
       .identifier(["userId"])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),

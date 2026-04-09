@@ -924,6 +924,59 @@ test("dev doctor warns when the optional opponent forecast endpoint contract is 
   );
 });
 
+test("dev doctor fails when the canonical BB secret contract is missing", () => {
+  const report = workflowTesting.collectDevDoctorReport(
+    createRuntime({
+      env: {
+        AWS_REGION: "us-east-1",
+        BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret",
+      },
+      execAwsJson(args) {
+        if (args[0] === "sts") {
+          return {
+            Account: "427377913956",
+          };
+        }
+        if (args[0] === "ssm" && args.includes("prediction-endpoint-name")) {
+          return {
+            Parameters: [
+              {
+                Name: "/buzzerbeater/ml-data-infra/dev/prediction-endpoint-name",
+                Value: "predictor-endpoint",
+              },
+            ],
+          };
+        }
+        if (args[0] === "ssm") {
+          return {
+            InvalidParameters: [
+              "/buzzerbeater/ml-data-infra/dev/bb-connection-encryption-secret",
+              "/buzzerbeater/ml-data-infra/dev/bb-connection-encryption-secret-fingerprint",
+            ],
+          };
+        }
+        if (args[0] === "sagemaker") {
+          return {
+            EndpointStatus: "InService",
+          };
+        }
+
+        throw new Error(`Unexpected AWS CLI call: ${args.join(" ")}`);
+      },
+      spawnSync(command, args, _options) {
+        throw new Error(`Unexpected spawnSync call: ${command} ${args.join(" ")}`);
+      },
+    }),
+  );
+
+  const sharedInfraCheck = report.checks.find(
+    (check) => check.label === "Shared infra SSM contract",
+  );
+  assert.ok(sharedInfraCheck);
+  assert.equal(sharedInfraCheck.status, "fail");
+  assert.match(sharedInfraCheck.detail, /bb-connection-encryption-secret/);
+});
+
 test("dev doctor points missing predictor pins at the root deploy wrapper", () => {
   const report = workflowTesting.collectDevDoctorReport(
     createRuntime({

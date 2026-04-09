@@ -1,4 +1,6 @@
-import { defineFunction, secret } from "@aws-amplify/backend";
+import { defineFunction } from "@aws-amplify/backend";
+
+import { buildBbConnectionSecretFunctionEnvironment } from "../_shared/bb-connection-secret";
 
 export const getMatchBoxscoreDetails = defineFunction({
   resourceGroupName: "data",
@@ -6,7 +8,5 @@ export const getMatchBoxscoreDetails = defineFunction({
   entry: "../data/get-match-boxscore-details/handler.ts",
   timeoutSeconds: 30,
   memoryMB: 512,
-  environment: {
-    BB_CONNECTION_ENCRYPTION_SECRET: secret("BB_CONNECTION_ENCRYPTION_SECRET"),
-  },
+  environment: buildBbConnectionSecretFunctionEnvironment(),
 });

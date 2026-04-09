@@ -53,6 +53,15 @@ const ACTIVE_SCAN_STATUSES = new Set([
 ]);
 const STALE_SCAN_MILLISECONDS = 15 * 60 * 1000;
 const BB_CREDENTIAL_RECONNECT_REQUIRED_PREFIX = "Reconnect BuzzerBeater:";
+const BB_CREDENTIAL_SECRET_MISMATCH_PREFIX =
+  "BuzzerBeater credential secret mismatch:";
+const BB_CREDENTIAL_SECRET_UNAVAILABLE_PREFIX =
+  "BuzzerBeater credential decryption is unavailable";
+
+type HighlightsCredentialErrorKind =
+  | "reconnect_required"
+  | "secret_mismatch"
+  | "secret_unavailable";
 
 export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const [perspective, setPerspective] =
@@ -180,10 +189,14 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const failedMatches = scanStatus?.matchesFailed ?? 0;
   const brokenMatches = scanStatus?.brokenMatches ?? [];
   const hasBrokenMatches = brokenMatches.length > 0;
-  const failedScanNeedsReconnect = isReconnectRequiredHighlightsError(
+  const failedScanCredentialErrorKind = resolveHighlightsCredentialErrorKind(
+    scanStatus?.errorCode,
     scanStatus?.error,
   );
-  const submitNeedsReconnect = isReconnectRequiredHighlightsError(submitError);
+  const submitCredentialErrorKind = resolveHighlightsCredentialErrorKind(
+    null,
+    submitError,
+  );
 
   return (
     <Panel>
@@ -231,8 +244,8 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
         <Alert>
           <div className="grid gap-1">
             <p>
-              {submitNeedsReconnect
-                ? "Reconnect BuzzerBeater in this environment and then rerun the scan."
+              {submitCredentialErrorKind
+                ? describeHighlightsCredentialRecovery(submitCredentialErrorKind)
                 : "The scan could not be started right now. Try again in a moment."}
             </p>
             <p className="text-xs leading-5 text-current/80">
@@ -439,8 +452,10 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
                 <Alert>
                   <div className="grid gap-1">
                     <p>
-                      {failedScanNeedsReconnect
-                        ? "Reconnect BuzzerBeater in this environment and then rerun the scan."
+                      {failedScanCredentialErrorKind
+                        ? describeHighlightsCredentialRecovery(
+                            failedScanCredentialErrorKind,
+                          )
                         : "The latest team history scan ended before all moments were ready. Retry it to start a fresh run."}
                     </p>
                     {scanStatus.error ? (
@@ -599,9 +614,17 @@ export function describeHighlightsEmptyState(
 
   if (
     payload.scanStatus.status === "FAILED" &&
-    isReconnectRequiredHighlightsError(payload.scanStatus.error)
+    resolveHighlightsCredentialErrorKind(
+      payload.scanStatus.errorCode,
+      payload.scanStatus.error,
+    )
   ) {
-    return "Reconnect BuzzerBeater in this environment and then rerun the scan.";
+    return describeHighlightsCredentialRecovery(
+      resolveHighlightsCredentialErrorKind(
+        payload.scanStatus.errorCode,
+        payload.scanStatus.error,
+      )!,
+    );
   }
 
   if (hasActiveTeamHighlightsScan(payload.scanStatus)) {
@@ -736,8 +759,18 @@ export function describeScanStatus(status: TeamHighlightsScanStatus): string {
   }
 
   if (status.status === "FAILED") {
-    if (isReconnectRequiredHighlightsError(status.error)) {
+    const credentialErrorKind = resolveHighlightsCredentialErrorKind(
+      status.errorCode,
+      status.error,
+    );
+    if (credentialErrorKind === "reconnect_required") {
       return "The scan stopped before discovery began because the saved BuzzerBeater credential for this environment can no longer be decrypted.";
+    }
+    if (credentialErrorKind === "secret_mismatch") {
+      return "The scan stopped before discovery began because the saved BuzzerBeater credential was encrypted with a different environment secret.";
+    }
+    if (credentialErrorKind === "secret_unavailable") {
+      return "The scan stopped before discovery began because this environment could not load its BuzzerBeater credential secret.";
     }
     return "The latest team history scan ended before all moments were ready.";
   }
@@ -781,12 +814,59 @@ function formatAmplifyErrors(
 
 export function isReconnectRequiredHighlightsError(
   error: string | null | undefined,
+  errorCode?: string | null,
 ): boolean {
+  if (
+    resolveHighlightsCredentialErrorKind(errorCode ?? null, error) ===
+    "reconnect_required"
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function resolveHighlightsCredentialErrorKind(
+  errorCode: string | null | undefined,
+  error: string | null | undefined,
+): HighlightsCredentialErrorKind | null {
+  const normalizedErrorCode = errorCode?.trim().toLowerCase() ?? null;
+  if (
+    normalizedErrorCode === "reconnect_required" ||
+    normalizedErrorCode === "secret_mismatch" ||
+    normalizedErrorCode === "secret_unavailable"
+  ) {
+    return normalizedErrorCode;
+  }
+
+  const normalizedError = error?.trim().toLowerCase() ?? "";
+  if (
+    normalizedError.startsWith(BB_CREDENTIAL_RECONNECT_REQUIRED_PREFIX.toLowerCase())
+  ) {
+    return "reconnect_required";
+  }
+  if (
+    normalizedError.startsWith(BB_CREDENTIAL_SECRET_MISMATCH_PREFIX.toLowerCase())
+  ) {
+    return "secret_mismatch";
+  }
   return Boolean(
-    error?.trim().toLowerCase().startsWith(
-      BB_CREDENTIAL_RECONNECT_REQUIRED_PREFIX.toLowerCase(),
-    ),
-  );
+    normalizedError.startsWith(BB_CREDENTIAL_SECRET_UNAVAILABLE_PREFIX.toLowerCase()),
+  )
+    ? "secret_unavailable"
+    : null;
+}
+
+function describeHighlightsCredentialRecovery(
+  errorKind: HighlightsCredentialErrorKind,
+): string {
+  if (errorKind === "reconnect_required") {
+    return "Reconnect BuzzerBeater in this environment and then rerun the scan.";
+  }
+  if (errorKind === "secret_mismatch") {
+    return "This environment is using a different BB credential secret than the one that encrypted the saved credential. If that rotation was intentional, reconnect BuzzerBeater and rerun the scan. Otherwise, fix the environment secret configuration first.";
+  }
+  return "This environment can't load its BB credential secret right now. Fix the environment secret configuration and then rerun the scan.";
 }
 
 function formatBrokenMatchLabel(

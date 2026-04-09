@@ -4,6 +4,7 @@ import process from "node:process";
 import { getParametersByName } from "../amplify/_shared/aws-cli-ssm.js";
 import {
   branchToEnvironmentName,
+  buildBbConnectionSecretParameterPaths,
   buildSharedInfraParameterPaths,
   type SharedInfraBindings,
 } from "../amplify/_shared/shared-infra-contract.js";
@@ -431,12 +432,19 @@ function checkSharedInfraParameters(
   runtime: Pick<AwsCliRuntime, "execAwsJson">,
 ): ParameterCheck {
   const parameterPaths = buildSharedInfraParameterPaths(environmentName);
+  const bbConnectionSecretPaths =
+    buildBbConnectionSecretParameterPaths(environmentName);
   const parameterEntries = Object.entries(parameterPaths) as Array<
     [keyof typeof parameterPaths, string]
   >;
+  const requiredParameterPaths = [
+    ...parameterEntries.map(([, parameterPath]) => parameterPath),
+    bbConnectionSecretPaths.secret,
+    bbConnectionSecretPaths.fingerprint,
+  ];
   const payload = getParametersByName({
     execAwsJson: runtime.execAwsJson,
-    names: parameterEntries.map(([, parameterPath]) => parameterPath),
+    names: requiredParameterPaths,
     region,
   }) as {
     InvalidParameters?: string[];
@@ -447,13 +455,18 @@ function checkSharedInfraParameters(
 
   return {
     environmentName,
-    missingPaths: parameterEntries
-      .filter(
-        ([bindingKey, parameterPath]) =>
-          !OPTIONAL_SHARED_INFRA_BINDING_KEYS.has(bindingKey) &&
-          invalidParameters.has(parameterPath),
-      )
-      .map(([, parameterPath]) => parameterPath),
+    missingPaths: [
+      ...parameterEntries
+        .filter(
+          ([bindingKey, parameterPath]) =>
+            !OPTIONAL_SHARED_INFRA_BINDING_KEYS.has(bindingKey) &&
+            invalidParameters.has(parameterPath),
+        )
+        .map(([, parameterPath]) => parameterPath),
+      ...[bbConnectionSecretPaths.secret, bbConnectionSecretPaths.fingerprint].filter(
+        (parameterPath) => invalidParameters.has(parameterPath),
+      ),
+    ],
     missingOptionalPaths: parameterEntries
       .filter(
         ([bindingKey, parameterPath]) =>

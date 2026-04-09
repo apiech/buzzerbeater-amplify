@@ -18,6 +18,11 @@ export type SharedInfraParameterPaths = {
   [Key in keyof SharedInfraBindings]: string;
 };
 
+export type BbConnectionSecretParameterPaths = {
+  fingerprint: string;
+  secret: string;
+};
+
 export function normalizeEnvironmentName(value: string): string {
   const normalized = value
     .trim()
@@ -56,5 +61,17 @@ export function buildSharedInfraParameterPaths(
     teamHighlightsStatusTableName: `${basePath}/team-highlights-status-table-name`,
     teamMatchProjectionTableName: `${basePath}/team-match-projection-table-name`,
     teamMomentsTableName: `${basePath}/team-moments-table-name`,
+  };
+}
+
+export function buildBbConnectionSecretParameterPaths(
+  environmentName: string,
+): BbConnectionSecretParameterPaths {
+  const normalizedEnvironment = normalizeEnvironmentName(environmentName);
+  const basePath = `/buzzerbeater/ml-data-infra/${normalizedEnvironment}`;
+
+  return {
+    fingerprint: `${basePath}/bb-connection-encryption-secret-fingerprint`,
+    secret: `${basePath}/bb-connection-encryption-secret`,
   };
 }

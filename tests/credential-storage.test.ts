@@ -6,7 +6,9 @@ import {
   deactivateActiveTrackedTeamsForUser,
 } from "../amplify/data/_backend/active-tracked-teams";
 import {
+  BB_CREDENTIAL_SECRET_MISMATCH_ERROR_CODE,
   __testing as credentialTesting,
+  resolveBbCredentialErrorCode,
   resolveBbAccessKey,
 } from "../amplify/data/_backend/credentials";
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
@@ -14,10 +16,17 @@ import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 test("resolveBbAccessKey decrypts the stored BbCredential only", async (t) => {
   const originalGetBbCredential = credentialTesting.runtime.getBbCredential;
   const originalDecryptValue = credentialTesting.runtime.decryptValue;
+  const originalResolveBbConnectionSecretState =
+    credentialTesting.runtime.resolveBbConnectionSecretState;
+  const originalUpsertBbCredential = credentialTesting.runtime.upsertBbCredential;
+  const fingerprintWrites: Array<Record<string, unknown>> = [];
 
   t.after(() => {
     credentialTesting.runtime.getBbCredential = originalGetBbCredential;
     credentialTesting.runtime.decryptValue = originalDecryptValue;
+    credentialTesting.runtime.resolveBbConnectionSecretState =
+      originalResolveBbConnectionSecretState;
+    credentialTesting.runtime.upsertBbCredential = originalUpsertBbCredential;
   });
 
   credentialTesting.runtime.getBbCredential = async () => ({
@@ -33,14 +42,88 @@ test("resolveBbAccessKey decrypts the stored BbCredential only", async (t) => {
     decryptedSecret = secret;
     return "access-key";
   };
+  credentialTesting.runtime.resolveBbConnectionSecretState = async () => ({
+    parameterName:
+      "/buzzerbeater/ml-data-infra/dev/bb-connection-encryption-secret",
+    secret: "shared-secret",
+    secretFingerprint: "fingerprint-1",
+  });
+  credentialTesting.runtime.upsertBbCredential = async (_env, record) => {
+    fingerprintWrites.push(record as Record<string, unknown>);
+  };
 
   const accessKey = await resolveBbAccessKey(
-    { BB_CONNECTION_ENCRYPTION_SECRET: "shared-secret" },
+    {
+      BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME:
+        "/buzzerbeater/ml-data-infra/dev/bb-connection-encryption-secret",
+    },
     "user-1",
   );
 
   assert.equal(accessKey, "access-key");
   assert.equal(decryptedSecret, "shared-secret");
+  assert.deepStrictEqual(fingerprintWrites, [
+    {
+      algorithm: "aes-256-gcm",
+      authTag: "auth",
+      cipherText: "cipher",
+      iv: "iv",
+      secretFingerprint: "fingerprint-1",
+      userId: "user-1",
+    },
+  ]);
+});
+
+test("resolveBbAccessKey reports secret mismatch when the stored fingerprint drifts", async (t) => {
+  const originalGetBbCredential = credentialTesting.runtime.getBbCredential;
+  const originalResolveBbConnectionSecretState =
+    credentialTesting.runtime.resolveBbConnectionSecretState;
+  const originalUpsertBbCredential = credentialTesting.runtime.upsertBbCredential;
+
+  t.after(() => {
+    credentialTesting.runtime.getBbCredential = originalGetBbCredential;
+    credentialTesting.runtime.resolveBbConnectionSecretState =
+      originalResolveBbConnectionSecretState;
+    credentialTesting.runtime.upsertBbCredential = originalUpsertBbCredential;
+  });
+
+  credentialTesting.runtime.getBbCredential = async () => ({
+    userId: "user-1",
+    cipherText: "cipher",
+    iv: "iv",
+    authTag: "auth",
+    algorithm: "aes-256-gcm",
+    secretFingerprint: "fingerprint-old",
+  });
+  credentialTesting.runtime.resolveBbConnectionSecretState = async () => ({
+    parameterName:
+      "/buzzerbeater/ml-data-infra/dev/bb-connection-encryption-secret",
+    secret: "shared-secret",
+    secretFingerprint: "fingerprint-new",
+  });
+  credentialTesting.runtime.upsertBbCredential = async () => {
+    throw new Error("upsertBbCredential should not be called");
+  };
+
+  let error: unknown;
+  try {
+    await resolveBbAccessKey(
+      {
+        BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME:
+          "/buzzerbeater/ml-data-infra/dev/bb-connection-encryption-secret",
+      },
+      "user-1",
+    );
+    assert.fail("resolveBbAccessKey should reject when the fingerprint drifts");
+  } catch (caughtError) {
+    error = caughtError;
+  }
+
+  assert.equal(
+    resolveBbCredentialErrorCode(error),
+    BB_CREDENTIAL_SECRET_MISMATCH_ERROR_CODE,
+  );
+  assert.match(String((error as Error).message), /secret mismatch/i);
 });
 
 test("deactivateActiveTrackedTeamsForUser clears projected credentials while leaving rows in place", async (t) => {
@@ -94,4 +177,5 @@ test("deactivateActiveTrackedTeamsForUser clears projected credentials while lea
   assert.equal(firstPutItem.credentialIv, null);
   assert.equal(firstPutItem.credentialAuthTag, null);
   assert.equal(firstPutItem.credentialAlgorithm, null);
+  assert.equal(firstPutItem.credentialSecretFingerprint, null);
 });

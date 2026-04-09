@@ -24,6 +24,7 @@ function createScanStatus(
     brokenMatches: [],
     completedAt: null,
     currentSeason: null,
+    errorCode: null,
     error: null,
     matchesCompleted: null,
     matchesDiscovered: null,
@@ -163,6 +164,7 @@ test("describeHighlightsEmptyState guides the user through empty and active stat
     describeHighlightsEmptyState(
       createPayload({
         scanStatus: createScanStatus("FAILED", {
+          errorCode: "reconnect_required",
           error:
             "Reconnect BuzzerBeater: the saved credential for this environment can no longer be decrypted.",
         }),
@@ -186,6 +188,13 @@ test("isReconnectRequiredHighlightsError recognizes credential drift failures", 
   );
   assert.equal(
     isReconnectRequiredHighlightsError("The request failed."),
+    false,
+  );
+  assert.equal(
+    isReconnectRequiredHighlightsError(
+      "BuzzerBeater credential secret mismatch: the saved credential was encrypted with a different environment secret.",
+      "secret_mismatch",
+    ),
     false,
   );
 });
@@ -251,6 +260,7 @@ test("describeScanStatus stays user-facing", () => {
 
   const reconnectFailureDescription = describeScanStatus(
     createScanStatus("FAILED", {
+      errorCode: "reconnect_required",
       error:
         "Reconnect BuzzerBeater: the saved credential for this environment can no longer be decrypted.",
     }),
@@ -258,6 +268,18 @@ test("describeScanStatus stays user-facing", () => {
   assert.match(
     reconnectFailureDescription,
     /credential for this environment can no longer be decrypted/i,
+  );
+
+  const secretMismatchDescription = describeScanStatus(
+    createScanStatus("FAILED", {
+      errorCode: "secret_mismatch",
+      error:
+        "BuzzerBeater credential secret mismatch: the saved credential was encrypted with a different environment secret.",
+    }),
+  );
+  assert.match(
+    secretMismatchDescription,
+    /different environment secret/i,
   );
 });
 
@@ -327,6 +349,10 @@ test("highlights panel polls active scans silently", () => {
   assert.match(
     source,
     /Reconnect BuzzerBeater in this environment and then rerun the scan\./,
+  );
+  assert.match(
+    source,
+    /different BB credential secret than the one that encrypted the saved credential/i,
   );
   assert.match(source, /Moments are ready for the rest of your history/);
   assert.match(source, /could not be prepared from BuzzerBeater data/);

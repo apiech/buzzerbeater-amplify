@@ -107,6 +107,7 @@ test("externally configurable and injected env names are all classified", () => 
 
   assert.deepEqual(unexpectedNames, []);
   assert.deepEqual([...runtimeInjectedNames].sort(), [
+    "BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME",
     "GAME_DAY_RECAP_STATE_MACHINE_ARN",
     "LEAGUE_HISTORY_BACKFILL_STATE_MACHINE_ARN",
     "OPPONENT_FORECAST_ENDPOINT_NAME",

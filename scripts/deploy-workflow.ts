@@ -13,7 +13,10 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { buildSharedInfraParameterPaths } from "../amplify/_shared/shared-infra-contract.js";
+import {
+  buildBbConnectionSecretParameterPaths,
+  buildSharedInfraParameterPaths,
+} from "../amplify/_shared/shared-infra-contract.js";
 import { getParametersByName } from "../amplify/_shared/aws-cli-ssm.js";
 import {
   createSharedInfraBootstrapCommand,
@@ -959,12 +962,18 @@ function checkSharedInfraParameters(
   runtime: WorkflowRuntime,
 ): DoctorCheck {
   const parameterPaths = buildSharedInfraParameterPaths(environmentName);
+  const bbConnectionSecretPaths =
+    buildBbConnectionSecretParameterPaths(environmentName);
   const optionalPaths = new Set([parameterPaths.opponentForecastEndpointName]);
+  const requiredSecretPaths = [
+    bbConnectionSecretPaths.secret,
+    bbConnectionSecretPaths.fingerprint,
+  ];
 
   try {
     const contract = getParametersByName({
       execAwsJson: runtime.execAwsJson,
-      names: Object.values(parameterPaths),
+      names: [...Object.values(parameterPaths), ...requiredSecretPaths],
       region,
     }) as {
       InvalidParameters?: string[];
@@ -972,7 +981,9 @@ function checkSharedInfraParameters(
     const missing = (contract.InvalidParameters ?? [])
       .map((value) => normalizeOptionalString(value))
       .filter((value): value is string => Boolean(value));
-    const missingRequired = missing.filter((value) => !optionalPaths.has(value));
+    const missingRequired = missing.filter(
+      (value) => !optionalPaths.has(value),
+    );
     const missingOptional = missing.filter((value) => optionalPaths.has(value));
 
     if (missingRequired.length > 0) {

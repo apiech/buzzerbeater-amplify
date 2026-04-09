@@ -16,6 +16,7 @@ export type ActiveTrackedTeamCredentialProjection = {
   credentialIv?: string | null;
   credentialAuthTag?: string | null;
   credentialAlgorithm?: BbCredentialRecord["algorithm"] | null;
+  credentialSecretFingerprint?: string | null;
 };
 
 export type ActiveTrackedTeamRecord = {
@@ -27,6 +28,7 @@ export type ActiveTrackedTeamRecord = {
   credentialIv?: string | null;
   credentialAuthTag?: string | null;
   credentialAlgorithm?: BbCredentialRecord["algorithm"] | null;
+  credentialSecretFingerprint?: string | null;
   active: boolean;
   isPrimary: boolean;
   fetchedAt?: string | null;
@@ -103,6 +105,7 @@ export async function deactivateActiveTrackedTeamsForUser(
           credentialIv: null,
           credentialAuthTag: null,
           credentialAlgorithm: null,
+          credentialSecretFingerprint: null,
           updatedAt: now,
         },
       }),
@@ -119,6 +122,7 @@ export function buildActiveTrackedTeamCredentialProjection(
       credentialIv: null,
       credentialAuthTag: null,
       credentialAlgorithm: null,
+      credentialSecretFingerprint: null,
     };
   }
 
@@ -127,6 +131,7 @@ export function buildActiveTrackedTeamCredentialProjection(
     credentialIv: credential.iv,
     credentialAuthTag: credential.authTag,
     credentialAlgorithm: credential.algorithm,
+    credentialSecretFingerprint: credential.secretFingerprint ?? null,
   };
 }
 

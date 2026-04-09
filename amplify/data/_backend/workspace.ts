@@ -24,7 +24,7 @@ import {
   type ActiveTrackedTeamCredentialProjection,
   upsertActiveTrackedTeam,
 } from "./active-tracked-teams";
-import { encryptValue, getEncryptionSecret } from "./encryption";
+import { encryptValue, resolveBbConnectionSecretState } from "./encryption";
 import {
   listWorkspacePlayerHistory,
   storeCanonicalPlayerSkillSnapshot,
@@ -187,11 +187,12 @@ export async function connectAccount(args: {
     });
     await client.login();
 
-    const encryptionSecret = getEncryptionSecret(args.env);
-    const encryptedAccessKey = encryptValue(accessKey, encryptionSecret);
+    const encryptionState = await resolveBbConnectionSecretState(args.env);
+    const encryptedAccessKey = encryptValue(accessKey, encryptionState.secret);
     await upsertBbCredential(args.env, {
       userId,
       ...encryptedAccessKey,
+      secretFingerprint: encryptionState.secretFingerprint,
     });
 
     const synced = await syncWorkspace({
@@ -208,6 +209,7 @@ export async function connectAccount(args: {
       credentialOverride: {
         userId,
         ...encryptedAccessKey,
+        secretFingerprint: encryptionState.secretFingerprint,
       },
     });
 

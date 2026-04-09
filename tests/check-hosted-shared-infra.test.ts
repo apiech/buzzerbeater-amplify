@@ -156,6 +156,8 @@ test("hosted readiness reports missing shared-infra parameters", () => {
         {
           InvalidParameters: [
             "/buzzerbeater/ml-data-infra/prod/prediction-endpoint-name",
+            "/buzzerbeater/ml-data-infra/prod/bb-connection-encryption-secret",
+            "/buzzerbeater/ml-data-infra/prod/bb-connection-encryption-secret-fingerprint",
           ],
         },
         {
@@ -168,6 +170,10 @@ test("hosted readiness reports missing shared-infra parameters", () => {
   assert.match(
     report.issues.join("\n"),
     /Shared ML infra SSM parameters are missing for 'prod'/,
+  );
+  assert.match(
+    report.issues.join("\n"),
+    /bb-connection-encryption-secret-fingerprint/,
   );
 });
 

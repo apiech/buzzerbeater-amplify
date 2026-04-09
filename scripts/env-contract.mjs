@@ -148,13 +148,6 @@ export const envContract = {
   ],
   secrets: [
     {
-      name: "BB_CONNECTION_ENCRYPTION_SECRET",
-      purpose:
-        "Encrypts and decrypts stored BuzzerBeater access keys across bb-amplify and shared ML Data Infra.",
-      followUp:
-        "Set this as an Amplify secret for sandbox/hosting, and use the same raw value when deploying `bb-shared-infra` so both systems can read the same encrypted credentials.",
-    },
-    {
       name: "STRIPE_SECRET_KEY",
       purpose: "Authenticates server-side Stripe API requests.",
     },
@@ -245,6 +238,11 @@ export const envContract = {
         "Backend-injected shared Step Functions state machine ARN wired during synth for highlights submit lambdas.",
     },
     {
+      name: "BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME",
+      purpose:
+        "Backend-injected SSM parameter path for the canonical per-environment BuzzerBeater credential encryption secret.",
+    },
+    {
       name: "PREDICTION_ENDPOINT_NAME",
       purpose:
         "Backend-injected SageMaker endpoint name imported from the shared ML Data Infra SSM contract.",
@@ -256,6 +254,11 @@ export const envContract = {
     },
   ],
   localScripts: [
+    {
+      name: "BB_CONNECTION_ENCRYPTION_SECRET",
+      purpose:
+        "Deployment-only raw secret used by shared-infra publish/rotate flows to write the canonical SSM SecureString and fingerprint for an environment.",
+    },
     {
       name: "BILLING_ADMIN_OVERRIDE_URL",
       purpose: "Local helper script target URL for `npm run billing:override`.",
@@ -347,9 +350,10 @@ export function renderEnvTemplate() {
     "# published by bb-shared-infra. Do not set imported resource names in .env.",
     "#",
     "# Local sandbox runs:",
-    "# - `npm run sandbox` is the primary local workflow. It syncs",
-    "#   BB_CONNECTION_ENCRYPTION_SECRET from /Users/karey/projects/bb/.env.deploy.local",
-    "#   when needed, sets BB_SHARED_ENVIRONMENT_NAME, and bootstraps ML Data Infra.",
+    "# - `npm run sandbox` is the primary local workflow. It loads",
+    "#   /Users/karey/projects/bb/.env.deploy.local, publishes the canonical",
+    "#   BuzzerBeater encryption secret into shared-infra SSM when needed,",
+    "#   sets BB_SHARED_ENVIRONMENT_NAME, and bootstraps ML Data Infra.",
     "# - Predictor endpoints are not bootstrapped implicitly. Release one explicitly",
     "#   before the first sandbox or dev deploy that needs predictions.",
     "# - Plain `npx ampx sandbox` expects shared infra and predictor resources for",
@@ -362,10 +366,10 @@ export function renderEnvTemplate() {
     "# Amplify secrets are required separately and should not be stored in .env.",
     "# Preferred local operator flow:",
     "# - Keep deployment-only local values in /Users/karey/projects/bb/.env.deploy.local",
-    "# - `npm run sandbox` auto-syncs BB_CONNECTION_ENCRYPTION_SECRET into the",
-    "#   Amplify sandbox secret store when it is missing.",
-    "# - Run `npm run sandbox:secret:sync` only when you need to repair or force",
-    "#   that sync manually.",
+    "# - Shared-infra deploy scripts publish the canonical BuzzerBeater",
+    "#   encryption secret into SSM and update its fingerprint.",
+    "# - App/runtime functions read that secret from SSM via",
+    "#   BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME instead of raw env.",
     "# - Other secrets still use `npm run ampx -- sandbox secret set <NAME>`.",
     "#",
     "# Shared ML Data Infra deploys:",
@@ -409,7 +413,7 @@ export function renderReadmeEnvSection() {
     "- Shared infra discovery",
     "  - `bb-amplify` no longer provisions app-local match-store resources and no longer depends on a generated local env bridge file.",
     "  - `bb-shared-infra` publishes a deterministic SSM contract keyed by sandbox or environment identity.",
-    "  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, syncs `BB_CONNECTION_ENCRYPTION_SECRET` into the Amplify sandbox when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.",
+    "  - `npm run sandbox` is the primary local workflow. It loads `/Users/karey/projects/bb/.env.deploy.local`, publishes the canonical BuzzerBeater encryption secret into shared-infra SSM when needed, bootstraps ML Data Infra, and exports `BB_SHARED_ENVIRONMENT_NAME` before Amplify synth.",
     "  - Predictor endpoints are a separate explicit deploy. Sandbox and dev should fail fast if the predictor endpoint is missing instead of guessing a default artifact.",
     "  - Hosted builds derive the shared infra environment name from `AWS_BRANCH`, with `main -> prod` and other hosted branches using their normalized branch name.",
     "  - Hosted backend deploys require the Amplify app service role to have `ssm:GetParameter`, `ssm:GetParameters`, and `ssm:GetParametersByPath` on `arn:aws:ssm:us-east-1:427377913956:parameter/buzzerbeater/ml-data-infra/*`.",
