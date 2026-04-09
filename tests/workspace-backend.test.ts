@@ -624,7 +624,11 @@ test("lineup helper uses owner tracked profiles instead of shared snapshot paylo
   const rosterSkills = rosterPlayer.skills as Record<string, unknown>;
   assert.equal(rosterPlayer.available, true);
   assert.equal(rosterSkills.js, 7);
+  assert.equal(rosterSkills.jr, 6);
+  assert.equal(rosterSkills.od, 5);
   assert.equal(rosterSkills.pa, 9);
+  assert.equal(rosterSkills.rb, 4);
+  assert.equal(rosterSkills.sb, 2);
   assert.equal(rosterSkills.gs, 7);
   assert.deepStrictEqual(workspace.snapshotWarnings, []);
 });

@@ -44,6 +44,7 @@ const SKILL_ALIASES: Partial<Record<string, CanonicalSkillField>> = {
   jumprange: "jr",
   jr: "jr",
   outsidedefense: "od",
+  outsidedef: "od",
   perimeterdefense: "od",
   perimdef: "od",
   od: "od",
@@ -61,9 +62,11 @@ const SKILL_ALIASES: Partial<Record<string, CanonicalSkillField>> = {
   insidedef: "id",
   id: "id",
   rebounding: "rb",
+  rebound: "rb",
   rb: "rb",
   shotblocking: "sb",
   shotblock: "sb",
+  shotblk: "sb",
   sb: "sb",
   stamina: "st",
   st: "st",
@@ -117,7 +120,7 @@ export function buildRawPlayerSkills(input: {
 }): RawPlayerSkills {
   const normalized: Partial<Record<CanonicalSkillField, number>> = {};
   for (const [rawKey, rawValue] of Object.entries(input.skills)) {
-    const key = rawKey.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase();
+    const key = rawKey.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
     const canonical = SKILL_ALIASES[key];
     if (canonical == null) {
       continue;

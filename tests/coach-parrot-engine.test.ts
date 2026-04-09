@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildRawPlayerSkills,
   evaluateLineup,
   evaluateRoster,
   rankRoster,
@@ -173,6 +174,26 @@ test("CoachParrot artifact includes extracted context coefficients", () => {
     Object.keys(coachParrotArtifacts.home_court_adjustments).sort().join(","),
     "insideDefense,outsideDefense,rebounding",
   );
+});
+
+test("CoachParrot skill normalization accepts legacy roster key variants", () => {
+  const player = buildRawPlayerSkills({
+    playerId: "p1",
+    name: "Legacy Alias Guard",
+    skills: {
+      jump_range: 11,
+      outside_def: 12,
+      rebound: 13,
+      shot_blocking: 14,
+      game_shape: "strong",
+    },
+  });
+
+  assert.equal(player.jr, 11);
+  assert.equal(player.od, 12);
+  assert.equal(player.rb, 13);
+  assert.equal(player.sb, 14);
+  assert.equal(player.gs, 8);
 });
 
 test("CoachParrot tactic context still changes ratings independently of venue modifiers", () => {
