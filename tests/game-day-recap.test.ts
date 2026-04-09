@@ -14,7 +14,9 @@ import {
 import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
 
 installInactiveMaintenanceRuntime();
+import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../amplify/_shared/game-day-recap-errors";
 import { requireFeatureAccess } from "../amplify/data/_backend/billing";
+import { BBXmlApiError } from "../lib/bbapi";
 import type {
   BBApiBoxScore,
   BBApiSchedule,
@@ -220,35 +222,35 @@ function createExpectedPromptGame(matchId: string) {
       away: {
         conferenceIndex: 2,
         conferencePosition: 1,
-        currentStreak: "W2",
         defStrategy: "23 Zone",
         efficiency: {},
         gdp: {},
-        lastFive: "4-1",
+        lastFiveEnteringGame: "4-1",
         name: "Away",
         offStrategy: "Motion",
-        ratingSnapshot: {},
+        ratingLabels: {},
         recentAverageMargin: 5,
         recentSignalFlags: [],
-        record: "10-5",
+        recordEnteringGame: "10-5",
         score: 81,
+        streakEnteringGame: "W2",
         topPlayers: [],
       },
       home: {
         conferenceIndex: 1,
         conferencePosition: 1,
-        currentStreak: "W3",
         defStrategy: "Man To Man",
         efficiency: {},
         gdp: {},
-        lastFive: "5-0",
+        lastFiveEnteringGame: "5-0",
         name: "Home",
         offStrategy: "Push",
-        ratingSnapshot: {},
+        ratingLabels: {},
         recentAverageMargin: 7,
         recentSignalFlags: [],
-        record: "12-3",
+        recordEnteringGame: "12-3",
         score: 85,
+        streakEnteringGame: "W3",
         topPlayers: [],
       },
     },
@@ -638,6 +640,8 @@ test("team form helpers compute streaks, last-five form, and top players", () =>
 
   assert.equal(context.currentStreak, "W1");
   assert.equal(context.lastFive, "3-2");
+  assert.equal(context.wins, 3);
+  assert.equal(context.losses, 2);
   assert.ok(context.recentSignalFlags.includes("possible_strategic_deemphasis"));
 
   const topPlayers = __testing.extractTopPlayers(
@@ -652,6 +656,175 @@ test("team form helpers compute streaks, last-five form, and top players", () =>
     }).awayTeam.players,
   );
   assert.equal(topPlayers[0]?.name, "Ari Away");
+});
+
+test("buildGameDayRecapPromptPayload uses entering-game records and BB rating labels", async () => {
+  const standings = createStandings(64, "100");
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+        {
+          awayTeam: { id: "A", score: 79, teamName: "Alpha" },
+          homeTeam: { id: "C", score: 72, teamName: "Gamma" },
+          id: "prev-a",
+          startTime: "2026-03-10T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+        {
+          awayTeam: { id: "D", score: 66, teamName: "Delta" },
+          homeTeam: { id: "B", score: 70, teamName: "Beta" },
+          id: "prev-b",
+          startTime: "2026-03-08T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "C",
+      createSchedule("C", [
+        {
+          awayTeam: { id: "A", score: 79, teamName: "Alpha" },
+          homeTeam: { id: "C", score: 72, teamName: "Gamma" },
+          id: "prev-a",
+          startTime: "2026-03-10T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "D",
+      createSchedule("D", [
+        {
+          awayTeam: { id: "D", score: 66, teamName: "Delta" },
+          homeTeam: { id: "B", score: 70, teamName: "Beta" },
+          id: "prev-b",
+          startTime: "2026-03-08T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+  ]);
+
+  const payload = await __testing.buildGameDayRecapPromptPayload({
+    bb: {
+      getBoxScore: async (matchId) => {
+        switch (matchId) {
+          case "m-1":
+            return createBoxScore({
+              awayScore: 81,
+              awayTeamId: "B",
+              awayTeamName: "Beta",
+              homeScore: 85,
+              homeTeamId: "A",
+              homeTeamName: "Alpha",
+              matchId: "m-1",
+            });
+          case "prev-a":
+            return createBoxScore({
+              awayScore: 79,
+              awayTeamId: "A",
+              awayTeamName: "Alpha",
+              homeScore: 72,
+              homeTeamId: "C",
+              homeTeamName: "Gamma",
+              matchId: "prev-a",
+            });
+          case "prev-b":
+            return createBoxScore({
+              awayScore: 66,
+              awayTeamId: "D",
+              awayTeamName: "Delta",
+              homeScore: 70,
+              homeTeamId: "B",
+              homeTeamName: "Beta",
+              matchId: "prev-b",
+            });
+          case undefined:
+            throw new Error("Unexpected missing box score id");
+          default:
+            throw new Error(`Unexpected box score ${matchId}`);
+        }
+      },
+      getSchedule: async (teamId) => {
+        const schedule = schedules.get(teamId ?? "");
+        if (!schedule) {
+          throw new Error(`Missing schedule for ${teamId}`);
+        }
+        return schedule;
+      },
+      getTeamInfo: async () => {
+        throw new Error("team info should not be loaded in this test");
+      },
+    },
+    connection: {
+      bbLoginName: "coach-alpha",
+      leagueId: "100",
+      leagueName: "Elite League",
+      leagueTimeZone: "America/New_York",
+      refreshSortAt: "2026-03-15T23:10:00.000Z",
+      status: "CONNECTED",
+      userId: "user-1",
+    },
+    now: new Date("2026-03-15T23:10:00Z"),
+    requestedGames: [
+      {
+        awayTeamId: "B",
+        awayTeamName: "Beta",
+        homeTeamId: "A",
+        homeTeamName: "Alpha",
+        isScheduleFinal: true,
+        matchId: "m-1",
+        scheduledAwayScore: 81,
+        scheduledHomeScore: 85,
+        startTime: "2026-03-15T19:00:00Z",
+        type: "League",
+      },
+    ],
+    request: {
+      gameDate: "2026-03-15",
+      gameDayNumber: null,
+      kind: "LEAGUE_DATE",
+      label: "Elite League 2026-03-15",
+      leagueId: "100",
+      leagueName: "Elite League",
+      matchId: null,
+      season: 64,
+      timeZone: "America/New_York",
+    },
+    season: 64,
+    standings,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
+  });
+
+  const firstGame = payload.games[0];
+  assert.ok(firstGame);
+  assert.equal(firstGame.teams.home.recordEnteringGame, "1-0");
+  assert.equal(firstGame.teams.home.streakEnteringGame, "W1");
+  assert.equal(firstGame.teams.away.recordEnteringGame, "1-0");
+  assert.equal(firstGame.teams.away.streakEnteringGame, "W1");
+  assert.equal(firstGame.teams.home.ratingLabels.outsideDefense, "prominent");
+  assert.equal(firstGame.teams.away.ratingLabels.outsideScoring, "sensational");
 });
 
 test("submitGameDayRecap is idempotent while a recap is already active", async () => {
@@ -1020,7 +1193,7 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
   );
 });
 
-test("processGameDayRecap succeeds with partial coverage when one box score is missing", async () => {
+test("processGameDayRecap fails with a retryable coverage error when a past final box score fetch fails", async () => {
   const recapRecord = {
     gameDate: "2026-03-15",
     leagueId: "100",
@@ -1117,9 +1290,196 @@ test("processGameDayRecap succeeds with partial coverage when one box score is m
         matchId: "prev-a",
       }),
     ],
-    ["m-2", null],
   ]);
   const updates: Array<Record<string, unknown>> = [];
+  let providerCalls = 0;
+
+  await assert.rejects(
+    () =>
+      processGameDayRecap(
+        {
+          env: {},
+          messageBody: JSON.stringify({
+            requestedAt: recapRecord.requestedAt,
+            targetKey: recapRecord.targetKey,
+            userId: recapRecord.userId,
+          }),
+          modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          region: "us-east-1",
+        },
+        {
+          createBbClient: () => ({
+            getBoxScore: async (matchId) => {
+              if (matchId === "m-2") {
+                throw new BBXmlApiError(
+                  "BB box score fetch failed",
+                  "boxscore.aspx",
+                  503,
+                );
+              }
+              const boxScore = boxScores.get(matchId ?? "");
+              if (!boxScore) {
+                throw new Error(`Missing box score for ${matchId}`);
+              }
+              return boxScore;
+            },
+            getSchedule: async (teamId) => {
+              const schedule = schedules.get(teamId ?? "");
+              if (!schedule) {
+                throw new Error(`Missing schedule for ${teamId}`);
+              }
+              return schedule;
+            },
+            getSeasons: async () => ({
+              seasons: [{ finish: "2026-05-01", id: 64, start: "2026-02-02" }],
+              version: "1",
+            }),
+            getStandings: async () => standings,
+            getTeamInfo: async () => ({
+              country: null,
+              fields: {},
+              isBot: false,
+              league: { id: "100", name: "Elite League" },
+              ownerName: "Owner",
+              retrievedAt: "2026-03-15T00:00:00Z",
+              rival: null,
+              shortName: "ALP",
+              teamId: "A",
+              teamName: "Alpha",
+              version: "1",
+            }),
+          }),
+          createProvider: () => ({
+            generate: async () => {
+              providerCalls += 1;
+              throw new Error(
+                "provider should not be invoked when final slate coverage is incomplete",
+              );
+            },
+            modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            providerName: "bedrock",
+          }),
+          getBbConnection: async () => ({
+            bbLoginName: "coach-alpha",
+            leagueTimeZone: "America/New_York",
+            refreshSortAt: "2026-03-17T23:10:00.000Z",
+            status: "CONNECTED",
+            userId: "user-1",
+          }),
+          getGameDayRecap: async () => recapRecord,
+          now: () => new Date("2026-03-17T23:10:00Z"),
+          resolveBbAccessKey: async () => "secret",
+          updateGameDayRecap: async (_env, input) => {
+            updates.push(input);
+          },
+        },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME);
+      return true;
+    },
+  );
+
+  const finalUpdate = updates.at(-1);
+  assert.ok(finalUpdate);
+  assert.equal(providerCalls, 0);
+  assert.equal(finalUpdate.status, "FAILED");
+  assert.deepStrictEqual(finalUpdate.coverageJson, {
+    availableGames: 1,
+    missingGames: [
+      {
+        awayTeamName: "Delta",
+        homeTeamName: "Gamma",
+        matchId: "m-2",
+        reason: "final box score was unavailable",
+      },
+    ],
+    partial: true,
+    requestedGames: 2,
+  });
+});
+
+test("processGameDayRecap still allows partial coverage for same-day games that are not clearly final", async () => {
+  const recapRecord = {
+    gameDate: "2026-03-15",
+    leagueId: "100",
+    requestJson: {
+      gameDate: "2026-03-15",
+      leagueId: "100",
+    },
+    requestedAt: "2026-03-15T19:30:00Z",
+    status: "QUEUED" as const,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
+  };
+  const standings = createStandings();
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "C",
+      createSchedule("C", [
+        {
+          awayTeam: { id: "D", score: null, teamName: "Delta" },
+          homeTeam: { id: "C", score: null, teamName: "Gamma" },
+          id: "m-2",
+          startTime: "2026-03-15T21:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "D",
+      createSchedule("D", [
+        {
+          awayTeam: { id: "D", score: null, teamName: "Delta" },
+          homeTeam: { id: "C", score: null, teamName: "Gamma" },
+          id: "m-2",
+          startTime: "2026-03-15T21:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+  ]);
+  const boxScores = new Map<string, BBApiBoxScore>([
+    [
+      "m-1",
+      createBoxScore({
+        awayScore: 81,
+        awayTeamId: "B",
+        awayTeamName: "Beta",
+        homeScore: 85,
+        homeTeamId: "A",
+        homeTeamName: "Alpha",
+        matchId: "m-1",
+      }),
+    ],
+  ]);
+  const updates: Array<Record<string, unknown>> = [];
+  let providerCalls = 0;
 
   await processGameDayRecap(
     {
@@ -1135,12 +1495,16 @@ test("processGameDayRecap succeeds with partial coverage when one box score is m
     {
       createBbClient: () => ({
         getBoxScore: async (matchId) => {
-          const boxScore = boxScores.get(matchId ?? "");
-          if (boxScore === undefined) {
-            throw new Error(`Missing box score for ${matchId}`);
+          if (matchId === "m-2") {
+            throw new BBXmlApiError(
+              "BB box score fetch failed",
+              "boxscore.aspx",
+              503,
+            );
           }
-          if (boxScore === null) {
-            throw new Error(`Box score unavailable for ${matchId}`);
+          const boxScore = boxScores.get(matchId ?? "");
+          if (!boxScore) {
+            throw new Error(`Missing box score for ${matchId}`);
           }
           return boxScore;
         },
@@ -1171,30 +1535,33 @@ test("processGameDayRecap succeeds with partial coverage when one box score is m
         }),
       }),
       createProvider: () => ({
-        generate: async (payload) => ({
-          games: payload.games.map((game) => ({
-            evidenceTags: ["recent_form"],
-            headline: `Recap for ${game.matchId}`,
-            matchId: game.matchId,
-            writeup: `${game.teams.home.name} handled ${game.teams.away.name} with a balanced night and enough late execution to close it out cleanly.`,
-          })),
-          summary: {
-            headline: "Elite League roundup",
-            lede: "One final box score was enough to produce a partial slate recap while the remaining game stayed unavailable.",
-          },
-        }),
+        generate: async (payload) => {
+          providerCalls += 1;
+          return {
+            games: payload.games.map((game) => ({
+              evidenceTags: ["recent_form"],
+              headline: `Recap for ${game.matchId}`,
+              matchId: game.matchId,
+              writeup: `${game.teams.home.name} did enough to beat ${game.teams.away.name} while the later matchup remained unfinished.`,
+            })),
+            summary: {
+              headline: "Elite League roundup",
+              lede: "Completed finals were summarized while one same-day game still lacked final coverage.",
+            },
+          };
+        },
         modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         providerName: "bedrock",
       }),
       getBbConnection: async () => ({
         bbLoginName: "coach-alpha",
         leagueTimeZone: "America/New_York",
-        refreshSortAt: "2026-03-15T23:10:00.000Z",
+        refreshSortAt: "2026-03-15T19:45:00.000Z",
         status: "CONNECTED",
         userId: "user-1",
       }),
       getGameDayRecap: async () => recapRecord,
-      now: () => new Date("2026-03-15T23:10:00Z"),
+      now: () => new Date("2026-03-15T19:45:00Z"),
       resolveBbAccessKey: async () => "secret",
       updateGameDayRecap: async (_env, input) => {
         updates.push(input);
@@ -1204,6 +1571,7 @@ test("processGameDayRecap succeeds with partial coverage when one box score is m
 
   const finalUpdate = updates.at(-1);
   assert.ok(finalUpdate);
+  assert.equal(providerCalls, 1);
   assert.equal(finalUpdate.status, "SUCCEEDED");
   assert.deepStrictEqual(finalUpdate.coverageJson, {
     availableGames: 1,
@@ -1217,6 +1585,139 @@ test("processGameDayRecap succeeds with partial coverage when one box score is m
     ],
     partial: true,
     requestedGames: 2,
+  });
+});
+
+test("buildGameDayRecapPromptPayload logs BBXmlApiError details for failed box score fetches", async () => {
+  const standings = createStandings();
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    ["C", createSchedule("C", [])],
+    ["D", createSchedule("D", [])],
+  ]);
+  const capturedWarns: Array<[unknown, unknown]> = [];
+  const originalWarn = console.warn;
+
+  console.warn = ((message?: unknown, details?: unknown) => {
+    capturedWarns.push([message, details]);
+  }) as typeof console.warn;
+
+  try {
+    await assert.rejects(
+      () =>
+        __testing.buildGameDayRecapPromptPayload({
+          bb: {
+            getBoxScore: async () => {
+              throw new BBXmlApiError(
+                "BB API request failed for boxscore.aspx: 503 Service Unavailable",
+                "boxscore.aspx",
+                503,
+              );
+            },
+            getSchedule: async (teamId) => {
+              const schedule = schedules.get(teamId ?? "");
+              if (!schedule) {
+                throw new Error(`Missing schedule for ${teamId}`);
+              }
+              return schedule;
+            },
+            getTeamInfo: async () => {
+              throw new Error("team info should not be loaded in this test");
+            },
+          },
+          connection: {
+            bbLoginName: "coach-alpha",
+            leagueId: "100",
+            leagueName: "Elite League",
+            leagueTimeZone: "America/New_York",
+            refreshSortAt: "2026-03-17T23:10:00.000Z",
+            status: "CONNECTED",
+            userId: "user-1",
+          },
+          enforceCompletedSlateCoverage: true,
+          now: new Date("2026-03-17T23:10:00Z"),
+          requestedGames: [
+            {
+              awayTeamId: "B",
+              awayTeamName: "Beta",
+              homeTeamId: "A",
+              homeTeamName: "Alpha",
+              isScheduleFinal: true,
+              matchId: "m-1",
+              scheduledAwayScore: 81,
+              scheduledHomeScore: 85,
+              startTime: "2026-03-15T19:00:00Z",
+              type: "League",
+            },
+          ],
+          request: {
+            gameDate: "2026-03-15",
+            gameDayNumber: null,
+            kind: "LEAGUE_DATE",
+            label: "Elite League 2026-03-15",
+            leagueId: "100",
+            leagueName: "Elite League",
+            matchId: null,
+            season: 64,
+            timeZone: "America/New_York",
+          },
+          season: 64,
+          standings,
+          targetKey: "100#2026-03-15",
+          userId: "user-1",
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME);
+        return true;
+      },
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  const fetchFailureLog = capturedWarns.find(
+    ([message]) =>
+      typeof message === "string" &&
+      message.includes("process.box_score_fetch_failed"),
+  );
+  assert.ok(fetchFailureLog, "expected a box score fetch failure warning");
+  assert.deepStrictEqual(fetchFailureLog[1], {
+    endpoint: "boxscore.aspx",
+    errorMessage:
+      "BB API request failed for boxscore.aspx: 503 Service Unavailable",
+    errorName: "BBXmlApiError",
+    expectedFinal: true,
+    matchId: "m-1",
+    scheduleFinal: true,
+    scheduledAwayScore: 81,
+    scheduledHomeScore: 85,
+    status: 503,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
   });
 });
 

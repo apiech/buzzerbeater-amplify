@@ -19,6 +19,8 @@ import {
   normalizeLeagueTimeZone,
   resolveCalendarDateKey,
 } from "../../../lib/league-timezones";
+import { formatBuzzerBeaterLabel } from "../../../lib/buzzerbeater/rating-scale";
+import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../../_shared/game-day-recap-errors";
 import { resolveBbAccessKey } from "./credentials";
 import {
   buildExecutionName,
@@ -161,18 +163,18 @@ type GameDayRecapPromptPayload = {
 type GameDayRecapPromptTeam = {
   conferenceIndex: number | null;
   conferencePosition: number | null;
-  currentStreak: string;
   defStrategy: string | null;
   efficiency: Record<string, number | string>;
   gdp: Record<string, number | string>;
-  lastFive: string;
+  lastFiveEnteringGame: string;
   name: string;
   offStrategy: string | null;
-  ratingSnapshot: Record<string, number | string>;
+  ratingLabels: Record<string, string>;
   recentAverageMargin: number | null;
   recentSignalFlags: string[];
-  record: string;
+  recordEnteringGame: string;
   score: number;
+  streakEnteringGame: string;
   topPlayers: Array<{
     assists: number;
     blocks: number;
@@ -188,12 +190,49 @@ type GameDayRecapPromptTeam = {
 export type SlateGame = {
   awayTeamId: string;
   awayTeamName: string;
+  isScheduleFinal: boolean;
   homeTeamId: string;
   homeTeamName: string;
   matchId: string;
+  scheduledAwayScore: number | null;
+  scheduledHomeScore: number | null;
   startTime: string | null;
   type: string | null;
 };
+
+type BoxScoreFetchErrorDetails = {
+  endpoint?: string;
+  errorMessage: string;
+  errorName?: string;
+  status?: number;
+};
+
+type BoxScoreLoadResult =
+  | {
+      boxScore: BBApiBoxScore;
+      kind: "ok";
+    }
+  | {
+      boxScore: BBApiBoxScore;
+      kind: "incomplete_boxscore";
+    }
+  | {
+      error: BoxScoreFetchErrorDetails;
+      kind: "fetch_failed";
+    };
+
+class RetryableCompletedSlateCoverageError extends Error {
+  readonly coverage: GameDayRecapCoveragePayload;
+
+  constructor(
+    coverage: GameDayRecapCoveragePayload,
+    message = "Completed slate recap coverage is incomplete while final box scores are still missing.",
+  ) {
+    super(message);
+    this.name = RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME;
+    this.coverage = coverage;
+  }
+}
 
 type LeagueSlateResolutionDiagnostics = {
   exactMatchCount: number;
@@ -905,6 +944,8 @@ export async function processGameDayRecap(
     const promptPayload = await buildGameDayRecapPromptPayload({
       bb,
       connection,
+      enforceCompletedSlateCoverage: true,
+      now: deps.now(),
       requestedGames: slate,
       request: {
         gameDate: recap.gameDate,
@@ -919,6 +960,8 @@ export async function processGameDayRecap(
       },
       season,
       standings,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
     });
     coverage = promptPayload.coverage;
 
@@ -994,6 +1037,9 @@ export async function processGameDayRecap(
       userId: recap.userId,
     });
   } catch (error) {
+    if (isRetryableCompletedSlateCoverageError(error)) {
+      coverage = error.coverage;
+    }
     logGameDayRecapError("process.failed", {
       coverage,
       targetKey: recap.targetKey,
@@ -1133,6 +1179,8 @@ export async function processLeagueGameDayRecap(
     const promptPayload = await buildGameDayRecapPromptPayload({
       bb,
       connection,
+      enforceCompletedSlateCoverage: true,
+      now: deps.now(),
       requestedGames: slate,
       request: {
         gameDate: null,
@@ -1143,10 +1191,12 @@ export async function processLeagueGameDayRecap(
         leagueName: standings.league?.name ?? recap.leagueName ?? null,
         matchId: null,
         season,
-        timeZone: null,
+        timeZone: resolveLeagueTimeZone(connection, standings),
       },
       season,
       standings,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
     });
     coverage = promptPayload.coverage;
 
@@ -1187,6 +1237,15 @@ export async function processLeagueGameDayRecap(
       userId: recap.userId,
     });
   } catch (error) {
+    if (isRetryableCompletedSlateCoverageError(error)) {
+      coverage = error.coverage;
+    }
+    logGameDayRecapError("process.failed", {
+      coverage,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+      ...toLoggableError(error),
+    });
     await deps.updateLeagueGameDayRecap(args.env, {
       completedAt: deps.now().toISOString(),
       coverageJson: coverage,
@@ -1646,21 +1705,20 @@ async function resolveLeagueDaySlateWithDiagnostics(args: {
       diagnostics.exactMatchCount += 1;
 
       if (!slateByMatchId.has(matchId)) {
-        slateByMatchId.set(matchId, {
-          awayTeamId,
-          awayTeamName:
-            match.awayTeam.teamName ??
-            standingTeams.get(awayTeamId)?.teamName ??
-            "Away team",
-          homeTeamId,
-          homeTeamName:
-            match.homeTeam.teamName ??
-            standingTeams.get(homeTeamId)?.teamName ??
-            "Home team",
+        slateByMatchId.set(
           matchId,
-          startTime: match.startTime,
-          type: match.type,
-        });
+          toSlateGameFromScheduleMatch({
+            awayTeamName:
+              match.awayTeam.teamName ??
+              standingTeams.get(awayTeamId)?.teamName ??
+              "Away team",
+            homeTeamName:
+              match.homeTeam.teamName ??
+              standingTeams.get(homeTeamId)?.teamName ??
+              "Home team",
+            match,
+          }),
+        );
       }
     }
   }
@@ -1725,20 +1783,18 @@ export async function resolveLeagueGameDaySlate(args: {
       }
 
       slateByMatchId.set(matchId, {
-        awayTeamId,
-        awayTeamName:
-          match.awayTeam.teamName ??
-          standingTeams.get(awayTeamId)?.teamName ??
-          "Away team",
+        ...toSlateGameFromScheduleMatch({
+          awayTeamName:
+            match.awayTeam.teamName ??
+            standingTeams.get(awayTeamId)?.teamName ??
+            "Away team",
+          homeTeamName:
+            match.homeTeam.teamName ??
+            standingTeams.get(homeTeamId)?.teamName ??
+            "Home team",
+          match,
+        }),
         gameDayNumbers: new Set([gameDayNumber]),
-        homeTeamId,
-        homeTeamName:
-          match.homeTeam.teamName ??
-          standingTeams.get(homeTeamId)?.teamName ??
-          "Home team",
-        matchId,
-        startTime: match.startTime,
-        type: match.type,
       });
     });
   }
@@ -1767,6 +1823,26 @@ function isRegularSeasonLeagueMatchType(
       normalizedType === "league.rs" ||
       normalizedType === "league.regularseason"),
   );
+}
+
+function toSlateGameFromScheduleMatch(args: {
+  awayTeamName: string;
+  homeTeamName: string;
+  match: BBApiScheduleMatch;
+}): SlateGame {
+  return {
+    awayTeamId: args.match.awayTeam.id?.trim() ?? "unknown-away",
+    awayTeamName: args.awayTeamName,
+    isScheduleFinal:
+      args.match.homeTeam.score !== null && args.match.awayTeam.score !== null,
+    homeTeamId: args.match.homeTeam.id?.trim() ?? "unknown-home",
+    homeTeamName: args.homeTeamName,
+    matchId: args.match.id?.trim() ?? "unknown-match",
+    scheduledAwayScore: args.match.awayTeam.score,
+    scheduledHomeScore: args.match.homeTeam.score,
+    startTime: args.match.startTime,
+    type: args.match.type,
+  };
 }
 
 export function buildGameDayRecapBedrockRequest(args: {
@@ -1823,6 +1899,8 @@ export function buildGameDayRecapBedrockRequest(args: {
           "You are writing basketball recaps for the requested game or slate.",
           "Use only supplied facts. Do not invent transfers, injuries, off-court news, or play-by-play.",
           "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
+          "Team context fields ending in EnteringGame describe the state before tipoff, so only advance records or streaks when the game result clearly supports it.",
+          "If you mention team ratings, use the supplied BuzzerBeater word labels rather than raw numeric scores.",
           "Headlines should be vivid but factual.",
         ].join(" "),
       },
@@ -1869,10 +1947,14 @@ export function assertSupportedBedrockRecapModel(
 async function buildGameDayRecapPromptPayload(args: {
   bb: Pick<BBXmlApiClient, "getBoxScore" | "getSchedule" | "getTeamInfo">;
   connection: BbConnectionRecord;
+  enforceCompletedSlateCoverage?: boolean;
+  now: Date;
   requestedGames: SlateGame[];
   request: GameDayRecapPromptPayload["request"];
   season: number;
   standings: BBApiStandings;
+  targetKey: string;
+  userId: string;
 }): Promise<GameDayRecapPromptPayload> {
   const standingsIndex = extractStandingTeams(args.standings);
   const schedules = await Promise.all(
@@ -1882,31 +1964,64 @@ async function buildGameDayRecapPromptPayload(args: {
     ),
   );
   const scheduleByTeamId = new Map<string, BBApiSchedule>(schedules);
-  const boxScoreCache = new Map<string, Promise<BBApiBoxScore | null>>();
+  const boxScoreCache = new Map<string, Promise<BoxScoreLoadResult>>();
   const coverageIssues: CoverageIssue[] = [];
+  const finalCoverageBlockers: CoverageIssue[] = [];
   const promptGames: GameDayRecapPromptPayload["games"] = [];
 
   for (const requestedGame of args.requestedGames) {
-    const boxScore = await loadBoxScore(
+    const boxScoreResult = await loadBoxScore(
       args.bb,
       boxScoreCache,
       requestedGame.matchId,
     );
-    if (
-      !boxScore ||
-      boxScore.homeTeam.score === null ||
-      boxScore.awayTeam.score === null
-    ) {
-      coverageIssues.push({
+    const expectedFinal = isRequestedGameExpectedFinal({
+      now: args.now,
+      request: args.request,
+      requestedGame,
+    });
+    if (boxScoreResult.kind !== "ok") {
+      if (boxScoreResult.kind === "fetch_failed") {
+        logGameDayRecapWarn("process.box_score_fetch_failed", {
+          expectedFinal,
+          matchId: requestedGame.matchId,
+          scheduledAwayScore: requestedGame.scheduledAwayScore,
+          scheduledHomeScore: requestedGame.scheduledHomeScore,
+          scheduleFinal: requestedGame.isScheduleFinal,
+          targetKey: args.targetKey,
+          userId: args.userId,
+          ...boxScoreResult.error,
+        });
+      } else {
+        logGameDayRecapWarn("process.box_score_incomplete", {
+          awayScore: boxScoreResult.boxScore.awayTeam.score,
+          expectedFinal,
+          homeScore: boxScoreResult.boxScore.homeTeam.score,
+          matchId: requestedGame.matchId,
+          scheduledAwayScore: requestedGame.scheduledAwayScore,
+          scheduledHomeScore: requestedGame.scheduledHomeScore,
+          scheduleFinal: requestedGame.isScheduleFinal,
+          targetKey: args.targetKey,
+          userId: args.userId,
+        });
+      }
+
+      const issue: CoverageIssue = {
         awayTeamName: requestedGame.awayTeamName,
         homeTeamName: requestedGame.homeTeamName,
         matchId: requestedGame.matchId,
-        reason: boxScore
-          ? "final box score was incomplete"
-          : "final box score was unavailable",
-      });
+        reason:
+          boxScoreResult.kind === "incomplete_boxscore"
+            ? "final box score was incomplete"
+            : "final box score was unavailable",
+      };
+      coverageIssues.push(issue);
+      if (expectedFinal) {
+        finalCoverageBlockers.push(issue);
+      }
       continue;
     }
+    const boxScore = boxScoreResult.boxScore;
 
     const homeSchedule = scheduleByTeamId.get(requestedGame.homeTeamId);
     const awaySchedule = scheduleByTeamId.get(requestedGame.awayTeamId);
@@ -1975,6 +2090,20 @@ async function buildGameDayRecapPromptPayload(args: {
     partial: coverageIssues.length > 0,
     requestedGames: args.requestedGames.length,
   };
+  if (
+    args.enforceCompletedSlateCoverage &&
+    finalCoverageBlockers.length > 0 &&
+    isCoverageStrictForRequest(args.request)
+  ) {
+    logGameDayRecapWarn("process.completed_slate_coverage_blocked", {
+      blockedGames: finalCoverageBlockers,
+      coverage,
+      requestKind: args.request.kind,
+      targetKey: args.targetKey,
+      userId: args.userId,
+    });
+    throw new RetryableCompletedSlateCoverageError(coverage);
+  }
 
   return {
     coverage,
@@ -2088,9 +2217,13 @@ function toSlateGameFromBoxScore(boxScore: BBApiBoxScore): SlateGame {
   return {
     awayTeamId: boxScore.awayTeam.id ?? "unknown-away",
     awayTeamName: boxScore.awayTeam.teamName ?? "Away team",
+    isScheduleFinal:
+      boxScore.homeTeam.score !== null && boxScore.awayTeam.score !== null,
     homeTeamId: boxScore.homeTeam.id ?? "unknown-home",
     homeTeamName: boxScore.homeTeam.teamName ?? "Home team",
     matchId: boxScore.matchId ?? "unknown-match",
+    scheduledAwayScore: boxScore.awayTeam.score,
+    scheduledHomeScore: boxScore.homeTeam.score,
     startTime: boxScore.startTime,
     type: boxScore.type,
   };
@@ -2103,18 +2236,18 @@ function buildPromptTeam(
   return {
     conferenceIndex: seasonContext.conferenceIndex + 1,
     conferencePosition: seasonContext.conferencePosition,
-    currentStreak: seasonContext.currentStreak,
     defStrategy: team.defStrategy,
     efficiency: compactScalarRecord(team.efficiency),
     gdp: compactScalarRecord(team.gdp),
-    lastFive: seasonContext.lastFive,
+    lastFiveEnteringGame: seasonContext.lastFive,
     name: seasonContext.teamName,
     offStrategy: team.offStrategy,
-    ratingSnapshot: compactScalarRecord(team.ratings),
+    ratingLabels: formatTeamRatingsForRecap(team.ratings),
     recentAverageMargin: seasonContext.recentAverageMargin,
     recentSignalFlags: seasonContext.recentSignalFlags,
-    record: `${seasonContext.wins}-${seasonContext.losses}`,
+    recordEnteringGame: `${seasonContext.wins}-${seasonContext.losses}`,
     score: team.score ?? 0,
+    streakEnteringGame: seasonContext.currentStreak,
     topPlayers: extractTopPlayers(team.players),
   };
 }
@@ -2203,9 +2336,9 @@ function buildStandingsContext(args: {
 
 async function loadBoxScore(
   bb: Pick<BBXmlApiClient, "getBoxScore">,
-  cache: Map<string, Promise<BBApiBoxScore | null>>,
+  cache: Map<string, Promise<BoxScoreLoadResult>>,
   matchId: string,
-): Promise<BBApiBoxScore | null> {
+): Promise<BoxScoreLoadResult> {
   const existing = cache.get(matchId);
   if (existing) {
     return existing;
@@ -2213,15 +2346,31 @@ async function loadBoxScore(
 
   const pending = bb
     .getBoxScore(matchId)
-    .then((boxScore) => boxScore)
-    .catch(() => null);
+    .then((boxScore) =>
+      hasCompleteBoxScore(boxScore)
+        ? ({
+            boxScore,
+            kind: "ok",
+          } satisfies BoxScoreLoadResult)
+        : ({
+            boxScore,
+            kind: "incomplete_boxscore",
+          } satisfies BoxScoreLoadResult),
+    )
+    .catch(
+      (error) =>
+        ({
+          error: toBoxScoreFetchErrorDetails(error),
+          kind: "fetch_failed",
+        }) satisfies BoxScoreLoadResult,
+    );
   cache.set(matchId, pending);
   return pending;
 }
 
 async function loadRecentCompletedBoxScores(args: {
   bb: Pick<BBXmlApiClient, "getBoxScore">;
-  boxScoreCache: Map<string, Promise<BBApiBoxScore | null>>;
+  boxScoreCache: Map<string, Promise<BoxScoreLoadResult>>;
   gameStartTime: string | null;
   limit: number;
   schedule: BBApiSchedule;
@@ -2240,12 +2389,116 @@ async function loadRecentCompletedBoxScores(args: {
     ),
   );
 
-  return loaded.filter((boxScore): boxScore is BBApiBoxScore =>
-    Boolean(
-      boxScore &&
-      boxScore.homeTeam.score !== null &&
-      boxScore.awayTeam.score !== null,
-    ),
+  return loaded.flatMap((result) =>
+    result.kind === "ok" ? [result.boxScore] : [],
+  );
+}
+
+function hasCompleteBoxScore(boxScore: BBApiBoxScore): boolean {
+  return (
+    boxScore.homeTeam.score !== null && boxScore.awayTeam.score !== null
+  );
+}
+
+function toBoxScoreFetchErrorDetails(error: unknown): BoxScoreFetchErrorDetails {
+  const loggable = toLoggableError(error);
+  const endpoint =
+    typeof loggable.endpoint === "string" ? loggable.endpoint : undefined;
+  const errorMessage =
+    typeof loggable.errorMessage === "string"
+      ? loggable.errorMessage
+      : String(error);
+  const errorName =
+    typeof loggable.errorName === "string" ? loggable.errorName : undefined;
+  const status =
+    typeof loggable.status === "number" ? loggable.status : undefined;
+
+  return {
+    endpoint,
+    errorMessage,
+    errorName,
+    status,
+  };
+}
+
+function isRequestedGameExpectedFinal(args: {
+  now: Date;
+  request: GameDayRecapPromptPayload["request"];
+  requestedGame: SlateGame;
+}): boolean {
+  if (args.requestedGame.isScheduleFinal) {
+    return true;
+  }
+
+  const timeZone = normalizeLeagueTimeZone(args.request.timeZone);
+  if (!timeZone) {
+    return false;
+  }
+
+  const currentLeagueDate = resolveCalendarDateKey(
+    args.now.toISOString(),
+    timeZone,
+  );
+  if (!currentLeagueDate) {
+    return false;
+  }
+
+  if (args.request.kind === "LEAGUE_DATE" && args.request.gameDate) {
+    return args.request.gameDate < currentLeagueDate;
+  }
+
+  const scheduledLeagueDate = resolveCalendarDateKey(
+    args.requestedGame.startTime,
+    timeZone,
+  );
+  return Boolean(scheduledLeagueDate && scheduledLeagueDate < currentLeagueDate);
+}
+
+function isCoverageStrictForRequest(
+  request: GameDayRecapPromptPayload["request"],
+): boolean {
+  return (
+    request.kind === "LEAGUE_DATE" || request.kind === "LEAGUE_GAME_DAY"
+  );
+}
+
+function formatTeamRatingsForRecap(
+  ratings: BBApiBoxScoreTeam["ratings"],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(ratings ?? {}).flatMap(([key, value]) => {
+      if (!Number.isFinite(value)) {
+        return [];
+      }
+
+      const label = formatBuzzerBeaterLabel({
+        scale: "team_rating",
+        value,
+      });
+      return [[key, label ?? String(roundToOneDecimal(value))]];
+    }),
+  );
+}
+
+function summarizeCompletedRecord(
+  matches: BBApiScheduleMatch[],
+  teamId: string,
+): { losses: number; wins: number } {
+  return matches.reduce(
+    (record, match) => {
+      const margin = getMarginForTeam(match, teamId);
+      if (margin === null) {
+        return record;
+      }
+
+      if (margin >= 0) {
+        record.wins += 1;
+      } else {
+        record.losses += 1;
+      }
+      return record;
+    },
+    { losses: 0, wins: 0 },
   );
 }
 
@@ -2259,6 +2512,7 @@ function buildTeamSeasonContext(args: {
     args.schedule,
     args.gameStartTime,
   );
+  const record = summarizeCompletedRecord(completedMatches, args.standing.teamId);
   const recentMatches = completedMatches.slice(0, 5);
   const recentMargins = recentMatches
     .map((match) => getMarginForTeam(match, args.standing.teamId))
@@ -2301,14 +2555,14 @@ function buildTeamSeasonContext(args: {
     conferencePosition: args.standing.conferencePosition,
     currentStreak: streak,
     lastFive: formatLastFive(recentMatches, args.standing.teamId),
-    losses: args.standing.losses,
+    losses: record.losses,
     recentAverageMargin,
     recentBoxScoreCoverage: args.boxScores.length,
     recentMargins,
     recentSignalFlags: Array.from(recentSignalFlags),
     teamId: args.standing.teamId,
     teamName: args.standing.teamName,
-    wins: args.standing.wins,
+    wins: record.wins,
   };
 }
 
@@ -3027,6 +3281,17 @@ function logGameDayRecapError(
   details: Record<string, unknown>,
 ): void {
   console.error(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
+}
+
+function isRetryableCompletedSlateCoverageError(
+  error: unknown,
+): error is RetryableCompletedSlateCoverageError {
+  return (
+    error instanceof RetryableCompletedSlateCoverageError ||
+    (error instanceof Error &&
+      error.name === RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME &&
+      "coverage" in error)
+  );
 }
 
 function toLoggableError(error: unknown): Record<string, unknown> {

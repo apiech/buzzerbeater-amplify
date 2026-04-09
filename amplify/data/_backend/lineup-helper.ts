@@ -4,18 +4,24 @@ import {
   OFFENSE_OPTIONS,
   evaluateLineup,
   evaluateRoster,
+  normalizeDefensiveSwitch,
   normalizeLineupAssignments,
   normalizeContext,
+  validateDefensiveSwitch,
   validateOptimizedLineup,
   type CoachParrotContext,
   type CoachParrotEvaluation,
   type LineupAssignment,
+  type LineupOptimizerAlgorithm,
   type Position,
   type RawPlayerSkills,
 } from "../../../lib/coach-parrot";
 import { ownedRosterPlayerToRawPlayerSkills } from "../../../lib/bbapi";
 import type { Schema } from "../resource";
-import { PositionCode } from "../schema-enums";
+import {
+  LineupHelperAlgorithm,
+  PositionCode,
+} from "../schema-enums";
 import {
   getOwnerTrackedPlayerProfile,
   listWorkspacePlayerHistory,
@@ -147,7 +153,7 @@ dependencies: LineupHelperDependencies = defaultLineupHelperDependencies,
     dependencies,
   );
 
-  return buildLineupHelperWorkspacePayload({
+  return await buildLineupHelperWorkspacePayload({
     generatedAt: new Date().toISOString(),
     syncedAt: asString(connection.lastSyncAt),
     roster: helperRoster,
@@ -174,6 +180,7 @@ export async function evaluateLineupHelper(args: {
 }
 
 export async function optimizeLineupHelper(args: {
+  algorithm?: unknown;
   roster: unknown;
   context: unknown;
 }): Promise<LineupHelperOptimizeResult> {
@@ -181,22 +188,24 @@ export async function optimizeLineupHelper(args: {
 
   const rosterPlayers = parseHelperRoster(args.roster);
   const context = normalizeContext(toContextRecord(args.context));
+  const algorithm = asLineupHelperAlgorithm(args.algorithm);
 
-  return buildOptimizedLineupHelperEvaluationPayload({
+  return await buildOptimizedLineupHelperEvaluationPayload({
+    algorithm,
     roster: rosterPlayers,
     context,
   });
 }
 
-export function buildLineupHelperWorkspacePayload(input: {
+export async function buildLineupHelperWorkspacePayload(input: {
   generatedAt: string;
   syncedAt: string | null;
   roster: HelperRosterPlayer[];
   defaultContext: CoachParrotContext;
-}): LineupHelperWorkspaceResult {
+}): Promise<LineupHelperWorkspaceResult> {
   const availableRoster = input.roster.filter((player) => player.available);
   const evaluation = availableRoster.length
-    ? buildOptimizedEvaluation({
+    ? await buildOptimizedEvaluation({
         context: input.defaultContext,
         roster: availableRoster,
       })
@@ -206,7 +215,7 @@ export function buildLineupHelperWorkspacePayload(input: {
     generatedAt: input.generatedAt,
     syncedAt: input.syncedAt,
     roster: input.roster,
-    defaultContext: input.defaultContext,
+    defaultContext: serializeContext(input.defaultContext),
     defaultAssignments: evaluation
       ? serializeAssignments(evaluation.chosenLineup)
       : [],
@@ -237,6 +246,10 @@ export function buildLineupHelperEvaluationPayload(input: {
 }): LineupHelperEvaluationResult {
   const availableRoster = input.roster.filter((player) => player.available);
   const normalizedAssignments = normalizeLineupAssignments(input.assignments);
+  const defensiveSwitchErrors = validateDefensiveSwitch(input.context.defensiveSwitch);
+  if (defensiveSwitchErrors.length) {
+    throw new Error(defensiveSwitchErrors.join(" "));
+  }
   const legality = validateOptimizedLineup({
     lineup: normalizedAssignments,
     players: availableRoster.map((player) => ({
@@ -259,12 +272,18 @@ export function buildLineupHelperEvaluationPayload(input: {
   return serializeEvaluation(evaluation);
 }
 
-export function buildOptimizedLineupHelperEvaluationPayload(input: {
+export async function buildOptimizedLineupHelperEvaluationPayload(input: {
+  algorithm?: LineupOptimizerAlgorithm;
   roster: HelperRosterPlayer[];
   context: CoachParrotContext;
-}): LineupHelperOptimizeResult {
+}): Promise<LineupHelperOptimizeResult> {
   const availableRoster = input.roster.filter((player) => player.available);
-  const evaluation = buildOptimizedEvaluation({
+  const defensiveSwitchErrors = validateDefensiveSwitch(input.context.defensiveSwitch);
+  if (defensiveSwitchErrors.length) {
+    throw new Error(defensiveSwitchErrors.join(" "));
+  }
+  const evaluation = await buildOptimizedEvaluation({
+    algorithm: input.algorithm,
     context: input.context,
     roster: availableRoster,
   });
@@ -406,7 +425,7 @@ function serializeEvaluation(
   evaluation: CoachParrotEvaluation,
 ): LineupHelperEvaluationResult {
   return {
-    context: evaluation.context,
+    context: serializeContext(evaluation.context),
     normalizedLineup: serializeAssignments(evaluation.chosenLineup),
     rawRatings: evaluation.rawRatings,
     roundedRatings: evaluation.roundedRatings,
@@ -454,16 +473,18 @@ function serializeEvaluation(
   };
 }
 
-function buildOptimizedEvaluation(args: {
+async function buildOptimizedEvaluation(args: {
+  algorithm?: LineupOptimizerAlgorithm;
   context: CoachParrotContext;
   roster: HelperRosterPlayer[];
-}): CoachParrotEvaluation | null {
+}): Promise<CoachParrotEvaluation | null> {
   if (!args.roster.length) {
     return null;
   }
 
   try {
-    return evaluateRoster({
+    return await evaluateRoster({
+      algorithm: args.algorithm,
       roster: {
         players: args.roster.map(toRawPlayerSkills),
       },
@@ -487,6 +508,24 @@ function toPositionOutput(
     sf: value.SF,
     pf: value.PF,
     c: value.C,
+  };
+}
+
+function serializeContext(
+  context: CoachParrotContext,
+): LineupHelperEvaluationResult["context"] {
+  return {
+    offense: context.offense,
+    defense: context.defense,
+    enthusiasm: context.enthusiasm,
+    homeCourt: context.homeCourt,
+    defensiveSwitch: {
+      pg: toPositionCode(context.defensiveSwitch.PG),
+      sg: toPositionCode(context.defensiveSwitch.SG),
+      sf: toPositionCode(context.defensiveSwitch.SF),
+      pf: toPositionCode(context.defensiveSwitch.PF),
+      c: toPositionCode(context.defensiveSwitch.C),
+    },
   };
 }
 
@@ -567,7 +606,18 @@ function toContextRecord(value: unknown): Partial<CoachParrotContext> {
     enthusiasm: asNumber(source?.enthusiasm) ?? undefined,
     homeCourt:
       asString(source?.homeCourt) ?? asString(source?.home_court) ?? undefined,
+    defensiveSwitch: toDefensiveSwitchRecord(source?.defensiveSwitch),
   };
+}
+
+function toDefensiveSwitchRecord(
+  value: unknown,
+): CoachParrotContext["defensiveSwitch"] | undefined {
+  const source = toRecord(value);
+  if (!source) {
+    return undefined;
+  }
+  return normalizeDefensiveSwitch(source);
 }
 
 function readCachedWorkspace(
@@ -663,6 +713,17 @@ function asPosition(value: unknown): Position | null {
   return text && ["PG", "SG", "SF", "PF", "C"].includes(text)
     ? (text as Position)
     : null;
+}
+
+function asLineupHelperAlgorithm(value: unknown): LineupOptimizerAlgorithm | undefined {
+  const text = asString(value);
+  if (text === LineupHelperAlgorithm.LEGACY_HEURISTIC) {
+    return "LEGACY_HEURISTIC";
+  }
+  if (text === LineupHelperAlgorithm.EXACT) {
+    return "EXACT";
+  }
+  return undefined;
 }
 
 function toPositionCode(position: Position): PositionCode {

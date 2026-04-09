@@ -5,6 +5,7 @@ type Handler = Schema["optimizeLineupHelper"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
   return optimizeLineupHelper({
+    algorithm: event.arguments.algorithm,
     roster: event.arguments.roster,
     context: event.arguments.context,
   });

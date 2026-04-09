@@ -6,7 +6,11 @@ import {
   type ClientSchema,
 } from "@aws-amplify/backend";
 
-import { PositionCode, TeamHighlightsPerspective } from "./schema-enums";
+import {
+  LineupHelperAlgorithm,
+  PositionCode,
+  TeamHighlightsPerspective,
+} from "./schema-enums";
 import { buildBbConnectionSecretFunctionEnvironment } from "../_shared/bb-connection-secret";
 import { getAccessibleMatch } from "../get-accessible-match/resource";
 import { getAccessiblePlayByPlay } from "../get-accessible-play-by-play/resource";
@@ -444,6 +448,7 @@ const schema = a
     ThemeId: a.enum(["clubhouse", "arena", "nightfall"]),
 
     PositionCode: a.enum(Object.values(PositionCode)),
+    LineupHelperAlgorithm: a.enum(Object.values(LineupHelperAlgorithm)),
 
     TeamHighlightsPerspective: a.enum(Object.values(TeamHighlightsPerspective)),
     TeamHighlightsScanState: a.enum([
@@ -971,11 +976,20 @@ const schema = a
       executionArn: a.string(),
     }),
 
+    LineupHelperDefensiveSwitch: a.customType({
+      pg: a.ref("PositionCode").required(),
+      sg: a.ref("PositionCode").required(),
+      sf: a.ref("PositionCode").required(),
+      pf: a.ref("PositionCode").required(),
+      c: a.ref("PositionCode").required(),
+    }),
+
     LineupHelperContext: a.customType({
       offense: a.string().required(),
       defense: a.string().required(),
       enthusiasm: a.integer().required(),
       homeCourt: a.string().required(),
+      defensiveSwitch: a.ref("LineupHelperDefensiveSwitch").required(),
     }),
 
     LineupHelperAssignment: a.customType({
@@ -1957,6 +1971,7 @@ const schema = a
       .arguments({
         roster: a.ref("LineupHelperRosterPlayer").required().array().required(),
         context: a.ref("LineupHelperContext").required(),
+        algorithm: a.ref("LineupHelperAlgorithm"),
       })
       .returns(a.ref("LineupHelperEvaluation"))
       .authorization((allow) => [allow.authenticated()])

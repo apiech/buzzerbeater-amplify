@@ -1,7 +1,8 @@
-import { Stack, type RemovalPolicy } from "aws-cdk-lib";
+import { Duration, Stack, type RemovalPolicy } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import type { IFunction } from "aws-cdk-lib/aws-lambda";
 
+import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../_shared/game-day-recap-errors.js";
 import type { GameDayRecapSynthConfig } from "../_shared/synth-env.js";
 import { createSingleLambdaWorkflow } from "./state-machine-workflow.js";
 
@@ -28,6 +29,12 @@ export function configureGameDayRecapJobs(
   const workflow = createSingleLambdaWorkflow(workflowStack, {
     idPrefix: "GameDayRecapJob",
     logGroupRemovalPolicy: removalPolicy,
+    retry: {
+      backoffRate: 2,
+      errors: [RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME],
+      interval: Duration.seconds(15),
+      maxAttempts: 2,
+    },
     workerFunction: backend.gameDayRecapWorker.resources.lambda,
   });
 

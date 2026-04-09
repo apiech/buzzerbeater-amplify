@@ -8,6 +8,7 @@ type WorkflowOptions = {
   idPrefix: string;
   logGroupRemovalPolicy: RemovalPolicy;
   payload?: sfn.TaskInput;
+  retry?: sfn.RetryProps;
   workerFunction: IFunction;
 };
 
@@ -29,6 +30,9 @@ export function createSingleLambdaWorkflow(
       payloadResponseOnly: true,
     },
   );
+  if (options.retry) {
+    invokeWorker.addRetry(options.retry);
+  }
   invokeWorker.addCatch(new sfn.Fail(stack, `${options.idPrefix}Failed`), {
     resultPath: "$.error",
   });

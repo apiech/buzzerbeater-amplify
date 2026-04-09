@@ -96,9 +96,9 @@ test("CoachParrot rankings match the sample positional outputs", () => {
   }
 });
 
-test("CoachParrot roster-only optimization honors the GM lab legality profile", () => {
+test("CoachParrot roster-only optimization honors the GM lab legality profile", async () => {
   const { roster, context } = buildSampleInputs();
-  const evaluation = evaluateRoster({
+  const evaluation = await evaluateRoster({
     roster,
     context,
   });
@@ -138,7 +138,7 @@ test("CoachParrot roster-only optimization honors the GM lab legality profile", 
   }
 
   const starters = (["PG", "SG", "SF", "PF", "C"] as Position[]).map(
-    (position) => legality.roleAssignments[position][0]?.playerId,
+    (position) => legality.roleAssignments[position][0]!.playerId,
   );
   assert.equal(new Set(starters).size, 5);
 
@@ -235,13 +235,13 @@ test("CoachParrot skill normalization accepts legacy roster key variants", () =>
   assert.equal(player.gs, 8);
 });
 
-test("CoachParrot tactic context still changes ratings independently of venue modifiers", () => {
+test("CoachParrot tactic context still changes ratings independently of venue modifiers", async () => {
   const { roster, context } = buildSampleInputs();
-  const base = evaluateRoster({
+  const base = await evaluateRoster({
     roster,
     context,
   });
-  const alternate = evaluateRoster({
+  const alternate = await evaluateRoster({
     roster,
     context: {
       ...context,
@@ -255,4 +255,48 @@ test("CoachParrot tactic context still changes ratings independently of venue mo
     base.rawRatings.outsideScoring + base.rawRatings.offensiveFlow,
     alternate.rawRatings.outsideScoring + alternate.rawRatings.offensiveFlow,
   );
+});
+
+test("CoachParrot defensive switch remaps defense and rebounding only", () => {
+  const { roster, lineup, context } = buildSampleInputs();
+  const base = evaluateLineup({
+    roster,
+    lineup,
+    context,
+  });
+  const switched = evaluateLineup({
+    roster,
+    lineup,
+    context: {
+      ...context,
+      defensiveSwitch: {
+        PG: "PF",
+        SG: "SG",
+        SF: "SF",
+        PF: "PG",
+        C: "C",
+      },
+    },
+  });
+
+  assert.equal(
+    Math.abs(
+      base.rawRatings.outsideScoring - switched.rawRatings.outsideScoring,
+    ) < 1e-10,
+    true,
+  );
+  assert.equal(
+    Math.abs(
+      base.rawRatings.insideScoring - switched.rawRatings.insideScoring,
+    ) < 1e-10,
+    true,
+  );
+  assert.equal(
+    Math.abs(base.rawRatings.offensiveFlow - switched.rawRatings.offensiveFlow) <
+      1e-10,
+    true,
+  );
+  assert.notEqual(base.rawRatings.outsideDefense, switched.rawRatings.outsideDefense);
+  assert.notEqual(base.rawRatings.insideDefense, switched.rawRatings.insideDefense);
+  assert.notEqual(base.rawRatings.rebounding, switched.rawRatings.rebounding);
 });

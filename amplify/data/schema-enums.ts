@@ -6,6 +6,11 @@ export enum PositionCode {
   C = "C",
 }
 
+export enum LineupHelperAlgorithm {
+  EXACT = "EXACT",
+  LEGACY_HEURISTIC = "LEGACY_HEURISTIC",
+}
+
 export enum TeamHighlightsPerspective {
   AGAINST = "AGAINST",
   BOTH = "BOTH",

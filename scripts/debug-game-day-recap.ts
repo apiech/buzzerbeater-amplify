@@ -119,6 +119,7 @@ async function main(): Promise<void> {
       const promptPayload = await __testing.buildGameDayRecapPromptPayload({
         bb,
         connection: createDebugConnection(options, selected.standings),
+        now: new Date(),
         requestedGames: selected.slate,
         request: {
           gameDate: options.gameDate,
@@ -133,6 +134,8 @@ async function main(): Promise<void> {
         },
         season: selected.season,
         standings: selected.standings,
+        targetKey: `${options.leagueId}#${options.gameDate}`,
+        userId: "debug",
       });
       output.selected = {
         coverage: promptPayload.coverage,

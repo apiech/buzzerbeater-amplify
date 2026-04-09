@@ -4,18 +4,24 @@ import { useEffect, useRef, useState } from "react";
 
 import { client } from "@/app/amplify-client";
 import {
-  LINEUP_MINUTE_OPTIONS,
+  LINEUP_POSITION_LABELS,
   LINEUP_POSITIONS,
-  assignmentMatrixFromLineup,
-  assignmentsFromMatrix,
+  LINEUP_ROLE_SEQUENCE,
+  LINEUP_SPLIT_PATTERNS,
+  assignmentsFromLineupLayout,
   coerceEnthusiasm,
-  createEmptyMinuteRow,
+  emptyLineupLayout,
+  isIdentityDefensiveSwitch,
   lineupRuleSummary,
+  lineupLayoutFromAssignments,
+  minutesForRole,
   normalizeHelperContext,
-  type LineupMinuteMatrix,
-  validateLineupMatrix,
+  roleIsEnabled,
+  validateLineupLayout,
+  type LineupSlotLayout,
 } from "@/app/lineup-helper-state";
 import type {
+  LineupHelperAlgorithm,
   DecodedLineupHelperWorkspace,
   LineupHelperAssignment,
   LineupHelperContext,
@@ -69,10 +75,14 @@ export function LineupHelper() {
   const [evaluation, setEvaluation] = useState<LineupHelperEvaluation | null>(
     null,
   );
-  const [minuteMatrix, setMinuteMatrix] = useState<LineupMinuteMatrix>({});
+  const [lineupLayout, setLineupLayout] = useState<LineupSlotLayout>(() =>
+    emptyLineupLayout(),
+  );
   const [context, setContext] = useState<LineupHelperContext>(() =>
     normalizeHelperContext({}),
   );
+  const [algorithm, setAlgorithm] =
+    useState<LineupHelperAlgorithm>("EXACT");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
@@ -82,7 +92,11 @@ export function LineupHelper() {
   const suppressNextEvaluationRef = useRef(false);
 
   const roster = workspace?.roster ?? EMPTY_ROSTER;
-  const validation = validateLineupMatrix(roster, minuteMatrix);
+  const validation = validateLineupLayout(
+    roster,
+    lineupLayout,
+    context.defensiveSwitch,
+  );
   const availableRosterCount = roster.filter(
     (player) => player.available,
   ).length;
@@ -109,22 +123,20 @@ export function LineupHelper() {
       if (response.errors?.length || !response.data) {
         setWorkspace(null);
         setEvaluation(null);
-        setMinuteMatrix({});
+        suppressNextEvaluationRef.current = true;
+        setLineupLayout(emptyLineupLayout());
         setWorkspaceError(formatAmplifyErrors(response.errors));
         setIsLoadingWorkspace(false);
         return;
       }
 
       const nextWorkspace = decodeLineupHelperWorkspace(response.data);
-      setWorkspace(nextWorkspace);
+    setWorkspace(nextWorkspace);
       setEvaluation(nextWorkspace.evaluation);
       setContext(nextWorkspace.defaultContext);
       suppressNextEvaluationRef.current = true;
-      setMinuteMatrix(
-        assignmentMatrixFromLineup(
-          nextWorkspace.roster,
-          nextWorkspace.defaultAssignments,
-        ),
+      setLineupLayout(
+        lineupLayoutFromAssignments(nextWorkspace.defaultAssignments),
       );
       setWorkspaceError(null);
       setEvaluationError(null);
@@ -136,6 +148,15 @@ export function LineupHelper() {
       cancelled = true;
     };
   }, [workspaceLoadVersion]);
+
+  useEffect(() => {
+    if (
+      algorithm === "LEGACY_HEURISTIC" &&
+      !isIdentityDefensiveSwitch(context.defensiveSwitch)
+    ) {
+      setAlgorithm("EXACT");
+    }
+  }, [algorithm, context.defensiveSwitch]);
 
   useEffect(() => {
     if (!workspace) {
@@ -150,7 +171,11 @@ export function LineupHelper() {
       return;
     }
 
-    const nextValidation = validateLineupMatrix(nextRoster, minuteMatrix);
+    const nextValidation = validateLineupLayout(
+      nextRoster,
+      lineupLayout,
+      context.defensiveSwitch,
+    );
     if (!nextRoster.length || !nextRoster.some((player) => player.available)) {
       setIsEvaluating(false);
       setEvaluationError(null);
@@ -170,8 +195,8 @@ export function LineupHelper() {
         setIsEvaluating(true);
         const response = await client.queries.evaluateLineupHelper({
           roster: nextRoster.map(encodeLineupHelperRosterPlayer),
-          assignments: assignmentsFromMatrix(minuteMatrix),
-          context,
+          assignments: assignmentsFromLineupLayout(lineupLayout),
+          context: encodeLineupHelperContext(context),
         });
 
         if (cancelled) {
@@ -194,33 +219,80 @@ export function LineupHelper() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [context, minuteMatrix, workspace]);
+  }, [context, lineupLayout, workspace]);
 
-  function updateMinute(
-    playerId: string,
+  function updatePlayerSlot(
     position: PositionCode,
-    value: string,
+    role: "backup" | "reserve" | "starter",
+    playerId: string,
   ) {
-    const nextMinutes = Number(value);
-    setMinuteMatrix((current) => ({
-      ...current,
-      [playerId]: {
-        ...(current[playerId] ?? createEmptyMinuteRow()),
-        [position]: nextMinutes,
-      },
-    }));
+    setLineupLayout((current) => {
+      const nextState = current[position];
+      return {
+        ...current,
+        [position]: {
+          ...nextState,
+          ...(role === "starter"
+            ? { starterPlayerId: playerId }
+            : role === "backup"
+              ? { backupPlayerId: playerId }
+              : { reservePlayerId: playerId }),
+        },
+      };
+    });
+  }
+
+  function updatePattern(position: PositionCode, patternKey: string) {
+    const nextPatternKey = patternKey as typeof LINEUP_SPLIT_PATTERNS[number]["key"];
+    setLineupLayout((current) => {
+      const nextState = current[position];
+      return {
+        ...current,
+        [position]: {
+          ...nextState,
+          patternKey: nextPatternKey,
+          reservePlayerId: roleIsEnabled(nextPatternKey, "reserve")
+            ? nextState.reservePlayerId
+            : "",
+        },
+      };
+    });
+  }
+
+  function updateDefensiveSwitch(
+    offensePosition: PositionCode,
+    defensivePosition: PositionCode,
+  ) {
+    setContext((current) => {
+      const nextSwitch = { ...current.defensiveSwitch };
+      const previousDefensivePosition = nextSwitch[offensePosition];
+      const swappedOffensePosition = LINEUP_POSITIONS.find(
+        (position) => nextSwitch[position] === defensivePosition,
+      );
+
+      nextSwitch[offensePosition] = defensivePosition;
+      if (
+        swappedOffensePosition &&
+        swappedOffensePosition !== offensePosition
+      ) {
+        nextSwitch[swappedOffensePosition] = previousDefensivePosition;
+      }
+
+      return {
+        ...current,
+        defensiveSwitch: nextSwitch,
+      };
+    });
   }
 
   function handleRestoreDefaultLineup() {
     if (!workspace) {
       return;
     }
-    setMinuteMatrix(
-      assignmentMatrixFromLineup(
-        workspace.roster,
-        workspace.defaultAssignments,
-      ),
-    );
+    suppressNextEvaluationRef.current = true;
+    setContext(workspace.defaultContext);
+    setEvaluation(workspace.evaluation);
+    setLineupLayout(lineupLayoutFromAssignments(workspace.defaultAssignments));
     setEvaluationError(null);
   }
 
@@ -232,8 +304,9 @@ export function LineupHelper() {
     setIsOptimizing(true);
     setEvaluationError(null);
     const response = await client.queries.optimizeLineupHelper({
+      algorithm,
       roster: workspace.roster.map(encodeLineupHelperRosterPlayer),
-      context,
+      context: encodeLineupHelperContext(context),
     });
 
     if (response.errors?.length || !response.data) {
@@ -251,17 +324,37 @@ export function LineupHelper() {
 
     suppressNextEvaluationRef.current = true;
     setEvaluation(nextEvaluation);
-    setMinuteMatrix(
-      assignmentMatrixFromLineup(workspace.roster, nextEvaluation.normalizedLineup),
-    );
+    setContext(nextEvaluation.context);
+    setLineupLayout(lineupLayoutFromAssignments(nextEvaluation.normalizedLineup));
     setIsOptimizing(false);
   }
+
+  const legacyAlgorithmDisabled = !isIdentityDefensiveSwitch(
+    context.defensiveSwitch,
+  );
 
   return (
     <div className="grid gap-4">
       <SectionHeading
         actions={
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <Field className="min-w-44" label="Algorithm">
+              <Select
+                disabled={isOptimizing}
+                onChange={(event) =>
+                  setAlgorithm(event.target.value as LineupHelperAlgorithm)
+                }
+                value={algorithm}
+              >
+                <option value="EXACT">Exact</option>
+                <option
+                  disabled={legacyAlgorithmDisabled}
+                  value="LEGACY_HEURISTIC"
+                >
+                  Legacy heuristic
+                </option>
+              </Select>
+            </Field>
             <Button
               loading={isLoadingWorkspace}
               onClick={() => setWorkspaceLoadVersion((current) => current + 1)}
@@ -434,12 +527,17 @@ export function LineupHelper() {
                     </Select>
                   </Field>
                 </div>
+                {legacyAlgorithmDisabled ? (
+                  <p className="text-ink-muted text-xs">
+                    Legacy heuristic is disabled while defensive switch is active.
+                  </p>
+                ) : null}
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
                 <SectionHeading
                   description={lineupRuleSummary()}
-                  title="Minute plan"
+                  title="Lineup plan"
                   titleAs="h5"
                 />
                 <div className={minuteSummaryGridClassName}>
@@ -457,141 +555,253 @@ export function LineupHelper() {
                     target={240}
                   />
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  {roster
+                    .filter((player) => player.available)
+                    .sort(
+                      (left, right) =>
+                        (validation.playerTotals[right.playerId] ?? 0) -
+                          (validation.playerTotals[left.playerId] ?? 0) ||
+                        left.fullName.localeCompare(right.fullName),
+                    )
+                    .map((player) => {
+                      const totalMinutes =
+                        validation.playerTotals[player.playerId] ?? 0;
+                      return (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold",
+                            totalMinutes > 42
+                              ? "border-danger-border bg-danger-bg text-accent-strong"
+                              : totalMinutes === 42
+                                ? "border-note-border bg-note-bg text-note"
+                                : "border-black/10 bg-black/5 text-ink",
+                          )}
+                          key={`player-total-${player.playerId}`}
+                        >
+                          {player.fullName}
+                          <span className="text-ink-muted">{totalMinutes} min</span>
+                        </span>
+                      );
+                    })}
+                </div>
                 <div className="grid gap-3">
-                  {roster.map((player) => {
-                    const rowMinutes = minuteMatrix[player.playerId] ?? createEmptyMinuteRow();
-                    const totalMinutes = LINEUP_POSITIONS.reduce(
-                      (sum, position) => sum + rowMinutes[position],
-                      0,
-                    );
-                    const roleMap =
-                      validation.rolesByPlayerPosition[player.playerId] ?? {};
+                  {LINEUP_POSITIONS.map((position) => {
+                    const positionLayout = lineupLayout[position];
+                    const positionAssignments = validation.roleAssignments[position];
+                    const positionOutputRankings =
+                      visibleEvaluation?.rankings[position] ?? [];
 
                     return (
                       <article
-                        className={cn(
-                          "rounded-card grid gap-4 border border-black/8 bg-white/65 p-4 shadow-sm",
-                          !player.available && "opacity-70",
-                        )}
-                        key={player.playerId}
+                        className="rounded-card grid gap-4 border border-black/8 bg-white/65 p-4 shadow-sm"
+                        key={`position-${position}`}
                       >
-                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                          <div className="grid gap-2 xl:max-w-[22rem]">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="grid gap-2">
                             <div className="flex flex-wrap items-center gap-2">
                               <strong className="text-ink text-base">
-                                {player.fullName}
+                                {position} offense
                               </strong>
-                              <span
-                                className={cn(
-                                  "inline-flex rounded-full border px-3 py-1 text-xs font-semibold",
-                                  player.available
-                                    ? "border-success/20 bg-success/10 text-success"
-                                    : "border-danger-border bg-danger-bg text-accent-strong",
-                                )}
+                              <StatusBadge tone="note">
+                                {LINEUP_POSITION_LABELS[position]}
+                              </StatusBadge>
+                              <StatusBadge
+                                tone={
+                                  validation.positionTotals[position] === 48
+                                    ? "success"
+                                    : "danger"
+                                }
                               >
-                                {player.available ? "Ready" : "Unavailable"}
-                              </span>
+                                {validation.positionTotals[position]}/48 min
+                              </StatusBadge>
                             </div>
-                            <span className={statusCopyClassName}>
-                              {player.bestPosition ?? "Flex"} •{" "}
-                              {formatCurrency(player.salary)} •{" "}
-                              {skillHeadline(player)}
-                            </span>
-                            <span className="text-ink-muted text-xs">
-                              <BuzzerBeaterRatingText
-                                label={player.gameShape}
-                                scale="game_shape"
-                              >
-                                {player.gameShape ?? "No shape"}
-                              </BuzzerBeaterRatingText>{" "}
-                              • Age {player.age ?? "N/A"}
-                            </span>
-                            <div className="grid gap-1">
-                              <span className="text-ink text-sm">
-                                {player.snapshotCapturedAt
-                                  ? `Updated ${formatTimestamp(player.snapshotCapturedAt)}`
-                                  : "Player data not ready"}
-                              </span>
-                              <span className="text-ink-muted text-xs">
-                                {player.snapshotWarning ?? "Latest saved player update"}
-                              </span>
-                            </div>
-                            {Object.keys(roleMap).length ? (
-                              <div className="flex flex-wrap gap-2">
-                                {LINEUP_POSITIONS.flatMap((position) => {
-                                  const role = roleMap[position];
-                                  return role ? (
-                                    <MinuteRolePill
-                                      key={`${player.playerId}-${position}-${role}`}
-                                      label={`${position} ${formatRoleLabel(role)}`}
-                                      role={role}
-                                    />
-                                  ) : [];
-                                })}
-                              </div>
-                            ) : null}
+                            <p className={statusCopyClassName}>
+                              Defends as {context.defensiveSwitch[position]}. Choose a
+                              legal split, then assign starter, backup, and reserve.
+                            </p>
                           </div>
 
-                          <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                            {LINEUP_POSITIONS.map((position) => (
-                              <Field
-                                className="gap-1"
-                                key={`${player.playerId}-${position}`}
-                                label={position}
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <Field label="Defends as">
+                              <Select
+                                disabled={isOptimizing}
+                                onChange={(event) =>
+                                  updateDefensiveSwitch(
+                                    position,
+                                    event.target.value as PositionCode,
+                                  )
+                                }
+                                value={context.defensiveSwitch[position]}
                               >
-                                <Select
-                                  className="min-h-10 rounded-[0.9rem] px-3 py-2 text-center text-sm font-semibold"
-                                  disabled={!player.available || isOptimizing}
-                                  onChange={(event) =>
-                                    updateMinute(
-                                      player.playerId,
-                                      position,
-                                      event.target.value,
-                                    )
-                                  }
-                                  value={String(rowMinutes[position])}
-                                >
-                                  {LINEUP_MINUTE_OPTIONS.map((minuteValue) => (
-                                    <option key={minuteValue} value={minuteValue}>
-                                      {minuteValue} min
+                                {LINEUP_POSITIONS.map((option) => (
+                                  <option key={`${position}-switch-${option}`} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </Select>
+                            </Field>
+                            <Field label="Split pattern">
+                              <Select
+                                disabled={isOptimizing}
+                                onChange={(event) =>
+                                  updatePattern(position, event.target.value)
+                                }
+                                value={positionLayout.patternKey}
+                              >
+                                {LINEUP_SPLIT_PATTERNS.map((pattern) => (
+                                  <option key={`${position}-${pattern.key}`} value={pattern.key}>
+                                    {pattern.label}
+                                  </option>
+                                ))}
+                              </Select>
+                            </Field>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 lg:grid-cols-3">
+                          {LINEUP_ROLE_SEQUENCE.map((role) => {
+                            const enabled = roleIsEnabled(positionLayout.patternKey, role);
+                            const playerId =
+                              role === "starter"
+                                ? positionLayout.starterPlayerId
+                                : role === "backup"
+                                  ? positionLayout.backupPlayerId
+                                  : positionLayout.reservePlayerId;
+                            const selectedPlayer = roster.find(
+                              (player) => player.playerId === playerId,
+                            );
+                            const selectedOtherPlayers = new Set(
+                              [positionLayout.starterPlayerId, positionLayout.backupPlayerId, positionLayout.reservePlayerId]
+                                .filter((candidateId) => candidateId && candidateId !== playerId),
+                            );
+                            const options = roster.filter(
+                              (player) =>
+                                player.available &&
+                                (!selectedOtherPlayers.has(player.playerId) ||
+                                  player.playerId === playerId),
+                            );
+
+                            return (
+                              <div
+                                className={cn(
+                                  "rounded-card grid gap-3 border p-4",
+                                  enabled
+                                    ? "border-black/8 bg-white/70"
+                                    : "border-black/6 bg-black/5 opacity-70",
+                                )}
+                                key={`${position}-${role}`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="grid gap-1">
+                                    <span className="text-ink text-sm font-semibold">
+                                      {formatRoleLabel(role)}
+                                    </span>
+                                    <span className="text-ink-muted text-xs">
+                                      {enabled
+                                        ? `${minutesForRole(positionLayout.patternKey, role)} minutes`
+                                        : "Unused in this split"}
+                                    </span>
+                                  </div>
+                                  {enabled ? (
+                                    <MinuteRolePill
+                                      label={formatRoleLabel(role)}
+                                      role={role}
+                                    />
+                                  ) : null}
+                                </div>
+
+                                <Field label="Player">
+                                  <Select
+                                    disabled={!enabled || isOptimizing}
+                                    onChange={(event) =>
+                                      updatePlayerSlot(position, role, event.target.value)
+                                    }
+                                    value={playerId}
+                                  >
+                                    <option value="">
+                                      {enabled ? "Choose player" : "Unused"}
                                     </option>
-                                  ))}
-                                </Select>
-                                <div className="flex items-center justify-between gap-2 text-xs">
+                                    {options.map((player) => (
+                                      <option key={`${position}-${role}-${player.playerId}`} value={player.playerId}>
+                                        {player.fullName}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                </Field>
+
+                                <div className="grid gap-1 text-xs">
                                   <span className="text-ink-muted">
                                     Output{" "}
                                     {formatDecimal(
-                                      evaluation?.playerPositionOutputs[player.playerId]?.[
-                                        position
-                                      ] ?? null,
+                                      selectedPlayer
+                                        ? visibleEvaluation?.playerPositionOutputs[
+                                            selectedPlayer.playerId
+                                          ]?.[position] ?? null
+                                        : null,
                                     )}
                                   </span>
-                                  {roleMap[position] ? (
-                                    <MinuteRolePill
-                                      label={formatRoleLabel(roleMap[position])}
-                                      role={roleMap[position]}
-                                    />
+                                  <span className="text-ink-muted">
+                                    Player total{" "}
+                                    {selectedPlayer
+                                      ? `${validation.playerTotals[selectedPlayer.playerId] ?? 0} min`
+                                      : "0 min"}
+                                  </span>
+                                  {selectedPlayer ? (
+                                    <span className="text-ink">
+                                      {selectedPlayer.bestPosition ?? "Flex"} •{" "}
+                                      {formatCurrency(selectedPlayer.salary)} •{" "}
+                                      <BuzzerBeaterRatingText scale="game_shape">
+                                        {selectedPlayer.gameShape ?? "unknown shape"}
+                                      </BuzzerBeaterRatingText>{" "}
+                                      •{" "}
+                                      {skillHeadline(selectedPlayer)}
+                                    </span>
                                   ) : (
-                                    <span className="text-ink-muted">Open</span>
+                                    <span className="text-ink-muted">
+                                      Choose from your available roster.
+                                    </span>
                                   )}
                                 </div>
-                              </Field>
-                            ))}
-                          </div>
+                              </div>
+                            );
+                          })}
+                        </div>
 
-                          <div className="grid min-w-24 gap-1 xl:justify-items-end">
-                            <span className="text-ink-muted text-[0.72rem] font-bold uppercase tracking-[0.16em]">
-                              Total
-                            </span>
-                            <strong className="text-ink text-3xl leading-none">
-                              {totalMinutes}
-                            </strong>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {positionAssignments.map((assignment) => (
+                            <MinuteRolePill
+                              key={`${position}-${assignment.playerId}-${assignment.role}`}
+                              label={`${resolvePlayerName(
+                                roster,
+                                assignment.playerId,
+                              )} ${assignment.minutes}m`}
+                              role={assignment.role}
+                            />
+                          ))}
+                          {!positionAssignments.length ? (
                             <span className="text-ink-muted text-xs">
-                              {totalMinutes === 42
-                                ? "At exhaustion limit"
-                                : `${Math.max(0, 42 - totalMinutes)} min left`}
+                              No legal role assignment yet.
                             </span>
-                          </div>
+                          ) : null}
+                        </div>
+
+                        <div className="grid gap-2">
+                          <span className="text-ink-muted text-[0.72rem] font-bold uppercase tracking-[0.16em]">
+                            Top fits for {position}
+                          </span>
+                          <ol className="grid list-decimal gap-1 pl-5 text-sm">
+                            {positionOutputRankings.slice(0, 5).map((entry) => (
+                              <li key={`${position}-rank-${entry.playerId}`}>
+                                <span className="font-semibold text-ink">
+                                  {entry.name}
+                                </span>{" "}
+                                <span className="text-ink-muted">
+                                  ({formatDecimal(entry.output)})
+                                </span>
+                              </li>
+                            ))}
+                          </ol>
                         </div>
                       </article>
                     );
@@ -656,7 +866,7 @@ export function LineupHelper() {
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Position outputs" titleAs="h5" />
+                <SectionHeading title="Slot outputs" titleAs="h5" />
                 <TableShell compact>
                   <thead>
                     <tr>
@@ -740,7 +950,7 @@ function decodeLineupHelperWorkspace(
     generatedAt: record.generatedAt,
     syncedAt: record.syncedAt ?? null,
     roster: record.roster.map(decodeLineupHelperRosterPlayer),
-    defaultContext: normalizeHelperContext(record.defaultContext),
+    defaultContext: decodeLineupHelperContext(record.defaultContext),
     defaultAssignments: record.defaultAssignments.map(decodeLineupHelperAssignment),
     evaluation: record.evaluation ? decodeLineupHelperEvaluation(record.evaluation) : null,
     snapshotWarnings: record.snapshotWarnings.map((warning) => ({
@@ -758,9 +968,7 @@ function decodeLineupHelperEvaluation(
   record: LineupHelperEvaluationRecord,
 ): LineupHelperEvaluation | null {
   return {
-    context: normalizeHelperContext(
-      record.context,
-    ),
+    context: decodeLineupHelperContext(record.context),
     normalizedLineup: record.normalizedLineup.map(decodeLineupHelperAssignment),
     rawRatings: { ...record.rawRatings },
     roundedRatings: { ...record.roundedRatings },
@@ -799,6 +1007,42 @@ function decodeLineupHelperEvaluation(
       ),
     },
     totalOutput: Number(record.totalOutput),
+  };
+}
+
+function decodeLineupHelperContext(
+  record: LineupHelperWorkspaceRecord["defaultContext"],
+): LineupHelperContext {
+  return normalizeHelperContext({
+    defense: record.defense,
+    defensiveSwitch: {
+      PG: record.defensiveSwitch.pg as PositionCode,
+      SG: record.defensiveSwitch.sg as PositionCode,
+      SF: record.defensiveSwitch.sf as PositionCode,
+      PF: record.defensiveSwitch.pf as PositionCode,
+      C: record.defensiveSwitch.c as PositionCode,
+    },
+    enthusiasm: record.enthusiasm,
+    homeCourt: record.homeCourt,
+    offense: record.offense,
+  });
+}
+
+function encodeLineupHelperContext(
+  context: LineupHelperContext,
+): LineupHelperWorkspaceRecord["defaultContext"] {
+  return {
+    offense: context.offense,
+    defense: context.defense,
+    enthusiasm: context.enthusiasm,
+    homeCourt: context.homeCourt,
+    defensiveSwitch: {
+      pg: context.defensiveSwitch.PG as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["pg"],
+      sg: context.defensiveSwitch.SG as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["sg"],
+      sf: context.defensiveSwitch.SF as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["sf"],
+      pf: context.defensiveSwitch.PF as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["pf"],
+      c: context.defensiveSwitch.C as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["c"],
+    },
   };
 }
 
@@ -930,6 +1174,13 @@ function skillHeadline(player: LineupHelperRosterPlayer) {
       {`${key.toUpperCase()} ${value}`}
     </BuzzerBeaterRatingText>,
   ]);
+}
+
+function resolvePlayerName(
+  roster: LineupHelperRosterPlayer[],
+  playerId: string,
+) {
+  return roster.find((player) => player.playerId === playerId)?.fullName ?? playerId;
 }
 
 function MinuteSummaryTile({

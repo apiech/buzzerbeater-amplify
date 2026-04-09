@@ -462,8 +462,8 @@ test("buildSalaryProjectionPayload ignores hidden snapshot payload content", () 
   assert.equal("skills" in (payload as Record<string, unknown>), false);
 });
 
-test("lineup helper workspace payload includes defaults, evaluation, and snapshot warnings", () => {
-  const payload = lineupHelperTesting.buildLineupHelperWorkspacePayload({
+test("lineup helper workspace payload includes defaults, evaluation, and snapshot warnings", async () => {
+  const payload = await lineupHelperTesting.buildLineupHelperWorkspacePayload({
     generatedAt: "2026-03-15T00:00:00.000Z",
     syncedAt: "2026-03-15T00:00:00.000Z",
     defaultContext: {
@@ -471,6 +471,13 @@ test("lineup helper workspace payload includes defaults, evaluation, and snapsho
       defense: "Man to man",
       enthusiasm: 5,
       homeCourt: "Away or Neutral",
+      defensiveSwitch: {
+        PG: "PG",
+        SG: "SG",
+        SF: "SF",
+        PF: "PF",
+        C: "C",
+      },
     },
     roster: [
       createHelperPlayer("p1", "Lead Guard", "PG", {
@@ -587,10 +594,17 @@ test("lineup helper workspace payload includes defaults, evaluation, and snapsho
   assert.equal((payload.snapshotWarnings as Array<unknown>).length, 1);
   assert.equal(typeof payload.evaluation, "object");
   assert.equal((payload.defaultAssignments as Array<unknown>).length > 0, true);
+  assert.deepStrictEqual(payload.defaultContext.defensiveSwitch, {
+    pg: "PG",
+    sg: "SG",
+    sf: "SF",
+    pf: "PF",
+    c: "C",
+  });
 });
 
-test("lineup helper workspace payload keeps the roster when no usable snapshots exist", () => {
-  const payload = lineupHelperTesting.buildLineupHelperWorkspacePayload({
+test("lineup helper workspace payload keeps the roster when no usable snapshots exist", async () => {
+  const payload = await lineupHelperTesting.buildLineupHelperWorkspacePayload({
     generatedAt: "2026-03-15T00:00:00.000Z",
     syncedAt: "2026-03-15T00:00:00.000Z",
     defaultContext: {
@@ -598,6 +612,13 @@ test("lineup helper workspace payload keeps the roster when no usable snapshots 
       defense: "Man to man",
       enthusiasm: 5,
       homeCourt: "Away or Neutral",
+      defensiveSwitch: {
+        PG: "PG",
+        SG: "SG",
+        SF: "SF",
+        PF: "PF",
+        C: "C",
+      },
     },
     roster: [
       {
@@ -741,6 +762,13 @@ test("lineup helper evaluation payload rejects invalid minutes", () => {
           defense: "Man to man",
           enthusiasm: 5,
           homeCourt: "Away or Neutral",
+          defensiveSwitch: {
+            PG: "PG",
+            SG: "SG",
+            SF: "SF",
+            PF: "PF",
+            C: "C",
+          },
         },
         roster: [
           createHelperPlayer("p1", "Lead Guard", "PG", {
@@ -966,6 +994,13 @@ test("optimizeLineupHelper returns a legal lineup and excludes unavailable playe
       defense: "Man to man",
       enthusiasm: 5,
       homeCourt: "Away or Neutral",
+      defensiveSwitch: {
+        PG: "PG",
+        SG: "SG",
+        SF: "SF",
+        PF: "PF",
+        C: "C",
+      },
     },
   });
 

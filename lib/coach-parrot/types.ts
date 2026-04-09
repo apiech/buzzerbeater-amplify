@@ -12,12 +12,15 @@ export const SKILL_SEQUENCE = ["JS", "JR", "OD", "HA", "DR", "PA", "IS", "ID", "
 export type Position = (typeof POSITION_SEQUENCE)[number];
 export type Rating = (typeof RATING_SEQUENCE)[number];
 export type SkillKey = (typeof SKILL_SEQUENCE)[number];
+export type DefensiveSwitch = Record<Position, Position>;
+export type LineupOptimizerAlgorithm = "EXACT" | "LEGACY_HEURISTIC";
 
 export type CoachParrotContext = {
   offense: string;
   defense: string;
   enthusiasm: number;
   homeCourt: string;
+  defensiveSwitch: DefensiveSwitch;
 };
 
 export type RawPlayerSkills = {

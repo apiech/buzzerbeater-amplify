@@ -7,26 +7,40 @@ import {
   resolveHomeCourtFlag,
 } from "./artifacts";
 import {
+  LINEUP_ALLOWED_MINUTES,
   LINEUP_MAX_MINUTES_PER_PLAYER,
   LINEUP_MINUTES_PER_POSITION,
+  normalizeDefensiveSwitch,
   normalizeLineupAssignments,
-  optimizeLineupByOutputs,
-} from "./optimizer";
+} from "./lineup-rules";
 import { resolveBuzzerBeaterNumericValue } from "../buzzerbeater/rating-scale";
 import type {
   CoachParrotContext,
   CoachParrotEvaluation,
   CoachParrotRoster,
+  LineupOptimizerAlgorithm,
   LineupAssignment,
   Position,
   RankingEntry,
   Rating,
   RawPlayerSkills,
 } from "./types";
+import { optimizeLineup } from "./optimizer";
 import {
   POSITION_SEQUENCE,
   RATING_SEQUENCE,
 } from "./types";
+
+const OFFENSE_POSITION_RATINGS = [
+  "outsideScoring",
+  "insideScoring",
+  "offensiveFlow",
+] as const satisfies Rating[];
+const DEFENSE_POSITION_RATINGS = [
+  "outsideDefense",
+  "insideDefense",
+  "rebounding",
+] as const satisfies Rating[];
 
 type CanonicalSkillField =
   | "js"
@@ -91,6 +105,7 @@ export function normalizeContext(input: Partial<CoachParrotContext>): CoachParro
     defense: normalizeDefense(input.defense),
     enthusiasm: normalizeEnthusiasm(input.enthusiasm),
     homeCourt: normalizeLocation(input.homeCourt),
+    defensiveSwitch: normalizeDefensiveSwitch(input.defensiveSwitch),
   };
 }
 
@@ -242,35 +257,62 @@ export function positionOutputTotals(args: {
   return Object.fromEntries(
     POSITION_SEQUENCE.map((position) => [
       position,
-      Number(
-        RATING_SEQUENCE.reduce((sum, rating) => {
-          return (
-            sum +
-            ratingComponent({
-              player: args.player,
-              position,
-              rating,
-              assignedMinutes,
-              context: args.context,
-            })
-          );
-        }, 0).toFixed(12),
-      ),
+      Number(slotOutputTotal({
+        assignedMinutes,
+        context: args.context,
+        offensivePosition: position,
+        player: args.player,
+      }).toFixed(12)),
     ]),
   ) as Record<Position, number>;
 }
 
+function slotOutputTotal(args: {
+  assignedMinutes: number;
+  context: CoachParrotContext;
+  offensivePosition: Position;
+  player: RawPlayerSkills;
+}): number {
+  const defensivePosition = args.context.defensiveSwitch[args.offensivePosition];
+  const offensiveTotal = OFFENSE_POSITION_RATINGS.reduce((sum, rating) => {
+    return (
+      sum +
+      ratingComponent({
+        player: args.player,
+        position: args.offensivePosition,
+        rating,
+        assignedMinutes: args.assignedMinutes,
+        context: args.context,
+      })
+    );
+  }, 0);
+  const defensiveTotal = DEFENSE_POSITION_RATINGS.reduce((sum, rating) => {
+    return (
+      sum +
+      ratingComponent({
+        player: args.player,
+        position: defensivePosition,
+        rating,
+        assignedMinutes: args.assignedMinutes,
+        context: args.context,
+      })
+    );
+  }, 0);
+  return offensiveTotal + defensiveTotal;
+}
+
 export function rankRoster(args: {
   roster: CoachParrotRoster;
-  context: CoachParrotContext;
+  context: Partial<CoachParrotContext>;
 }): {
   playerOutputs: Record<string, Record<Position, number>>;
   rankings: Record<Position, RankingEntry[]>;
 } {
+  const context = normalizeContext(args.context);
   const playerOutputs = Object.fromEntries(
     args.roster.players.map((player) => [
       player.playerId,
-      positionOutputTotals({ player, context: args.context }),
+      positionOutputTotals({ player, context }),
     ]),
   ) as Record<string, Record<Position, number>>;
 
@@ -281,7 +323,7 @@ export function rankRoster(args: {
         .map((player) => {
           const positionOutputs = playerOutputs[player.playerId] ?? positionOutputTotals({
             player,
-            context: args.context,
+            context,
           });
           return {
             playerId: player.playerId,
@@ -304,17 +346,35 @@ export function rankRoster(args: {
   };
 }
 
-export function buildLineup(args: {
+export async function buildLineup(args: {
+  algorithm?: LineupOptimizerAlgorithm;
   roster: CoachParrotRoster;
   context: CoachParrotContext;
-}): {
+}): Promise<{
   assignments: LineupAssignment[];
   rankings: Record<Position, RankingEntry[]>;
   playerOutputs: Record<string, Record<Position, number>>;
   warnings: string[];
-} {
+}> {
   const { playerOutputs, rankings } = rankRoster(args);
-  const optimized = optimizeLineupByOutputs({
+  const playerOutputsByMinutes = Object.fromEntries(
+    args.roster.players.map((player) => [
+      player.playerId,
+      Object.fromEntries(
+        LINEUP_ALLOWED_MINUTES.map((minutes) => [
+          minutes,
+          positionOutputTotals({
+            player,
+            context: args.context,
+            assignedMinutes: minutes,
+          }),
+        ]),
+      ),
+    ]),
+  ) as Record<string, Record<number, Record<Position, number>>>;
+  const optimized = await optimizeLineup({
+    algorithm: args.algorithm,
+    playerOutputsByMinutes,
     playerOutputs,
     players: args.roster,
   });
@@ -437,15 +497,32 @@ export function evaluateLineup(args: {
         warnings.push(`missing player data for ${assignment.playerId}`);
         continue;
       }
-      const components = positionRatingComponents({
+      const assignedMinutes = totalMinutesByPlayer.get(assignment.playerId);
+      if (assignedMinutes == null) {
+        warnings.push(`missing minute totals for ${assignment.playerId}`);
+        continue;
+      }
+      const offensiveComponents = positionRatingComponents({
         player,
         position,
-        assignedMinutes: totalMinutesByPlayer.get(assignment.playerId) ?? assignment.minutes,
+        assignedMinutes,
         context,
       });
-      for (const rating of RATING_SEQUENCE) {
+      const defensivePosition = context.defensiveSwitch[position];
+      const defensiveComponents = positionRatingComponents({
+        player,
+        position: defensivePosition,
+        assignedMinutes,
+        context,
+      });
+      for (const rating of OFFENSE_POSITION_RATINGS) {
         perPositionContributions[rating][position] +=
-          components[rating] * (assignment.minutes / LINEUP_MINUTES_PER_POSITION);
+          offensiveComponents[rating] * (assignment.minutes / LINEUP_MINUTES_PER_POSITION);
+      }
+      for (const rating of DEFENSE_POSITION_RATINGS) {
+        perPositionContributions[rating][defensivePosition] +=
+          defensiveComponents[rating] *
+          (assignment.minutes / LINEUP_MINUTES_PER_POSITION);
       }
     }
   }
@@ -511,12 +588,14 @@ export function evaluateLineup(args: {
   };
 }
 
-export function evaluateRoster(args: {
+export async function evaluateRoster(args: {
+  algorithm?: LineupOptimizerAlgorithm;
   roster: CoachParrotRoster;
   context: Partial<CoachParrotContext>;
-}): CoachParrotEvaluation {
+}): Promise<CoachParrotEvaluation> {
   const context = normalizeContext(args.context);
-  const built = buildLineup({
+  const built = await buildLineup({
+    algorithm: args.algorithm,
     roster: args.roster,
     context,
   });

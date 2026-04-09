@@ -166,12 +166,14 @@ export type TendenciesSummary = NonNullable<
 >;
 
 export type PositionCode = "PG" | "SG" | "SF" | "PF" | "C";
+export type LineupHelperAlgorithm = "EXACT" | "LEGACY_HEURISTIC";
 
 export type LineupHelperContext = {
   offense: string;
   defense: string;
   enthusiasm: number;
   homeCourt: string;
+  defensiveSwitch: Record<PositionCode, PositionCode>;
 };
 
 export type LineupHelperAssignment = {
