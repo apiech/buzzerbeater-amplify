@@ -55,6 +55,7 @@ type QueryOperationName =
   | "listMyBillingPayments"
   | "getTeamHub";
 type MutationOperationName =
+  | "clearMyTeamHighlightsData"
   | "connectBbAccount"
   | "createBillingCheckoutSession"
   | "createBillingLifetimeCheckoutSession"
@@ -217,6 +218,8 @@ export const client = {
       requestRead("getRecapHistory", input),
   },
   mutations: {
+    clearMyTeamHighlightsData: () =>
+      requestMutation("clearMyTeamHighlightsData"),
     connectBbAccount: (input: JsonObject) =>
       requestMutation("connectBbAccount", input),
     createBillingCheckoutSession: (input?: JsonObject) =>

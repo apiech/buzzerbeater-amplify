@@ -21,6 +21,14 @@ type MutationOperation = (
 type QueryName = keyof typeof queryOperations;
 type MutationName = keyof typeof mutationOperations;
 
+const runtime = {
+  getServerDataClient,
+};
+
+export const __testing = {
+  runtime,
+};
+
 const queryOperations = {
   evaluateLineupHelper: async (input) =>
     (await getServerDataClient()).queries.evaluateLineupHelper(
@@ -70,54 +78,56 @@ const queryOperations = {
 } satisfies Record<string, QueryOperation>;
 
 const mutationOperations = {
+  clearMyTeamHighlightsData: async () =>
+    (await runtime.getServerDataClient()).mutations.clearMyTeamHighlightsData(),
   connectBbAccount: async (input) =>
-    (await getServerDataClient()).mutations.connectBbAccount(
+    (await runtime.getServerDataClient()).mutations.connectBbAccount(
       requiredInput(input) as never,
     ),
   createBillingCheckoutSession: async (input) =>
-    (await getServerDataClient()).mutations.createBillingCheckoutSession(
+    (await runtime.getServerDataClient()).mutations.createBillingCheckoutSession(
       optionalInput(input) as never,
     ),
   createBillingLifetimeCheckoutSession: async (input) =>
-    (await getServerDataClient()).mutations.createBillingLifetimeCheckoutSession(
+    (await runtime.getServerDataClient()).mutations.createBillingLifetimeCheckoutSession(
       optionalInput(input) as never,
     ),
   createBillingPortalSession: async (input) =>
-    (await getServerDataClient()).mutations.createBillingPortalSession(
+    (await runtime.getServerDataClient()).mutations.createBillingPortalSession(
       optionalInput(input) as never,
     ),
   disconnectBbAccount: async () =>
-    (await getServerDataClient()).mutations.disconnectBbAccount(),
+    (await runtime.getServerDataClient()).mutations.disconnectBbAccount(),
   refreshWorkspace: async () =>
-    (await getServerDataClient()).mutations.refreshWorkspace(),
+    (await runtime.getServerDataClient()).mutations.refreshWorkspace(),
   setBbLeagueTimeZone: async (input) =>
-    (await getServerDataClient()).mutations.setBbLeagueTimeZone(
+    (await runtime.getServerDataClient()).mutations.setBbLeagueTimeZone(
       requiredInput(input) as never,
     ),
   submitGameDayRecap: async (input) =>
-    (await getServerDataClient()).mutations.submitGameDayRecap(
+    (await runtime.getServerDataClient()).mutations.submitGameDayRecap(
       requiredInput(input) as never,
     ),
   submitLeagueHistoryBackfill: async (input) =>
-    (await getServerDataClient()).mutations.submitLeagueHistoryBackfill(
+    (await runtime.getServerDataClient()).mutations.submitLeagueHistoryBackfill(
       optionalInput(input) as never,
     ),
   submitLeagueGameDayRecap: async (input) =>
-    (await getServerDataClient()).mutations.submitLeagueGameDayRecap(
+    (await runtime.getServerDataClient()).mutations.submitLeagueGameDayRecap(
       requiredInput(input) as never,
     ),
   submitMyTeamHighlightsScan: async () =>
-    (await getServerDataClient()).mutations.submitMyTeamHighlightsScan(),
+    (await runtime.getServerDataClient()).mutations.submitMyTeamHighlightsScan(),
   submitOpponentForecastJob: async (input) =>
-    (await getServerDataClient()).mutations.submitOpponentForecastJob(
+    (await runtime.getServerDataClient()).mutations.submitOpponentForecastJob(
       requiredInput(input) as never,
     ),
   submitPredictionJob: async (input) =>
-    (await getServerDataClient()).mutations.submitPredictionJob(
+    (await runtime.getServerDataClient()).mutations.submitPredictionJob(
       requiredInput(input) as never,
     ),
   submitSingleGameSummary: async (input) =>
-    (await getServerDataClient()).mutations.submitSingleGameSummary(
+    (await runtime.getServerDataClient()).mutations.submitSingleGameSummary(
       requiredInput(input) as never,
     ),
 } satisfies Record<string, MutationOperation>;

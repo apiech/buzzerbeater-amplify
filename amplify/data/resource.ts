@@ -212,6 +212,14 @@ export const getMyTeamHighlights = defineFunction({
   memoryMB: 512,
 });
 
+export const clearMyTeamHighlightsData = defineFunction({
+  resourceGroupName: "data",
+  name: "clear-my-team-highlights-data",
+  entry: "./clear-my-team-highlights-data/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
 export const leagueHistoryWorker = defineFunction({
   resourceGroupName: "data",
   name: "league-history-worker",
@@ -352,6 +360,7 @@ export const maintenanceProtectedFunctions = [
   submitMyTeamHighlightsScan,
   submitLeagueHistoryBackfill,
   getMyTeamHighlights,
+  clearMyTeamHighlightsData,
   getBillingSummary,
   createBillingCheckoutSession,
   createBillingLifetimeCheckoutSession,
@@ -1159,12 +1168,17 @@ const schema = a
       errorCode: a.string(),
       executionArn: a.string(),
       error: a.string(),
+      matchesAlreadyRecorded: a.integer(),
       matchesCompleted: a.integer(),
       matchesDiscovered: a.integer(),
       matchesEnqueuedForIngest: a.integer(),
       matchesEnqueuedForMaterialize: a.integer(),
       matchesFailed: a.integer(),
+      matchesProcessedThisRun: a.integer(),
       matchesReused: a.integer(),
+      matchesWithMoments: a.integer(),
+      matchesWithoutMoments: a.integer(),
+      momentsWritten: a.integer(),
       requestedAt: a.datetime().required(),
       seasonsFrom: a.integer(),
       seasonsTo: a.integer(),
@@ -1172,6 +1186,7 @@ const schema = a
       status: a.ref("TeamHighlightsScanState").required(),
       teamId: a.string().required(),
       teamName: a.string(),
+      unsupportedSeasonsWarning: a.string(),
       updatedAt: a.datetime(),
     }),
 
@@ -1216,6 +1231,14 @@ const schema = a
       teamName: a.string(),
       teamScoreAfter: a.integer(),
       teamScoreBefore: a.integer(),
+      viewerUrl: a.string(),
+    }),
+
+    TeamHighlightsClearResult: a.customType({
+      clearedCoverageCount: a.integer().required(),
+      deletedMomentCount: a.integer().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
     }),
 
     TeamHighlightsSummary: a.customType({
@@ -1931,6 +1954,12 @@ const schema = a
       .returns(a.ref("TeamHighlights"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getMyTeamHighlights)),
+
+    clearMyTeamHighlightsData: a
+      .mutation()
+      .returns(a.ref("TeamHighlightsClearResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(clearMyTeamHighlightsData)),
 
     getBillingSummary: a
       .query()

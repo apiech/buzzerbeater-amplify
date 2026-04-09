@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearMyTeamHighlightsData,
   getMyTeamHighlights,
   submitMyTeamHighlightsScan,
 } from "../amplify/data/_backend/team-highlights";
@@ -21,6 +22,7 @@ function createMoment(index: number, overrides: Record<string, unknown> = {}) {
     teamId: "team-1",
     teamName: "Alpha",
     outcomeChanged: index % 3 === 0,
+    viewerUrl: `https://buzzerbeater.com/match/match-${index}/reportmatch.aspx?realTime=2875`,
     ...overrides,
   };
 }
@@ -255,7 +257,9 @@ test("submitMyTeamHighlightsScan replaces a stale active scan", async () => {
 
   assert.equal(result.queued, true);
   assert.equal(writtenStatuses.length, 2);
-  assert.equal(writtenStatuses[0].status, "QUEUED");
+  const firstStatus = writtenStatuses[0];
+  assert.ok(firstStatus);
+  assert.equal(firstStatus.status, "QUEUED");
 });
 
 test("submitMyTeamHighlightsScan fails before queueing when saved credentials are stale", async () => {
@@ -304,7 +308,7 @@ test("submitMyTeamHighlightsScan fails before queueing when saved credentials ar
 test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async () => {
   const allMoments = Array.from({ length: 26 }, (_, index) => createMoment(index));
 
-  const result = (await getMyTeamHighlights(
+  const result: Awaited<ReturnType<typeof getMyTeamHighlights>> = await getMyTeamHighlights(
     {
       cursor: null,
       env: {},
@@ -331,23 +335,25 @@ test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async
           },
         ],
         currentSeason: 52,
+        matchesAlreadyRecorded: 20,
         matchesCompleted: 4,
+        matchesProcessedThisRun: 4,
+        matchesWithMoments: 3,
+        matchesWithoutMoments: 1,
+        momentsWritten: 6,
         requestedAt: "2026-03-15T09:00:00.000Z",
         status: "SUCCEEDED",
         teamId: "team-1",
         teamName: "Alpha",
+        unsupportedSeasonsWarning:
+          "bb-events does not currently track buzzerbeaters in seasons 1-14.",
         updatedAt: "2026-03-15T09:12:00.000Z",
         userId: "user-1",
       }),
       listTrackedTeamsForUser: async () => [createTrackedTeam()],
       queryTeamMoments: async () => allMoments as any,
     },
-  )) as {
-    items: Array<Record<string, unknown>>;
-    nextCursor: string | null;
-    summary: Record<string, number>;
-    team: { teamId: string; teamName: string | null };
-  };
+  );
 
   assert.equal(result.items.length, 25);
   assert.equal(result.summary.totalMoments, 26);
@@ -355,19 +361,25 @@ test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async
   assert.equal(result.summary.againstMoments, 13);
   assert.equal(result.summary.outcomeChangeMoments, 9);
   assert.equal(result.team.teamId, "team-1");
-  assert.equal((result as { scanStatus: { currentSeason: number | null } }).scanStatus.currentSeason, 52);
-  assert.equal((result as { scanStatus: { matchesCompleted: number | null } }).scanStatus.matchesCompleted, 4);
+  const scanStatus = result.scanStatus;
+  assert.ok(scanStatus);
+  assert.equal(scanStatus.currentSeason, 52);
+  assert.equal(scanStatus.matchesAlreadyRecorded, 20);
+  assert.equal(scanStatus.momentsWritten, 6);
+  assert.equal(scanStatus.matchesCompleted, 4);
   assert.equal(
-    (
-      result as {
-        scanStatus: { brokenMatches: Array<{ boxscoreUrl: string }> };
-      }
-    ).scanStatus.brokenMatches[0].boxscoreUrl,
+    (result.items[0] as { viewerUrl: string | null }).viewerUrl,
+    "https://buzzerbeater.com/match/match-0/reportmatch.aspx?realTime=2875",
+  );
+  const firstBrokenMatch = scanStatus.brokenMatches?.[0];
+  assert.ok(firstBrokenMatch);
+  assert.equal(
+    firstBrokenMatch.boxscoreUrl,
     "https://www.buzzerbeater.com/match/1006000001/boxscore.aspx",
   );
   assert.ok(result.nextCursor);
 
-  const nextPage = (await getMyTeamHighlights(
+  const nextPage: Awaited<ReturnType<typeof getMyTeamHighlights>> = await getMyTeamHighlights(
     {
       cursor: result.nextCursor,
       env: {},
@@ -384,11 +396,77 @@ test("getMyTeamHighlights filters, paginates, and summarizes stored rows", async
       listTrackedTeamsForUser: async () => [createTrackedTeam()],
       queryTeamMoments: async () => allMoments as any,
     },
-  )) as {
-    items: Array<Record<string, unknown>>;
-    nextCursor: string | null;
-  };
+  );
 
   assert.equal(nextPage.items.length, 1);
   assert.equal(nextPage.nextCursor, null);
+});
+
+test("clearMyTeamHighlightsData deletes team moments, clears coverage, and removes the latest status", async () => {
+  const deletedMoments: Array<Record<string, unknown>> = [];
+  const clearedCoverage: Array<Record<string, unknown>> = [];
+  const deletedStatuses: Array<{ teamId: string; userId: string }> = [];
+
+  const result = await clearMyTeamHighlightsData(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+    },
+    {
+      clearTeamProjectionCoverage: async (_env, items) => {
+        clearedCoverage.push(
+          ...Array.from(items, (item) => ({ ...item }) as Record<string, unknown>),
+        );
+      },
+      deleteTeamHighlightsStatus: async (_env, userId, teamId) => {
+        deletedStatuses.push({ teamId, userId });
+      },
+      deleteTeamMoments: async (_env, items) => {
+        deletedMoments.push(
+          ...Array.from(items, (item) => ({ ...item }) as Record<string, unknown>),
+        );
+      },
+      getBbConnection: async () => ({
+        teamId: "team-1",
+        teamName: "Alpha",
+      }) as any,
+      getTeamHighlightsStatus: async () => ({
+        requestedAt: "2026-03-15T09:00:00.000Z",
+        status: "SUCCEEDED",
+        teamId: "team-1",
+        teamName: "Alpha",
+        updatedAt: "2026-03-15T09:12:00.000Z",
+        userId: "user-1",
+      }),
+      listTrackedTeamsForUser: async () => [createTrackedTeam()],
+      now: () => new Date("2026-03-15T12:00:00.000Z"),
+      queryTeamMoments: async () => [createMoment(0), createMoment(1)] as any,
+      queryTeamProjections: async () =>
+        [
+          {
+            highlightsMomentCount: 1,
+            highlightsStatus: "READY",
+            matchId: "match-0",
+            seasonStartMatchKey: "72#2026-03-31T20:00:00.000Z#match-0",
+            teamId: "team-1",
+          },
+          {
+            matchId: "match-1",
+            seasonStartMatchKey: "72#2026-03-30T20:00:00.000Z#match-1",
+            teamId: "team-1",
+          },
+        ] as any,
+      requireFeatureAccess: async () => "premium",
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    clearedCoverageCount: 1,
+    deletedMomentCount: 2,
+    teamId: "team-1",
+    teamName: "Alpha",
+  });
+  assert.equal(deletedMoments.length, 2);
+  assert.equal(clearedCoverage.length, 1);
+  assert.deepStrictEqual(deletedStatuses, [{ teamId: "team-1", userId: "user-1" }]);
 });

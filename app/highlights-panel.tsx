@@ -73,6 +73,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const loadHighlightsEffect = useEffectEvent((options: LoadHighlightsOptions = {}) => {
     void loadHighlights(options);
@@ -152,13 +153,39 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     });
   }
 
+  async function handleClear(): Promise<void> {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Clear the current team's saved highlights data in this environment? This deletes only this team's moments and recorded coverage so the next scan starts fresh.",
+      )
+    ) {
+      return;
+    }
+
+    setIsClearing(true);
+    setSubmitError(null);
+
+    const response = await client.mutations.clearMyTeamHighlightsData();
+    if (response.errors?.length || !response.data) {
+      setSubmitError(formatAmplifyErrors(response.errors));
+      setIsClearing(false);
+      return;
+    }
+
+    await loadHighlights();
+    setIsClearing(false);
+  }
+
   const focusTeamName =
     payload?.team.teamName ?? workspace.home.team.teamName ?? "Your club";
   const scanStatus = payload?.scanStatus ?? null;
   const isScanStale = isTeamHighlightsScanStale(scanStatus);
   const hasActiveScan = hasActiveTeamHighlightsScan(scanStatus) && !isScanStale;
+  const hasRecordedHistory = hasRecordedTeamHighlightsHistory(scanStatus);
   const scanActionLabel = getTeamHighlightsScanActionLabel(scanStatus, {
     hasActiveScan,
+    hasRecordedHistory,
     isScanStale,
   });
   const summary = payload?.summary ?? {
@@ -183,9 +210,6 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     };
   }, [hasActiveScan]);
 
-  const submittedMatches =
-    (scanStatus?.matchesEnqueuedForIngest ?? 0) +
-    (scanStatus?.matchesEnqueuedForMaterialize ?? 0);
   const failedMatches = scanStatus?.matchesFailed ?? 0;
   const brokenMatches = scanStatus?.brokenMatches ?? [];
   const hasBrokenMatches = brokenMatches.length > 0;
@@ -202,13 +226,26 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     <Panel>
       <SectionHeading
         actions={
-          <Button
-            disabled={hasActiveScan}
-            loading={isSubmitting}
-            onClick={() => void handleSubmit()}
-          >
-            {scanActionLabel}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {(payload?.summary.totalMoments ?? 0) > 0 || hasRecordedHistory ? (
+              <Button
+                className="border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100"
+                disabled={hasActiveScan}
+                loading={isClearing}
+                onClick={() => void handleClear()}
+                variant="secondary"
+              >
+                Clear data
+              </Button>
+            ) : null}
+            <Button
+              disabled={hasActiveScan || isClearing}
+              loading={isSubmitting}
+              onClick={() => void handleSubmit()}
+            >
+              {scanActionLabel}
+            </Button>
+          </div>
         }
         description="Scan your connected club's history for late-game moments and review them from both team perspectives."
         eyebrow="Highlights"
@@ -379,24 +416,35 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
                   value={scanStatus.matchesDiscovered ?? 0}
                 />
                 <StatCard
-                  detail="Discovered games that already had moments ready before this run."
-                  label="Already ready"
-                  value={scanStatus.matchesReused ?? 0}
+                  detail="Games already recorded for this team before this run."
+                  label="Already recorded"
+                  value={
+                    scanStatus.matchesAlreadyRecorded ??
+                    scanStatus.matchesReused ??
+                    0
+                  }
                 />
                 <StatCard
-                  detail="Discovered games that needed fresh moment preparation in this run."
-                  label="Needed work"
-                  value={submittedMatches}
+                  detail="Games this run checked and recorded for this team."
+                  label="Processed this run"
+                  value={
+                    scanStatus.matchesProcessedThisRun ??
+                    scanStatus.matchesCompleted ??
+                    0
+                  }
                 />
                 <StatCard
-                  detail="Games from this run that already finished preparing moments."
-                  label="Prepared this run"
-                  value={scanStatus.matchesCompleted ?? 0}
+                  detail="Late-game moments written for this team in this run."
+                  label="Moments written"
+                  value={scanStatus.momentsWritten ?? 0}
                 />
               </div>
               <p className={statusCopyClassName}>
                 {describeScanStatus(scanStatus)}
               </p>
+              {scanStatus.unsupportedSeasonsWarning ? (
+                <Alert>{scanStatus.unsupportedSeasonsWarning}</Alert>
+              ) : null}
               {typeof scanStatus.currentSeason === "number" && hasActiveScan ? (
                 <p className={statusCopyClassName}>
                   Currently scanning season {scanStatus.currentSeason}.
@@ -511,6 +559,18 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
                   <span className="text-xs font-semibold uppercase tracking-[0.08em] text-ink-muted">
                     {formatMomentMeta(moment)}
                   </span>
+                  {moment.viewerUrl ? (
+                    <div className="flex justify-start">
+                      <a
+                        className="text-sm font-semibold text-accent underline underline-offset-2"
+                        href={moment.viewerUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Open viewer
+                      </a>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -567,6 +627,7 @@ export function getTeamHighlightsScanActionLabel(
   status: TeamHighlightsScanStatus | null,
   options: {
     hasActiveScan: boolean;
+    hasRecordedHistory: boolean;
     isScanStale: boolean;
   },
 ): string {
@@ -575,17 +636,31 @@ export function getTeamHighlightsScanActionLabel(
   }
 
   if (options.isScanStale || status?.status === "FAILED") {
-    return "Retry scan";
+    return options.hasRecordedHistory ? "Retry extend" : "Retry scan";
   }
 
-  if (
-    status?.status === "COMPLETED_WITH_GAPS" ||
-    status?.status === "SUCCEEDED"
-  ) {
-    return "Rescan history";
+  if (options.hasRecordedHistory) {
+    return "Extend history";
   }
 
   return "Scan history";
+}
+
+export function hasRecordedTeamHighlightsHistory(
+  status: TeamHighlightsScanStatus | null,
+): boolean {
+  if (!status) {
+    return false;
+  }
+
+  if (status.status === "SUCCEEDED" || status.status === "COMPLETED_WITH_GAPS") {
+    return true;
+  }
+
+  return Boolean(
+    (status.matchesAlreadyRecorded ?? status.matchesReused ?? 0) > 0 ||
+      (status.matchesProcessedThisRun ?? status.matchesCompleted ?? 0) > 0,
+  );
 }
 
 export function describeHighlightsEmptyState(
@@ -638,13 +713,24 @@ export function describeHighlightsEmptyState(
     return "Some games could not be prepared from BuzzerBeater data, but moments are ready for the rest of your history.";
   }
 
+  if (
+    payload.scanStatus.unsupportedSeasonsWarning &&
+    payload.summary.totalMoments === 0
+  ) {
+    return "Coverage is recorded for supported seasons, but early unsupported seasons are excluded from bb-events results.";
+  }
+
   if (payload.summary.totalMoments > 0) {
     return options.onlyOutcomeChange
       ? "Moments exist for this team, but none match the current outcome-change filter."
       : "Moments exist for this team, but none match the current perspective filter.";
   }
 
-  return "No late-game moments are ready for this team yet.";
+  if (hasRecordedTeamHighlightsHistory(payload.scanStatus)) {
+    return "This team's saved history is recorded, but no bb-events buzzerbeaters were found for the current coverage yet.";
+  }
+
+  return "Run a team history scan to build your all-time moments list.";
 }
 
 function buildMomentHeadline(moment: TeamHighlightsMoment): string {
@@ -709,12 +795,13 @@ function formatMomentMeta(moment: TeamHighlightsMoment): string {
 
 export function describeScanStatus(status: TeamHighlightsScanStatus): string {
   const discovered = status.matchesDiscovered ?? 0;
-  const completed = status.matchesCompleted ?? 0;
+  const completed =
+    status.matchesProcessedThisRun ?? status.matchesCompleted ?? 0;
   const failed = status.matchesFailed ?? 0;
-  const submitted =
-    (status.matchesEnqueuedForIngest ?? 0) +
-    (status.matchesEnqueuedForMaterialize ?? 0);
-  const reused = status.matchesReused ?? 0;
+  const reused = status.matchesAlreadyRecorded ?? status.matchesReused ?? 0;
+  const withMoments = status.matchesWithMoments ?? 0;
+  const withoutMoments = status.matchesWithoutMoments ?? 0;
+  const momentsWritten = status.momentsWritten ?? 0;
   const brokenMatches = status.brokenMatches ?? [];
   const intro =
     status.status === "COMPLETED_WITH_GAPS" ||
@@ -725,13 +812,19 @@ export function describeScanStatus(status: TeamHighlightsScanStatus): string {
 
   if (status.seasonsFrom !== null && status.seasonsTo !== null) {
     const reusedCopy = reused
-      ? ` ${reused} game${reused === 1 ? " was" : "s were"} already ready before this run.`
-      : "";
-    const submittedCopy = submitted
-      ? ` ${submitted} game${submitted === 1 ? " needed" : "s needed"} fresh preparation in this run.`
+      ? ` ${reused} game${reused === 1 ? " was" : "s were"} already recorded for this team before this run.`
       : "";
     const completedCopy = completed
-      ? ` ${completed} game${completed === 1 ? " finished" : "s finished"} preparing moments${status.status === "WAITING_FOR_MATCH_JOBS" ? " so far" : " in this run"}.`
+      ? ` ${completed} game${completed === 1 ? " was" : "s were"} processed in this run.`
+      : "";
+    const momentsCopy = momentsWritten
+      ? ` ${momentsWritten} moment${momentsWritten === 1 ? " was" : "s were"} written in this run.`
+      : "";
+    const zeroHitCopy = withoutMoments
+      ? ` ${withoutMoments} processed game${withoutMoments === 1 ? " had" : "s had"} no qualifying bb-events buzzerbeaters.`
+      : "";
+    const withMomentsCopy = withMoments
+      ? ` ${withMoments} processed game${withMoments === 1 ? " produced" : "s produced"} at least one saved moment.`
       : "";
     const brokenCopy = brokenMatches.length
       ? ` ${brokenMatches.length} game${brokenMatches.length === 1 ? " could" : "s could"} not be prepared from BuzzerBeater data.`
@@ -740,22 +833,22 @@ export function describeScanStatus(status: TeamHighlightsScanStatus): string {
       const failureCopy = failed
         ? ` ${failed} submitted job${failed === 1 ? " has" : "s have"} failed.`
         : "";
-      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy}${failureCopy} Older clubs can take several minutes.`;
+      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${completedCopy}${withMomentsCopy}${zeroHitCopy}${momentsCopy}${failureCopy} Older clubs can take several minutes.`;
     }
 
     if (status.status === "FAILED") {
-      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo} before the run failed. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy}`;
+      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo} before the run failed. Found ${discovered} completed games.${reusedCopy}${completedCopy}${withMomentsCopy}${zeroHitCopy}${momentsCopy}`;
     }
 
     if (status.status === "COMPLETED_WITH_GAPS") {
-      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy}${brokenCopy}`;
+      return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${completedCopy}${withMomentsCopy}${zeroHitCopy}${momentsCopy}${brokenCopy}`;
     }
 
-    return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${submittedCopy}${completedCopy} Older clubs can take several minutes.`;
+    return `${intro} seasons ${status.seasonsFrom} through ${status.seasonsTo}. Found ${discovered} completed games.${reusedCopy}${completedCopy}${withMomentsCopy}${zeroHitCopy}${momentsCopy} Older clubs can take several minutes.`;
   }
 
   if (status.status === "WAITING_FOR_MATCH_JOBS") {
-    return `Preparing moments from ${submitted} submitted match jobs. ${completed} finished so far. Older clubs can take several minutes.`;
+    return `Preparing saved moments now. ${completed} game${completed === 1 ? " is" : "s are"} already recorded in this run. Older clubs can take several minutes.`;
   }
 
   if (status.status === "FAILED") {

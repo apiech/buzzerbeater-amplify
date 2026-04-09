@@ -15,6 +15,7 @@ type FunctionResource = {
 
 type MatchStoreBackend = {
   createStack(name: string): Stack;
+  clearMyTeamHighlightsData: FunctionResource;
   connectBbAccount: FunctionResource;
   disconnectBbAccount: FunctionResource;
   generateSharedPlayerCard: FunctionResource;
@@ -110,6 +111,7 @@ export function configureMatchStoreIntegration(
     backend.generateSharedPlayerCard,
   ];
   const teamHighlightsReadFunctions = [backend.getMyTeamHighlights];
+  const teamHighlightsClearFunctions = [backend.clearMyTeamHighlightsData];
 
   for (const resource of matchStoreReadFunctions) {
     resource.addEnvironment("MATCH_STORE_BUCKET_NAME", bindings.matchStoreBucketName);
@@ -160,6 +162,21 @@ export function configureMatchStoreIntegration(
     );
     teamMomentsTable.grantReadData(resource.resources.lambda);
     teamHighlightsStatusTable.grantReadData(resource.resources.lambda);
+  }
+
+  for (const resource of teamHighlightsClearFunctions) {
+    resource.addEnvironment("TEAM_MOMENTS_TABLE_NAME", bindings.teamMomentsTableName);
+    resource.addEnvironment(
+      "TEAM_HIGHLIGHTS_STATUS_TABLE_NAME",
+      bindings.teamHighlightsStatusTableName,
+    );
+    resource.addEnvironment(
+      "TEAM_MATCH_PROJECTION_TABLE_NAME",
+      bindings.teamMatchProjectionTableName,
+    );
+    teamMomentsTable.grantReadWriteData(resource.resources.lambda);
+    teamHighlightsStatusTable.grantReadWriteData(resource.resources.lambda);
+    teamMatchProjectionTable.grantReadWriteData(resource.resources.lambda);
   }
 
   backend.submitMyTeamHighlightsScan.addEnvironment(

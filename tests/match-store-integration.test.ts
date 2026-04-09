@@ -55,6 +55,7 @@ test("browse-time workspace writers keep player snapshot access without active t
 
 test("team highlights handlers no longer receive active tracked team table wiring", () => {
   assert.match(source, /backend\.getMyTeamHighlights/);
+  assert.match(source, /backend\.clearMyTeamHighlightsData/);
   assert.match(source, /backend\.submitMyTeamHighlightsScan/);
   assert.doesNotMatch(source, /const teamHighlightsFunctions = \[/);
   assert.doesNotMatch(source, /activeTrackedTeamsTable\.grantReadData/);

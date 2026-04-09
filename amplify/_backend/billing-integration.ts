@@ -17,6 +17,7 @@ type FunctionResource = {
 type BillingBackend = {
   billingAdminOverride: FunctionResource;
   billingWebhook: FunctionResource;
+  clearMyTeamHighlightsData: FunctionResource;
   createBillingCheckoutSession: FunctionResource;
   createBillingPortalSession: FunctionResource;
   createStack(name: string): Stack;
@@ -61,6 +62,10 @@ export function configureBillingIntegration(
     "COMMERCIAL_MODE_ENABLED",
     String(config.commercialModeEnabled),
   );
+  backend.clearMyTeamHighlightsData.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
 
   if (config.defaultPlanId) {
     backend.getBillingSummary.addEnvironment(
@@ -88,6 +93,10 @@ export function configureBillingIntegration(
       config.defaultPlanId,
     );
     backend.submitMyTeamHighlightsScan.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      config.defaultPlanId,
+    );
+    backend.clearMyTeamHighlightsData.addEnvironment(
       "BILLING_DEFAULT_PLAN",
       config.defaultPlanId,
     );

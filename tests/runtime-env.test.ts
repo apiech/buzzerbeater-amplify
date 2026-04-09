@@ -36,6 +36,12 @@ test("runtime env resolvers read required values from passed env objects", () =>
     }),
     "team-highlights-status",
   );
+  assert.equal(
+    teamHighlightsTesting.resolveTeamProjectionTableName({
+      TEAM_MATCH_PROJECTION_TABLE_NAME: "team-match-projections",
+    }),
+    "team-match-projections",
+  );
   assert.deepEqual(
     matchStoreTesting.resolveMatchStoreEnv({
       MATCH_STORE_BUCKET_NAME: "match-store-bucket",
@@ -70,6 +76,10 @@ test("runtime env resolvers throw when required values are missing", () => {
   assert.throws(
     () => teamHighlightsTesting.resolveTeamHighlightsStatusTableName({}),
     /TEAM_HIGHLIGHTS_STATUS_TABLE_NAME is not configured/,
+  );
+  assert.throws(
+    () => teamHighlightsTesting.resolveTeamProjectionTableName({}),
+    /TEAM_MATCH_PROJECTION_TABLE_NAME is not configured/,
   );
   assert.throws(
     () => matchStoreTesting.resolveMatchStoreEnv({}),
