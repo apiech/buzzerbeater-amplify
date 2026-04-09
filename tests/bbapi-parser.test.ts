@@ -49,6 +49,161 @@ for (const [name, parser] of Object.entries(parsers)) {
   });
 }
 
+function buildBoxScoreXmlWithAwayPlayer(args: {
+  didNotPlay?: boolean;
+  minutes?: Record<string, number>;
+  rating: string;
+}) {
+  const minutes = {
+    C: 0,
+    PF: 0,
+    PG: 0,
+    SF: 0,
+    SG: 0,
+    ...(args.minutes ?? {}),
+  };
+
+  const awayPerformance = [
+    "<fgm>0</fgm>",
+    "<fga>0</fga>",
+    "<tpm>0</tpm>",
+    "<tpa>0</tpa>",
+    "<ftm>0</ftm>",
+    "<fta>0</fta>",
+    "<oreb>0</oreb>",
+    "<reb>1</reb>",
+    "<ast>0</ast>",
+    "<to>0</to>",
+    "<stl>0</stl>",
+    "<blk>0</blk>",
+    "<pf>0</pf>",
+    "<pts>0</pts>",
+    `<rating>${args.rating}</rating>`,
+    args.didNotPlay ? "<dnp/>" : "",
+  ].join("");
+
+  return `<?xml version='1.0' encoding='utf-8'?>
+<bbapi version='1'>
+  <match id='fixture-match' retrieved='2026-04-09T00:00:00Z'>
+    <awayTeam id='10'>
+      <teamName>Away Team</teamName>
+      <score partials='0,0,0,0'>0</score>
+      <boxscore>
+        <player id='away-player'>
+          <firstName>Away</firstName>
+          <lastName>Sample</lastName>
+          <minutes>
+            <PG>${minutes.PG}</PG>
+            <SG>${minutes.SG}</SG>
+            <SF>${minutes.SF}</SF>
+            <PF>${minutes.PF}</PF>
+            <C>${minutes.C}</C>
+          </minutes>
+          <performance>${awayPerformance}</performance>
+        </player>
+      </boxscore>
+    </awayTeam>
+    <homeTeam id='11'>
+      <teamName>Home Team</teamName>
+      <score partials='0,0,0,0'>0</score>
+      <boxscore>
+        <player id='home-player'>
+          <firstName>Home</firstName>
+          <lastName>Baseline</lastName>
+          <minutes>
+            <PG>12</PG>
+            <SG>0</SG>
+            <SF>0</SF>
+            <PF>0</PF>
+            <C>0</C>
+          </minutes>
+          <performance>
+            <fgm>1</fgm>
+            <fga>2</fga>
+            <tpm>0</tpm>
+            <tpa>1</tpa>
+            <ftm>0</ftm>
+            <fta>0</fta>
+            <oreb>0</oreb>
+            <reb>1</reb>
+            <ast>1</ast>
+            <to>0</to>
+            <stl>0</stl>
+            <blk>0</blk>
+            <pf>1</pf>
+            <pts>2</pts>
+            <rating>12</rating>
+          </performance>
+        </player>
+      </boxscore>
+    </homeTeam>
+  </match>
+</bbapi>`;
+}
+
+for (const scenario of [
+  {
+    didNotPlay: false,
+    label: "numeric ratings without a dnp marker",
+    minutes: { PG: 18 },
+    rating: "16",
+    ratingValue: 16,
+  },
+  {
+    didNotPlay: false,
+    label: "played players whose rating is N/A",
+    minutes: { PG: 5 },
+    rating: "N/A",
+    ratingValue: null,
+  },
+  {
+    didNotPlay: true,
+    label: "dnp players whose rating is N/A",
+    minutes: {},
+    rating: "N/A",
+    ratingValue: null,
+  },
+  {
+    didNotPlay: true,
+    label: "dnp players whose rating uses the -100000 sentinel",
+    minutes: {},
+    rating: "-100000",
+    ratingValue: null,
+  },
+] as const) {
+  test(`parseBoxScore accepts ${scenario.label}`, () => {
+    const boxScore = parseBoxScore(
+      buildBoxScoreXmlWithAwayPlayer({
+        didNotPlay: scenario.didNotPlay,
+        minutes: scenario.minutes,
+        rating: scenario.rating,
+      }),
+    );
+    const awayPlayer = boxScore.awayTeam.players[0];
+
+    assert.ok(awayPlayer);
+    assert.deepStrictEqual(awayPlayer.performanceStats, {
+      ast: 0,
+      blk: 0,
+      fga: 0,
+      fgm: 0,
+      fta: 0,
+      ftm: 0,
+      oreb: 0,
+      pf: 0,
+      pts: 0,
+      reb: 1,
+      stl: 0,
+      to: 0,
+      tpa: 0,
+      tpm: 0,
+    });
+    assert.equal(awayPlayer.ratingRaw, scenario.rating);
+    assert.equal(awayPlayer.ratingValue, scenario.ratingValue);
+    assert.equal(awayPlayer.didNotPlay, scenario.didNotPlay);
+  });
+}
+
 test("parseSeasons reads season bounds from child elements", () => {
   const xml = readFileSync(join(xmlDir, "seasons.xml"), "utf8");
 

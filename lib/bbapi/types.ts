@@ -171,13 +171,41 @@ export type BBApiStandings = {
   brackets: BBApiBracketSection[];
 };
 
+export const BOX_SCORE_PLAYER_PERFORMANCE_STAT_KEYS = [
+  "fgm",
+  "fga",
+  "tpm",
+  "tpa",
+  "ftm",
+  "fta",
+  "oreb",
+  "reb",
+  "ast",
+  "to",
+  "stl",
+  "blk",
+  "pf",
+  "pts",
+] as const;
+
+export type BBApiBoxScorePlayerPerformanceStatKey =
+  (typeof BOX_SCORE_PLAYER_PERFORMANCE_STAT_KEYS)[number];
+
+export type BBApiBoxScorePlayerPerformanceStats = Record<
+  BBApiBoxScorePlayerPerformanceStatKey,
+  number
+>;
+
 export type BBApiBoxScorePlayer = {
   id: string | null;
   firstName: string | null;
   lastName: string | null;
   fullName: string;
-  performance: Record<string, number>;
+  didNotPlay: boolean;
   minutesByPosition: Record<string, number>;
+  performanceStats: BBApiBoxScorePlayerPerformanceStats;
+  ratingRaw: string | null;
+  ratingValue: number | null;
   details: Record<string, unknown>;
 };
 

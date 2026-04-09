@@ -2055,12 +2055,12 @@ function totalMinutesPlayed(player: BBApiBoxScorePlayer): number {
 }
 
 function calculateRecentActivityScore(player: BBApiBoxScorePlayer): number {
-  const pts = asNumber(player.performance.pts) ?? 0;
-  const reb = asNumber(player.performance.reb) ?? 0;
-  const ast = asNumber(player.performance.ast) ?? 0;
-  const stl = asNumber(player.performance.stl) ?? 0;
-  const blk = asNumber(player.performance.blk) ?? 0;
-  const turnovers = asNumber(player.performance.to) ?? 0;
+  const pts = asNumber(player.performanceStats.pts) ?? 0;
+  const reb = asNumber(player.performanceStats.reb) ?? 0;
+  const ast = asNumber(player.performanceStats.ast) ?? 0;
+  const stl = asNumber(player.performanceStats.stl) ?? 0;
+  const blk = asNumber(player.performanceStats.blk) ?? 0;
+  const turnovers = asNumber(player.performanceStats.to) ?? 0;
 
   return pts + 0.7 * reb + 0.7 * ast + 1.5 * (stl + blk) - turnovers;
 }

@@ -59,22 +59,25 @@
         "firstName": "Ada",
         "lastName": "Guard",
         "fullName": "Ada Guard",
-        "performance": {
-          "pts": 21,
+        "didNotPlay": false,
+        "performanceStats": {
           "fgm": 8,
           "fga": 16,
-          "tpm": 3,
-          "tpa": 7,
           "ftm": 2,
           "fta": 2,
           "oreb": 1,
-          "reb": 5,
           "ast": 6,
           "to": 2,
           "stl": 1,
           "blk": 0,
-          "pf": 2
+          "pf": 2,
+          "pts": 21,
+          "reb": 5,
+          "tpa": 7,
+          "tpm": 3
         },
+        "ratingRaw": "16",
+        "ratingValue": 16,
         "minutesByPosition": {
           "PG": 32,
           "SG": 6,
@@ -138,22 +141,25 @@
         "firstName": "Bea",
         "lastName": "Wing",
         "fullName": "Bea Wing",
-        "performance": {
-          "pts": 19,
+        "didNotPlay": false,
+        "performanceStats": {
           "fgm": 7,
           "fga": 15,
-          "tpm": 2,
-          "tpa": 6,
           "ftm": 3,
           "fta": 4,
           "oreb": 2,
-          "reb": 7,
           "ast": 4,
           "to": 1,
           "stl": 2,
           "blk": 1,
-          "pf": 3
+          "pf": 3,
+          "pts": 19,
+          "reb": 7,
+          "tpa": 6,
+          "tpm": 2
         },
+        "ratingRaw": "14",
+        "ratingValue": 14,
         "minutesByPosition": {
           "PG": 0,
           "SG": 18,

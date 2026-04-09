@@ -16,7 +16,7 @@ import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtim
 installInactiveMaintenanceRuntime();
 import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../amplify/_shared/game-day-recap-errors";
 import { requireFeatureAccess } from "../amplify/data/_backend/billing";
-import { BBXmlApiError } from "../lib/bbapi";
+import { BBXmlApiError, BBXmlApiParseError } from "../lib/bbapi";
 import type {
   BBApiBoxScore,
   BBApiSchedule,
@@ -118,6 +118,58 @@ function createCompleteTeamRatings(base: number) {
   };
 }
 
+function createBoxScorePerformanceStats(
+  overrides: Partial<
+    NonNullable<BBApiBoxScore["awayTeam"]>["players"][number]["performanceStats"]
+  > = {},
+) {
+  return {
+    ast: 0,
+    blk: 0,
+    fga: 0,
+    fgm: 0,
+    fta: 0,
+    ftm: 0,
+    oreb: 0,
+    pf: 0,
+    pts: 0,
+    reb: 0,
+    stl: 0,
+    to: 0,
+    tpa: 0,
+    tpm: 0,
+    ...overrides,
+  };
+}
+
+function createBoxScorePlayer(args: {
+  didNotPlay?: boolean;
+  firstName: string;
+  id: string;
+  lastName: string;
+  minutesByPosition: Record<string, number>;
+  performanceStats?: Partial<
+    NonNullable<BBApiBoxScore["awayTeam"]>["players"][number]["performanceStats"]
+  >;
+  ratingRaw: string;
+  ratingValue: number | null;
+}) {
+  const firstName = args.firstName;
+  const lastName = args.lastName;
+  return {
+    didNotPlay: args.didNotPlay ?? false,
+    details: {},
+    firstName,
+    fullName: `${firstName} ${lastName}`,
+    id: args.id,
+    lastName,
+    minutesByPosition: args.minutesByPosition,
+    performanceStats: createBoxScorePerformanceStats(args.performanceStats),
+    ratingRaw: args.ratingRaw,
+    ratingValue: args.ratingValue,
+  };
+}
+
 function createBoxScore(args: {
   awayScore: number;
   awayTeamId: string;
@@ -139,14 +191,12 @@ function createBoxScore(args: {
       offStrategy: "Motion",
       partialScores: [20, 18, 22, 24],
       players: [
-        {
-          details: {},
+        createBoxScorePlayer({
           firstName: "Ari",
-          fullName: "Ari Away",
           id: "p-away",
           lastName: "Away",
           minutesByPosition: { C: 0, PF: 0, PG: 30, SF: 0, SG: 8 },
-          performance: {
+          performanceStats: {
             ast: 7,
             blk: 0,
             pts: 24,
@@ -154,7 +204,9 @@ function createBoxScore(args: {
             stl: 2,
             to: 3,
           },
-        },
+          ratingRaw: "16",
+          ratingValue: 16,
+        }),
       ],
       ratings: createCompleteTeamRatings(12.2),
       score: args.awayScore,
@@ -174,14 +226,12 @@ function createBoxScore(args: {
       offStrategy: "Push The Ball",
       partialScores: [18, 24, 20, 26],
       players: [
-        {
-          details: {},
+        createBoxScorePlayer({
           firstName: "Hal",
-          fullName: "Hal Home",
           id: "p-home",
           lastName: "Home",
           minutesByPosition: { C: 0, PF: 0, PG: 0, SF: 30, SG: 10 },
-          performance: {
+          performanceStats: {
             ast: 5,
             blk: 1,
             pts: 21,
@@ -189,7 +239,9 @@ function createBoxScore(args: {
             stl: 1,
             to: 1,
           },
-        },
+          ratingRaw: "15",
+          ratingValue: 15,
+        }),
       ],
       ratings: createCompleteTeamRatings(11.4),
       score: args.homeScore,
@@ -1716,6 +1768,277 @@ test("buildGameDayRecapPromptPayload logs BBXmlApiError details for failed box s
     scheduledAwayScore: 81,
     scheduledHomeScore: 85,
     status: 503,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
+  });
+});
+
+test("buildGameDayRecapPromptPayload accepts completed boxscores with live rating and dnp shapes", async () => {
+  const standings = createStandings();
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    ["C", createSchedule("C", [])],
+    ["D", createSchedule("D", [])],
+  ]);
+  const boxScore = createBoxScore({
+    awayScore: 81,
+    awayTeamId: "B",
+    awayTeamName: "Beta",
+    homeScore: 85,
+    homeTeamId: "A",
+    homeTeamName: "Alpha",
+    matchId: "m-1",
+  });
+  boxScore.awayTeam.players.push(
+    createBoxScorePlayer({
+      didNotPlay: false,
+      firstName: "Erwin",
+      id: "p-away-na",
+      lastName: "Silver",
+      minutesByPosition: { C: 0, PF: 0, PG: 5, SF: 0, SG: 0 },
+      performanceStats: { reb: 1 },
+      ratingRaw: "N/A",
+      ratingValue: null,
+    }),
+  );
+  boxScore.homeTeam.players.push(
+    createBoxScorePlayer({
+      didNotPlay: true,
+      firstName: "Blake",
+      id: "p-home-dnp-na",
+      lastName: "Burrows",
+      minutesByPosition: { C: 0, PF: 0, PG: 0, SF: 0, SG: 0 },
+      ratingRaw: "N/A",
+      ratingValue: null,
+    }),
+    createBoxScorePlayer({
+      didNotPlay: true,
+      firstName: "Neil",
+      id: "p-home-dnp-sentinel",
+      lastName: "Gardeck",
+      minutesByPosition: { C: 0, PF: 0, PG: 0, SF: 0, SG: 0 },
+      ratingRaw: "-100000",
+      ratingValue: null,
+    }),
+  );
+
+  const payload = await __testing.buildGameDayRecapPromptPayload({
+    bb: {
+      getBoxScore: async () => boxScore,
+      getSchedule: async (teamId) => {
+        const schedule = schedules.get(teamId ?? "");
+        if (!schedule) {
+          throw new Error(`Missing schedule for ${teamId}`);
+        }
+        return schedule;
+      },
+      getTeamInfo: async () => {
+        throw new Error("team info should not be loaded in this test");
+      },
+    },
+    connection: {
+      bbLoginName: "coach-alpha",
+      leagueId: "100",
+      leagueName: "Elite League",
+      leagueTimeZone: "America/New_York",
+      refreshSortAt: "2026-03-17T23:10:00.000Z",
+      status: "CONNECTED",
+      userId: "user-1",
+    },
+    enforceCompletedSlateCoverage: true,
+    now: new Date("2026-03-17T23:10:00Z"),
+    requestedGames: [
+      {
+        awayTeamId: "B",
+        awayTeamName: "Beta",
+        homeTeamId: "A",
+        homeTeamName: "Alpha",
+        isScheduleFinal: true,
+        matchId: "m-1",
+        scheduledAwayScore: 81,
+        scheduledHomeScore: 85,
+        startTime: "2026-03-15T19:00:00Z",
+        type: "League",
+      },
+    ],
+    request: {
+      gameDate: "2026-03-15",
+      gameDayNumber: null,
+      kind: "LEAGUE_DATE",
+      label: "Elite League 2026-03-15",
+      leagueId: "100",
+      leagueName: "Elite League",
+      matchId: null,
+      season: 64,
+      timeZone: "America/New_York",
+    },
+    season: 64,
+    standings,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
+  });
+
+  assert.deepStrictEqual(payload.coverage, {
+    availableGames: 1,
+    missingGames: [],
+    partial: false,
+    requestedGames: 1,
+  });
+  assert.equal(payload.games.length, 1);
+  assert.equal(payload.games[0]?.teams.away.topPlayers[0]?.name, "Ari Away");
+});
+
+test("buildGameDayRecapPromptPayload logs parse error details separately from fetch failures", async () => {
+  const standings = createStandings();
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    ["C", createSchedule("C", [])],
+    ["D", createSchedule("D", [])],
+  ]);
+  const capturedWarns: Array<[unknown, unknown]> = [];
+  const originalWarn = console.warn;
+
+  console.warn = ((message?: unknown, details?: unknown) => {
+    capturedWarns.push([message, details]);
+  }) as typeof console.warn;
+
+  try {
+    await assert.rejects(
+      () =>
+        __testing.buildGameDayRecapPromptPayload({
+          bb: {
+            getBoxScore: async () => {
+              throw new BBXmlApiParseError(
+                "Failed to parse BB API response for boxscore.aspx: Unexpected boxscore player performance.rating value: mystery.",
+                "boxscore.aspx",
+                "<bbapi version='1'><match id='m-1' /></bbapi>",
+              );
+            },
+            getSchedule: async (teamId) => {
+              const schedule = schedules.get(teamId ?? "");
+              if (!schedule) {
+                throw new Error(`Missing schedule for ${teamId}`);
+              }
+              return schedule;
+            },
+            getTeamInfo: async () => {
+              throw new Error("team info should not be loaded in this test");
+            },
+          },
+          connection: {
+            bbLoginName: "coach-alpha",
+            leagueId: "100",
+            leagueName: "Elite League",
+            leagueTimeZone: "America/New_York",
+            refreshSortAt: "2026-03-17T23:10:00.000Z",
+            status: "CONNECTED",
+            userId: "user-1",
+          },
+          enforceCompletedSlateCoverage: true,
+          now: new Date("2026-03-17T23:10:00Z"),
+          requestedGames: [
+            {
+              awayTeamId: "B",
+              awayTeamName: "Beta",
+              homeTeamId: "A",
+              homeTeamName: "Alpha",
+              isScheduleFinal: true,
+              matchId: "m-1",
+              scheduledAwayScore: 81,
+              scheduledHomeScore: 85,
+              startTime: "2026-03-15T19:00:00Z",
+              type: "League",
+            },
+          ],
+          request: {
+            gameDate: "2026-03-15",
+            gameDayNumber: null,
+            kind: "LEAGUE_DATE",
+            label: "Elite League 2026-03-15",
+            leagueId: "100",
+            leagueName: "Elite League",
+            matchId: null,
+            season: 64,
+            timeZone: "America/New_York",
+          },
+          season: 64,
+          standings,
+          targetKey: "100#2026-03-15",
+          userId: "user-1",
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME);
+        return true;
+      },
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  const parseFailureLog = capturedWarns.find(
+    ([message]) =>
+      typeof message === "string" &&
+      message.includes("process.box_score_parse_failed"),
+  );
+  assert.ok(parseFailureLog, "expected a box score parse failure warning");
+  assert.deepStrictEqual(parseFailureLog[1], {
+    bodyPreview: "<bbapi version='1'><match id='m-1' /></bbapi>",
+    endpoint: "boxscore.aspx",
+    errorMessage:
+      "Failed to parse BB API response for boxscore.aspx: Unexpected boxscore player performance.rating value: mystery.",
+    errorName: "BBXmlApiParseError",
+    expectedFinal: true,
+    matchId: "m-1",
+    scheduleFinal: true,
+    scheduledAwayScore: 81,
+    scheduledHomeScore: 85,
     targetKey: "100#2026-03-15",
     userId: "user-1",
   });

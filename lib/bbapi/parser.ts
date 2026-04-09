@@ -3,13 +3,17 @@ import {
   TEAM_RATING_KEYS,
   type TeamRatings,
 } from "../buzzerbeater/team-ratings";
-import { OWNED_ROSTER_SKILL_KEYS } from "./types";
+import {
+  BOX_SCORE_PLAYER_PERFORMANCE_STAT_KEYS,
+  OWNED_ROSTER_SKILL_KEYS,
+} from "./types";
 
 import type {
   BBApiArena,
   BBApiArenaSeat,
   BBApiBoxScore,
   BBApiBoxScorePlayer,
+  BBApiBoxScorePlayerPerformanceStats,
   BBApiBoxScoreTeam,
   BBApiConferenceStandings,
   BBApiConferenceTeam,
@@ -456,14 +460,25 @@ function parseBoxScorePlayer(player: unknown): BBApiBoxScorePlayer {
   const node = getObject(player);
   const firstName = readText(node?.firstName);
   const lastName = readText(node?.lastName);
+  const performanceNode = requireObject(
+    node?.performance,
+    "boxscore player performance",
+  );
+  const ratingRaw = requireNodeText(
+    performanceNode.rating,
+    "boxscore player performance.rating",
+  );
   return {
+    didNotPlay: Object.prototype.hasOwnProperty.call(performanceNode, "dnp"),
     id: asString(node?.["@_id"]),
     firstName,
     lastName,
     fullName: [firstName, lastName].filter(Boolean).join(" "),
-    performance: mapRequiredNumberChildren(
-      node?.performance,
-      "boxscore player performance",
+    performanceStats: parseBoxScorePlayerPerformanceStats(performanceNode),
+    ratingRaw,
+    ratingValue: parseBoxScorePlayerRating(
+      ratingRaw,
+      "boxscore player performance.rating",
     ),
     minutesByPosition: mapRequiredNumberChildren(
       node?.minutes,
@@ -471,6 +486,33 @@ function parseBoxScorePlayer(player: unknown): BBApiBoxScorePlayer {
     ),
     details: stripKeys(node, ["@_id", "firstName", "lastName", "performance", "minutes"]),
   };
+}
+
+function parseBoxScorePlayerPerformanceStats(
+  node: XmlObject,
+): BBApiBoxScorePlayerPerformanceStats {
+  const stats = {} as BBApiBoxScorePlayerPerformanceStats;
+  for (const key of BOX_SCORE_PLAYER_PERFORMANCE_STAT_KEYS) {
+    stats[key] = requireNodeNumber(
+      node[key],
+      `boxscore player performance.${key}`,
+    );
+  }
+  return stats;
+}
+
+function parseBoxScorePlayerRating(label: string, context: string): number | null {
+  const trimmed = label.trim();
+  if (!trimmed || trimmed === "N/A" || trimmed === "-100000") {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  throw new Error(`Unexpected ${context} value: ${label}.`);
 }
 
 function parseNamedReference(node: unknown): BBApiNamedReference | null {

@@ -747,7 +747,9 @@ function toBoxscorePlayerLines(
       fullName: asOptionalString(player.fullName) ?? "Unknown player",
       isStarter: asOptionalBoolean(asRecord(player.details)?.isStarter) ?? false,
       minutes: sumMetricEntries(minutesByPosition),
-      performance: toNumericMetricEntries(asRecord(player.performance)),
+      performance: toNumericMetricEntries(
+        asRecord(player.performanceStats) ?? asRecord(player.performance),
+      ),
       minutesByPosition,
     };
   });

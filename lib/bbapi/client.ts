@@ -43,6 +43,18 @@ export class BBXmlApiError extends Error {
   }
 }
 
+export class BBXmlApiParseError extends Error {
+  constructor(
+    message: string,
+    readonly endpoint?: string,
+    readonly bodyPreview?: string,
+    cause?: unknown,
+  ) {
+    super(message, cause ? { cause } : undefined);
+    this.name = "BBXmlApiParseError";
+  }
+}
+
 export type BBXmlApiClientOptions = {
   username: string;
   securityCode: string;
@@ -135,7 +147,20 @@ export class BBXmlApiClient {
   }
 
   async getBoxScore(matchId?: string): Promise<BBApiBoxScore> {
-    return parseBoxScore(await this.request("boxscore.aspx", matchId ? { matchid: matchId } : undefined));
+    const xml = await this.request(
+      "boxscore.aspx",
+      matchId ? { matchid: matchId } : undefined,
+    );
+    try {
+      return parseBoxScore(xml);
+    } catch (error) {
+      throw new BBXmlApiParseError(
+        `Failed to parse BB API response for boxscore.aspx: ${error instanceof Error ? error.message : String(error)}`,
+        "boxscore.aspx",
+        buildBodyPreview(xml),
+        error,
+      );
+    }
   }
 
   async getBoxScoreXml(matchId?: string): Promise<string> {
@@ -283,6 +308,14 @@ function splitSetCookieHeader(headerValue: string | null): string[] {
     return [];
   }
   return headerValue.split(/,(?=[^;]+=[^;]+)/g);
+}
+
+function buildBodyPreview(body: string): string {
+  const normalized = body.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 240) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 237)}...`;
 }
 
 function shouldRetryRequest(error: unknown): boolean {

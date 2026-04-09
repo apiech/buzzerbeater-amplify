@@ -548,7 +548,10 @@ function toPlayerSummaries(value: unknown): JsonRecord[] {
   return toRecordArray(value).map((player) => ({
     fullName: asOptionalString(player.fullName) ?? "Unknown player",
     minutesByPosition: asOptionalRecord(player.minutesByPosition) ?? {},
-    performance: asOptionalRecord(player.performance) ?? {},
+    performance:
+      asOptionalRecord(player.performanceStats) ??
+      asOptionalRecord(player.performance) ??
+      {},
     playerId: asOptionalString(player.id),
     totalMinutes: totalMinutesFromPositions(player.minutesByPosition),
   }));

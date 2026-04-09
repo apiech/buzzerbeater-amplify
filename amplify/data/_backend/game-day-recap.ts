@@ -3,7 +3,11 @@ import {
   ConverseCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 
-import { BBXmlApiClient, type BBXmlApiClientOptions } from "../../../lib/bbapi";
+import {
+  BBXmlApiClient,
+  BBXmlApiParseError,
+  type BBXmlApiClientOptions,
+} from "../../../lib/bbapi";
 import type {
   BBApiBoxScore,
   BBApiBoxScorePlayer,
@@ -200,7 +204,8 @@ export type SlateGame = {
   type: string | null;
 };
 
-type BoxScoreFetchErrorDetails = {
+type BoxScoreLoadErrorDetails = {
+  bodyPreview?: string;
   endpoint?: string;
   errorMessage: string;
   errorName?: string;
@@ -217,8 +222,12 @@ type BoxScoreLoadResult =
       kind: "incomplete_boxscore";
     }
   | {
-      error: BoxScoreFetchErrorDetails;
-      kind: "fetch_failed";
+      error: BoxScoreLoadErrorDetails;
+      kind: "api_fetch_failed";
+    }
+  | {
+      error: BoxScoreLoadErrorDetails;
+      kind: "parse_failed";
     };
 
 class RetryableCompletedSlateCoverageError extends Error {
@@ -226,7 +235,7 @@ class RetryableCompletedSlateCoverageError extends Error {
 
   constructor(
     coverage: GameDayRecapCoveragePayload,
-    message = "Completed slate recap coverage is incomplete while final box scores are still missing.",
+    message = "Completed slate recap coverage is incomplete because one or more final box scores could not be processed.",
   ) {
     super(message);
     this.name = RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME;
@@ -1981,8 +1990,19 @@ async function buildGameDayRecapPromptPayload(args: {
       requestedGame,
     });
     if (boxScoreResult.kind !== "ok") {
-      if (boxScoreResult.kind === "fetch_failed") {
+      if (boxScoreResult.kind === "api_fetch_failed") {
         logGameDayRecapWarn("process.box_score_fetch_failed", {
+          expectedFinal,
+          matchId: requestedGame.matchId,
+          scheduledAwayScore: requestedGame.scheduledAwayScore,
+          scheduledHomeScore: requestedGame.scheduledHomeScore,
+          scheduleFinal: requestedGame.isScheduleFinal,
+          targetKey: args.targetKey,
+          userId: args.userId,
+          ...boxScoreResult.error,
+        });
+      } else if (boxScoreResult.kind === "parse_failed") {
+        logGameDayRecapWarn("process.box_score_parse_failed", {
           expectedFinal,
           matchId: requestedGame.matchId,
           scheduledAwayScore: requestedGame.scheduledAwayScore,
@@ -2013,7 +2033,9 @@ async function buildGameDayRecapPromptPayload(args: {
         reason:
           boxScoreResult.kind === "incomplete_boxscore"
             ? "final box score was incomplete"
-            : "final box score was unavailable",
+            : boxScoreResult.kind === "parse_failed"
+              ? "final box score response could not be parsed"
+              : "final box score was unavailable",
       };
       coverageIssues.push(issue);
       if (expectedFinal) {
@@ -2357,12 +2379,16 @@ async function loadBoxScore(
             kind: "incomplete_boxscore",
           } satisfies BoxScoreLoadResult),
     )
-    .catch(
-      (error) =>
-        ({
-          error: toBoxScoreFetchErrorDetails(error),
-          kind: "fetch_failed",
-        }) satisfies BoxScoreLoadResult,
+    .catch((error) =>
+      error instanceof BBXmlApiParseError
+        ? ({
+            error: toBoxScoreLoadErrorDetails(error),
+            kind: "parse_failed",
+          } satisfies BoxScoreLoadResult)
+        : ({
+            error: toBoxScoreLoadErrorDetails(error),
+            kind: "api_fetch_failed",
+          } satisfies BoxScoreLoadResult),
     );
   cache.set(matchId, pending);
   return pending;
@@ -2400,8 +2426,10 @@ function hasCompleteBoxScore(boxScore: BBApiBoxScore): boolean {
   );
 }
 
-function toBoxScoreFetchErrorDetails(error: unknown): BoxScoreFetchErrorDetails {
+function toBoxScoreLoadErrorDetails(error: unknown): BoxScoreLoadErrorDetails {
   const loggable = toLoggableError(error);
+  const bodyPreview =
+    typeof loggable.bodyPreview === "string" ? loggable.bodyPreview : undefined;
   const endpoint =
     typeof loggable.endpoint === "string" ? loggable.endpoint : undefined;
   const errorMessage =
@@ -2413,12 +2441,24 @@ function toBoxScoreFetchErrorDetails(error: unknown): BoxScoreFetchErrorDetails 
   const status =
     typeof loggable.status === "number" ? loggable.status : undefined;
 
-  return {
-    endpoint,
+  const details: BoxScoreLoadErrorDetails = {
     errorMessage,
-    errorName,
-    status,
   };
+
+  if (bodyPreview !== undefined) {
+    details.bodyPreview = bodyPreview;
+  }
+  if (endpoint !== undefined) {
+    details.endpoint = endpoint;
+  }
+  if (errorName !== undefined) {
+    details.errorName = errorName;
+  }
+  if (status !== undefined) {
+    details.status = status;
+  }
+
+  return details;
 }
 
 function isRequestedGameExpectedFinal(args: {
@@ -2621,27 +2661,27 @@ function extractTopPlayers(
     )
     .slice(0, 3)
     .map((player) => ({
-      assists: asNumberFromUnknown(player.performance.ast),
-      blocks: asNumberFromUnknown(player.performance.blk),
+      assists: asNumberFromUnknown(player.performanceStats.ast),
+      blocks: asNumberFromUnknown(player.performanceStats.blk),
       minutes: Object.values(player.minutesByPosition).reduce<number>(
         (sum, value) => sum + (value ?? 0),
         0,
       ),
       name: player.fullName,
-      points: asNumberFromUnknown(player.performance.pts),
-      rebounds: asNumberFromUnknown(player.performance.reb),
-      steals: asNumberFromUnknown(player.performance.stl),
-      turnovers: asNumberFromUnknown(player.performance.to),
+      points: asNumberFromUnknown(player.performanceStats.pts),
+      rebounds: asNumberFromUnknown(player.performanceStats.reb),
+      steals: asNumberFromUnknown(player.performanceStats.stl),
+      turnovers: asNumberFromUnknown(player.performanceStats.to),
     }));
 }
 
 function scorePlayerPerformance(player: BBApiBoxScorePlayer): number {
-  const points = asNumberFromUnknown(player.performance.pts);
-  const rebounds = asNumberFromUnknown(player.performance.reb);
-  const assists = asNumberFromUnknown(player.performance.ast);
-  const steals = asNumberFromUnknown(player.performance.stl);
-  const blocks = asNumberFromUnknown(player.performance.blk);
-  const turnovers = asNumberFromUnknown(player.performance.to);
+  const points = asNumberFromUnknown(player.performanceStats.pts);
+  const rebounds = asNumberFromUnknown(player.performanceStats.reb);
+  const assists = asNumberFromUnknown(player.performanceStats.ast);
+  const steals = asNumberFromUnknown(player.performanceStats.stl);
+  const blocks = asNumberFromUnknown(player.performanceStats.blk);
+  const turnovers = asNumberFromUnknown(player.performanceStats.to);
 
   return (
     points + rebounds * 0.7 + assists * 0.7 + steals + blocks - turnovers * 0.5
@@ -3309,6 +3349,9 @@ function toLoggableError(error: unknown): Record<string, unknown> {
   }
   if ("status" in error && typeof error.status === "number") {
     details.status = error.status;
+  }
+  if ("bodyPreview" in error && typeof error.bodyPreview === "string") {
+    details.bodyPreview = error.bodyPreview;
   }
 
   return details;
