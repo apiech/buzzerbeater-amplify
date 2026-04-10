@@ -234,3 +234,56 @@ test("recap labels prefer headlines and league/date copy over raw ids", () => {
   assert.match(recapTesting.describeRecapRecord(record), /2026-03-15/);
   assert.doesNotMatch(recapTesting.describeRecapRecord(record), /137828772/);
 });
+
+test("forum formatter builds BBCode with recap metadata and match links", () => {
+  const record = {
+    completedAt: "2026-03-15T23:15:00Z",
+    coverageJson: null,
+    error: null,
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    kind: "LEAGUE_DATE",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    requestJson: {},
+    requestedAt: "2026-03-15T23:00:00Z",
+    resultJson: null,
+    season: null,
+    selectionKey: "LEAGUE_DATE:100#2026-03-15",
+    status: "SUCCEEDED",
+    targetKey: "100#2026-03-15",
+    updatedAt: "2026-03-15T23:10:00Z",
+  } as const;
+
+  const forumPost = recapTesting.formatRecapForumPost(record, {
+    games: [
+      {
+        evidenceTags: [],
+        headline: "Alpha closes strong [late]",
+        matchId: "137828772",
+        writeup: "Alpha handled Beta in the fourth quarter.",
+      },
+      {
+        evidenceTags: [],
+        headline: "Gamma keeps rolling",
+        matchId: "scrim-like",
+        writeup: "Gamma's offense stayed sharp all night.",
+      },
+    ],
+    summary: {
+      headline: "Elite League roundup",
+      lede: "Two games gave the forum plenty to discuss.",
+    },
+  });
+
+  assert.match(forumPost, /^\[b]Elite League roundup\[\/b]/);
+  assert.match(forumPost, /\[i]Elite League .+ 2026-03-15\[\/i]/);
+  assert.match(
+    forumPost,
+    /\[quote]Two games gave the forum plenty to discuss\.\[\/quote]/,
+  );
+  assert.match(forumPost, /\[b]Alpha closes strong \(late\)\[\/b]/);
+  assert.match(forumPost, /Match: \[match=137828772]/);
+  assert.match(forumPost, /Match: scrim-like/);
+});

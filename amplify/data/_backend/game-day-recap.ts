@@ -49,6 +49,7 @@ import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
 } from "./maintenance";
+import { classifyCompetition } from "./match-importance";
 import type { PlanId } from "../../../lib/billing/plans";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -79,6 +80,8 @@ type TeamSeasonContext = {
   teamName: string;
   wins: number;
 };
+
+type TeamSeasonContextPromptField = string | null;
 
 type GameDayRecapSubmissionRequest = {
   gameDate: string;
@@ -132,6 +135,44 @@ export type GameDayRecapResultPayload = {
   };
 };
 
+type GameDayRecapPromptPeriodFact = {
+  awayScore: number;
+  homeScore: number;
+  label: string;
+  margin: number;
+  period: number;
+  winningSide: "away" | "home" | "tie";
+};
+
+type GameDayRecapPromptQuarterFacts = {
+  decisiveQuarter:
+    | (GameDayRecapPromptPeriodFact & {
+        winningSide: "away" | "home";
+      })
+    | null;
+  fourthQuarterOutcome: GameDayRecapPromptPeriodFact | null;
+  periods: GameDayRecapPromptPeriodFact[];
+};
+
+type GameDayRecapPromptGame = {
+  effortDelta: number | null;
+  evidenceSignals: string[];
+  finalMargin: number;
+  matchId: string;
+  neutral: boolean | null;
+  quarterFacts: GameDayRecapPromptQuarterFacts;
+  quarterScores: {
+    away: number[];
+    home: number[];
+  };
+  standingsContext: string[];
+  teams: {
+    away: GameDayRecapPromptTeam;
+    home: GameDayRecapPromptTeam;
+  };
+  type: string | null;
+};
+
 type GameDayRecapPromptPayload = {
   coverage: GameDayRecapCoveragePayload;
   request: {
@@ -145,23 +186,7 @@ type GameDayRecapPromptPayload = {
     season: number | null;
     timeZone: string | null;
   };
-  games: Array<{
-    effortDelta: number | null;
-    evidenceSignals: string[];
-    finalMargin: number;
-    matchId: string;
-    neutral: boolean | null;
-    quarterScores: {
-      away: number[];
-      home: number[];
-    };
-    standingsContext: string[];
-    teams: {
-      away: GameDayRecapPromptTeam;
-      home: GameDayRecapPromptTeam;
-    };
-    type: string | null;
-  }>;
+  games: GameDayRecapPromptGame[];
 };
 
 type GameDayRecapPromptTeam = {
@@ -170,15 +195,18 @@ type GameDayRecapPromptTeam = {
   defStrategy: string | null;
   efficiency: Record<string, number | string>;
   gdp: Record<string, number | string>;
-  lastFiveEnteringGame: string;
+  lastFive: TeamSeasonContextPromptField;
+  lastFiveEnteringGame: TeamSeasonContextPromptField;
   name: string;
   offStrategy: string | null;
   ratingLabels: Record<string, string>;
   recentAverageMargin: number | null;
   recentSignalFlags: string[];
-  recordEnteringGame: string;
+  record: TeamSeasonContextPromptField;
+  recordEnteringGame: TeamSeasonContextPromptField;
   score: number;
-  streakEnteringGame: string;
+  streak: TeamSeasonContextPromptField;
+  streakEnteringGame: TeamSeasonContextPromptField;
   topPlayers: Array<{
     assists: number;
     blocks: number;
@@ -230,6 +258,17 @@ type BoxScoreLoadResult =
       kind: "parse_failed";
     };
 
+type ScheduleMatchInclusionPredicate = (match: BBApiScheduleMatch) => boolean;
+type GameDayRecapGenerateOptions = {
+  validationFeedback?: string[];
+};
+
+type GameDayRecapSemanticValidationIssue = {
+  feedback: string;
+  matchId: string;
+  reason: string;
+};
+
 class RetryableCompletedSlateCoverageError extends Error {
   readonly coverage: GameDayRecapCoveragePayload;
 
@@ -240,6 +279,22 @@ class RetryableCompletedSlateCoverageError extends Error {
     super(message);
     this.name = RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME;
     this.coverage = coverage;
+  }
+}
+
+class GameDayRecapSemanticValidationError extends Error {
+  readonly feedbackLines: string[];
+  readonly issues: GameDayRecapSemanticValidationIssue[];
+
+  constructor(issues: GameDayRecapSemanticValidationIssue[]) {
+    super(
+      `Game day recap response contained factual contradictions: ${issues
+        .map((issue) => `match ${issue.matchId}: ${issue.reason}`)
+        .join("; ")}`,
+    );
+    this.name = "GameDayRecapSemanticValidationError";
+    this.feedbackLines = issues.map((issue) => issue.feedback);
+    this.issues = issues;
   }
 }
 
@@ -263,7 +318,8 @@ type LeagueSlateResolutionDiagnostics = {
 type BedrockGameDayRecapProvider = {
   generate: (
     payload: GameDayRecapPromptPayload,
-  ) => Promise<GameDayRecapResultPayload>;
+    options?: GameDayRecapGenerateOptions,
+  ) => Promise<unknown>;
   modelId: string;
   providerName: "bedrock";
 };
@@ -319,9 +375,10 @@ type ProcessDependencies = {
 type SubmitDependencyOverrides = Partial<SubmitDependencies>;
 type ProcessDependencyOverrides = Partial<ProcessDependencies>;
 
-const GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v1";
+const GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v2";
 const GAME_DAY_RECAP_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID";
 const GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID_PREMIUM";
+const GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN = 8;
 const TERMINAL_RECAP_STATUSES = new Set<GameDayRecapStatus>([
   "FAILED",
   "SUCCEEDED",
@@ -1016,7 +1073,10 @@ export async function processGameDayRecap(
       targetKey: recap.targetKey,
       userId: recap.userId,
     });
-    const result = await provider.generate(promptPayload);
+    const result = await generateValidatedGameDayRecap({
+      payload: promptPayload,
+      provider,
+    });
     logGameDayRecapInfo("process.provider.succeeded", {
       gameCount: result.games.length,
       summaryHeadline: result.summary.headline,
@@ -1229,7 +1289,10 @@ export async function processLeagueGameDayRecap(
       modelId,
       region: args.region,
     });
-    const result = await provider.generate(promptPayload);
+    const result = await generateValidatedGameDayRecap({
+      payload: promptPayload,
+      provider,
+    });
 
     await deps.updateLeagueGameDayRecap(args.env, {
       completedAt: deps.now().toISOString(),
@@ -1359,7 +1422,10 @@ export async function processSingleGameSummary(
       modelId,
       region: args.region,
     });
-    const result = await provider.generate(promptPayload);
+    const result = await generateValidatedGameDayRecap({
+      payload: promptPayload,
+      provider,
+    });
 
     await deps.updateSingleGameSummary(args.env, {
       completedAt: deps.now().toISOString(),
@@ -1857,7 +1923,10 @@ function toSlateGameFromScheduleMatch(args: {
 export function buildGameDayRecapBedrockRequest(args: {
   modelId: string;
   payload: GameDayRecapPromptPayload;
+  validationFeedback?: string[];
 }) {
+  const validationFeedback = args.validationFeedback?.filter(Boolean) ?? [];
+
   return {
     inferenceConfig: {
       maxTokens: 5000,
@@ -1876,6 +1945,8 @@ export function buildGameDayRecapBedrockRequest(args: {
                     "Write one reporter-style recap for each completed game in medium length.",
                     "Use only the provided evidence and keep any strategic de-emphasis language cautious.",
                   ],
+                  validationFeedback:
+                    validationFeedback.length > 0 ? validationFeedback : undefined,
                 },
                 recapContext: args.payload,
               },
@@ -1908,9 +1979,14 @@ export function buildGameDayRecapBedrockRequest(args: {
           "You are writing basketball recaps for the requested game or slate.",
           "Use only supplied facts. Do not invent transfers, injuries, off-court news, or play-by-play.",
           "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
-          "Team context fields ending in EnteringGame describe the state before tipoff, so only advance records or streaks when the game result clearly supports it.",
+          "Unqualified team record, streak, and recent-form fields describe the postgame state after the final result.",
+          "Team context fields ending in EnteringGame describe the state before tipoff and should only appear when you are explicitly contrasting the pregame setup.",
+          "Use quarterFacts as the source of truth for period-by-period scoring. If a quarter is tied, do not say either team outscored, won, or took that quarter.",
           "If you mention team ratings, use the supplied BuzzerBeater word labels rather than raw numeric scores.",
           "Headlines should be vivid but factual.",
+          validationFeedback.length > 0
+            ? `Previous draft issues to correct: ${validationFeedback.join(" ")}`
+            : "",
         ].join(" "),
       },
     ],
@@ -1965,6 +2041,7 @@ async function buildGameDayRecapPromptPayload(args: {
   targetKey: string;
   userId: string;
 }): Promise<GameDayRecapPromptPayload> {
+  const includeRecapContextMatch = isRegularSeasonLeagueContextMatch;
   const standingsIndex = extractStandingTeams(args.standings);
   const schedules = await Promise.all(
     Array.from(standingsIndex.keys()).map(
@@ -2065,6 +2142,7 @@ async function buildGameDayRecapPromptPayload(args: {
         bb: args.bb,
         boxScoreCache,
         gameStartTime: requestedGame.startTime,
+        includeMatch: includeRecapContextMatch,
         limit: 3,
         schedule: homeSchedule,
       }),
@@ -2072,6 +2150,7 @@ async function buildGameDayRecapPromptPayload(args: {
         bb: args.bb,
         boxScoreCache,
         gameStartTime: requestedGame.startTime,
+        includeMatch: includeRecapContextMatch,
         limit: 3,
         schedule: awaySchedule,
       }),
@@ -2080,21 +2159,36 @@ async function buildGameDayRecapPromptPayload(args: {
     const homeContext = buildTeamSeasonContext({
       boxScores: homeRecentBoxScores,
       gameStartTime: requestedGame.startTime,
+      includeMatch: includeRecapContextMatch,
       schedule: homeSchedule,
       standing: homeStanding,
     });
     const awayContext = buildTeamSeasonContext({
       boxScores: awayRecentBoxScores,
       gameStartTime: requestedGame.startTime,
+      includeMatch: includeRecapContextMatch,
       schedule: awaySchedule,
       standing: awayStanding,
+    });
+    const homePostgameContext = derivePostgameTeamSeasonContext({
+      boxScore,
+      enteringGameContext: homeContext,
+      priorBoxScores: homeRecentBoxScores,
+    });
+    const awayPostgameContext = derivePostgameTeamSeasonContext({
+      boxScore,
+      enteringGameContext: awayContext,
+      priorBoxScores: awayRecentBoxScores,
     });
 
     promptGames.push(
       buildPromptGame({
-        awayContext,
+        awayEnteringGameContext: awayContext,
+        awayPostgameContext,
         boxScore,
-        homeContext,
+        hasHistoricalContext: true,
+        homeEnteringGameContext: homeContext,
+        homePostgameContext,
         requestedGame,
       }),
     );
@@ -2147,8 +2241,12 @@ async function buildSingleGameSummaryPromptPayload(args: {
   const requestedGame = toSlateGameFromBoxScore(args.boxScore);
   const timeZone = resolveLeagueTimeZone(args.connection, null);
   const gameDate = resolveCalendarDateKey(args.boxScore.startTime, timeZone);
-  const homeContext = buildNeutralTeamSeasonContext(args.boxScore.homeTeam);
-  const awayContext = buildNeutralTeamSeasonContext(args.boxScore.awayTeam);
+  const homeEnteringGameContext = buildNeutralTeamSeasonContext(
+    args.boxScore.homeTeam,
+  );
+  const awayEnteringGameContext = buildNeutralTeamSeasonContext(
+    args.boxScore.awayTeam,
+  );
 
   return {
     coverage: {
@@ -2159,9 +2257,12 @@ async function buildSingleGameSummaryPromptPayload(args: {
     },
     games: [
       buildPromptGame({
-        awayContext,
+        awayEnteringGameContext,
+        awayPostgameContext: awayEnteringGameContext,
         boxScore: args.boxScore,
-        homeContext,
+        hasHistoricalContext: false,
+        homeEnteringGameContext,
+        homePostgameContext: homeEnteringGameContext,
         requestedGame,
       }),
     ],
@@ -2180,20 +2281,27 @@ async function buildSingleGameSummaryPromptPayload(args: {
 }
 
 function buildPromptGame(args: {
-  awayContext: TeamSeasonContext;
+  awayEnteringGameContext: TeamSeasonContext;
+  awayPostgameContext: TeamSeasonContext;
   boxScore: BBApiBoxScore;
-  homeContext: TeamSeasonContext;
+  hasHistoricalContext: boolean;
+  homeEnteringGameContext: TeamSeasonContext;
+  homePostgameContext: TeamSeasonContext;
   requestedGame: SlateGame;
-}): GameDayRecapPromptPayload["games"][number] {
+}): GameDayRecapPromptGame {
+  const quarterFacts = buildQuarterFacts(args.boxScore);
   const evidenceSignals = buildEvidenceSignals({
-    awayContext: args.awayContext,
+    awayContext: args.awayPostgameContext,
     boxScore: args.boxScore,
-    homeContext: args.homeContext,
+    homeContext: args.homePostgameContext,
+    quarterFacts,
   });
-  const standingsContext = buildStandingsContext({
-    awayContext: args.awayContext,
-    homeContext: args.homeContext,
-  });
+  const standingsContext = args.hasHistoricalContext
+    ? buildStandingsContext({
+        awayContext: args.awayEnteringGameContext,
+        homeContext: args.homeEnteringGameContext,
+      })
+    : [];
 
   return {
     effortDelta: args.boxScore.effortDelta,
@@ -2203,14 +2311,25 @@ function buildPromptGame(args: {
     ),
     matchId: args.requestedGame.matchId,
     neutral: args.boxScore.neutral,
+    quarterFacts,
     quarterScores: {
       away: args.boxScore.awayTeam.partialScores,
       home: args.boxScore.homeTeam.partialScores,
     },
     standingsContext,
     teams: {
-      away: buildPromptTeam(args.boxScore.awayTeam, args.awayContext),
-      home: buildPromptTeam(args.boxScore.homeTeam, args.homeContext),
+      away: buildPromptTeam({
+        enteringGameContext: args.awayEnteringGameContext,
+        hasHistoricalContext: args.hasHistoricalContext,
+        postgameContext: args.awayPostgameContext,
+        team: args.boxScore.awayTeam,
+      }),
+      home: buildPromptTeam({
+        enteringGameContext: args.homeEnteringGameContext,
+        hasHistoricalContext: args.hasHistoricalContext,
+        postgameContext: args.homePostgameContext,
+        team: args.boxScore.homeTeam,
+      }),
     },
     type: args.boxScore.type ?? args.requestedGame.type,
   };
@@ -2251,26 +2370,52 @@ function toSlateGameFromBoxScore(boxScore: BBApiBoxScore): SlateGame {
   };
 }
 
-function buildPromptTeam(
-  team: BBApiBoxScoreTeam,
-  seasonContext: TeamSeasonContext,
-): GameDayRecapPromptTeam {
+function buildPromptTeam(args: {
+  enteringGameContext: TeamSeasonContext;
+  hasHistoricalContext: boolean;
+  postgameContext: TeamSeasonContext;
+  team: BBApiBoxScoreTeam;
+}): GameDayRecapPromptTeam {
+  const teamContextFields = args.hasHistoricalContext
+    ? {
+        lastFive: args.postgameContext.lastFive,
+        lastFiveEnteringGame: args.enteringGameContext.lastFive,
+        record: formatTeamRecord(args.postgameContext),
+        recordEnteringGame: formatTeamRecord(args.enteringGameContext),
+        streak: args.postgameContext.currentStreak,
+        streakEnteringGame: args.enteringGameContext.currentStreak,
+      }
+    : {
+        lastFive: null,
+        lastFiveEnteringGame: null,
+        record: null,
+        recordEnteringGame: null,
+        streak: null,
+        streakEnteringGame: null,
+      };
+
   return {
-    conferenceIndex: seasonContext.conferenceIndex + 1,
-    conferencePosition: seasonContext.conferencePosition,
-    defStrategy: team.defStrategy,
-    efficiency: compactScalarRecord(team.efficiency),
-    gdp: compactScalarRecord(team.gdp),
-    lastFiveEnteringGame: seasonContext.lastFive,
-    name: seasonContext.teamName,
-    offStrategy: team.offStrategy,
-    ratingLabels: formatTeamRatingsForRecap(team.ratings),
-    recentAverageMargin: seasonContext.recentAverageMargin,
-    recentSignalFlags: seasonContext.recentSignalFlags,
-    recordEnteringGame: `${seasonContext.wins}-${seasonContext.losses}`,
-    score: team.score ?? 0,
-    streakEnteringGame: seasonContext.currentStreak,
-    topPlayers: extractTopPlayers(team.players),
+    conferenceIndex: args.hasHistoricalContext
+      ? args.postgameContext.conferenceIndex + 1
+      : null,
+    conferencePosition: args.hasHistoricalContext
+      ? args.postgameContext.conferencePosition
+      : null,
+    defStrategy: args.team.defStrategy,
+    efficiency: compactScalarRecord(args.team.efficiency),
+    gdp: compactScalarRecord(args.team.gdp),
+    ...teamContextFields,
+    name: args.postgameContext.teamName,
+    offStrategy: args.team.offStrategy,
+    ratingLabels: formatTeamRatingsForRecap(args.team.ratings),
+    recentAverageMargin: args.hasHistoricalContext
+      ? args.postgameContext.recentAverageMargin
+      : null,
+    recentSignalFlags: args.hasHistoricalContext
+      ? args.postgameContext.recentSignalFlags
+      : [],
+    score: args.team.score ?? 0,
+    topPlayers: extractTopPlayers(args.team.players),
   };
 }
 
@@ -2278,6 +2423,7 @@ function buildEvidenceSignals(args: {
   awayContext: TeamSeasonContext;
   boxScore: BBApiBoxScore;
   homeContext: TeamSeasonContext;
+  quarterFacts: GameDayRecapPromptQuarterFacts;
 }): string[] {
   const signals = new Set<string>();
   const finalMargin = Math.abs(
@@ -2314,18 +2460,7 @@ function buildEvidenceSignals(args: {
     signals.add("losing_streak_context");
   }
 
-  const homeQuarterRun = computeBestQuarterMargin(
-    args.boxScore.homeTeam.partialScores,
-    args.boxScore.awayTeam.partialScores,
-  );
-  const awayQuarterRun = computeBestQuarterMargin(
-    args.boxScore.awayTeam.partialScores,
-    args.boxScore.homeTeam.partialScores,
-  );
-  if (
-    (homeQuarterRun && homeQuarterRun.margin >= 8) ||
-    (awayQuarterRun && awayQuarterRun.margin >= 8)
-  ) {
+  if (args.quarterFacts.decisiveQuarter) {
     signals.add("decisive_quarter_run");
   }
 
@@ -2338,10 +2473,10 @@ function buildStandingsContext(args: {
 }): string[] {
   const context: string[] = [];
   context.push(
-    `${args.homeContext.teamName} entered ${ordinal(args.homeContext.conferencePosition)} in conference ${args.homeContext.conferenceIndex + 1} at ${args.homeContext.wins}-${args.homeContext.losses}.`,
+    `${args.homeContext.teamName} was ${ordinal(args.homeContext.conferencePosition)} in conference ${args.homeContext.conferenceIndex + 1} entering the game.`,
   );
   context.push(
-    `${args.awayContext.teamName} entered ${ordinal(args.awayContext.conferencePosition)} in conference ${args.awayContext.conferenceIndex + 1} at ${args.awayContext.wins}-${args.awayContext.losses}.`,
+    `${args.awayContext.teamName} was ${ordinal(args.awayContext.conferencePosition)} in conference ${args.awayContext.conferenceIndex + 1} entering the game.`,
   );
 
   const standingGap = Math.abs(
@@ -2398,12 +2533,14 @@ async function loadRecentCompletedBoxScores(args: {
   bb: Pick<BBXmlApiClient, "getBoxScore">;
   boxScoreCache: Map<string, Promise<BoxScoreLoadResult>>;
   gameStartTime: string | null;
+  includeMatch?: ScheduleMatchInclusionPredicate;
   limit: number;
   schedule: BBApiSchedule;
 }): Promise<BBApiBoxScore[]> {
   const recentMatches = listCompletedMatchesBefore(
     args.schedule,
     args.gameStartTime,
+    args.includeMatch,
   )
     .slice(0, args.limit)
     .map((match) => match.id)
@@ -2542,15 +2679,75 @@ function summarizeCompletedRecord(
   );
 }
 
+function derivePostgameTeamSeasonContext(args: {
+  boxScore: BBApiBoxScore;
+  enteringGameContext: TeamSeasonContext;
+  priorBoxScores: BBApiBoxScore[];
+}): TeamSeasonContext {
+  const currentMargin = getBoxScoreMarginForTeam(
+    args.boxScore,
+    args.enteringGameContext.teamId,
+  );
+  if (currentMargin === null) {
+    return args.enteringGameContext;
+  }
+
+  const recentMargins = [currentMargin, ...args.enteringGameContext.recentMargins]
+    .filter((margin): margin is number => Number.isFinite(margin))
+    .slice(0, 5);
+  const postgameBoxScores = [args.boxScore, ...args.priorBoxScores].slice(0, 3);
+  const streakPrefix = currentMargin >= 0 ? "W" : "L";
+  const priorPrefix =
+    args.enteringGameContext.currentStreak.startsWith("W") ||
+    args.enteringGameContext.currentStreak.startsWith("L")
+      ? args.enteringGameContext.currentStreak[0]
+      : null;
+  const priorCount = parseInt(
+    args.enteringGameContext.currentStreak.slice(1),
+    10,
+  );
+  const streakCount =
+    priorPrefix === streakPrefix && Number.isFinite(priorCount)
+      ? priorCount + 1
+      : 1;
+  const currentStreak = `${streakPrefix}${streakCount}`;
+  const recentAverageMargin = recentMargins.length
+    ? roundToOneDecimal(
+        recentMargins.reduce((sum, margin) => sum + margin, 0) /
+          recentMargins.length,
+      )
+    : null;
+
+  return {
+    ...args.enteringGameContext,
+    currentStreak,
+    lastFive: formatLastFiveFromMargins(recentMargins),
+    losses:
+      args.enteringGameContext.losses + (currentMargin < 0 ? 1 : 0),
+    recentAverageMargin,
+    recentBoxScoreCoverage: postgameBoxScores.length,
+    recentMargins,
+    recentSignalFlags: buildRecentSignalFlags({
+      boxScores: postgameBoxScores,
+      recentAverageMargin,
+      streak: currentStreak,
+      teamId: args.enteringGameContext.teamId,
+    }),
+    wins: args.enteringGameContext.wins + (currentMargin >= 0 ? 1 : 0),
+  };
+}
+
 function buildTeamSeasonContext(args: {
   boxScores: BBApiBoxScore[];
   gameStartTime: string | null;
+  includeMatch?: ScheduleMatchInclusionPredicate;
   schedule: BBApiSchedule;
   standing: TeamStandingSummary;
 }): TeamSeasonContext {
   const completedMatches = listCompletedMatchesBefore(
     args.schedule,
     args.gameStartTime,
+    args.includeMatch,
   );
   const record = summarizeCompletedRecord(completedMatches, args.standing.teamId);
   const recentMatches = completedMatches.slice(0, 5);
@@ -2565,31 +2762,6 @@ function buildTeamSeasonContext(args: {
       )
     : null;
 
-  const blowoutLosses = args.boxScores.filter((boxScore) => {
-    const teamBoxScore = resolveBoxScoreTeam(boxScore, args.standing.teamId);
-    const opponentBoxScore = resolveOpponentBoxScoreTeam(
-      boxScore,
-      args.standing.teamId,
-    );
-    return teamBoxScore && opponentBoxScore
-      ? (teamBoxScore.score ?? 0) - (opponentBoxScore.score ?? 0) <= -15
-      : false;
-  }).length;
-
-  const recentSignalFlags = new Set<string>();
-  if (blowoutLosses >= 2) {
-    recentSignalFlags.add("possible_strategic_deemphasis");
-  }
-  if ((recentAverageMargin ?? 0) <= -10) {
-    recentSignalFlags.add("recent_slide");
-  }
-  if (streak.startsWith("W") && parseInt(streak.slice(1), 10) >= 3) {
-    recentSignalFlags.add("hot_streak");
-  }
-  if (streak.startsWith("L") && parseInt(streak.slice(1), 10) >= 3) {
-    recentSignalFlags.add("cold_streak");
-  }
-
   return {
     conferenceIndex: args.standing.conferenceIndex,
     conferencePosition: args.standing.conferencePosition,
@@ -2599,11 +2771,69 @@ function buildTeamSeasonContext(args: {
     recentAverageMargin,
     recentBoxScoreCoverage: args.boxScores.length,
     recentMargins,
-    recentSignalFlags: Array.from(recentSignalFlags),
+    recentSignalFlags: buildRecentSignalFlags({
+      boxScores: args.boxScores,
+      recentAverageMargin,
+      streak,
+      teamId: args.standing.teamId,
+    }),
     teamId: args.standing.teamId,
     teamName: args.standing.teamName,
     wins: record.wins,
   };
+}
+
+function buildRecentSignalFlags(args: {
+  boxScores: BBApiBoxScore[];
+  recentAverageMargin: number | null;
+  streak: string;
+  teamId: string;
+}): string[] {
+  const recentSignalFlags = new Set<string>();
+
+  if (countBlowoutLosses(args.boxScores, args.teamId) >= 2) {
+    recentSignalFlags.add("possible_strategic_deemphasis");
+  }
+  if ((args.recentAverageMargin ?? 0) <= -10) {
+    recentSignalFlags.add("recent_slide");
+  }
+  if (args.streak.startsWith("W") && parseInt(args.streak.slice(1), 10) >= 3) {
+    recentSignalFlags.add("hot_streak");
+  }
+  if (args.streak.startsWith("L") && parseInt(args.streak.slice(1), 10) >= 3) {
+    recentSignalFlags.add("cold_streak");
+  }
+
+  return Array.from(recentSignalFlags);
+}
+
+function countBlowoutLosses(boxScores: BBApiBoxScore[], teamId: string): number {
+  return boxScores.filter((boxScore) => {
+    const margin = getBoxScoreMarginForTeam(boxScore, teamId);
+    return margin !== null && margin <= -15;
+  }).length;
+}
+
+function formatLastFiveFromMargins(margins: number[]): string {
+  if (!margins.length) {
+    return "0-0";
+  }
+
+  let wins = 0;
+  let losses = 0;
+  for (const margin of margins) {
+    if (margin >= 0) {
+      wins += 1;
+    } else {
+      losses += 1;
+    }
+  }
+
+  return `${wins}-${losses}`;
+}
+
+function formatTeamRecord(context: TeamSeasonContext): string {
+  return `${context.wins}-${context.losses}`;
 }
 
 function extractStandingTeams(
@@ -2637,12 +2867,14 @@ function extractStandingTeams(
 function listCompletedMatchesBefore(
   schedule: BBApiSchedule,
   gameStartTime: string | null,
+  includeMatch?: ScheduleMatchInclusionPredicate,
 ): BBApiScheduleMatch[] {
   const cutoff = parseTimestamp(gameStartTime);
   return [...schedule.matches]
     .filter((match) =>
       Boolean(
         match.id &&
+        (includeMatch ? includeMatch(match) : true) &&
         match.homeTeam.score !== null &&
         match.awayTeam.score !== null &&
         (!Number.isFinite(cutoff) || parseTimestamp(match.startTime) < cutoff),
@@ -2675,6 +2907,12 @@ function extractTopPlayers(
     }));
 }
 
+function isRegularSeasonLeagueContextMatch(match: BBApiScheduleMatch): boolean {
+  return (
+    classifyCompetition(match.type).competitionKey === "LEAGUE_REGULAR_SEASON"
+  );
+}
+
 function scorePlayerPerformance(player: BBApiBoxScorePlayer): number {
   const points = asNumberFromUnknown(player.performanceStats.pts);
   const rebounds = asNumberFromUnknown(player.performanceStats.reb);
@@ -2699,6 +2937,18 @@ function resolveBoxScoreTeam(
     return boxScore.awayTeam;
   }
   return null;
+}
+
+function getBoxScoreMarginForTeam(
+  boxScore: BBApiBoxScore,
+  teamId: string,
+): number | null {
+  const teamBoxScore = resolveBoxScoreTeam(boxScore, teamId);
+  const opponentBoxScore = resolveOpponentBoxScoreTeam(boxScore, teamId);
+
+  return teamBoxScore && opponentBoxScore
+    ? (teamBoxScore.score ?? 0) - (opponentBoxScore.score ?? 0)
+    : null;
 }
 
 function resolveOpponentBoxScoreTeam(
@@ -2806,31 +3056,58 @@ function formatLastFive(matches: BBApiScheduleMatch[], teamId: string): string {
   return `${wins}-${losses}`;
 }
 
-function computeBestQuarterMargin(
-  teamPartials: number[],
-  opponentPartials: number[],
-): { margin: number; period: number } | null {
-  if (!teamPartials.length || teamPartials.length !== opponentPartials.length) {
-    return null;
-  }
+function buildQuarterFacts(
+  boxScore: BBApiBoxScore,
+): GameDayRecapPromptQuarterFacts {
+  const periods = boxScore.homeTeam.partialScores.flatMap((homeScore, index) => {
+    const awayScore = boxScore.awayTeam.partialScores[index];
+    if (awayScore == null) {
+      return [];
+    }
 
-  let bestPeriod = 0;
-  let bestMargin = Number.NEGATIVE_INFINITY;
-  teamPartials.forEach((points, index) => {
-    const opponentPoints = opponentPartials[index];
-    if (opponentPoints == null) {
-      return;
-    }
-    const margin = points - opponentPoints;
-    if (margin > bestMargin) {
-      bestMargin = margin;
-      bestPeriod = index + 1;
-    }
+    const margin = Math.abs(homeScore - awayScore);
+    const winningSide =
+      homeScore === awayScore ? "tie" : homeScore > awayScore ? "home" : "away";
+
+    return [
+      {
+        awayScore,
+        homeScore,
+        label: formatPeriodLabel(index + 1),
+        margin,
+        period: index + 1,
+        winningSide,
+      } satisfies GameDayRecapPromptPeriodFact,
+    ];
   });
 
-  return Number.isFinite(bestMargin)
-    ? { margin: bestMargin, period: bestPeriod }
-    : null;
+  const decisiveQuarter = [...periods]
+    .filter(
+      (
+        period,
+      ): period is GameDayRecapPromptPeriodFact & {
+        winningSide: "away" | "home";
+      } =>
+        period.winningSide !== "tie" &&
+        period.margin >= GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN,
+    )
+    .sort((left, right) => right.margin - left.margin || left.period - right.period)
+    .at(0) ?? null;
+
+  return {
+    decisiveQuarter,
+    fourthQuarterOutcome:
+      periods.find((period) => period.period === 4) ?? null,
+    periods,
+  };
+}
+
+function formatPeriodLabel(period: number): string {
+  if (period <= 4) {
+    return `${ordinal(period)} quarter`;
+  }
+
+  return period === 5 ? "overtime" : `${ordinal(period - 4)} overtime`;
 }
 
 function compactScalarRecord(
@@ -3487,12 +3764,13 @@ function createBedrockGameDayRecapProvider(args: {
   });
 
   return {
-    generate: async (payload) => {
+    generate: async (payload, options) => {
       const response = await client.send(
         new ConverseCommand(
           buildGameDayRecapBedrockRequest({
             modelId: args.modelId,
             payload,
+            validationFeedback: options?.validationFeedback,
           }),
         ),
       );
@@ -3514,16 +3792,39 @@ function createBedrockGameDayRecapProvider(args: {
         );
       }
 
-      return validateGameDayRecapResult(JSON.parse(text), payload.games);
+      return JSON.parse(text);
     },
     modelId: args.modelId,
     providerName: "bedrock",
   };
 }
 
+async function generateValidatedGameDayRecap(args: {
+  payload: GameDayRecapPromptPayload;
+  provider: BedrockGameDayRecapProvider;
+}): Promise<GameDayRecapResultPayload> {
+  try {
+    return validateGameDayRecapResult(
+      await args.provider.generate(args.payload),
+      args.payload.games,
+    );
+  } catch (error) {
+    if (!isGameDayRecapSemanticValidationError(error)) {
+      throw error;
+    }
+
+    return validateGameDayRecapResult(
+      await args.provider.generate(args.payload, {
+        validationFeedback: error.feedbackLines,
+      }),
+      args.payload.games,
+    );
+  }
+}
+
 function validateGameDayRecapResult(
   input: unknown,
-  expectedGames: GameDayRecapPromptPayload["games"],
+  expectedGames: GameDayRecapPromptGame[],
 ): GameDayRecapResultPayload {
   const record = requireRecord(input, "Game day recap result");
   const summary = requireRecord(record.summary, "Game day recap summary");
@@ -3586,14 +3887,27 @@ function validateGameDayRecapResult(
     throw new Error("Game day recap summary was missing a headline or lede.");
   }
 
+  const orderedGames = expectedMatchIds.map((matchId) => {
+    const game = gamesByMatchId.get(matchId);
+    if (!game) {
+      throw new Error(`Game day recap result omitted match ${matchId}.`);
+    }
+    return game;
+  });
+
+  const expectedGamesByMatchId = new Map(
+    expectedGames.map((game) => [game.matchId, game]),
+  );
+  const semanticIssues = orderedGames.flatMap((game) => {
+    const expectedGame = expectedGamesByMatchId.get(game.matchId);
+    return expectedGame ? validateRecapGameSemantics(game, expectedGame) : [];
+  });
+  if (semanticIssues.length > 0) {
+    throw new GameDayRecapSemanticValidationError(semanticIssues);
+  }
+
   return {
-    games: expectedMatchIds.map((matchId) => {
-      const game = gamesByMatchId.get(matchId);
-      if (!game) {
-        throw new Error(`Game day recap result omitted match ${matchId}.`);
-      }
-      return game;
-    }),
+    games: orderedGames,
     summary: {
       headline,
       lede,
@@ -3601,20 +3915,342 @@ function validateGameDayRecapResult(
   };
 }
 
+function validateRecapGameSemantics(
+  game: GameDayRecapResultPayload["games"][number],
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const text = `${game.headline}. ${game.writeup}`;
+  const sentences = splitRecapText(text);
+
+  return sentences.flatMap((sentence) => [
+    ...validateQuarterSentence(sentence, game.matchId, expectedGame),
+    ...validateRecordSentence(sentence, game.matchId, expectedGame),
+    ...validateCompactStreakSentence(sentence, game.matchId, expectedGame),
+  ]);
+}
+
+function validateQuarterSentence(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const referencedPeriod = extractReferencedQuarter(sentence);
+  if (!referencedPeriod) {
+    return [];
+  }
+
+  const periodFact = expectedGame.quarterFacts.periods.find(
+    (period) => period.period === referencedPeriod,
+  );
+  if (!periodFact) {
+    return [];
+  }
+
+  const quarterWinnerVerbMatch = sentence.match(
+    /\b(?:outscor(?:e|ed|es|ing)|won|take(?:s|n)?|took|claim(?:ed|s|ing))\b/i,
+  );
+  if (!quarterWinnerVerbMatch) {
+    return [];
+  }
+
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+  const periodMatch = sentence.match(
+    /\b(first|1st|second|2nd|third|3rd|fourth|4th)\s+quarter\b/i,
+  );
+  const scorePair = findClosestScorePair(sentence, periodMatch?.index ?? 0);
+  const winnerSide = resolveExplicitQuarterWinnerSide(sentence, expectedGame);
+
+  if (scorePair) {
+    const matchesActualScore =
+      (scorePair.first === periodFact.homeScore &&
+        scorePair.second === periodFact.awayScore) ||
+      (scorePair.first === periodFact.awayScore &&
+        scorePair.second === periodFact.homeScore);
+    if (!matchesActualScore) {
+      issues.push({
+        feedback: `For match ${matchId}, the ${periodFact.label} score was ${periodFact.homeScore}-${periodFact.awayScore} from the home-away view (${periodFact.awayScore}-${periodFact.homeScore} from the away-home view). Do not use ${scorePair.first}-${scorePair.second}.`,
+        matchId,
+        reason: `${periodFact.label} was ${periodFact.homeScore}-${periodFact.awayScore}, not ${scorePair.first}-${scorePair.second}.`,
+      });
+      return issues;
+    }
+
+    if (scorePair.first === scorePair.second) {
+      issues.push({
+        feedback: `For match ${matchId}, the ${periodFact.label} was tied ${scorePair.first}-${scorePair.second}. Do not say either team outscored, won, or took that quarter.`,
+        matchId,
+        reason: `${periodFact.label} was tied ${scorePair.first}-${scorePair.second}, so no team outscored the other.`,
+      });
+      return issues;
+    }
+  }
+
+  if (!winnerSide) {
+    return issues;
+  }
+
+  if (periodFact.winningSide === "tie") {
+    issues.push({
+      feedback: `For match ${matchId}, the ${periodFact.label} was tied ${periodFact.homeScore}-${periodFact.awayScore}. Do not say ${expectedGame.teams[winnerSide].name} won that quarter.`,
+      matchId,
+      reason: `${expectedGame.teams[winnerSide].name} was credited with winning a tied ${periodFact.label}.`,
+    });
+    return issues;
+  }
+
+  if (periodFact.winningSide !== winnerSide) {
+    issues.push({
+      feedback: `For match ${matchId}, ${expectedGame.teams[periodFact.winningSide].name} won the ${periodFact.label} ${winnerFacingQuarterScore(periodFact, periodFact.winningSide)}. Do not say ${expectedGame.teams[winnerSide].name} won that quarter.`,
+      matchId,
+      reason: `${expectedGame.teams[winnerSide].name} was credited with the ${periodFact.label}, but ${expectedGame.teams[periodFact.winningSide].name} actually won it.`,
+    });
+    return issues;
+  }
+
+  if (scorePair) {
+    const expectedWinnerScore =
+      winnerSide === "home" ? periodFact.homeScore : periodFact.awayScore;
+    const expectedLoserScore =
+      winnerSide === "home" ? periodFact.awayScore : periodFact.homeScore;
+    if (
+      scorePair.first !== expectedWinnerScore ||
+      scorePair.second !== expectedLoserScore
+    ) {
+      issues.push({
+        feedback: `For match ${matchId}, if you say ${expectedGame.teams[winnerSide].name} won the ${periodFact.label}, use ${expectedWinnerScore}-${expectedLoserScore}.`,
+        matchId,
+        reason: `${expectedGame.teams[winnerSide].name} was paired with the wrong ${periodFact.label} score.`,
+      });
+    }
+  }
+
+  return issues;
+}
+
+function validateRecordSentence(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  if (hasPregameQualifier(sentence)) {
+    return [];
+  }
+
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+
+  for (const side of ["home", "away"] as const) {
+    const team = expectedGame.teams[side];
+    if (!team.record) {
+      continue;
+    }
+
+    const escapedName = escapeRegExp(team.name);
+    const parentheticalMatch = sentence.match(
+      new RegExp(`${escapedName}[^.!?]{0,20}\\((\\d{1,2})-(\\d{1,2})\\)`, "i"),
+    );
+    if (parentheticalMatch) {
+      const mentionedRecord = `${parentheticalMatch[1]}-${parentheticalMatch[2]}`;
+      if (mentionedRecord !== team.record) {
+        issues.push({
+          feedback: `For match ${matchId}, ${team.name}'s postgame record is ${team.record}. Do not use ${mentionedRecord}.`,
+          matchId,
+          reason: `${team.name} was given a ${mentionedRecord} record instead of ${team.record}.`,
+        });
+      }
+      continue;
+    }
+
+    const directionalMatch = sentence.match(
+      new RegExp(
+        `${escapedName}[^.!?]{0,40}\\b(?:now\\s+at|at|to|improved\\s+to|moved\\s+to|fell\\s+to|dropped\\s+to)\\s+(\\d{1,2})-(\\d{1,2})\\b`,
+        "i",
+      ),
+    );
+    if (!directionalMatch) {
+      continue;
+    }
+
+    const mentionedRecord = `${directionalMatch[1]}-${directionalMatch[2]}`;
+    if (mentionedRecord !== team.record) {
+      issues.push({
+        feedback: `For match ${matchId}, ${team.name}'s postgame record is ${team.record}. Do not use ${mentionedRecord}.`,
+        matchId,
+        reason: `${team.name} was said to be ${mentionedRecord} instead of ${team.record}.`,
+      });
+    }
+  }
+
+  return issues;
+}
+
+function validateCompactStreakSentence(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  if (hasPregameQualifier(sentence)) {
+    return [];
+  }
+
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+
+  for (const side of ["home", "away"] as const) {
+    const team = expectedGame.teams[side];
+    if (!team.streak) {
+      continue;
+    }
+
+    const compactStreakMatch = sentence.match(
+      new RegExp(
+        `${escapeRegExp(team.name)}[^.!?]{0,40}\\b([WL])(\\d{1,2})\\b`,
+        "i",
+      ),
+    );
+    if (!compactStreakMatch) {
+      continue;
+    }
+
+    const mentionedStreak = `${compactStreakMatch[1]?.toUpperCase() ?? ""}${compactStreakMatch[2]}`;
+    if (mentionedStreak !== team.streak) {
+      issues.push({
+        feedback: `For match ${matchId}, ${team.name}'s postgame streak is ${team.streak}. Do not use ${mentionedStreak}.`,
+        matchId,
+        reason: `${team.name} was given a ${mentionedStreak} streak instead of ${team.streak}.`,
+      });
+    }
+  }
+
+  return issues;
+}
+
+function splitRecapText(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|[\n\r]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function extractReferencedQuarter(sentence: string): number | null {
+  const match = sentence.match(
+    /\b(first|1st|second|2nd|third|3rd|fourth|4th)\s+quarter\b/i,
+  );
+  const token = match?.[1]?.toLowerCase();
+  if (!token) {
+    return null;
+  }
+
+  switch (token) {
+    case "first":
+    case "1st":
+      return 1;
+    case "second":
+    case "2nd":
+      return 2;
+    case "third":
+    case "3rd":
+      return 3;
+    case "fourth":
+    case "4th":
+      return 4;
+    default:
+      return null;
+  }
+}
+
+function findClosestScorePair(
+  sentence: string,
+  pivotIndex: number,
+): { first: number; second: number } | null {
+  let selected: { distance: number; first: number; second: number } | null = null;
+
+  const scorePattern = /\b(\d{1,3})-(\d{1,3})\b/g;
+  let match = scorePattern.exec(sentence);
+  while (match) {
+    const first = asOptionalNumber(match[1]);
+    const second = asOptionalNumber(match[2]);
+    const index = match.index ?? 0;
+    if (first === null || second === null) {
+      match = scorePattern.exec(sentence);
+      continue;
+    }
+
+    const distance = Math.abs(index - pivotIndex);
+    if (!selected || distance < selected.distance) {
+      selected = { distance, first, second };
+    }
+
+    match = scorePattern.exec(sentence);
+  }
+
+  return selected
+    ? {
+        first: selected.first,
+        second: selected.second,
+      }
+    : null;
+}
+
+function resolveExplicitQuarterWinnerSide(
+  sentence: string,
+  expectedGame: GameDayRecapPromptGame,
+): "away" | "home" | null {
+  for (const side of ["home", "away"] as const) {
+    const teamName = expectedGame.teams[side].name;
+    if (
+      new RegExp(
+        `${escapeRegExp(teamName)}[^.!?]{0,80}\\b(?:outscor(?:e|ed|es|ing)|won|take(?:s|n)?|took|claim(?:ed|s|ing))\\b`,
+        "i",
+      ).test(sentence)
+    ) {
+      return side;
+    }
+  }
+
+  return null;
+}
+
+function winnerFacingQuarterScore(
+  periodFact: GameDayRecapPromptPeriodFact,
+  winnerSide: "away" | "home",
+): string {
+  return winnerSide === "home"
+    ? `${periodFact.homeScore}-${periodFact.awayScore}`
+    : `${periodFact.awayScore}-${periodFact.homeScore}`;
+}
+
+function hasPregameQualifier(sentence: string): boolean {
+  return /\b(enter(?:ed|ing)|came in|coming in|before tipoff|pregame|pre-game)\b/i.test(
+    sentence,
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isGameDayRecapSemanticValidationError(
+  error: unknown,
+): error is GameDayRecapSemanticValidationError {
+  return error instanceof GameDayRecapSemanticValidationError;
+}
+
 export const __testing = {
   GAME_DAY_RECAP_EVIDENCE_TAGS,
   GAME_DAY_RECAP_PROMPT_VERSION,
   GAME_DAY_RECAP_RESULT_SCHEMA,
   SUPPORTED_STRUCTURED_OUTPUT_MODEL_PATTERNS,
+  buildQuarterFacts,
   buildEvidenceSignals,
   buildGameDayRecapBedrockRequest,
   buildGameDayRecapPromptPayload,
   buildGameDayRecapTargetKey,
   buildTeamSeasonContext,
+  derivePostgameTeamSeasonContext,
   extractStandingTeams,
   extractTopPlayers,
   formatCurrentStreak,
   formatLastFive,
+  isRegularSeasonLeagueContextMatch,
   listCompletedMatchesBefore,
   normalizeGameDayRecapRequest,
   parseGameDayRecapQueueMessage,

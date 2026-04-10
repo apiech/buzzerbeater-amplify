@@ -85,6 +85,10 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   const [recapError, setRecapError] = useState<string | null>(null);
   const [isLoadingRecaps, setIsLoadingRecaps] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<{
+    message: string;
+    tone: "error" | "success";
+  } | null>(null);
 
   const loadRecapsEffect = useEffectEvent(
     (preferredKey: string | null = selectedRecapKey) => {
@@ -121,6 +125,20 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
       window.clearInterval(intervalId);
     };
   }, [recaps, selectedRecapKey]);
+
+  useEffect(() => {
+    if (!copyFeedback) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCopyFeedback(null);
+    }, 2500);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [copyFeedback]);
 
   async function loadRecaps(preferredKey: string | null = selectedRecapKey) {
     setIsLoadingRecaps(true);
@@ -179,6 +197,25 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
     }
 
     setIsSubmitting(false);
+  }
+
+  async function handleCopyForumPost() {
+    if (!selectedRecap || !selectedResult) {
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(formatRecapForumPost(selectedRecap, selectedResult));
+      setCopyFeedback({
+        message: "Forum-ready recap copied.",
+        tone: "success",
+      });
+    } catch {
+      setCopyFeedback({
+        message: "Clipboard copy failed.",
+        tone: "error",
+      });
+    }
   }
 
   const selectedRecap =
@@ -472,6 +509,24 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
 
             {selectedResult ? (
               <>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    onClick={() => void handleCopyForumPost()}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    {copyFeedback?.tone === "success" ? "Copied" : "Copy for forum"}
+                  </Button>
+                  <span
+                    className={
+                      copyFeedback?.tone === "error"
+                        ? "text-sm leading-7 text-danger"
+                        : statusCopyClassName
+                    }
+                  >
+                    {copyFeedback?.message ?? "Copies BBCode with match links for forum posting."}
+                  </span>
+                </div>
                 <p className={statusCopyClassName}>{selectedResult.summary.lede}</p>
                 <div className="grid gap-4">
                   {selectedResult.games.map((game) => (
@@ -843,6 +898,74 @@ function describeCoverage(coverage: GameDayRecapCoveragePayload): string {
     : `${coverage.availableGames} games were covered.`;
 }
 
+function formatRecapForumPost(
+  record: RecapHistoryRecord,
+  result: GameDayRecapResultPayload,
+): string {
+  const lines = [
+    `[b]${escapeForumText(result.summary.headline)}[/b]`,
+    `[i]${escapeForumText(describeRecapRecord(record))}[/i]`,
+    "",
+    `[quote]${escapeForumText(result.summary.lede)}[/quote]`,
+  ];
+
+  for (const game of result.games) {
+    lines.push("");
+    lines.push(`[b]${escapeForumText(game.headline)}[/b]`);
+    lines.push(escapeForumText(game.writeup));
+
+    const matchLink = formatForumMatchLink(game.matchId);
+    if (matchLink) {
+      lines.push(matchLink);
+    }
+  }
+
+  return lines.join("\n").trim();
+}
+
+function escapeForumText(value: string): string {
+  return value.trim().replace(/\[/g, "(").replace(/\]/g, ")");
+}
+
+function formatForumMatchLink(matchId: string | null | undefined): string | null {
+  const normalizedMatchId = matchId?.trim();
+  if (!normalizedMatchId) {
+    return null;
+  }
+
+  return /^\d+$/.test(normalizedMatchId)
+    ? `Match: [match=${normalizedMatchId}]`
+    : `Match: ${escapeForumText(normalizedMatchId)}`;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard is unavailable.");
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "true");
+  textArea.style.position = "fixed";
+  textArea.style.opacity = "0";
+  textArea.style.pointerEvents = "none";
+  document.body.append(textArea);
+  textArea.select();
+
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Clipboard copy was rejected.");
+    }
+  } finally {
+    textArea.remove();
+  }
+}
+
 function formatEvidenceTag(tag: string): string {
   return tag
     .replace(/_/g, " ")
@@ -851,5 +974,6 @@ function formatEvidenceTag(tag: string): string {
 
 export const __testing = {
   describeRecapRecord,
+  formatRecapForumPost,
   recapTitle,
 };
