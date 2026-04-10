@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   __testing as repositoryTesting,
+  createNextGameRecommendationJob,
   createOpponentForecastJob,
   createSyncRun,
   getBbConnection,
@@ -128,6 +129,103 @@ test("createOpponentForecastJob serializes AWSJSON payloads before model.create"
     expiresAt: createInput?.["expiresAt"],
   });
   assert.deepStrictEqual(record.requestJson, { teamId: "200" });
+});
+
+test("createNextGameRecommendationJob serializes AWSJSON payloads before model.create", async (t) => {
+  let createInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          NextGameRecommendationJob: {
+            create: async (input: Record<string, unknown>) => {
+              createInput = input;
+              return {
+                data: {
+                  id: "recommendation-1",
+                  userId: "u1",
+                  matchId: "m-1",
+                  opponentTeamId: "opp-1",
+                  enthusiasm: 8,
+                  switchPg: "PG",
+                  switchSg: "SG",
+                  switchSf: "SF",
+                  switchPf: "PF",
+                  switchC: "C",
+                  status: "QUEUED",
+                  requestJson: {
+                    input: {
+                      enthusiasm: 8,
+                    },
+                  },
+                },
+              };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  const record = await createNextGameRecommendationJob({} as any, {
+    id: "recommendation-1",
+    userId: "u1",
+    matchId: "m-1",
+    opponentTeamId: "opp-1",
+    opponentTeamName: "Rivals",
+    enthusiasm: 8,
+    switchPg: "PG",
+    switchSg: "SG",
+    switchSf: "SF",
+    switchPf: "PF",
+    switchC: "C",
+    status: "QUEUED",
+    startedAt: null,
+    completedAt: null,
+    requestJson: {
+      input: {
+        enthusiasm: 8,
+      },
+    },
+    resultJson: {
+      biggestWinPlan: {
+        offense: "Base Offense",
+      },
+    },
+    error: null,
+    executionArn: null,
+  });
+
+  assert.deepStrictEqual(createInput, {
+    id: "recommendation-1",
+    userId: "u1",
+    matchId: "m-1",
+    opponentTeamId: "opp-1",
+    opponentTeamName: "Rivals",
+    enthusiasm: 8,
+    switchPg: "PG",
+    switchSg: "SG",
+    switchSf: "SF",
+    switchPf: "PF",
+    switchC: "C",
+    status: "QUEUED",
+    startedAt: null,
+    completedAt: null,
+    requestJson: '{"input":{"enthusiasm":8}}',
+    resultJson: '{"biggestWinPlan":{"offense":"Base Offense"}}',
+    error: null,
+    executionArn: null,
+    requestedAt: createInput?.["requestedAt"],
+    expiryKey: "EXPIRABLE",
+    expiresAt: createInput?.["expiresAt"],
+  });
+  assert.deepStrictEqual(record.requestJson, {
+    input: {
+      enthusiasm: 8,
+    },
+  });
 });
 
 test("updateSyncRun serializes AWSJSON payloads before model.update", async (t) => {

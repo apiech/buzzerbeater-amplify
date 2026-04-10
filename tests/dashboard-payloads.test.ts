@@ -153,6 +153,61 @@ test("opponent forecast polling stops after terminal statuses", () => {
   );
 });
 
+test("next-game recommendation polling stops after terminal statuses", () => {
+  assert.equal(
+    dashboardTesting.isNextGameRecommendationTerminalStatus("SUCCEEDED"),
+    true,
+  );
+  assert.equal(
+    dashboardTesting.isNextGameRecommendationTerminalStatus("FAILED"),
+    true,
+  );
+  assert.equal(
+    dashboardTesting.isNextGameRecommendationTerminalStatus(
+      "EVALUATING_CANDIDATES",
+    ),
+    false,
+  );
+});
+
+test("next-game recommendation blocked reasons prioritize next-opponent visibility and forecast readiness", () => {
+  assert.equal(
+    dashboardTesting.resolveNextGameRecommendationBlockedReason({
+      isScoutViewingNextOpponent: false,
+      isLoadingOpponentForecast: false,
+      nextGameRecommendationError: null,
+      nextMatch: {
+        matchId: "m-1",
+        opponentTeamId: "opp-1",
+        opponentTeamName: "Rivals",
+        startTime: "2026-04-09T00:00:00.000Z",
+        type: "League",
+        isHome: true,
+      },
+      opponentForecast: null,
+    }),
+    "Open Scout on your actual scheduled next opponent to use this recommendation tool.",
+  );
+
+  assert.equal(
+    dashboardTesting.resolveNextGameRecommendationBlockedReason({
+      isScoutViewingNextOpponent: true,
+      isLoadingOpponentForecast: false,
+      nextGameRecommendationError: null,
+      nextMatch: {
+        matchId: "m-1",
+        opponentTeamId: "opp-1",
+        opponentTeamName: "Rivals",
+        startTime: "2026-04-09T00:00:00.000Z",
+        type: "League",
+        isHome: true,
+      },
+      opponentForecast: null,
+    }),
+    "Generate a successful opponent forecast for this next opponent before requesting recommendations.",
+  );
+});
+
 function createRosterPlayer(
   name: string,
   overrides: Partial<{

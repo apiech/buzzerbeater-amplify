@@ -3,7 +3,9 @@ import test, { type TestContext } from "node:test";
 
 import {
   __testing as bffTesting,
+  isQueryName,
   isMutationName,
+  runQueryOperation,
   runMutationOperation,
 } from "../app/server/amplify-bff";
 
@@ -45,4 +47,62 @@ test("clearMyTeamHighlightsData is routed through the mutation BFF", async (t) =
     teamId: "163730",
     teamName: "Visionaries",
   });
+});
+
+test("getLatestNextGameRecommendation is routed through the query BFF", async (t) => {
+  let input: Record<string, unknown> | null = null;
+
+  installServerDataClient(t, {
+    queries: {
+      getLatestNextGameRecommendation: async (value: Record<string, unknown>) => {
+        input = value;
+        return {
+          data: {
+            jobId: "recommendation-1",
+            matchId: "m-1",
+            opponentTeamId: "opp-1",
+            enthusiasm: 8,
+            defensiveSwitch: {
+              pg: "PG",
+              sg: "SG",
+              sf: "SF",
+              pf: "PF",
+              c: "C",
+            },
+            requestedAt: "2026-04-09T00:00:00.000Z",
+            status: "QUEUED",
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(isQueryName("getLatestNextGameRecommendation"), true);
+
+  const result = await runQueryOperation("getLatestNextGameRecommendation", {
+    input: {
+      enthusiasm: 8,
+      defensiveSwitch: {
+        pg: "PG",
+        sg: "SG",
+        sf: "SF",
+        pf: "PF",
+        c: "C",
+      },
+    },
+  });
+
+  assert.deepStrictEqual(input, {
+    input: {
+      enthusiasm: 8,
+      defensiveSwitch: {
+        pg: "PG",
+        sg: "SG",
+        sf: "SF",
+        pf: "PF",
+        c: "C",
+      },
+    },
+  });
+  assert.equal((result.data as { jobId: string }).jobId, "recommendation-1");
 });

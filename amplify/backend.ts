@@ -9,6 +9,7 @@ import { configureHostedComputeRole } from "./_backend/hosted-compute-role.js";
 import { configureLeagueHistoryJobs } from "./_backend/league-history-jobs.js";
 import { configureMaintenanceControlPlane } from "./_backend/maintenance-control-plane.js";
 import { configureMatchStoreIntegration } from "./_backend/match-store-integration.js";
+import { configureNextGameRecommendationJobs } from "./_backend/next-game-recommendation-jobs.js";
 import { configureOpponentForecastJobs } from "./_backend/opponent-forecast-jobs.js";
 import { configureOperationalRetention } from "./_backend/operational-retention.js";
 import { configurePredictionJobs } from "./_backend/prediction-jobs.js";
@@ -38,6 +39,7 @@ import {
   getLeagueIntel,
   getLeagueHistory,
   getLatestOpponentForecast,
+  getLatestNextGameRecommendation,
   getLineupHelperWorkspace,
   getMyTeamHighlights,
   getPlayerLab,
@@ -66,6 +68,8 @@ import { getMatchBoxscoreDetails } from "./get-match-boxscore-details/resource.j
 import { listAccessibleMatches } from "./list-accessible-matches/resource.js";
 import { maintenanceAdmin } from "./maintenance-admin/resource.js";
 import { maintenanceAlarmTrip } from "./maintenance-alarm-trip/resource.js";
+import { nextGameRecommendationSubmit } from "./next-game-recommendation-submit/resource.js";
+import { nextGameRecommendationWorker } from "./next-game-recommendation-worker/resource.js";
 import { opponentForecastSubmit } from "./opponent-forecast-submit/resource.js";
 import { opponentForecastWorker } from "./opponent-forecast-worker/resource.js";
 import { predictionSubmit } from "./prediction-submit/resource.js";
@@ -87,6 +91,7 @@ const backend = defineBackend({
   getLeagueIntel,
   getLeagueHistory,
   getLatestOpponentForecast,
+  getLatestNextGameRecommendation,
   getPlayerLab,
   getRivalsWorkspace,
   getLineupHelperWorkspace,
@@ -100,6 +105,8 @@ const backend = defineBackend({
   generateSharedPlayerCard,
   revokeSharedPlayerCard,
   lookupSharedPlayerCard,
+  nextGameRecommendationSubmit,
+  nextGameRecommendationWorker,
   pruneOperationalData,
   setBbLeagueTimeZone,
   getAccessibleMatch,
@@ -134,6 +141,7 @@ configureBbConnectionSecretAccess([
   backend.getTeamHub,
   backend.getScoutWorkspace,
   backend.getLatestOpponentForecast,
+  backend.getLatestNextGameRecommendation,
   backend.getLeagueIntel,
   backend.getLeagueHistory,
   backend.getPlayerLab,
@@ -151,6 +159,8 @@ configureBbConnectionSecretAccess([
   backend.pruneOperationalData,
   backend.getMatchBoxscoreDetails,
   backend.gameDayRecapWorker,
+  backend.nextGameRecommendationSubmit,
+  backend.nextGameRecommendationWorker,
   backend.opponentForecastWorker,
 ]);
 configureBillingIntegration(backend, resolveBillingConfig());
@@ -162,6 +172,7 @@ configureMaintenanceControlPlane(backend, [
   backend.getTeamHub,
   backend.getScoutWorkspace,
   backend.getLatestOpponentForecast,
+  backend.getLatestNextGameRecommendation,
   backend.getLeagueIntel,
   backend.getLeagueHistory,
   backend.getPlayerLab,
@@ -192,6 +203,8 @@ configureMaintenanceControlPlane(backend, [
   backend.leagueHistoryWorker,
   backend.gameDayRecapSubmit,
   backend.gameDayRecapWorker,
+  backend.nextGameRecommendationSubmit,
+  backend.nextGameRecommendationWorker,
   backend.opponentForecastSubmit,
   backend.opponentForecastWorker,
   backend.predictionSubmit,
@@ -210,6 +223,11 @@ configureGameDayRecapJobs(
 );
 configureLeagueHistoryJobs(backend, appResourceRemovalPolicy);
 configureOpponentForecastJobs(
+  backend,
+  sharedInfraBindings,
+  appResourceRemovalPolicy,
+);
+configureNextGameRecommendationJobs(
   backend,
   sharedInfraBindings,
   appResourceRemovalPolicy,

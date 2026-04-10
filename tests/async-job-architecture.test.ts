@@ -11,6 +11,7 @@ test("async job workflows are colocated with their lambda stacks", () => {
   const jobFiles = [
     "game-day-recap-jobs.ts",
     "league-history-jobs.ts",
+    "next-game-recommendation-jobs.ts",
     "opponent-forecast-jobs.ts",
     "prediction-jobs.ts",
   ];

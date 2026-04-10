@@ -32,6 +32,13 @@ export type OpponentForecastJobStatus =
   | "SUCCEEDED"
   | "FAILED";
 
+export type NextGameRecommendationStatus =
+  | "QUEUED"
+  | "PREPARING_INPUTS"
+  | "EVALUATING_CANDIDATES"
+  | "SUCCEEDED"
+  | "FAILED";
+
 export type GameDayRecapStatus =
   | "QUEUED"
   | "RESOLVING_SLATE"
@@ -203,6 +210,32 @@ export type OpponentForecastJobRecord = {
   resultJson?: unknown;
   error?: string | null;
   modelVersion?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  expiryKey: string;
+  expiresAt: string;
+};
+
+export type NextGameRecommendationJobRecord = {
+  id: string;
+  userId: string;
+  matchId: string;
+  opponentTeamId: string;
+  opponentTeamName?: string | null;
+  enthusiasm: number;
+  switchPg: string;
+  switchSg: string;
+  switchSf: string;
+  switchPf: string;
+  switchC: string;
+  status: NextGameRecommendationStatus;
+  requestedAt: string;
+  executionArn?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  requestJson: unknown;
+  resultJson?: unknown;
+  error?: string | null;
   createdAt?: string;
   updatedAt?: string;
   expiryKey: string;
@@ -873,6 +906,140 @@ export async function deleteOpponentForecastJob(
     "OpponentForecastJob",
   );
   await assertSuccessful(model.delete({ id }), "delete opponent forecast job");
+}
+
+export async function createNextGameRecommendationJob(
+  env: RepositoryEnv,
+  input: Omit<
+    NextGameRecommendationJobRecord,
+    "createdAt" | "updatedAt" | "requestedAt" | "expiryKey" | "expiresAt"
+  > & {
+    requestedAt?: string | null;
+    expiryKey?: string | null;
+    expiresAt?: string | null;
+  },
+): Promise<NextGameRecommendationJobRecord> {
+  const model = await getModel<NextGameRecommendationJobRecord>(
+    env,
+    "NextGameRecommendationJob",
+  );
+  const now = new Date().toISOString();
+  const record = assertPresent(
+    await assertSuccessful(
+      model.create(
+        prepareModelInput("NextGameRecommendationJob", {
+          ...input,
+          requestedAt: input.requestedAt ?? now,
+          expiryKey: input.expiryKey ?? "EXPIRABLE",
+          expiresAt: input.expiresAt ?? addDays(now, 30),
+        }),
+      ),
+      "create next game recommendation job",
+    ),
+    "create next game recommendation job",
+  );
+
+  return decodeAwsJsonFields("NextGameRecommendationJob", record);
+}
+
+export async function getNextGameRecommendationJob(
+  env: RepositoryEnv,
+  id: string,
+): Promise<NextGameRecommendationJobRecord | null> {
+  const record = await getModelRecord<NextGameRecommendationJobRecord>(
+    env,
+    "NextGameRecommendationJob",
+    { id },
+    "load next game recommendation job",
+  );
+
+  return decodeAwsJsonFields("NextGameRecommendationJob", record);
+}
+
+export async function updateNextGameRecommendationJob(
+  env: RepositoryEnv,
+  input: Partial<NextGameRecommendationJobRecord> &
+    Pick<NextGameRecommendationJobRecord, "id">,
+): Promise<void> {
+  const model = await getModel<NextGameRecommendationJobRecord>(
+    env,
+    "NextGameRecommendationJob",
+  );
+  await assertSuccessful(
+    model.update(prepareModelInput("NextGameRecommendationJob", input)),
+    "update next game recommendation job",
+  );
+}
+
+export async function listNextGameRecommendationJobsByUser(
+  env: RepositoryEnv,
+  userId: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<NextGameRecommendationJobRecord>> {
+  const page = await queryModelIndexPage<NextGameRecommendationJobRecord>(
+    env,
+    "NextGameRecommendationJob",
+    "listNextGameRecommendationJobsByUserAndRequestedAt",
+    { userId },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "DESC",
+    },
+    "list next game recommendation jobs by user",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("NextGameRecommendationJob", page.records),
+  };
+}
+
+export async function listExpiredNextGameRecommendationJobs(
+  env: RepositoryEnv,
+  expiresBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<NextGameRecommendationJobRecord>> {
+  const page = await queryModelIndexPage<NextGameRecommendationJobRecord>(
+    env,
+    "NextGameRecommendationJob",
+    "listNextGameRecommendationJobsByExpiryKeyAndExpiresAt",
+    {
+      expiryKey: "EXPIRABLE",
+      expiresAt: { lt: expiresBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list expired next game recommendation jobs",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("NextGameRecommendationJob", page.records),
+  };
+}
+
+export async function deleteNextGameRecommendationJob(
+  env: RepositoryEnv,
+  id: string,
+): Promise<void> {
+  const model = await getModel<NextGameRecommendationJobRecord>(
+    env,
+    "NextGameRecommendationJob",
+  );
+  await assertSuccessful(
+    model.delete({ id }),
+    "delete next game recommendation job",
+  );
 }
 
 export async function getGameDayRecap(

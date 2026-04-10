@@ -14,6 +14,7 @@ const AWS_JSON_FIELDS = {
   SyncRun: ["detailsJson"],
   SharedPlayerCard: ["payloadJson"],
   OpponentForecastJob: ["requestJson", "resolvedContextJson", "resultJson"],
+  NextGameRecommendationJob: ["requestJson", "resultJson"],
   GameDayRecap: ["requestJson", "coverageJson", "resultJson"],
   LeagueGameDayRecap: ["requestJson", "coverageJson", "resultJson"],
   SingleGameSummary: ["requestJson", "coverageJson", "resultJson"],

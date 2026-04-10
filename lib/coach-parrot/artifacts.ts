@@ -97,5 +97,5 @@ export function normalizeEnthusiasm(value: unknown): number {
   if (!Number.isFinite(numeric)) {
     return 5;
   }
-  return Math.min(12, Math.max(1, Math.round(numeric)));
+  return Math.min(15, Math.max(1, Math.round(numeric)));
 }

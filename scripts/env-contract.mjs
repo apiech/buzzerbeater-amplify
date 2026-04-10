@@ -238,6 +238,11 @@ export const envContract = {
         "Backend-injected shared Step Functions state machine ARN wired during synth for highlights submit lambdas.",
     },
     {
+      name: "NEXT_GAME_RECOMMENDATION_JOB_STATE_MACHINE_ARN",
+      purpose:
+        "Backend-injected Step Functions state machine ARN wired during synth for next-game recommendation submit lambdas.",
+    },
+    {
       name: "BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME",
       purpose:
         "Backend-injected SSM parameter path for the canonical per-environment BuzzerBeater credential encryption secret.",

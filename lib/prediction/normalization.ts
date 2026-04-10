@@ -36,7 +36,7 @@ type TeamPrefix = "home" | "away";
 type MatchBoxscorePayload = NonNullable<Schema["getMatchBoxscoreDetails"]["returnType"]>;
 export type PredictionInputShape = Schema["PredictionManualInput"]["type"];
 type TeamSide = NonNullable<MatchBoxscorePayload["homeTeam"]>;
-type TeamLocation = "HOME" | "AWAY";
+export type PredictionTeamLocation = "HOME" | "AWAY";
 type TeamRatingMap = TeamRatings;
 type TacticCoefficients = Record<string, TeamRatingMap>;
 
@@ -184,7 +184,7 @@ const DEFENSE_TACTIC_COEFFICIENTS: TacticCoefficients = {
 
 export function normalizePredictionRatingsFromBoxscore(args: {
   sourceTeam: TeamSide;
-  teamLocation: TeamLocation;
+  teamLocation: PredictionTeamLocation;
 }): TeamRatingMap {
   const rawRatings = readTeamRatings(args.sourceTeam);
   const normalized = { ...rawRatings };
@@ -216,7 +216,7 @@ export function applyBoxscoreRatingsToPredictionInput(args: {
   input: PredictionInputShape;
   sourceTeam: TeamSide;
   side: TeamPrefix;
-  teamLocation: TeamLocation;
+  teamLocation: PredictionTeamLocation;
 }): PredictionInputShape {
   const normalizedRatings = normalizePredictionRatingsFromBoxscore({
     sourceTeam: args.sourceTeam,
@@ -243,6 +243,32 @@ export function buildModelInputFromPredictionInput(
     away_offStrategy: FIXED_AWAY_OFFENSE,
     away_defStrategy: FIXED_AWAY_DEFENSE,
   };
+}
+
+export function applyPredictionRatingsContext(args: {
+  normalizedRatings: TeamRatings;
+  offenseStrategy: string | null | undefined;
+  defenseStrategy: string | null | undefined;
+  teamLocation: PredictionTeamLocation;
+}): TeamRatings {
+  const adjusted = { ...args.normalizedRatings };
+  const offenseCoefficients = resolveOffenseCoefficients(args.offenseStrategy);
+  const defenseCoefficients = resolveDefenseCoefficients(args.defenseStrategy);
+
+  for (const suffix of TEAM_RATING_KEYS) {
+    adjusted[suffix] = adjusted[suffix] * offenseCoefficients[suffix];
+    adjusted[suffix] = adjusted[suffix] * defenseCoefficients[suffix];
+  }
+
+  if (args.teamLocation === "HOME") {
+    adjusted.outsideDefense =
+      adjusted.outsideDefense * PREDICTION_HOME_COURT_FACTOR;
+    adjusted.insideDefense =
+      adjusted.insideDefense * PREDICTION_HOME_COURT_FACTOR;
+    adjusted.rebounding = adjusted.rebounding * PREDICTION_HOME_COURT_FACTOR;
+  }
+
+  return adjusted;
 }
 
 function readTeamRatings(team: TeamSide): TeamRatingMap {

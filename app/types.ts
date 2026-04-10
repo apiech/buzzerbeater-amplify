@@ -100,6 +100,9 @@ export type SubmitSingleGameSummaryResult = NonNullable<
 export type SubmitOpponentForecastJobResult = NonNullable<
   Schema["submitOpponentForecastJob"]["returnType"]
 >;
+export type SubmitNextGameRecommendationJobResult = NonNullable<
+  Schema["submitNextGameRecommendationJob"]["returnType"]
+>;
 export type SubmitPredictionJobResult = NonNullable<
   Schema["submitPredictionJob"]["returnType"]
 >;
@@ -133,6 +136,9 @@ export type LeagueHistoryPayload = NonNullable<
 >;
 export type OpponentForecastSnapshot = NonNullable<
   Schema["getLatestOpponentForecast"]["returnType"]
+>;
+export type NextGameRecommendationSnapshot = NonNullable<
+  Schema["getLatestNextGameRecommendation"]["returnType"]
 >;
 export type PlayerLabPayload = NonNullable<
   Schema["getPlayerLab"]["returnType"]
@@ -257,6 +263,29 @@ export type OpponentSummary =
 export type OpponentForecastResult = NonNullable<
   OpponentForecastSnapshot["result"]
 >;
+export type NextGameRecommendationResult = NonNullable<
+  NextGameRecommendationSnapshot["result"]
+>;
+export type RecommendationMode = "BIGGEST_WIN" | "EFFICIENT_WIN";
+export type NextGameRecommendationStatus =
+  | "QUEUED"
+  | "PREPARING_INPUTS"
+  | "EVALUATING_CANDIDATES"
+  | "SUCCEEDED"
+  | "FAILED";
+export type NextGameRecommendationInput = {
+  enthusiasm: number;
+  defensiveSwitch: {
+    pg: PositionCode;
+    sg: PositionCode;
+    sf: PositionCode;
+    pf: PositionCode;
+    c: PositionCode;
+  };
+};
+export type RecommendedGamePlan =
+  NextGameRecommendationResult["biggestWinPlan"];
+export type RecommendedGamePlanLineupRow = RecommendedGamePlan["lineup"][number];
 export type OpponentForecastScenario =
   OpponentForecastResult["topScenarios"][number];
 export type OpponentForecastPlayerProjection =

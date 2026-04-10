@@ -18,6 +18,13 @@ import { LeagueHistoryPanel } from "@/app/league-history-panel";
 import { LineupHelper } from "@/app/lineup-helper";
 import { OperationsPanel } from "@/app/operations-panel";
 import {
+  formatRecommendationSwitchSummary,
+  NEXT_GAME_RECOMMENDATION_DEFAULTS,
+  readNextGameRecommendationInput,
+  RECOMMENDATION_MODES,
+  writeNextGameRecommendationInput,
+} from "@/app/next-game-recommendation-state";
+import {
   applyForecastScenarioToDraft,
   createDefaultPredictionDraft,
   readPredictionDraftFromStorage,
@@ -34,9 +41,12 @@ import type {
   ConnectBbAccountResult,
   DashboardWorkspace,
   LineupHelperRosterPlayer,
+  NextGameRecommendationInput,
+  NextGameRecommendationSnapshot,
   OpponentForecastSnapshot,
   PredictionDraftState,
   PlayerSummary,
+  RecommendationMode,
   PlayerTrendPayload,
   SalaryProjection,
   ScoutWorkspacePayload,
@@ -112,6 +122,10 @@ const ownerRosterSkillColumns = [
   label: string;
 }>;
 const terminalOpponentForecastStatuses = new Set(["SUCCEEDED", "FAILED"]);
+const terminalNextGameRecommendationStatuses = new Set([
+  "SUCCEEDED",
+  "FAILED",
+]);
 
 export default function DashboardHomePage() {
   return <DashboardApp activeSection="home" viewerLabel={null} />;
@@ -652,6 +666,21 @@ function WorkspaceDashboard({
     useState(false);
   const [isRefreshingOpponentForecast, setIsRefreshingOpponentForecast] =
     useState(false);
+  const didRestoreRecommendationSettingsRef = useRef(false);
+  const [recommendationInput, setRecommendationInput] =
+    useState<NextGameRecommendationInput>(NEXT_GAME_RECOMMENDATION_DEFAULTS);
+  const [selectedRecommendationMode, setSelectedRecommendationMode] =
+    useState<RecommendationMode>("BIGGEST_WIN");
+  const [nextGameRecommendation, setNextGameRecommendation] =
+    useState<NextGameRecommendationSnapshot | null>(null);
+  const [nextGameRecommendationError, setNextGameRecommendationError] =
+    useState<string | null>(null);
+  const [isLoadingNextGameRecommendation, setIsLoadingNextGameRecommendation] =
+    useState(false);
+  const [
+    isRefreshingNextGameRecommendation,
+    setIsRefreshingNextGameRecommendation,
+  ] = useState(false);
   const didRestorePredictionDraftRef = useRef(false);
   const [predictionDraft, setPredictionDraft] = useState<PredictionDraftState>(
     () => createDefaultPredictionDraft(workspace),
@@ -659,6 +688,17 @@ function WorkspaceDashboard({
   const loadLatestOpponentForecastEffect = useEffectEvent((teamId: string) => {
     void loadLatestOpponentForecast(teamId);
   });
+  const loadLatestNextGameRecommendationEffect = useEffectEvent(
+    (input: NextGameRecommendationInput) => {
+      void loadLatestNextGameRecommendation(input);
+    },
+  );
+  const nextOpponentTeamId = home.nextMatch?.opponentTeamId ?? null;
+  const isScoutViewingNextOpponent = Boolean(
+    nextOpponentTeamId &&
+      resolveForecastTeamId(scout) &&
+      resolveForecastTeamId(scout) === nextOpponentTeamId,
+  );
 
   useEffect(() => {
     setScout(workspace.scout);
@@ -668,7 +708,28 @@ function WorkspaceDashboard({
     setScoutError(null);
     setOpponentForecast(null);
     setOpponentForecastError(null);
+    setNextGameRecommendation(null);
+    setNextGameRecommendationError(null);
   }, [workspace.scout]);
+
+  useEffect(() => {
+    if (didRestoreRecommendationSettingsRef.current) {
+      return;
+    }
+    didRestoreRecommendationSettingsRef.current = true;
+    setRecommendationInput(
+      readNextGameRecommendationInput(
+        typeof window === "undefined" ? null : window.sessionStorage,
+      ),
+    );
+  }, []);
+
+  useEffect(() => {
+    writeNextGameRecommendationInput(
+      typeof window === "undefined" ? null : window.sessionStorage,
+      recommendationInput,
+    );
+  }, [recommendationInput]);
 
   useEffect(() => {
     if (didRestorePredictionDraftRef.current) {
@@ -723,6 +784,58 @@ function WorkspaceDashboard({
   }, [opponentForecast, scout]);
 
   useEffect(() => {
+    if (!isScoutViewingNextOpponent) {
+      setNextGameRecommendation(null);
+      setNextGameRecommendationError(null);
+      return;
+    }
+
+    if (isLoadingOpponentForecast) {
+      return;
+    }
+
+    if (
+      !opponentForecast ||
+      opponentForecast.status !== "SUCCEEDED" ||
+      !opponentForecast.result
+    ) {
+      setNextGameRecommendation(null);
+      setNextGameRecommendationError(null);
+      return;
+    }
+
+    loadLatestNextGameRecommendationEffect(recommendationInput);
+  }, [
+    isLoadingOpponentForecast,
+    isScoutViewingNextOpponent,
+    opponentForecast,
+    recommendationInput,
+    scout,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isScoutViewingNextOpponent ||
+      !nextGameRecommendation ||
+      isNextGameRecommendationTerminalStatus(nextGameRecommendation.status)
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      loadLatestNextGameRecommendationEffect(recommendationInput);
+    }, 4000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [
+    isScoutViewingNextOpponent,
+    nextGameRecommendation,
+    recommendationInput,
+  ]);
+
+  useEffect(() => {
     setPredictionDraft((current) =>
       reconcilePredictionDraft(
         {
@@ -764,6 +877,20 @@ function WorkspaceDashboard({
     : billingSummary
       ? hasFeature(billingPlanId, "teamHighlights")
       : false;
+  const nextGameRecommendationBlockedReason =
+    resolveNextGameRecommendationBlockedReason({
+      isScoutViewingNextOpponent,
+      isLoadingOpponentForecast,
+      nextGameRecommendationError,
+      nextMatch: home.nextMatch,
+      opponentForecast,
+    });
+  const nextGameRecommendationResult = nextGameRecommendation?.result ?? null;
+  const activeRecommendationPlan = nextGameRecommendation?.result
+    ? selectedRecommendationMode === "EFFICIENT_WIN"
+      ? nextGameRecommendation.result.efficientWinPlan
+      : nextGameRecommendation.result.biggestWinPlan
+    : null;
 
   function handleUseScenarioInPreview(
     scenario: NonNullable<
@@ -844,6 +971,39 @@ function WorkspaceDashboard({
     }
   }
 
+  async function loadLatestNextGameRecommendation(
+    input: NextGameRecommendationInput,
+  ) {
+    if (!isScoutViewingNextOpponent) {
+      setNextGameRecommendation(null);
+      setNextGameRecommendationError(null);
+      return;
+    }
+
+    setIsLoadingNextGameRecommendation(true);
+    setNextGameRecommendationError(null);
+
+    try {
+      const response = await client.queries.getLatestNextGameRecommendation({
+        input,
+      });
+
+      if (response.errors?.length) {
+        setNextGameRecommendation(null);
+        setNextGameRecommendationError(formatAmplifyErrors(response.errors));
+        setIsLoadingNextGameRecommendation(false);
+        return;
+      }
+
+      setNextGameRecommendation(response.data ?? null);
+      setIsLoadingNextGameRecommendation(false);
+    } catch (error) {
+      setNextGameRecommendation(null);
+      setNextGameRecommendationError(formatClientError(error));
+      setIsLoadingNextGameRecommendation(false);
+    }
+  }
+
   async function handleRefreshOpponentForecast() {
     const teamId = resolveForecastTeamId(scout);
     if (!teamId) {
@@ -869,6 +1029,45 @@ function WorkspaceDashboard({
     } finally {
       setIsRefreshingOpponentForecast(false);
     }
+  }
+
+  async function handleRefreshNextGameRecommendation() {
+    if (!isScoutViewingNextOpponent) {
+      return;
+    }
+
+    setIsRefreshingNextGameRecommendation(true);
+    setNextGameRecommendationError(null);
+
+    try {
+      const response = await client.mutations.submitNextGameRecommendationJob({
+        input: recommendationInput,
+      });
+      if (response.errors?.length) {
+        setNextGameRecommendationError(formatAmplifyErrors(response.errors));
+        setIsRefreshingNextGameRecommendation(false);
+        return;
+      }
+
+      await loadLatestNextGameRecommendation(recommendationInput);
+    } catch (error) {
+      setNextGameRecommendationError(formatClientError(error));
+    } finally {
+      setIsRefreshingNextGameRecommendation(false);
+    }
+  }
+
+  function updateRecommendationSwitch(
+    key: keyof NextGameRecommendationInput["defensiveSwitch"],
+    value: NextGameRecommendationInput["defensiveSwitch"][typeof key],
+  ) {
+    setRecommendationInput((current) => ({
+      ...current,
+      defensiveSwitch: {
+        ...current.defensiveSwitch,
+        [key]: value,
+      },
+    }));
   }
 
   async function handleLoadPlayerTrend(player: PlayerSummary) {
@@ -1419,6 +1618,279 @@ function WorkspaceDashboard({
                 </Panel>
 
                 <Panel as="article" padding="sm" variant="solid">
+                  <SectionHeading
+                    actions={
+                      isScoutViewingNextOpponent && canUsePredictions ? (
+                        <Button
+                          disabled={Boolean(nextGameRecommendationBlockedReason)}
+                          loading={
+                            isRefreshingNextGameRecommendation ||
+                            (isLoadingNextGameRecommendation &&
+                              nextGameRecommendation?.status !== "SUCCEEDED")
+                          }
+                          onClick={() =>
+                            void handleRefreshNextGameRecommendation()
+                          }
+                          size="sm"
+                          variant="secondary"
+                        >
+                          {nextGameRecommendation
+                            ? "Refresh recommendation"
+                            : "Generate recommendation"}
+                        </Button>
+                      ) : null
+                    }
+                    title="Next-game recommendation"
+                    titleAs="h4"
+                  />
+                  {!canUsePredictions ? (
+                    <p className={statusCopyClassName}>
+                      Premium access is required to generate next-game
+                      recommendations.
+                    </p>
+                  ) : null}
+                  {nextGameRecommendation ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <StatusBadge
+                        tone={statusToneFromValue(nextGameRecommendation.status)}
+                      >
+                        {formatNextGameRecommendationStatus(
+                          nextGameRecommendation.status,
+                        )}
+                      </StatusBadge>
+                      <span className={mutedMetaClassName}>
+                        Requested{" "}
+                        {formatTimestamp(nextGameRecommendation.requestedAt)}
+                      </span>
+                      {nextGameRecommendation.completedAt ? (
+                        <span className={mutedMetaClassName}>
+                          Completed{" "}
+                          {formatTimestamp(nextGameRecommendation.completedAt)}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {isScoutViewingNextOpponent && home.nextMatch ? (
+                    <div className="mt-4 grid gap-4">
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                        <Field
+                          hint="Use the same 1-15 scale as lineup helper."
+                          htmlFor="next-game-enthusiasm"
+                          label="Enthusiasm"
+                        >
+                          <Input
+                            id="next-game-enthusiasm"
+                            max={15}
+                            min={1}
+                            onChange={(event) =>
+                              setRecommendationInput((current) => ({
+                                ...current,
+                                enthusiasm: Math.min(
+                                  15,
+                                  Math.max(
+                                    1,
+                                    Number(event.currentTarget.value || 8),
+                                  ),
+                                ),
+                              }))
+                            }
+                            type="number"
+                            value={recommendationInput.enthusiasm}
+                          />
+                        </Field>
+                        {(
+                          [
+                            ["pg", "PG"],
+                            ["sg", "SG"],
+                            ["sf", "SF"],
+                            ["pf", "PF"],
+                            ["c", "C"],
+                          ] as const
+                        ).map(([key, label]) => (
+                          <Field
+                            htmlFor={`next-game-switch-${key}`}
+                            key={key}
+                            label={`Switch ${label}`}
+                          >
+                            <Select
+                              id={`next-game-switch-${key}`}
+                              onChange={(event) =>
+                                updateRecommendationSwitch(
+                                  key,
+                                  event.currentTarget
+                                    .value as NextGameRecommendationInput["defensiveSwitch"][typeof key],
+                                )
+                              }
+                              value={recommendationInput.defensiveSwitch[key]}
+                            >
+                              {["PG", "SG", "SF", "PF", "C"].map((position) => (
+                                <option key={`${key}-${position}`} value={position}>
+                                  {position}
+                                </option>
+                              ))}
+                            </Select>
+                          </Field>
+                        ))}
+                      </div>
+                      <p className={statusCopyClassName}>
+                        Defensive switch:{" "}
+                        {formatRecommendationSwitchSummary(
+                          recommendationInput.defensiveSwitch,
+                        )}
+                      </p>
+                    </div>
+                  ) : null}
+                  {nextGameRecommendation?.result?.stale ? (
+                    <Alert>
+                      The stored recommendation used an older opponent forecast.
+                      Refresh it to evaluate the latest forecast scenario.
+                    </Alert>
+                  ) : null}
+                  {nextGameRecommendation?.error ? (
+                    <p className={statusCopyClassName}>
+                      {nextGameRecommendation.error}
+                    </p>
+                  ) : null}
+                  {nextGameRecommendationError &&
+                  !nextGameRecommendationBlockedReason ? (
+                    <Alert>{nextGameRecommendationError}</Alert>
+                  ) : null}
+                  {nextGameRecommendationBlockedReason ? (
+                    <p className={statusCopyClassName}>
+                      {nextGameRecommendationBlockedReason}
+                    </p>
+                  ) : activeRecommendationPlan ? (
+                    <>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {RECOMMENDATION_MODES.map((mode) => (
+                          <Button
+                            key={mode}
+                            onClick={() => setSelectedRecommendationMode(mode)}
+                            size="sm"
+                            variant={
+                              selectedRecommendationMode === mode
+                                ? "secondary"
+                                : "ghost"
+                            }
+                          >
+                            {formatRecommendationMode(mode)}
+                          </Button>
+                        ))}
+                      </div>
+
+                      <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                        <StatCard
+                          detail={formatPredictedScoreline(activeRecommendationPlan)}
+                          label="Predicted margin"
+                          value={formatSignedNumber(
+                            activeRecommendationPlan.predictedPointDiff,
+                          )}
+                        />
+                        <StatCard
+                          detail={`Off ${activeRecommendationPlan.offense} • Def ${activeRecommendationPlan.defense}`}
+                          label="Tactics"
+                          value={activeRecommendationPlan.effortChoice}
+                        />
+                        <StatCard
+                          detail={
+                            activeRecommendationPlan.targetMargin
+                              ? `Target ${activeRecommendationPlan.targetMargin}+`
+                              : "Best projected winning edge"
+                          }
+                          label="Goal"
+                          value={
+                            activeRecommendationPlan.meetsTargetMargin
+                              ? "On target"
+                              : "Below target"
+                          }
+                        />
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {[
+                          `Enthusiasm ${activeRecommendationPlan.enthusiasm}`,
+                          `Switch ${formatRecommendationSwitchSummary(
+                            activeRecommendationPlan.defensiveSwitch,
+                          )}`,
+                          `Forecast ${nextGameRecommendationResult?.forecastScenarioLabel ?? "Unknown"}`,
+                          `Probability ${formatPercent(
+                            nextGameRecommendationResult?.forecastScenarioProbability,
+                          )}`,
+                        ].map((tag) => (
+                          <span
+                            className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
+                            key={tag}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                        <Panel as="article" padding="sm" variant="solid">
+                          <SectionHeading title="Forecast source" titleAs="h4" />
+                          <p className={statusCopyClassName}>
+                            {nextGameRecommendationResult?.forecastScenarioLabel ?? "Unknown"}{" "}
+                            from forecast job{" "}
+                            {nextGameRecommendationResult?.forecastJobId ?? "N/A"}
+                          </p>
+                          <p className={statusCopyClassName}>
+                            Opponent source match{" "}
+                            {nextGameRecommendationResult?.opponentSourceMatchId ?? "N/A"}
+                          </p>
+                          {nextGameRecommendationResult?.opponentSourceMatchId ? (
+                            <div className="mt-3">
+                              <BoxscoreLink
+                                matchId={nextGameRecommendationResult.opponentSourceMatchId}
+                              />
+                            </div>
+                          ) : null}
+                        </Panel>
+
+                        <Panel as="article" padding="sm" variant="solid">
+                          <SectionHeading
+                            title="Recommended lineup"
+                            titleAs="h4"
+                          />
+                          <TableShell>
+                            <thead>
+                              <tr>
+                                <TableHeadCell>Player</TableHeadCell>
+                                <TableHeadCell>Pos</TableHeadCell>
+                                <TableHeadCell className={numericTableHeadClassName}>
+                                  Minutes
+                                </TableHeadCell>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {activeRecommendationPlan.lineup.map((row) => (
+                                <tr
+                                  key={`${row.playerId ?? row.fullName}-${row.position}`}
+                                >
+                                  <TableCell>{row.fullName}</TableCell>
+                                  <TableCell>{row.position}</TableCell>
+                                  <TableCell
+                                    className={numericTableCellClassName}
+                                  >
+                                    {row.minutes}
+                                  </TableCell>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </TableShell>
+                        </Panel>
+                      </div>
+                    </>
+                  ) : (
+                    <p className={statusCopyClassName}>
+                      {isLoadingNextGameRecommendation
+                        ? "Loading the latest stored recommendation."
+                        : "No stored recommendation is available for these settings yet."}
+                    </p>
+                  )}
+                </Panel>
+
+                <Panel as="article" padding="sm" variant="solid">
                   <SectionHeading title="Team tendencies" titleAs="h4" />
                   <div className="flex flex-wrap gap-2">
                     {renderTrendChips("Off", scout.summary.tendencies.offense)}
@@ -1911,6 +2383,50 @@ function isOpponentForecastTerminalStatus(value: string): boolean {
   return terminalOpponentForecastStatuses.has(value);
 }
 
+function formatNextGameRecommendationStatus(value: string): string {
+  return formatOpponentForecastStatus(value);
+}
+
+function isNextGameRecommendationTerminalStatus(value: string): boolean {
+  return terminalNextGameRecommendationStatuses.has(value);
+}
+
+function formatRecommendationMode(value: RecommendationMode): string {
+  return value === "EFFICIENT_WIN" ? "Efficient win" : "Biggest win";
+}
+
+function resolveNextGameRecommendationBlockedReason(args: {
+  isScoutViewingNextOpponent: boolean;
+  isLoadingOpponentForecast: boolean;
+  nextGameRecommendationError: string | null;
+  nextMatch: DashboardWorkspace["home"]["nextMatch"];
+  opponentForecast: OpponentForecastSnapshot | null;
+}): string | null {
+  if (!args.nextMatch) {
+    return "No next match is scheduled yet.";
+  }
+  if (!args.isScoutViewingNextOpponent) {
+    return "Open Scout on your actual scheduled next opponent to use this recommendation tool.";
+  }
+  if (
+    !args.opponentForecast ||
+    args.opponentForecast.status !== "SUCCEEDED" ||
+    !args.opponentForecast.result
+  ) {
+    if (args.isLoadingOpponentForecast) {
+      return null;
+    }
+    return "Generate a successful opponent forecast for this next opponent before requesting recommendations.";
+  }
+  if (
+    args.nextGameRecommendationError &&
+    /no usable opponent source boxscore/i.test(args.nextGameRecommendationError)
+  ) {
+    return "No usable opponent source boxscore with ratings is available yet.";
+  }
+  return null;
+}
+
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "N/A";
@@ -2231,6 +2747,22 @@ function formatSigned(value: number | null | undefined): string {
   return value > 0 ? `+${value}` : String(value);
 }
 
+function formatSignedNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "N/A";
+  }
+
+  const rounded = Number(value.toFixed(1));
+  return rounded > 0 ? `+${rounded}` : String(rounded);
+}
+
+function formatPredictedScoreline(plan: {
+  predictedOpponentScore: number;
+  predictedTeamScore: number;
+}): string {
+  return `${Number(plan.predictedTeamScore.toFixed(1))}-${Number(plan.predictedOpponentScore.toFixed(1))}`;
+}
+
 function formatMatchResult(match: {
   outcome?: string | null;
   teamScore?: number | null;
@@ -2403,9 +2935,11 @@ function readPayload<T>(response: { payload: T | string }): T {
 export const __testing = {
   compareOwnerRosterValues,
   formatPlayerMeta,
+  isNextGameRecommendationTerminalStatus,
   isOpponentForecastTerminalStatus,
   readGameShapeSortValue,
   readOwnerRosterSortValue,
   readPayload,
+  resolveNextGameRecommendationBlockedReason,
   sortLineupHelperRoster,
 };

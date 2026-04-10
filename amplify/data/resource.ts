@@ -20,6 +20,8 @@ import { billingWebhook } from "../billing-webhook/resource";
 import { gameDayRecapSubmit } from "../game-day-recap-submit/resource";
 import { gameDayRecapWorker } from "../game-day-recap-worker/resource";
 import { listAccessibleMatches } from "../list-accessible-matches/resource";
+import { nextGameRecommendationSubmit } from "../next-game-recommendation-submit/resource";
+import { nextGameRecommendationWorker } from "../next-game-recommendation-worker/resource";
 import { opponentForecastSubmit } from "../opponent-forecast-submit/resource";
 import { opponentForecastWorker } from "../opponent-forecast-worker/resource";
 import { predictionSubmit } from "../prediction-submit/resource";
@@ -122,6 +124,15 @@ export const getLatestOpponentForecast = defineFunction({
   resourceGroupName: "data",
   name: "get-latest-opponent-forecast",
   entry: "./get-latest-opponent-forecast/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
+export const getLatestNextGameRecommendation = defineFunction({
+  resourceGroupName: "data",
+  name: "get-latest-next-game-recommendation",
+  entry: "./get-latest-next-game-recommendation/handler.ts",
   timeoutSeconds: 60,
   memoryMB: 1024,
   environment: secureFunctionEnvironment,
@@ -363,6 +374,7 @@ export const maintenanceProtectedFunctions = [
   getTeamHub,
   getScoutWorkspace,
   getLatestOpponentForecast,
+  getLatestNextGameRecommendation,
   getLeagueIntel,
   getLeagueHistory,
   getPlayerLab,
@@ -393,6 +405,8 @@ export const maintenanceProtectedFunctions = [
   leagueHistoryWorker,
   gameDayRecapSubmit,
   gameDayRecapWorker,
+  nextGameRecommendationSubmit,
+  nextGameRecommendationWorker,
   opponentForecastSubmit,
   opponentForecastWorker,
   predictionSubmit,
@@ -433,6 +447,16 @@ const schema = a
       "SUCCEEDED",
       "FAILED",
     ]),
+
+    NextGameRecommendationStatus: a.enum([
+      "QUEUED",
+      "PREPARING_INPUTS",
+      "EVALUATING_CANDIDATES",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
+
+    RecommendationMode: a.enum(["BIGGEST_WIN", "EFFICIENT_WIN"]),
 
     GameDayRecapStatus: a.enum([
       "QUEUED",
@@ -856,6 +880,11 @@ const schema = a
       executionArn: a.string(),
     }),
 
+    NextGameRecommendationSubmitResult: a.customType({
+      jobId: a.string().required(),
+      executionArn: a.string(),
+    }),
+
     OpponentForecastCoverage: a.customType({
       recentGamesConsidered: a.integer().required(),
       headToHeadGamesConsidered: a.integer().required(),
@@ -954,6 +983,71 @@ const schema = a
       error: a.string(),
       modelVersion: a.string(),
       result: a.ref("OpponentForecastResult"),
+    }),
+
+    NextGameRecommendationInput: a.customType({
+      enthusiasm: a.integer().required(),
+      defensiveSwitch: a.ref("LineupHelperDefensiveSwitch").required(),
+    }),
+
+    RecommendedGamePlanLineupRow: a.customType({
+      playerId: a.string(),
+      fullName: a.string().required(),
+      position: a.ref("PositionCode").required(),
+      minutes: a.integer().required(),
+    }),
+
+    RecommendedGamePlan: a.customType({
+      mode: a.ref("RecommendationMode").required(),
+      predictedPointDiff: a.float().required(),
+      predictedTeamScore: a.float().required(),
+      predictedOpponentScore: a.float().required(),
+      offense: a.string().required(),
+      defense: a.string().required(),
+      effortChoice: a.string().required(),
+      enthusiasm: a.integer().required(),
+      defensiveSwitch: a.ref("LineupHelperDefensiveSwitch").required(),
+      meetsTargetMargin: a.boolean().required(),
+      targetMargin: a.integer(),
+      lineup: a
+        .ref("RecommendedGamePlanLineupRow")
+        .required()
+        .array()
+        .required(),
+    }),
+
+    NextGameRecommendationResult: a.customType({
+      generatedAt: a.datetime().required(),
+      matchId: a.string().required(),
+      opponentTeamId: a.string().required(),
+      opponentTeamName: a.string().required(),
+      forecastJobId: a.string().required(),
+      forecastScenarioId: a.string().required(),
+      forecastScenarioLabel: a.string().required(),
+      forecastScenarioProbability: a.float().required(),
+      forecastModelVersion: a.string().required(),
+      opponentSourceMatchId: a.string().required(),
+      enthusiasm: a.integer().required(),
+      defensiveSwitch: a.ref("LineupHelperDefensiveSwitch").required(),
+      stale: a.boolean().required(),
+      biggestWinPlan: a.ref("RecommendedGamePlan").required(),
+      efficientWinPlan: a.ref("RecommendedGamePlan").required(),
+    }),
+
+    NextGameRecommendationSnapshot: a.customType({
+      jobId: a.string().required(),
+      matchId: a.string().required(),
+      opponentTeamId: a.string().required(),
+      opponentTeamName: a.string(),
+      enthusiasm: a.integer().required(),
+      defensiveSwitch: a.ref("LineupHelperDefensiveSwitch").required(),
+      executionArn: a.string(),
+      status: a.ref("NextGameRecommendationStatus").required(),
+      requestedAt: a.datetime().required(),
+      startedAt: a.datetime(),
+      completedAt: a.datetime(),
+      error: a.string(),
+      result: a.ref("NextGameRecommendationResult"),
     }),
 
     GameDayRecapSubmitResult: a.customType({
@@ -1775,6 +1869,41 @@ const schema = a
       ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
+    NextGameRecommendationJob: a
+      .model({
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
+        matchId: a.string().required(),
+        opponentTeamId: a.string().required(),
+        opponentTeamName: a.string(),
+        enthusiasm: a.integer().required(),
+        switchPg: a.ref("PositionCode").required(),
+        switchSg: a.ref("PositionCode").required(),
+        switchSf: a.ref("PositionCode").required(),
+        switchPf: a.ref("PositionCode").required(),
+        switchC: a.ref("PositionCode").required(),
+        status: a.ref("NextGameRecommendationStatus").required(),
+        requestedAt: a.datetime().required(),
+        startedAt: a.datetime(),
+        completedAt: a.datetime(),
+        requestJson: a.json().required(),
+        resultJson: a.json(),
+        error: a.string(),
+        executionArn: a.string(),
+        expiryKey: a.string().required(),
+        expiresAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listNextGameRecommendationJobsByUserAndRequestedAt"),
+        index("expiryKey")
+          .sortKeys(["expiresAt"])
+          .queryField("listNextGameRecommendationJobsByExpiryKeyAndExpiresAt"),
+      ])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
     GameDayRecap: a
       .model({
         userId: a.string().required().authorization((allow) => [
@@ -1917,6 +2046,15 @@ const schema = a
       .returns(a.ref("OpponentForecastSnapshot"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLatestOpponentForecast)),
+
+    getLatestNextGameRecommendation: a
+      .query()
+      .arguments({
+        input: a.ref("NextGameRecommendationInput").required(),
+      })
+      .returns(a.ref("NextGameRecommendationSnapshot"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getLatestNextGameRecommendation)),
 
     getLeagueIntel: a
       .query()
@@ -2142,6 +2280,15 @@ const schema = a
       .returns(a.ref("OpponentForecastSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(opponentForecastSubmit)),
+
+    submitNextGameRecommendationJob: a
+      .mutation()
+      .arguments({
+        input: a.ref("NextGameRecommendationInput").required(),
+      })
+      .returns(a.ref("NextGameRecommendationSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(nextGameRecommendationSubmit)),
 
     submitGameDayRecap: a
       .mutation()
