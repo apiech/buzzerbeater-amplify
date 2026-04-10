@@ -2361,7 +2361,377 @@ test("processGameDayRecap retries once after semantic validation fails", async (
   assert.equal(updates.at(-1)?.status, "SUCCEEDED");
 });
 
-test("processGameDayRecap fails when the repair attempt still contains semantic contradictions", async () => {
+test("processGameDayRecap patches repeated semantic contradictions after the retry", async () => {
+  const recapRecord = {
+    gameDate: "2026-03-15",
+    leagueId: "100",
+    requestJson: {
+      gameDate: "2026-03-15",
+      leagueId: "100",
+    },
+    requestedAt: "2026-03-15T23:00:00Z",
+    status: "QUEUED" as const,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
+  };
+  const standings = createStandings();
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 92, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 92, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    ["C", createSchedule("C", [])],
+    ["D", createSchedule("D", [])],
+  ]);
+  const updates: Array<Record<string, unknown>> = [];
+  let providerCalls = 0;
+  const boxScore = createBoxScore({
+    awayScore: 81,
+    awayTeamId: "B",
+    awayTeamName: "Beta",
+    homeScore: 92,
+    homeTeamId: "A",
+    homeTeamName: "Alpha",
+    matchId: "m-1",
+  });
+  boxScore.awayTeam.partialScores = [20, 18, 24, 19];
+  boxScore.homeTeam.partialScores = [18, 24, 24, 26];
+
+  await processGameDayRecap(
+    {
+      env: {},
+      messageBody: JSON.stringify({
+        requestedAt: recapRecord.requestedAt,
+        targetKey: recapRecord.targetKey,
+        userId: recapRecord.userId,
+      }),
+      modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      region: "us-east-1",
+    },
+    {
+      createBbClient: () => ({
+        getBoxScore: async () => boxScore,
+        getSchedule: async (teamId) => {
+          const schedule = schedules.get(teamId ?? "");
+          if (!schedule) {
+            throw new Error(`Missing schedule for ${teamId}`);
+          }
+          return schedule;
+        },
+        getSeasons: async () => ({
+          seasons: [{ finish: "2026-05-01", id: 64, start: "2026-02-02" }],
+          version: "1",
+        }),
+        getStandings: async () => standings,
+        getTeamInfo: async () => ({
+          country: null,
+          fields: {},
+          isBot: false,
+          league: { id: "100", name: "Elite League" },
+          ownerName: "Owner",
+          retrievedAt: "2026-03-15T00:00:00Z",
+          rival: null,
+          shortName: "ALP",
+          teamId: "A",
+          teamName: "Alpha",
+          version: "1",
+        }),
+      }),
+      createProvider: () => ({
+        generate: async (payload) => {
+          providerCalls += 1;
+          return {
+            games: payload.games.map((game) => ({
+              evidenceTags: ["recent_form"],
+              headline: `Recap for ${game.matchId}`,
+              matchId: game.matchId,
+              writeup:
+                "The decisive third quarter saw Alpha outscore Beta 24-24 before pulling away for good once the closing possessions slowed down.",
+            })),
+            summary: {
+              headline: "Elite League roundup",
+              lede:
+                "The bad quarter claim persisted across both attempts, so the worker had to repair the contradiction before saving the recap.",
+            },
+          };
+        },
+        modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        providerName: "bedrock",
+      }),
+      getBbConnection: async () => ({
+        bbLoginName: "coach-alpha",
+        leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T23:10:00.000Z",
+        status: "CONNECTED",
+        userId: "user-1",
+      }),
+      getGameDayRecap: async () => recapRecord,
+      now: () => new Date("2026-03-17T23:10:00Z"),
+      resolveBbAccessKey: async () => "secret",
+      updateGameDayRecap: async (_env, input) => {
+        updates.push(input);
+      },
+    },
+  );
+
+  assert.equal(providerCalls, 2);
+  const finalUpdate = expectPresent(updates.at(-1), "missing final update");
+  assert.equal(finalUpdate.status, "SUCCEEDED");
+  assert.deepStrictEqual(finalUpdate.coverageJson, {
+    availableGames: 1,
+    missingGames: [],
+    partial: false,
+    requestedGames: 1,
+  });
+  assert.equal(
+    ((finalUpdate.resultJson as { games: Array<{ writeup: string }> }).games[0]
+      ?.writeup ??
+      ""),
+    "The 3rd quarter ended tied at 24-24.",
+  );
+});
+
+test("processGameDayRecap drops one invalid game and saves a partial result", async () => {
+  const recapRecord = {
+    gameDate: "2026-03-15",
+    leagueId: "100",
+    requestJson: {
+      gameDate: "2026-03-15",
+      leagueId: "100",
+    },
+    requestedAt: "2026-03-15T23:00:00Z",
+    status: "QUEUED" as const,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
+  };
+  const standings = createStandings();
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 92, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 92, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "C",
+      createSchedule("C", [
+        {
+          awayTeam: { id: "D", score: 84, teamName: "Delta" },
+          homeTeam: { id: "C", score: 88, teamName: "Gamma" },
+          id: "m-2",
+          startTime: "2026-03-15T21:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "D",
+      createSchedule("D", [
+        {
+          awayTeam: { id: "D", score: 84, teamName: "Delta" },
+          homeTeam: { id: "C", score: 88, teamName: "Gamma" },
+          id: "m-2",
+          startTime: "2026-03-15T21:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+  ]);
+  const boxScores = new Map<string, BBApiBoxScore>([
+    [
+      "m-1",
+      createBoxScore({
+        awayScore: 81,
+        awayTeamId: "B",
+        awayTeamName: "Beta",
+        homeScore: 92,
+        homeTeamId: "A",
+        homeTeamName: "Alpha",
+        matchId: "m-1",
+      }),
+    ],
+    [
+      "m-2",
+      createBoxScore({
+        awayScore: 84,
+        awayTeamId: "D",
+        awayTeamName: "Delta",
+        homeScore: 88,
+        homeTeamId: "C",
+        homeTeamName: "Gamma",
+        matchId: "m-2",
+      }),
+    ],
+  ]);
+  const updates: Array<Record<string, unknown>> = [];
+  let providerCalls = 0;
+
+  await processGameDayRecap(
+    {
+      env: {},
+      messageBody: JSON.stringify({
+        requestedAt: recapRecord.requestedAt,
+        targetKey: recapRecord.targetKey,
+        userId: recapRecord.userId,
+      }),
+      modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      region: "us-east-1",
+    },
+    {
+      createBbClient: () => ({
+        getBoxScore: async (matchId) => {
+          const boxScore = boxScores.get(matchId);
+          if (!boxScore) {
+            throw new Error(`Missing box score for ${matchId}`);
+          }
+          return boxScore;
+        },
+        getSchedule: async (teamId) => {
+          const schedule = schedules.get(teamId ?? "");
+          if (!schedule) {
+            throw new Error(`Missing schedule for ${teamId}`);
+          }
+          return schedule;
+        },
+        getSeasons: async () => ({
+          seasons: [{ finish: "2026-05-01", id: 64, start: "2026-02-02" }],
+          version: "1",
+        }),
+        getStandings: async () => standings,
+        getTeamInfo: async () => ({
+          country: null,
+          fields: {},
+          isBot: false,
+          league: { id: "100", name: "Elite League" },
+          ownerName: "Owner",
+          retrievedAt: "2026-03-15T00:00:00Z",
+          rival: null,
+          shortName: "ALP",
+          teamId: "A",
+          teamName: "Alpha",
+          version: "1",
+        }),
+      }),
+      createProvider: () => ({
+        generate: async (payload) => {
+          providerCalls += 1;
+          return {
+            games: payload.games.map((game) =>
+              game.matchId === "m-1"
+                ? {
+                    evidenceTags: ["recent_form"],
+                    headline: "Alpha closes cleanly",
+                    matchId: game.matchId,
+                    writeup:
+                      "Alpha stayed steady in the closing possessions and never let Beta turn the finish into a real swing once the lead settled in.",
+                  }
+                : {
+                    evidenceTags: ["recent_form"],
+                    headline: "Gamma won the third quarter 22-20",
+                    matchId: game.matchId,
+                    writeup:
+                      "Gamma still had enough late poise to finish the win even after a few empty trips tightened the margin for a stretch.",
+                  },
+            ),
+            summary: {
+              headline: "Elite League roundup",
+              lede:
+                "Both finals were summarized at first, but one game recap kept a contradiction in the headline that could not be safely repaired.",
+            },
+          };
+        },
+        modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        providerName: "bedrock",
+      }),
+      getBbConnection: async () => ({
+        bbLoginName: "coach-alpha",
+        leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T23:10:00.000Z",
+        status: "CONNECTED",
+        userId: "user-1",
+      }),
+      getGameDayRecap: async () => recapRecord,
+      now: () => new Date("2026-03-17T23:10:00Z"),
+      resolveBbAccessKey: async () => "secret",
+      updateGameDayRecap: async (_env, input) => {
+        updates.push(input);
+      },
+    },
+  );
+
+  assert.equal(providerCalls, 2);
+  const finalUpdate = expectPresent(updates.at(-1), "missing final update");
+  assert.equal(finalUpdate.status, "SUCCEEDED");
+  assert.deepStrictEqual(finalUpdate.coverageJson, {
+    availableGames: 1,
+    missingGames: [
+      {
+        awayTeamName: "Delta",
+        homeTeamName: "Gamma",
+        matchId: "m-2",
+        reason: "removed after factual validation could not be safely repaired",
+      },
+    ],
+    partial: true,
+    requestedGames: 2,
+  });
+  assert.deepStrictEqual(
+    (finalUpdate.resultJson as {
+      games: Array<{ matchId: string }>;
+      summary: { headline: string; lede: string };
+    }).games.map((game) => game.matchId),
+    ["m-1"],
+  );
+  assert.equal(
+    (finalUpdate.resultJson as { summary: { headline: string } }).summary
+      .headline,
+    "Elite League partial roundup",
+  );
+  assert.match(
+    (finalUpdate.resultJson as { summary: { lede: string } }).summary.lede,
+    /1 validated game/i,
+  );
+});
+
+test("processGameDayRecap still fails when every invalid game must be dropped", async () => {
   const recapRecord = {
     gameDate: "2026-03-15",
     leagueId: "100",
@@ -2465,15 +2835,15 @@ test("processGameDayRecap fails when the repair attempt still contains semantic 
               return {
                 games: payload.games.map((game) => ({
                   evidenceTags: ["recent_form"],
-                  headline: `Recap for ${game.matchId}`,
+                  headline: "Alpha won the third quarter 24-24",
                   matchId: game.matchId,
                   writeup:
-                    "The decisive third quarter saw Alpha outscore Beta 24-24 before pulling away for good once the closing possessions slowed down.",
+                    "Alpha eventually finished the job, but the contradictory headline remained in both attempts.",
                 })),
                 summary: {
                   headline: "Elite League roundup",
                   lede:
-                    "The bad quarter claim persisted across both attempts so the worker should reject the recap instead of saving it.",
+                    "The remaining contradiction lived in the headline, so the worker should only fail after it has no valid game recap left to keep.",
                 },
               };
             },
@@ -2495,12 +2865,15 @@ test("processGameDayRecap fails when the repair attempt still contains semantic 
           },
         },
       ),
-    /factual contradictions/i,
+    /could not be safely repaired/i,
   );
 
   assert.equal(providerCalls, 2);
   assert.equal(updates.at(-1)?.status, "FAILED");
-  assert.match(String(updates.at(-1)?.error ?? ""), /factual contradictions/i);
+  assert.match(
+    String(updates.at(-1)?.error ?? ""),
+    /could not be safely repaired/i,
+  );
 });
 
 test("buildGameDayRecapPromptPayload logs BBXmlApiError details for failed box score fetches", async () => {
@@ -3689,6 +4062,36 @@ test("validateGameDayRecapResult rejects postgame record and streak mismatches",
         [createExpectedPromptGame("m-1")],
       ),
     /12-3|W3/i,
+  );
+});
+
+test("removeInvalidWriteupSentences drops only the contradicted sentence", () => {
+  const trimmedGame = __testing.removeInvalidWriteupSentences(
+    {
+      evidenceTags: ["recent_form"],
+      headline: "Home stays in charge",
+      matchId: "m-1",
+      writeup:
+        "Home finished the game at 12-3. Away still pushed late, but Home kept enough control to finish the win without giving the lead away.",
+    },
+    [
+      {
+        feedback: "For match m-1, Home's postgame record is 13-3. Do not use 12-3.",
+        field: "writeup",
+        kind: "record_mismatch",
+        matchId: "m-1",
+        reason: "Home was said to be 12-3 instead of 13-3.",
+        salvage: "patch_or_remove",
+        sentence: "Home finished the game at 12-3.",
+        sentenceIndex: 0,
+        teamSide: "home",
+      },
+    ],
+  );
+
+  assert.equal(
+    trimmedGame?.writeup,
+    "Away still pushed late, but Home kept enough control to finish the win without giving the lead away.",
   );
 });
 

@@ -135,6 +135,9 @@ export type GameDayRecapResultPayload = {
   };
 };
 
+type GameDayRecapResultGame = GameDayRecapResultPayload["games"][number];
+type GameDayRecapResultSummary = GameDayRecapResultPayload["summary"];
+
 type GameDayRecapPromptPeriodFact = {
   awayScore: number;
   homeScore: number;
@@ -263,10 +266,34 @@ type GameDayRecapGenerateOptions = {
   validationFeedback?: string[];
 };
 
+type GameDayRecapSemanticValidationIssueField = "headline" | "writeup";
+type GameDayRecapSemanticValidationIssueKind =
+  | "compact_streak_mismatch"
+  | "quarter_score_mismatch"
+  | "quarter_winner_score_mismatch"
+  | "record_mismatch"
+  | "tied_quarter_claim"
+  | "wrong_quarter_winner";
+type GameDayRecapSemanticValidationIssueSalvage =
+  | "drop_only"
+  | "patch_or_remove";
 type GameDayRecapSemanticValidationIssue = {
+  actualValue?: string;
   feedback: string;
+  field: GameDayRecapSemanticValidationIssueField;
+  kind: GameDayRecapSemanticValidationIssueKind;
   matchId: string;
+  period?: number;
   reason: string;
+  salvage: GameDayRecapSemanticValidationIssueSalvage;
+  sentence: string;
+  sentenceIndex: number;
+  teamSide?: "away" | "home";
+};
+
+type GeneratedGameDayRecap = {
+  coverageIssues: CoverageIssue[];
+  result: GameDayRecapResultPayload;
 };
 
 class RetryableCompletedSlateCoverageError extends Error {
@@ -1073,13 +1100,14 @@ export async function processGameDayRecap(
       targetKey: recap.targetKey,
       userId: recap.userId,
     });
-    const result = await generateValidatedGameDayRecap({
+    const generatedRecap = await generateValidatedGameDayRecap({
       payload: promptPayload,
       provider,
     });
+    coverage = mergeCoverageIssues(coverage, generatedRecap.coverageIssues);
     logGameDayRecapInfo("process.provider.succeeded", {
-      gameCount: result.games.length,
-      summaryHeadline: result.summary.headline,
+      gameCount: generatedRecap.result.games.length,
+      summaryHeadline: generatedRecap.result.summary.headline,
       targetKey: recap.targetKey,
       userId: recap.userId,
     });
@@ -1092,7 +1120,7 @@ export async function processGameDayRecap(
       modelId: provider.modelId,
       modelProvider: provider.providerName,
       promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
-      resultJson: result,
+      resultJson: generatedRecap.result,
       season,
       status: "SUCCEEDED",
       targetKey: recap.targetKey,
@@ -1289,10 +1317,11 @@ export async function processLeagueGameDayRecap(
       modelId,
       region: args.region,
     });
-    const result = await generateValidatedGameDayRecap({
+    const generatedRecap = await generateValidatedGameDayRecap({
       payload: promptPayload,
       provider,
     });
+    coverage = mergeCoverageIssues(coverage, generatedRecap.coverageIssues);
 
     await deps.updateLeagueGameDayRecap(args.env, {
       completedAt: deps.now().toISOString(),
@@ -1302,7 +1331,7 @@ export async function processLeagueGameDayRecap(
       modelId: provider.modelId,
       modelProvider: provider.providerName,
       promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
-      resultJson: result,
+      resultJson: generatedRecap.result,
       season,
       status: "SUCCEEDED",
       targetKey: recap.targetKey,
@@ -1422,10 +1451,11 @@ export async function processSingleGameSummary(
       modelId,
       region: args.region,
     });
-    const result = await generateValidatedGameDayRecap({
+    const generatedRecap = await generateValidatedGameDayRecap({
       payload: promptPayload,
       provider,
     });
+    coverage = mergeCoverageIssues(coverage, generatedRecap.coverageIssues);
 
     await deps.updateSingleGameSummary(args.env, {
       completedAt: deps.now().toISOString(),
@@ -1437,7 +1467,7 @@ export async function processSingleGameSummary(
       modelId: provider.modelId,
       modelProvider: provider.providerName,
       promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
-      resultJson: result,
+      resultJson: generatedRecap.result,
       season: promptPayload.request.season,
       status: "SUCCEEDED",
       targetKey: summary.targetKey,
@@ -3802,23 +3832,40 @@ function createBedrockGameDayRecapProvider(args: {
 async function generateValidatedGameDayRecap(args: {
   payload: GameDayRecapPromptPayload;
   provider: BedrockGameDayRecapProvider;
-}): Promise<GameDayRecapResultPayload> {
+}): Promise<GeneratedGameDayRecap> {
+  const initialOutput = await args.provider.generate(args.payload);
+
   try {
-    return validateGameDayRecapResult(
-      await args.provider.generate(args.payload),
-      args.payload.games,
-    );
+    return {
+      coverageIssues: [],
+      result: validateGameDayRecapResult(initialOutput, args.payload.games),
+    };
   } catch (error) {
     if (!isGameDayRecapSemanticValidationError(error)) {
       throw error;
     }
 
-    return validateGameDayRecapResult(
-      await args.provider.generate(args.payload, {
-        validationFeedback: error.feedbackLines,
-      }),
-      args.payload.games,
-    );
+    const retryOutput = await args.provider.generate(args.payload, {
+      validationFeedback: error.feedbackLines,
+    });
+
+    try {
+      return {
+        coverageIssues: [],
+        result: validateGameDayRecapResult(retryOutput, args.payload.games),
+      };
+    } catch (retryError) {
+      if (!isGameDayRecapSemanticValidationError(retryError)) {
+        throw retryError;
+      }
+
+      return salvageGameDayRecapResult({
+        expectedGames: args.payload.games,
+        issues: retryError.issues,
+        request: args.payload.request,
+        result: normalizeGameDayRecapResult(retryOutput),
+      });
+    }
   }
 }
 
@@ -3826,6 +3873,13 @@ function validateGameDayRecapResult(
   input: unknown,
   expectedGames: GameDayRecapPromptGame[],
 ): GameDayRecapResultPayload {
+  return validateGameDayRecapPayload(
+    normalizeGameDayRecapResult(input),
+    expectedGames,
+  );
+}
+
+function normalizeGameDayRecapResult(input: unknown): GameDayRecapResultPayload {
   const record = requireRecord(input, "Game day recap result");
   const summary = requireRecord(record.summary, "Game day recap summary");
   const games = Array.isArray(record.games) ? record.games : null;
@@ -3866,35 +3920,33 @@ function validateGameDayRecapResult(
     };
   });
 
-  const expectedMatchIds = expectedGames.map((game) => game.matchId);
-  const matchIdSet = new Set(expectedMatchIds);
-  if (
-    validatedGames.length !== expectedMatchIds.length ||
-    validatedGames.some((game) => !matchIdSet.has(game.matchId))
-  ) {
-    throw new Error(
-      "Game day recap result did not match the expected slate coverage.",
-    );
-  }
-
-  const gamesByMatchId = new Map(
-    validatedGames.map((game) => [game.matchId, game]),
-  );
-
   const headline = asOptionalString(summary.headline)?.trim();
   const lede = asOptionalString(summary.lede)?.trim();
   if (!headline || !lede) {
     throw new Error("Game day recap summary was missing a headline or lede.");
   }
 
-  const orderedGames = expectedMatchIds.map((matchId) => {
-    const game = gamesByMatchId.get(matchId);
-    if (!game) {
-      throw new Error(`Game day recap result omitted match ${matchId}.`);
-    }
-    return game;
-  });
+  return {
+    games: validatedGames,
+    summary: {
+      headline,
+      lede,
+    },
+  };
+}
 
+function validateGameDayRecapPayload(
+  result: GameDayRecapResultPayload,
+  expectedGames: GameDayRecapPromptGame[],
+  options: {
+    allowPartial?: boolean;
+  } = {},
+): GameDayRecapResultPayload {
+  const orderedGames = orderGameDayRecapGames(
+    result.games,
+    expectedGames,
+    options.allowPartial ?? false,
+  );
   const expectedGamesByMatchId = new Map(
     expectedGames.map((game) => [game.matchId, game]),
   );
@@ -3908,24 +3960,104 @@ function validateGameDayRecapResult(
 
   return {
     games: orderedGames,
-    summary: {
-      headline,
-      lede,
-    },
+    summary: result.summary,
   };
 }
 
+function orderGameDayRecapGames(
+  games: GameDayRecapResultPayload["games"],
+  expectedGames: GameDayRecapPromptGame[],
+  allowPartial = false,
+): GameDayRecapResultPayload["games"] {
+  const expectedMatchIds = expectedGames.map((game) => game.matchId);
+  const matchIdSet = new Set(expectedMatchIds);
+  const gamesByMatchId = new Map<string, GameDayRecapResultGame>();
+
+  for (const game of games) {
+    if (!matchIdSet.has(game.matchId)) {
+      throw new Error(
+        "Game day recap result did not match the expected slate coverage.",
+      );
+    }
+    if (gamesByMatchId.has(game.matchId)) {
+      throw new Error("Game day recap result contained duplicate match coverage.");
+    }
+    gamesByMatchId.set(game.matchId, game);
+  }
+
+  if (!allowPartial && gamesByMatchId.size !== expectedMatchIds.length) {
+    throw new Error(
+      "Game day recap result did not match the expected slate coverage.",
+    );
+  }
+
+  const orderedGames = expectedMatchIds.flatMap((matchId) => {
+    const game = gamesByMatchId.get(matchId);
+    return game ? [game] : [];
+  });
+
+  if (!allowPartial && orderedGames.length !== expectedMatchIds.length) {
+    const missingMatchId = expectedMatchIds.find(
+      (matchId) => !gamesByMatchId.has(matchId),
+    );
+    throw new Error(
+      missingMatchId
+        ? `Game day recap result omitted match ${missingMatchId}.`
+        : "Game day recap result did not match the expected slate coverage.",
+    );
+  }
+
+  return orderedGames;
+}
+
 function validateRecapGameSemantics(
-  game: GameDayRecapResultPayload["games"][number],
+  game: GameDayRecapResultGame,
   expectedGame: GameDayRecapPromptGame,
 ): GameDayRecapSemanticValidationIssue[] {
-  const text = `${game.headline}. ${game.writeup}`;
-  const sentences = splitRecapText(text);
+  return [
+    ...collectSemanticIssuesForField(
+      game.headline,
+      "headline",
+      game.matchId,
+      expectedGame,
+    ),
+    ...collectSemanticIssuesForField(
+      game.writeup,
+      "writeup",
+      game.matchId,
+      expectedGame,
+    ),
+  ];
+}
 
-  return sentences.flatMap((sentence) => [
-    ...validateQuarterSentence(sentence, game.matchId, expectedGame),
-    ...validateRecordSentence(sentence, game.matchId, expectedGame),
-    ...validateCompactStreakSentence(sentence, game.matchId, expectedGame),
+function collectSemanticIssuesForField(
+  text: string,
+  field: GameDayRecapSemanticValidationIssueField,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  return splitRecapText(text).flatMap((sentence, sentenceIndex) => [
+    ...validateQuarterSentence(
+      sentence,
+      matchId,
+      expectedGame,
+      field,
+      sentenceIndex,
+    ),
+    ...validateRecordSentence(
+      sentence,
+      matchId,
+      expectedGame,
+      field,
+      sentenceIndex,
+    ),
+    ...validateCompactStreakSentence(
+      sentence,
+      matchId,
+      expectedGame,
+      field,
+      sentenceIndex,
+    ),
   ]);
 }
 
@@ -3933,6 +4065,8 @@ function validateQuarterSentence(
   sentence: string,
   matchId: string,
   expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
 ): GameDayRecapSemanticValidationIssue[] {
   const referencedPeriod = extractReferencedQuarter(sentence);
   if (!referencedPeriod) {
@@ -3968,18 +4102,32 @@ function validateQuarterSentence(
         scorePair.second === periodFact.homeScore);
     if (!matchesActualScore) {
       issues.push({
+        actualValue: `${periodFact.homeScore}-${periodFact.awayScore}`,
         feedback: `For match ${matchId}, the ${periodFact.label} score was ${periodFact.homeScore}-${periodFact.awayScore} from the home-away view (${periodFact.awayScore}-${periodFact.homeScore} from the away-home view). Do not use ${scorePair.first}-${scorePair.second}.`,
+        field,
+        kind: "quarter_score_mismatch",
         matchId,
+        period: periodFact.period,
         reason: `${periodFact.label} was ${periodFact.homeScore}-${periodFact.awayScore}, not ${scorePair.first}-${scorePair.second}.`,
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
       });
       return issues;
     }
 
     if (scorePair.first === scorePair.second) {
       issues.push({
+        actualValue: `${scorePair.first}-${scorePair.second}`,
         feedback: `For match ${matchId}, the ${periodFact.label} was tied ${scorePair.first}-${scorePair.second}. Do not say either team outscored, won, or took that quarter.`,
+        field,
+        kind: "tied_quarter_claim",
         matchId,
+        period: periodFact.period,
         reason: `${periodFact.label} was tied ${scorePair.first}-${scorePair.second}, so no team outscored the other.`,
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
       });
       return issues;
     }
@@ -3991,18 +4139,34 @@ function validateQuarterSentence(
 
   if (periodFact.winningSide === "tie") {
     issues.push({
+      actualValue: `${periodFact.homeScore}-${periodFact.awayScore}`,
       feedback: `For match ${matchId}, the ${periodFact.label} was tied ${periodFact.homeScore}-${periodFact.awayScore}. Do not say ${expectedGame.teams[winnerSide].name} won that quarter.`,
+      field,
+      kind: "wrong_quarter_winner",
       matchId,
+      period: periodFact.period,
       reason: `${expectedGame.teams[winnerSide].name} was credited with winning a tied ${periodFact.label}.`,
+      salvage: semanticIssueSalvageForField(field),
+      sentence,
+      sentenceIndex,
+      teamSide: winnerSide,
     });
     return issues;
   }
 
   if (periodFact.winningSide !== winnerSide) {
     issues.push({
+      actualValue: expectedGame.teams[periodFact.winningSide].name,
       feedback: `For match ${matchId}, ${expectedGame.teams[periodFact.winningSide].name} won the ${periodFact.label} ${winnerFacingQuarterScore(periodFact, periodFact.winningSide)}. Do not say ${expectedGame.teams[winnerSide].name} won that quarter.`,
+      field,
+      kind: "wrong_quarter_winner",
       matchId,
+      period: periodFact.period,
       reason: `${expectedGame.teams[winnerSide].name} was credited with the ${periodFact.label}, but ${expectedGame.teams[periodFact.winningSide].name} actually won it.`,
+      salvage: semanticIssueSalvageForField(field),
+      sentence,
+      sentenceIndex,
+      teamSide: winnerSide,
     });
     return issues;
   }
@@ -4017,9 +4181,17 @@ function validateQuarterSentence(
       scorePair.second !== expectedLoserScore
     ) {
       issues.push({
+        actualValue: `${expectedWinnerScore}-${expectedLoserScore}`,
         feedback: `For match ${matchId}, if you say ${expectedGame.teams[winnerSide].name} won the ${periodFact.label}, use ${expectedWinnerScore}-${expectedLoserScore}.`,
+        field,
+        kind: "quarter_winner_score_mismatch",
         matchId,
+        period: periodFact.period,
         reason: `${expectedGame.teams[winnerSide].name} was paired with the wrong ${periodFact.label} score.`,
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+        teamSide: winnerSide,
       });
     }
   }
@@ -4031,6 +4203,8 @@ function validateRecordSentence(
   sentence: string,
   matchId: string,
   expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
 ): GameDayRecapSemanticValidationIssue[] {
   if (hasPregameQualifier(sentence)) {
     return [];
@@ -4052,9 +4226,16 @@ function validateRecordSentence(
       const mentionedRecord = `${parentheticalMatch[1]}-${parentheticalMatch[2]}`;
       if (mentionedRecord !== team.record) {
         issues.push({
+          actualValue: team.record,
           feedback: `For match ${matchId}, ${team.name}'s postgame record is ${team.record}. Do not use ${mentionedRecord}.`,
+          field,
+          kind: "record_mismatch",
           matchId,
           reason: `${team.name} was given a ${mentionedRecord} record instead of ${team.record}.`,
+          salvage: semanticIssueSalvageForField(field),
+          sentence,
+          sentenceIndex,
+          teamSide: side,
         });
       }
       continue;
@@ -4073,9 +4254,16 @@ function validateRecordSentence(
     const mentionedRecord = `${directionalMatch[1]}-${directionalMatch[2]}`;
     if (mentionedRecord !== team.record) {
       issues.push({
+        actualValue: team.record,
         feedback: `For match ${matchId}, ${team.name}'s postgame record is ${team.record}. Do not use ${mentionedRecord}.`,
+        field,
+        kind: "record_mismatch",
         matchId,
         reason: `${team.name} was said to be ${mentionedRecord} instead of ${team.record}.`,
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+        teamSide: side,
       });
     }
   }
@@ -4087,6 +4275,8 @@ function validateCompactStreakSentence(
   sentence: string,
   matchId: string,
   expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
 ): GameDayRecapSemanticValidationIssue[] {
   if (hasPregameQualifier(sentence)) {
     return [];
@@ -4113,14 +4303,302 @@ function validateCompactStreakSentence(
     const mentionedStreak = `${compactStreakMatch[1]?.toUpperCase() ?? ""}${compactStreakMatch[2]}`;
     if (mentionedStreak !== team.streak) {
       issues.push({
+        actualValue: team.streak,
         feedback: `For match ${matchId}, ${team.name}'s postgame streak is ${team.streak}. Do not use ${mentionedStreak}.`,
+        field,
+        kind: "compact_streak_mismatch",
         matchId,
         reason: `${team.name} was given a ${mentionedStreak} streak instead of ${team.streak}.`,
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+        teamSide: side,
       });
     }
   }
 
   return issues;
+}
+
+function semanticIssueSalvageForField(
+  field: GameDayRecapSemanticValidationIssueField,
+): GameDayRecapSemanticValidationIssueSalvage {
+  return field === "writeup" ? "patch_or_remove" : "drop_only";
+}
+
+function salvageGameDayRecapResult(args: {
+  expectedGames: GameDayRecapPromptGame[];
+  issues: GameDayRecapSemanticValidationIssue[];
+  request: GameDayRecapPromptPayload["request"];
+  result: GameDayRecapResultPayload;
+}): GeneratedGameDayRecap {
+  const orderedGames = orderGameDayRecapGames(args.result.games, args.expectedGames);
+  const issuesByMatchId = new Map<string, GameDayRecapSemanticValidationIssue[]>();
+
+  for (const issue of args.issues) {
+    const issues = issuesByMatchId.get(issue.matchId);
+    if (issues) {
+      issues.push(issue);
+      continue;
+    }
+    issuesByMatchId.set(issue.matchId, [issue]);
+  }
+
+  const retainedGames: GameDayRecapResultPayload["games"] = [];
+  const coverageIssues: CoverageIssue[] = [];
+
+  for (const expectedGame of args.expectedGames) {
+    const currentGame = orderedGames.find((game) => game.matchId === expectedGame.matchId);
+    if (!currentGame) {
+      continue;
+    }
+
+    const issues = issuesByMatchId.get(currentGame.matchId) ?? [];
+    if (!issues.length) {
+      retainedGames.push(currentGame);
+      continue;
+    }
+
+    const salvagedGame = salvageGameDayRecapGame({
+      expectedGame,
+      game: currentGame,
+      issues,
+    });
+    if (salvagedGame) {
+      retainedGames.push(salvagedGame);
+      continue;
+    }
+
+    coverageIssues.push({
+      awayTeamName: expectedGame.teams.away.name,
+      homeTeamName: expectedGame.teams.home.name,
+      matchId: currentGame.matchId,
+      reason: "removed after factual validation could not be safely repaired",
+    });
+  }
+
+  if (!retainedGames.length) {
+    throw new Error(
+      "Game day recap response could not be safely repaired because every game summary still contained factual contradictions.",
+    );
+  }
+
+  const result = coverageIssues.length
+    ? {
+        games: retainedGames,
+        summary: buildSafePartialRecapSummary({
+          droppedGameCount: coverageIssues.length,
+          request: args.request,
+          retainedGameCount: retainedGames.length,
+        }),
+      }
+    : {
+        games: retainedGames,
+        summary: args.result.summary,
+      };
+
+  return {
+    coverageIssues,
+    result: validateGameDayRecapPayload(result, args.expectedGames, {
+      allowPartial: coverageIssues.length > 0,
+    }),
+  };
+}
+
+function salvageGameDayRecapGame(args: {
+  expectedGame: GameDayRecapPromptGame;
+  game: GameDayRecapResultGame;
+  issues: GameDayRecapSemanticValidationIssue[];
+}): GameDayRecapResultGame | null {
+  if (
+    args.issues.some(
+      (issue) => issue.field === "headline" || issue.salvage === "drop_only",
+    )
+  ) {
+    return null;
+  }
+
+  const patchedGame = applyGameWriteupRepairs(args.game, args.expectedGame, args.issues);
+  const remainingAfterPatch = validateRecapGameSemantics(
+    patchedGame,
+    args.expectedGame,
+  );
+  if (remainingAfterPatch.length === 0) {
+    return patchedGame;
+  }
+  if (
+    remainingAfterPatch.some(
+      (issue) => issue.field === "headline" || issue.salvage === "drop_only",
+    )
+  ) {
+    return null;
+  }
+
+  const trimmedGame = removeInvalidWriteupSentences(
+    patchedGame,
+    remainingAfterPatch,
+  );
+  if (!trimmedGame) {
+    return null;
+  }
+
+  return validateRecapGameSemantics(trimmedGame, args.expectedGame).length === 0
+    ? trimmedGame
+    : null;
+}
+
+function applyGameWriteupRepairs(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+  issues: GameDayRecapSemanticValidationIssue[],
+): GameDayRecapResultGame {
+  const sentences = splitRecapText(game.writeup);
+  const issuesBySentence = new Map<number, GameDayRecapSemanticValidationIssue[]>();
+
+  for (const issue of issues) {
+    if (issue.field !== "writeup") {
+      continue;
+    }
+    const sentenceIssues = issuesBySentence.get(issue.sentenceIndex);
+    if (sentenceIssues) {
+      sentenceIssues.push(issue);
+      continue;
+    }
+    issuesBySentence.set(issue.sentenceIndex, [issue]);
+  }
+
+  for (const [sentenceIndex, sentenceIssues] of Array.from(
+    issuesBySentence.entries(),
+  )) {
+    const replacement = buildSafeReplacementSentence(
+      choosePreferredRepairIssue(sentenceIssues),
+      expectedGame,
+    );
+    if (!replacement || !sentences[sentenceIndex]) {
+      continue;
+    }
+    sentences[sentenceIndex] = replacement;
+  }
+
+  return {
+    ...game,
+    writeup: sentences.join(" "),
+  };
+}
+
+function choosePreferredRepairIssue(
+  issues: GameDayRecapSemanticValidationIssue[],
+): GameDayRecapSemanticValidationIssue {
+  const priorities: Record<GameDayRecapSemanticValidationIssueKind, number> = {
+    compact_streak_mismatch: 1,
+    quarter_score_mismatch: 2,
+    quarter_winner_score_mismatch: 3,
+    record_mismatch: 0,
+    tied_quarter_claim: 4,
+    wrong_quarter_winner: 5,
+  };
+
+  return [...issues].sort(
+    (left, right) => priorities[left.kind] - priorities[right.kind],
+  )[0] ?? issues[0]!;
+}
+
+function buildSafeReplacementSentence(
+  issue: GameDayRecapSemanticValidationIssue,
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  switch (issue.kind) {
+    case "record_mismatch": {
+      const team = issue.teamSide ? expectedGame.teams[issue.teamSide] : null;
+      return team?.record ? `${team.name} finished the game at ${team.record}.` : null;
+    }
+    case "compact_streak_mismatch": {
+      const team = issue.teamSide ? expectedGame.teams[issue.teamSide] : null;
+      return team?.streak
+        ? `${team.name}'s postgame streak is ${team.streak}.`
+        : null;
+    }
+    case "quarter_score_mismatch":
+    case "quarter_winner_score_mismatch":
+    case "wrong_quarter_winner":
+    case "tied_quarter_claim": {
+      if (!issue.period) {
+        return null;
+      }
+      const periodFact = expectedGame.quarterFacts.periods.find(
+        (period) => period.period === issue.period,
+      );
+      if (!periodFact) {
+        return null;
+      }
+
+      if (periodFact.winningSide === "tie") {
+        return `The ${periodFact.label} ended tied at ${periodFact.homeScore}-${periodFact.awayScore}.`;
+      }
+
+      return `${expectedGame.teams[periodFact.winningSide].name} won the ${periodFact.label} ${winnerFacingQuarterScore(periodFact, periodFact.winningSide)}.`;
+    }
+    default:
+      return null;
+  }
+}
+
+function removeInvalidWriteupSentences(
+  game: GameDayRecapResultGame,
+  issues: GameDayRecapSemanticValidationIssue[],
+): GameDayRecapResultGame | null {
+  const sentences = splitRecapText(game.writeup);
+  const invalidSentenceIndexes = new Set(
+    issues
+      .filter((issue) => issue.field === "writeup")
+      .map((issue) => issue.sentenceIndex),
+  );
+  const trimmedSentences = sentences.filter(
+    (_sentence, sentenceIndex) => !invalidSentenceIndexes.has(sentenceIndex),
+  );
+
+  if (!trimmedSentences.length) {
+    return null;
+  }
+
+  return {
+    ...game,
+    writeup: trimmedSentences.join(" "),
+  };
+}
+
+function buildSafePartialRecapSummary(args: {
+  droppedGameCount: number;
+  request: GameDayRecapPromptPayload["request"];
+  retainedGameCount: number;
+}): GameDayRecapResultSummary {
+  const label = args.request.leagueName?.trim() || args.request.label.trim();
+  const retainedGamesLabel =
+    args.retainedGameCount === 1 ? "game" : "games";
+  const droppedGamesLabel =
+    args.droppedGameCount === 1 ? "game was" : "games were";
+
+  return {
+    headline: `${label} partial roundup`,
+    lede: `This partial recap covers ${args.retainedGameCount} validated ${retainedGamesLabel} from the requested slate after ${args.droppedGameCount} ${droppedGamesLabel} removed during factual validation.`,
+  };
+}
+
+function mergeCoverageIssues(
+  coverage: GameDayRecapCoveragePayload,
+  coverageIssues: CoverageIssue[],
+): GameDayRecapCoveragePayload {
+  if (!coverageIssues.length) {
+    return coverage;
+  }
+
+  const missingGames = [...coverage.missingGames, ...coverageIssues];
+  return {
+    availableGames: Math.max(0, coverage.availableGames - coverageIssues.length),
+    missingGames,
+    partial: true,
+    requestedGames: coverage.requestedGames,
+  };
 }
 
 function splitRecapText(text: string): string[] {
@@ -4243,6 +4721,7 @@ export const __testing = {
   buildEvidenceSignals,
   buildGameDayRecapBedrockRequest,
   buildGameDayRecapPromptPayload,
+  buildSafePartialRecapSummary,
   buildGameDayRecapTargetKey,
   buildTeamSeasonContext,
   derivePostgameTeamSeasonContext,
@@ -4252,14 +4731,18 @@ export const __testing = {
   formatLastFive,
   isRegularSeasonLeagueContextMatch,
   listCompletedMatchesBefore,
+  mergeCoverageIssues,
   normalizeGameDayRecapRequest,
+  normalizeGameDayRecapResult,
   parseGameDayRecapQueueMessage,
+  removeInvalidWriteupSentences,
   resolveConfiguredRecapModelId,
   resolveQueuedRecapModelId,
   resolveLeagueDaySlate,
   resolveLeagueGameDaySlate,
   resolveSeasonCandidatesForDate,
   resolveSeasonForDate,
+  salvageGameDayRecapResult,
   summarizeSeasonDiagnostics,
   validateGameDayRecapResult,
 };
