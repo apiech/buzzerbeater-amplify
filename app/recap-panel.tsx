@@ -939,8 +939,13 @@ function formatForumMatchLink(matchId: string | null | undefined): string | null
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
+  const clipboard =
+    typeof navigator === "undefined"
+      ? undefined
+      : (navigator as Navigator & { clipboard?: Clipboard }).clipboard;
+
+  if (typeof clipboard?.writeText === "function") {
+    await clipboard.writeText(text);
     return;
   }
 
