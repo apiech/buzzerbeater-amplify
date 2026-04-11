@@ -34,3 +34,14 @@ export function resolvePublicAppOrigin(
 
   throw new Error(options.errorMessage ?? "APP_BASE_URL must be configured.");
 }
+
+export function deriveAmplifyAppOrigin(env: OptionalStringRecord): string {
+  const configuredOrigin = normalizePublicAppOrigin(env.APP_BASE_URL);
+  if (configuredOrigin) {
+    return configuredOrigin;
+  }
+
+  throw new Error(
+    "APP_BASE_URL must be configured to derive AMPLIFY_APP_ORIGIN for Next.js runtime.",
+  );
+}

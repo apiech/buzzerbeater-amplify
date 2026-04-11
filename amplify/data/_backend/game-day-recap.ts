@@ -27,6 +27,17 @@ import { formatBuzzerBeaterLabel } from "../../../lib/buzzerbeater/rating-scale"
 import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../../_shared/game-day-recap-errors";
 import { resolveBbAccessKey } from "./credentials";
 import {
+  buildGameDayRecapTargetKey,
+  buildLeagueGameDayRecapTargetKey,
+  buildSingleGameSummaryTargetKey,
+  normalizeGameDayRecapRequest,
+  normalizeLeagueGameDayRecapRequest,
+  normalizeSingleGameSummaryRequest,
+  parseGameDayRecapQueueMessage,
+  type RecapJobKind,
+  type RecapQueueMessage,
+} from "./game-day-recap-request";
+import {
   buildExecutionName,
   startStateMachineExecution,
 } from "./step-functions";
@@ -82,31 +93,6 @@ type TeamSeasonContext = {
 };
 
 type TeamSeasonContextPromptField = string | null;
-
-type GameDayRecapSubmissionRequest = {
-  gameDate: string;
-  leagueId: string;
-};
-
-type LeagueGameDayRecapSubmissionRequest = {
-  gameDayNumber: number;
-  leagueId: string;
-  season: number | null;
-};
-
-type SingleGameSummarySubmissionRequest = {
-  matchId: string;
-};
-
-type RecapJobKind = "LEAGUE_DATE" | "LEAGUE_GAME_DAY" | "SINGLE_GAME";
-
-type RecapQueueMessage = {
-  kind: RecapJobKind;
-  modelId?: string;
-  requestedAt: string;
-  targetKey: string;
-  userId: string;
-};
 
 type CoverageIssue = {
   awayTeamName: string;
@@ -1487,128 +1473,6 @@ export async function processSingleGameSummary(
     });
     throw error;
   }
-}
-
-export function normalizeGameDayRecapRequest(
-  input: unknown,
-): GameDayRecapSubmissionRequest {
-  const record = requireRecord(input, "Game day recap request");
-  const leagueId = asOptionalString(record.leagueId)?.trim();
-  const gameDate = asOptionalString(record.gameDate)?.trim();
-
-  if (!leagueId) {
-    throw new Error("Game day recap requests require a leagueId.");
-  }
-  if (!gameDate || !/^\d{4}-\d{2}-\d{2}$/.test(gameDate)) {
-    throw new Error("Game day recap requests require a YYYY-MM-DD gameDate.");
-  }
-  if (!Number.isFinite(Date.parse(`${gameDate}T00:00:00Z`))) {
-    throw new Error("Game day recap gameDate must be a valid calendar date.");
-  }
-
-  return {
-    gameDate,
-    leagueId,
-  };
-}
-
-export function normalizeLeagueGameDayRecapRequest(
-  input: unknown,
-): LeagueGameDayRecapSubmissionRequest {
-  const record = requireRecord(input, "League game day recap request");
-  const leagueId = asOptionalString(record.leagueId)?.trim();
-  const gameDayNumber = asOptionalNumber(record.gameDayNumber);
-  const season = asOptionalNumber(record.season);
-
-  if (!leagueId) {
-    throw new Error("League game day recaps require a leagueId.");
-  }
-  if (
-    gameDayNumber === null ||
-    !Number.isInteger(gameDayNumber) ||
-    gameDayNumber < 1 ||
-    gameDayNumber > 22
-  ) {
-    throw new Error(
-      "League game day recaps require a gameDayNumber from 1 to 22.",
-    );
-  }
-  if (season !== null && (!Number.isInteger(season) || season < 1)) {
-    throw new Error("League game day recap season must be a positive integer.");
-  }
-
-  return {
-    gameDayNumber,
-    leagueId,
-    season,
-  };
-}
-
-export function normalizeSingleGameSummaryRequest(
-  input: unknown,
-): SingleGameSummarySubmissionRequest {
-  const record = requireRecord(input, "Single game summary request");
-  const matchId = asOptionalString(record.matchId)?.trim();
-  if (!matchId || !/^\d+$/.test(matchId)) {
-    throw new Error("Single game summaries require a numeric matchId.");
-  }
-
-  return { matchId };
-}
-
-export function buildGameDayRecapTargetKey(
-  leagueId: string,
-  gameDate: string,
-): string {
-  return `${leagueId}#${gameDate}`;
-}
-
-export function buildLeagueGameDayRecapTargetKey(
-  leagueId: string,
-  gameDayNumber: number,
-  season: number | null,
-): string {
-  return `${leagueId}#${season ?? "current"}#gameday-${gameDayNumber}`;
-}
-
-export function buildSingleGameSummaryTargetKey(matchId: string): string {
-  return matchId;
-}
-
-export function parseGameDayRecapQueueMessage(
-  messageBody: string,
-): RecapQueueMessage {
-  const payload = requireRecord(
-    JSON.parse(messageBody),
-    "Game day recap queue message",
-  );
-  const rawKind = asOptionalString(payload.kind)?.trim();
-  const modelId = asOptionalString(payload.modelId)?.trim();
-  const userId = asOptionalString(payload.userId)?.trim();
-  const targetKey = asOptionalString(payload.targetKey)?.trim();
-  const requestedAt = asOptionalString(payload.requestedAt)?.trim();
-  const kind = rawKind ?? "LEAGUE_DATE";
-
-  if (
-    !userId ||
-    !targetKey ||
-    !requestedAt ||
-    (kind !== "LEAGUE_DATE" &&
-      kind !== "LEAGUE_GAME_DAY" &&
-      kind !== "SINGLE_GAME")
-  ) {
-    throw new Error(
-      "Game day recap queue message must include kind, userId, targetKey, and requestedAt.",
-    );
-  }
-
-  return {
-    kind,
-    ...(modelId ? { modelId } : {}),
-    requestedAt,
-    targetKey,
-    userId,
-  };
 }
 
 function resolveRecapMessage(args: {
@@ -4711,6 +4575,16 @@ function isGameDayRecapSemanticValidationError(
 ): error is GameDayRecapSemanticValidationError {
   return error instanceof GameDayRecapSemanticValidationError;
 }
+
+export {
+  buildGameDayRecapTargetKey,
+  buildLeagueGameDayRecapTargetKey,
+  buildSingleGameSummaryTargetKey,
+  normalizeGameDayRecapRequest,
+  normalizeLeagueGameDayRecapRequest,
+  normalizeSingleGameSummaryRequest,
+  parseGameDayRecapQueueMessage,
+} from "./game-day-recap-request";
 
 export const __testing = {
   GAME_DAY_RECAP_EVIDENCE_TAGS,

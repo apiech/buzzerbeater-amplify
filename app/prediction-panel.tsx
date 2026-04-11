@@ -19,7 +19,7 @@ import {
 import {
   buildSubmissionRequest,
   clearForecastPrefill,
-  createDefaultManualPredictionInput,
+  createDefaultPredictionInput,
 } from "@/app/prediction-panel-state";
 import type {
   CurrentPredictionPreview,
@@ -51,7 +51,7 @@ import {
   PREDICTION_HOME_COURT_FACTOR,
 } from "@/lib/prediction/normalization";
 
-export { buildSubmissionRequest, createDefaultManualPredictionInput };
+export { buildSubmissionRequest, createDefaultPredictionInput };
 
 const RATING_FIELDS: Array<{
   label: string;

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "project": [
+    "app/**/*.{ts,tsx}",
+    "amplify/**/*.ts",
+    "config/**/*.ts",
+    "lib/**/*.ts",
+    "scripts/**/*.{ts,mjs}",
+    "tests/**/*.ts"
+  ],
+  "entry": [
+    "app/**/page.tsx",
+    "app/**/layout.tsx",
+    "app/**/route.ts",
+    "amplify/**/handler.ts",
+    "amplify/**/resource.ts",
+    "amplify/backend.ts"
+  ],
+  "include": [
+    "dependencies",
+    "devDependencies",
+    "unlisted"
+  ],
+  "ignoreFiles": [
+    "amplify/_backend/**/*.ts",
+    "amplify/backend.ts",
+    "amplify/missing-env-modules.d.ts"
+  ],
+  "ignoreDependencies": [
+    "@aws-amplify/backend-cli",
+    "aws-cdk",
+    "tailwindcss"
+  ]
+}

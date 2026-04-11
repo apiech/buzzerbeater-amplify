@@ -12,7 +12,12 @@ import {
 
 import { client } from "@/app/amplify-client";
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
-import { fetchBillingSummary } from "@/app/billing-client";
+import {
+  COMMERCIAL_MODE_DISABLED_SENTINEL,
+  formatAmplifyErrors,
+  formatClientError,
+} from "@/app/dashboard/remote-errors";
+import { useAuthenticatedWorkspace } from "@/app/dashboard/use-authenticated-workspace";
 import { HighlightsPanel } from "@/app/highlights-panel";
 import { LeagueHistoryPanel } from "@/app/league-history-panel";
 import { LineupHelper } from "@/app/lineup-helper";
@@ -101,7 +106,6 @@ const boxscoreLinkClassName =
   "inline-flex min-h-9 items-center justify-center rounded-full border border-border-soft bg-white/70 px-3.5 text-xs font-semibold text-ink shadow-sm transition duration-150 hover:-translate-y-px hover:border-accent/35 hover:bg-white/90";
 const numericTableCellClassName = "text-right tabular-nums";
 const numericTableHeadClassName = "text-right";
-const commercialModeDisabledSentinel = "__commercial-mode-disabled__";
 const ownerRosterSkillColumns = [
   { key: "js", label: "JS" },
   { key: "jr", label: "JR" },
@@ -160,171 +164,28 @@ function AuthenticatedWorkspace({
   commercialModeEnabled: boolean;
   viewerLabel: string | null;
 }) {
-  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(
-    null,
-  );
-  const [connection, setConnection] = useState<BbConnectionRecord | null>(null);
-  const [workspace, setWorkspace] = useState<DashboardWorkspace | null>(null);
-  const [billingError, setBillingError] = useState<string | null>(
-    commercialModeEnabled ? null : commercialModeDisabledSentinel,
-  );
-  const [isLoadingBilling, setIsLoadingBilling] = useState(commercialModeEnabled);
-  const [isLoadingConnection, setIsLoadingConnection] = useState(true);
-  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
-  const [isDisconnecting, setIsDisconnecting] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [showCredentialForm, setShowCredentialForm] = useState(false);
-
-  async function loadConnection(): Promise<BbConnectionRecord | null> {
-    setIsLoadingConnection(true);
-    setConnectionError(null);
-
-    const { data, errors } = await client.reads.getCurrentBbConnection();
-
-    if (errors?.length) {
-      setConnection(null);
-      setConnectionError(formatAmplifyErrors(errors));
-      setIsLoadingConnection(false);
-      return null;
-    }
-
-    const record = data ?? null;
-    setConnection(record);
-    setIsLoadingConnection(false);
-    return record;
-  }
-
-  async function loadBilling(): Promise<BillingSummary | null> {
-    if (!commercialModeEnabled) {
-      setBillingSummary(null);
-      setBillingError(commercialModeDisabledSentinel);
-      setIsLoadingBilling(false);
-      return null;
-    }
-
-    setIsLoadingBilling(true);
-    setBillingError(null);
-
-    try {
-      const summary = await fetchBillingSummary();
-      setBillingSummary(summary);
-      setIsLoadingBilling(false);
-      return summary;
-    } catch (error) {
-      setBillingSummary(null);
-      setBillingError(formatClientError(error));
-      setIsLoadingBilling(false);
-      return null;
-    }
-  }
-
-  async function loadWorkspace(force = false): Promise<void> {
-    setIsLoadingWorkspace(true);
-    setWorkspaceError(null);
-
-    const homeResponse = force
-      ? await client.mutations.refreshWorkspace()
-      : await client.queries.getHomeWorkspace();
-
-    if (homeResponse.errors?.length || !homeResponse.data) {
-      setWorkspace(null);
-      setWorkspaceError(formatAmplifyErrors(homeResponse.errors));
-      setIsLoadingWorkspace(false);
-      return;
-    }
-
-    const [
-      lineupHelperResponse,
-      scoutResponse,
-      leagueIntelResponse,
-      playerLabResponse,
-    ] = await Promise.all([
-      client.queries.getLineupHelperWorkspace(),
-      client.queries.getScoutWorkspace({}),
-      client.queries.getLeagueIntel(),
-      client.queries.getPlayerLab(),
-    ]);
-
-    const allErrors = [
-      ...(lineupHelperResponse.errors ?? []),
-      ...(scoutResponse.errors ?? []),
-      ...(leagueIntelResponse.errors ?? []),
-      ...(playerLabResponse.errors ?? []),
-    ];
-
-    if (
-      allErrors.length ||
-      !lineupHelperResponse.data ||
-      !scoutResponse.data ||
-      !leagueIntelResponse.data ||
-      !playerLabResponse.data
-    ) {
-      setWorkspace(null);
-      setWorkspaceError(formatAmplifyErrors(allErrors));
-      setIsLoadingWorkspace(false);
-      return;
-    }
-
-    setWorkspace({
-      home: homeResponse.data,
-      lineupHelper: lineupHelperResponse.data,
-      scout: scoutResponse.data,
-      leagueIntel: leagueIntelResponse.data,
-      playerLab: playerLabResponse.data,
-      syncedAt: homeResponse.data.syncedAt ?? null,
-    });
-    setIsLoadingWorkspace(false);
-  }
-
-  const initializeWorkspaceEffect = useEffectEvent(
-    async (isCancelled: () => boolean) => {
-      const [record] = await Promise.all([loadConnection(), loadBilling()]);
-      if (isCancelled()) {
-        return;
-      }
-
-      if (record?.status === "CONNECTED") {
-        await loadWorkspace(false);
-      } else {
-        setWorkspace(null);
-      }
-    },
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    void initializeWorkspaceEffect(() => cancelled);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const connected = connection?.status === "CONNECTED";
+  const {
+    billingError,
+    billingSummary,
+    connected,
+    connection,
+    connectionError,
+    handleDisconnect,
+    handleRefresh,
+    isDisconnecting,
+    isLoadingBilling,
+    isLoadingConnection,
+    isLoadingWorkspace,
+    loadConnection,
+    loadWorkspace,
+    setShowCredentialForm,
+    setWorkspace,
+    showCredentialForm,
+    workspace,
+    workspaceError,
+  } = useAuthenticatedWorkspace({ commercialModeEnabled });
   const viewerLabelText = viewerLabel ?? "Signed in";
-
-  async function handleRefresh(): Promise<void> {
-    await loadWorkspace(true);
-    await loadConnection();
-    await loadBilling();
-  }
-
-  async function handleDisconnect(): Promise<void> {
-    setIsDisconnecting(true);
-
-    const result = await client.mutations.disconnectBbAccount();
-    if (result.errors?.length) {
-      setWorkspaceError(formatAmplifyErrors(result.errors));
-      setIsDisconnecting(false);
-      return;
-    }
-
-    setWorkspace(null);
-    setShowCredentialForm(false);
-    await loadConnection();
-    setIsDisconnecting(false);
-  }
+  const connectedConnection = connection as BbConnectionRecord;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start">
@@ -394,8 +255,8 @@ function AuthenticatedWorkspace({
               <SectionHeading
                 actions={
                   <>
-                    <StatusBadge tone={statusToneFromValue(connection.status)}>
-                      {formatConnectionStatus(connection.status)}
+                    <StatusBadge tone={statusToneFromValue(connectedConnection.status)}>
+                      {formatConnectionStatus(connectedConnection.status)}
                     </StatusBadge>
                     <Button
                       loading={isLoadingWorkspace}
@@ -419,42 +280,42 @@ function AuthenticatedWorkspace({
                   </>
                 }
                 eyebrow="Club connection"
-                title={connection.teamName ?? "Connected club"}
+                title={connectedConnection.teamName ?? "Connected club"}
               />
 
               <div className={summaryGridClassName}>
                 <StatCard
                   detail="Used for your BuzzerBeater connection."
                   label="Login name"
-                  value={connection.bbLoginName || "Not set"}
+                  value={connectedConnection.bbLoginName || "Not set"}
                 />
                 <StatCard
                   detail={
-                    [connection.leagueName, connection.countryName]
+                    [connectedConnection.leagueName, connectedConnection.countryName]
                       .filter(Boolean)
                       .join(" • ") || "Club details update after refresh."
                   }
                   label="Club"
-                  value={connection.teamName ?? "Connected club"}
+                  value={connectedConnection.teamName ?? "Connected club"}
                 />
                 <StatCard
                   detail={
-                    connection.lastValidatedAt
-                      ? `Last checked ${formatTimestamp(connection.lastValidatedAt)}`
+                    connectedConnection.lastValidatedAt
+                      ? `Last checked ${formatTimestamp(connectedConnection.lastValidatedAt)}`
                       : "No validation has run yet."
                   }
                   label="Connection health"
-                  value={formatConnectionStatus(connection.status)}
+                  value={formatConnectionStatus(connectedConnection.status)}
                 />
                 <StatCard
                   detail={
-                    connection.lastSyncError ?? "Club data is up to date."
+                    connectedConnection.lastSyncError ?? "Club data is up to date."
                   }
                   label="Latest refresh"
                   value={
-                    (workspace?.syncedAt ?? connection.lastSyncAt)
+                    (workspace?.syncedAt ?? connectedConnection.lastSyncAt)
                       ? formatTimestamp(
-                          workspace?.syncedAt ?? connection.lastSyncAt,
+                          workspace?.syncedAt ?? connectedConnection.lastSyncAt,
                         )
                       : "Waiting to refresh"
                   }
@@ -859,7 +720,7 @@ function WorkspaceDashboard({
     scout,
   };
   const commercialModeDisabled =
-    billingError === commercialModeDisabledSentinel;
+    billingError === COMMERCIAL_MODE_DISABLED_SENTINEL;
   const billingPlanId =
     billingSummary?.planId === "premium" ? "premium" : "free";
   const canUsePredictions = commercialModeDisabled
@@ -2660,23 +2521,6 @@ function SortableHeadCell({
       </button>
     </TableHeadCell>
   );
-}
-
-function formatAmplifyErrors(
-  errors: Array<{ message?: string }> | null | undefined,
-): string {
-  if (!errors?.length) {
-    return "The operation failed without a detailed error message.";
-  }
-
-  return errors
-    .map((error) => error.message?.trim())
-    .filter((message): message is string => Boolean(message))
-    .join(" ");
-}
-
-function formatClientError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function formatTimestamp(value: string | null | undefined): string {

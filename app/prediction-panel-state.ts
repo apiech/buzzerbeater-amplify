@@ -38,8 +38,6 @@ export function createDefaultPredictionInput(): PredictionInput {
   };
 }
 
-export const createDefaultManualPredictionInput = createDefaultPredictionInput;
-
 export function createDefaultPredictionSourceSelection(
   workspace: DashboardWorkspace,
 ): PredictionSourceSelection {

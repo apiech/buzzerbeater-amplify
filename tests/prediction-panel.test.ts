@@ -18,7 +18,7 @@ import {
   applyForecastScenarioToDraft,
   buildSubmissionRequest,
   clearForecastPrefill,
-  createDefaultManualPredictionInput,
+  createDefaultPredictionInput,
   createDefaultPredictionDraft,
   mapOpponentEffortChoiceToRelativeDelta,
   reconcilePredictionDraft,
@@ -43,7 +43,7 @@ test("resolved prediction fixture stays aligned with the model payload shape", (
     unknown
   >;
   const defaults = buildModelInputFromPredictionInput(
-    createDefaultManualPredictionInput(),
+    createDefaultPredictionInput(),
   );
 
   assert.deepStrictEqual(
@@ -54,7 +54,7 @@ test("resolved prediction fixture stays aligned with the model payload shape", (
 
 test("prediction submission uses the editable grid as the source of truth", () => {
   const input = {
-    ...createDefaultManualPredictionInput(),
+    ...createDefaultPredictionInput(),
     away_gdp_focus: "Balanced.hit",
     away_gdp_pace: "Normal.hit",
     effortDelta: -1,
@@ -143,7 +143,7 @@ test("boxscore normalization removes source tactics and home court exactly once"
   assert.equal(normalized.offensiveFlow, 10);
 
   const applied = applyBoxscoreRatingsToPredictionInput({
-    input: createDefaultManualPredictionInput(),
+    input: createDefaultPredictionInput(),
     side: "home",
     sourceTeam: {
       defStrategy: "32Zone",
@@ -249,7 +249,7 @@ test("reconcilePredictionDraft resets stale GDP values back to N/A", () => {
     } as any,
     {
       input: {
-        ...createDefaultManualPredictionInput(),
+        ...createDefaultPredictionInput(),
         away_gdp_focus: "Balanced.hit",
         away_gdp_pace: "Normal.hit",
         home_gdp_focus: "Inside.hit",
