@@ -47,7 +47,7 @@ export function createDefaultPredictionSourceSelection(
         (match) => Boolean(match.matchId && match.hasBoxscore),
       )?.matchId ?? "",
     awaySourceMatchId:
-      workspace.scout.summary?.recentGames.find(
+      workspace.scout?.summary?.recentGames.find(
         (match) => Boolean(match.matchId && match.hasBoxscore),
       )?.matchId ?? "",
   };

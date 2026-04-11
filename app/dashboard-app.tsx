@@ -1,10 +1,21 @@
 "use client";
 
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  parseAsArrayOf,
+  parseAsInteger,
+  parseAsString,
+  useQueryState,
+} from "nuqs";
+import {
   useEffect,
-  useEffectEvent,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -17,11 +28,20 @@ import {
   formatAmplifyErrors,
   formatClientError,
 } from "@/app/dashboard/remote-errors";
+import { PanelErrorBoundary } from "@/app/dashboard/panel-error-boundary";
 import { useAuthenticatedWorkspace } from "@/app/dashboard/use-authenticated-workspace";
+import {
+  nextGameRecommendationQueryOptions,
+  opponentForecastQueryOptions,
+  scoutScheduleQueryOptions,
+  scoutTeamSummaryQueryOptions,
+  workspaceQueryKeys,
+} from "@/app/dashboard/workspace-query-client";
 import { HighlightsPanel } from "@/app/highlights-panel";
 import { LeagueHistoryPanel } from "@/app/league-history-panel";
 import { LineupHelper } from "@/app/lineup-helper";
 import { OperationsPanel } from "@/app/operations-panel";
+import { OpponentSchedulePanel } from "@/app/opponent-schedule-panel";
 import {
   formatRecommendationSwitchSummary,
   NEXT_GAME_RECOMMENDATION_DEFAULTS,
@@ -45,9 +65,9 @@ import type {
   ConnectBbAccountInput,
   ConnectBbAccountResult,
   DashboardWorkspace,
+  LineupHelperWorkspaceRecord,
   LineupHelperRosterPlayer,
   NextGameRecommendationInput,
-  NextGameRecommendationSnapshot,
   OpponentForecastSnapshot,
   PredictionDraftState,
   PlayerSummary,
@@ -131,6 +151,10 @@ const terminalNextGameRecommendationStatuses = new Set([
   "FAILED",
 ]);
 
+function readClientError(error: unknown): string | null {
+  return error ? formatClientError(error) : null;
+}
+
 export default function DashboardHomePage() {
   return <DashboardApp activeSection="home" viewerLabel={null} />;
 }
@@ -179,11 +203,10 @@ function AuthenticatedWorkspace({
     loadConnection,
     loadWorkspace,
     setShowCredentialForm,
-    setWorkspace,
     showCredentialForm,
     workspace,
     workspaceError,
-  } = useAuthenticatedWorkspace({ commercialModeEnabled });
+  } = useAuthenticatedWorkspace({ activeSection, commercialModeEnabled });
   const viewerLabelText = viewerLabel ?? "Signed in";
   const connectedConnection = connection as BbConnectionRecord;
 
@@ -244,8 +267,6 @@ function AuthenticatedWorkspace({
               if (status === "CONNECTED") {
                 setShowCredentialForm(false);
                 await loadWorkspace(false);
-              } else {
-                setWorkspace(null);
               }
             }}
           />
@@ -262,7 +283,9 @@ function AuthenticatedWorkspace({
                       loading={isLoadingWorkspace}
                       onClick={() => void handleRefresh()}
                     >
-                      Refresh club data
+                      {activeSection === "home"
+                        ? "Refresh club data"
+                        : "Refresh this section"}
                     </Button>
                     <Button
                       onClick={() => setShowCredentialForm(true)}
@@ -496,13 +519,27 @@ function WorkspaceDashboard({
   workspace: DashboardWorkspace;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const home = workspace.home;
-  const [scout, setScout] = useState(workspace.scout);
-  const [selectedScoutTeamId, setSelectedScoutTeamId] = useState(
-    workspace.scout.requestedTeamId ?? workspace.scout.teamId ?? "",
+  const nextOpponentTeamId = home.nextMatch?.opponentTeamId ?? null;
+  const shouldLoadScoutContext =
+    activeSection === "scout" || activeSection === "predictions";
+  const [selectedScoutTeamIdParam, setSelectedScoutTeamIdParam] = useQueryState(
+    "scoutTeam",
+    parseAsString.withOptions({ history: "replace" }),
   );
-  const [scoutError, setScoutError] = useState<string | null>(null);
-  const [isLoadingScout, setIsLoadingScout] = useState(false);
+  const [selectedScoutSeasonParam, setSelectedScoutSeasonParam] = useQueryState(
+    "scoutSeason",
+    parseAsInteger.withOptions({ history: "replace" }),
+  );
+  const [selectedScoutCompetitionKeysParam, setSelectedScoutCompetitionKeysParam] =
+    useQueryState(
+      "scoutTypes",
+      parseAsArrayOf(parseAsString).withOptions({ history: "replace" }),
+    );
+  const [scoutTeamDraftId, setScoutTeamDraftId] = useState(
+    selectedScoutTeamIdParam ?? nextOpponentTeamId ?? "",
+  );
   const [playerTrend, setPlayerTrend] = useState<PlayerTrendPayload | null>(
     null,
   );
@@ -518,60 +555,164 @@ function WorkspaceDashboard({
   const [loadingSalaryPlayerId, setLoadingSalaryPlayerId] = useState<
     string | null
   >(null);
-  const [opponentForecast, setOpponentForecast] =
-    useState<OpponentForecastSnapshot | null>(null);
-  const [opponentForecastError, setOpponentForecastError] = useState<
-    string | null
-  >(null);
-  const [isLoadingOpponentForecast, setIsLoadingOpponentForecast] =
-    useState(false);
-  const [isRefreshingOpponentForecast, setIsRefreshingOpponentForecast] =
-    useState(false);
   const didRestoreRecommendationSettingsRef = useRef(false);
   const [recommendationInput, setRecommendationInput] =
     useState<NextGameRecommendationInput>(NEXT_GAME_RECOMMENDATION_DEFAULTS);
   const [selectedRecommendationMode, setSelectedRecommendationMode] =
     useState<RecommendationMode>("BIGGEST_WIN");
-  const [nextGameRecommendation, setNextGameRecommendation] =
-    useState<NextGameRecommendationSnapshot | null>(null);
-  const [nextGameRecommendationError, setNextGameRecommendationError] =
-    useState<string | null>(null);
-  const [isLoadingNextGameRecommendation, setIsLoadingNextGameRecommendation] =
-    useState(false);
-  const [
-    isRefreshingNextGameRecommendation,
-    setIsRefreshingNextGameRecommendation,
-  ] = useState(false);
   const didRestorePredictionDraftRef = useRef(false);
   const [predictionDraft, setPredictionDraft] = useState<PredictionDraftState>(
     () => createDefaultPredictionDraft(workspace),
   );
-  const loadLatestOpponentForecastEffect = useEffectEvent((teamId: string) => {
-    void loadLatestOpponentForecast(teamId);
+  const scoutSummaryQuery = useQuery({
+    ...scoutTeamSummaryQueryOptions({
+      teamId: selectedScoutTeamIdParam ?? undefined,
+    }),
+    enabled: shouldLoadScoutContext,
   });
-  const loadLatestNextGameRecommendationEffect = useEffectEvent(
-    (input: NextGameRecommendationInput) => {
-      void loadLatestNextGameRecommendation(input);
+  const resolvedScoutTeamId =
+    selectedScoutTeamIdParam ??
+    scoutSummaryQuery.data?.requestedTeamId ??
+    scoutSummaryQuery.data?.teamId ??
+    nextOpponentTeamId ??
+    null;
+  const scoutScheduleQuery = useQuery({
+    ...scoutScheduleQueryOptions({
+      competitionKeys: selectedScoutCompetitionKeysParam,
+      season: selectedScoutSeasonParam,
+      teamId: resolvedScoutTeamId,
+    }),
+    enabled: activeSection === "scout" && Boolean(resolvedScoutTeamId),
+  });
+  const scout: ScoutWorkspacePayload | null = useMemo(() => {
+    if (!scoutSummaryQuery.data) {
+      return null;
+    }
+
+    return {
+      ...scoutSummaryQuery.data,
+      schedule:
+        activeSection === "scout"
+          ? scoutScheduleQuery.data ?? scoutSummaryQuery.data.schedule ?? null
+          : scoutSummaryQuery.data.schedule ?? null,
+    };
+  }, [activeSection, scoutScheduleQuery.data, scoutSummaryQuery.data]);
+  const scoutError =
+    (activeSection === "scout"
+      ? readClientError(scoutScheduleQuery.error)
+      : null) ?? readClientError(scoutSummaryQuery.error);
+  const isFetchingScout =
+    shouldLoadScoutContext &&
+    (scoutSummaryQuery.isFetching ||
+      (activeSection === "scout" && scoutScheduleQuery.isFetching));
+  const forecastTeamId = resolveForecastTeamId(scout);
+  const opponentForecastQuery = useQuery({
+    ...opponentForecastQueryOptions({
+      teamId: forecastTeamId ?? "",
+    }),
+    enabled: Boolean(forecastTeamId),
+    refetchInterval: (query) => {
+      const snapshot = query.state.data;
+      if (!snapshot || isOpponentForecastTerminalStatus(snapshot.status)) {
+        return false;
+      }
+
+      return 4000;
     },
-  );
-  const nextOpponentTeamId = home.nextMatch?.opponentTeamId ?? null;
+  });
+  const opponentForecastRefreshMutation = useMutation({
+    mutationFn: async (teamId: string) => {
+      const response = await client.mutations.submitOpponentForecastJob({
+        teamId,
+      });
+      if (response.errors?.length) {
+        throw new Error(formatAmplifyErrors(response.errors));
+      }
+    },
+    onSuccess: async (_, teamId) => {
+      await queryClient.invalidateQueries({
+        queryKey: workspaceQueryKeys.opponentForecast(teamId),
+      });
+    },
+  });
+  const opponentForecast = opponentForecastQuery.data ?? null;
+  const opponentForecastError =
+    readClientError(opponentForecastRefreshMutation.error) ??
+    readClientError(opponentForecastQuery.error);
+  const isLoadingOpponentForecast =
+    opponentForecastQuery.isPending || opponentForecastQuery.isFetching;
+  const isRefreshingOpponentForecast =
+    opponentForecastRefreshMutation.isPending;
   const isScoutViewingNextOpponent = Boolean(
     nextOpponentTeamId &&
-      resolveForecastTeamId(scout) &&
-      resolveForecastTeamId(scout) === nextOpponentTeamId,
+      forecastTeamId &&
+      forecastTeamId === nextOpponentTeamId,
   );
+  const nextGameRecommendationEnabled =
+    isScoutViewingNextOpponent &&
+    opponentForecast?.status === "SUCCEEDED" &&
+    Boolean(opponentForecast.result);
+  const nextGameRecommendationQuery = useQuery({
+    ...nextGameRecommendationQueryOptions({
+      input: recommendationInput,
+    }),
+    enabled: nextGameRecommendationEnabled,
+    refetchInterval: (query) => {
+      const snapshot = query.state.data;
+      if (
+        !snapshot ||
+        isNextGameRecommendationTerminalStatus(snapshot.status)
+      ) {
+        return false;
+      }
+
+      return 4000;
+    },
+  });
+  const nextGameRecommendationRefreshMutation = useMutation({
+    mutationFn: async (input: NextGameRecommendationInput) => {
+      const response = await client.mutations.submitNextGameRecommendationJob({
+        input,
+      });
+      if (response.errors?.length) {
+        throw new Error(formatAmplifyErrors(response.errors));
+      }
+    },
+    onSuccess: async (_, input) => {
+      await queryClient.invalidateQueries({
+        queryKey: workspaceQueryKeys.nextGameRecommendation(input),
+      });
+    },
+  });
+  const nextGameRecommendation = nextGameRecommendationEnabled
+    ? nextGameRecommendationQuery.data ?? null
+    : null;
+  const nextGameRecommendationError =
+    nextGameRecommendationEnabled
+      ? readClientError(nextGameRecommendationRefreshMutation.error) ??
+        readClientError(nextGameRecommendationQuery.error)
+      : null;
+  const isLoadingNextGameRecommendation =
+    nextGameRecommendationEnabled &&
+    (nextGameRecommendationQuery.isPending ||
+      nextGameRecommendationQuery.isFetching);
+  const isRefreshingNextGameRecommendation =
+    nextGameRecommendationRefreshMutation.isPending;
 
   useEffect(() => {
-    setScout(workspace.scout);
-    setSelectedScoutTeamId(
-      workspace.scout.requestedTeamId ?? workspace.scout.teamId ?? "",
+    setScoutTeamDraftId(
+      selectedScoutTeamIdParam ??
+        scout?.requestedTeamId ??
+        scout?.teamId ??
+        nextOpponentTeamId ??
+        "",
     );
-    setScoutError(null);
-    setOpponentForecast(null);
-    setOpponentForecastError(null);
-    setNextGameRecommendation(null);
-    setNextGameRecommendationError(null);
-  }, [workspace.scout]);
+  }, [
+    nextOpponentTeamId,
+    scout?.requestedTeamId,
+    scout?.teamId,
+    selectedScoutTeamIdParam,
+  ]);
 
   useEffect(() => {
     if (didRestoreRecommendationSettingsRef.current) {
@@ -612,91 +753,6 @@ function WorkspaceDashboard({
   }, [scout, workspace]);
 
   useEffect(() => {
-    const teamId = resolveForecastTeamId(scout);
-    if (!teamId) {
-      setOpponentForecast(null);
-      setOpponentForecastError(null);
-      return;
-    }
-
-    loadLatestOpponentForecastEffect(teamId);
-  }, [scout]);
-
-  useEffect(() => {
-    const teamId = resolveForecastTeamId(scout);
-    if (!teamId) {
-      return;
-    }
-
-    if (
-      !opponentForecast ||
-      isOpponentForecastTerminalStatus(opponentForecast.status)
-    ) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      loadLatestOpponentForecastEffect(teamId);
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [opponentForecast, scout]);
-
-  useEffect(() => {
-    if (!isScoutViewingNextOpponent) {
-      setNextGameRecommendation(null);
-      setNextGameRecommendationError(null);
-      return;
-    }
-
-    if (isLoadingOpponentForecast) {
-      return;
-    }
-
-    if (
-      !opponentForecast ||
-      opponentForecast.status !== "SUCCEEDED" ||
-      !opponentForecast.result
-    ) {
-      setNextGameRecommendation(null);
-      setNextGameRecommendationError(null);
-      return;
-    }
-
-    loadLatestNextGameRecommendationEffect(recommendationInput);
-  }, [
-    isLoadingOpponentForecast,
-    isScoutViewingNextOpponent,
-    opponentForecast,
-    recommendationInput,
-    scout,
-  ]);
-
-  useEffect(() => {
-    if (
-      !isScoutViewingNextOpponent ||
-      !nextGameRecommendation ||
-      isNextGameRecommendationTerminalStatus(nextGameRecommendation.status)
-    ) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      loadLatestNextGameRecommendationEffect(recommendationInput);
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [
-    isScoutViewingNextOpponent,
-    nextGameRecommendation,
-    recommendationInput,
-  ]);
-
-  useEffect(() => {
     setPredictionDraft((current) =>
       reconcilePredictionDraft(
         {
@@ -715,10 +771,13 @@ function WorkspaceDashboard({
     );
   }, [predictionDraft]);
 
-  const displayWorkspace = {
-    ...workspace,
-    scout,
-  };
+  const displayWorkspace = useMemo(
+    () => ({
+      ...workspace,
+      scout,
+    }),
+    [scout, workspace],
+  );
   const commercialModeDisabled =
     billingError === COMMERCIAL_MODE_DISABLED_SENTINEL;
   const billingPlanId =
@@ -779,142 +838,54 @@ function WorkspaceDashboard({
   }
 
   async function handleScoutLoad() {
-    if (!selectedScoutTeamId) {
+    if (!scoutTeamDraftId) {
       return;
     }
 
-    setIsLoadingScout(true);
-    setScoutError(null);
+    const currentTeamId =
+      selectedScoutTeamIdParam ??
+      scout?.requestedTeamId ??
+      scout?.teamId ??
+      nextOpponentTeamId ??
+      null;
+    const teamChanged = currentTeamId !== scoutTeamDraftId;
 
-    const response = await client.queries.getScoutWorkspace({
-      teamId: selectedScoutTeamId,
-    });
-
-    if (response.errors?.length || !response.data) {
-      setScoutError(formatAmplifyErrors(response.errors));
-      setIsLoadingScout(false);
+    await setSelectedScoutTeamIdParam(scoutTeamDraftId);
+    if (teamChanged) {
+      await setSelectedScoutSeasonParam(null);
+      await setSelectedScoutCompetitionKeysParam(null);
       return;
     }
 
-    setScout(response.data);
-    const teamId = resolveForecastTeamId(response.data);
-    if (teamId) {
-      void loadLatestOpponentForecast(teamId);
-    } else {
-      setOpponentForecast(null);
-      setOpponentForecastError(null);
-    }
-    setIsLoadingScout(false);
-  }
-
-  async function loadLatestOpponentForecast(teamId: string) {
-    setIsLoadingOpponentForecast(true);
-    setOpponentForecastError(null);
-
-    try {
-      const response = await client.queries.getLatestOpponentForecast({
-        teamId,
-      });
-
-      if (response.errors?.length) {
-        setOpponentForecast(null);
-        setOpponentForecastError(formatAmplifyErrors(response.errors));
-        setIsLoadingOpponentForecast(false);
-        return;
-      }
-
-      setOpponentForecast(response.data ?? null);
-      setIsLoadingOpponentForecast(false);
-    } catch (error) {
-      setOpponentForecast(null);
-      setOpponentForecastError(formatClientError(error));
-      setIsLoadingOpponentForecast(false);
-    }
-  }
-
-  async function loadLatestNextGameRecommendation(
-    input: NextGameRecommendationInput,
-  ) {
-    if (!isScoutViewingNextOpponent) {
-      setNextGameRecommendation(null);
-      setNextGameRecommendationError(null);
-      return;
-    }
-
-    setIsLoadingNextGameRecommendation(true);
-    setNextGameRecommendationError(null);
-
-    try {
-      const response = await client.queries.getLatestNextGameRecommendation({
-        input,
-      });
-
-      if (response.errors?.length) {
-        setNextGameRecommendation(null);
-        setNextGameRecommendationError(formatAmplifyErrors(response.errors));
-        setIsLoadingNextGameRecommendation(false);
-        return;
-      }
-
-      setNextGameRecommendation(response.data ?? null);
-      setIsLoadingNextGameRecommendation(false);
-    } catch (error) {
-      setNextGameRecommendation(null);
-      setNextGameRecommendationError(formatClientError(error));
-      setIsLoadingNextGameRecommendation(false);
+    await scoutSummaryQuery.refetch();
+    if (activeSection === "scout") {
+      await scoutScheduleQuery.refetch();
     }
   }
 
   async function handleRefreshOpponentForecast() {
-    const teamId = resolveForecastTeamId(scout);
-    if (!teamId) {
+    if (!forecastTeamId) {
       return;
     }
 
-    setIsRefreshingOpponentForecast(true);
-    setOpponentForecastError(null);
-
     try {
-      const response = await client.mutations.submitOpponentForecastJob({
-        teamId,
-      });
-      if (response.errors?.length) {
-        setOpponentForecastError(formatAmplifyErrors(response.errors));
-        setIsRefreshingOpponentForecast(false);
-        return;
-      }
-
-      await loadLatestOpponentForecast(teamId);
-    } catch (error) {
-      setOpponentForecastError(formatClientError(error));
-    } finally {
-      setIsRefreshingOpponentForecast(false);
+      await opponentForecastRefreshMutation.mutateAsync(forecastTeamId);
+    } catch {
+      // Mutation state carries the user-facing error.
     }
   }
 
   async function handleRefreshNextGameRecommendation() {
-    if (!isScoutViewingNextOpponent) {
+    if (!nextGameRecommendationEnabled) {
       return;
     }
 
-    setIsRefreshingNextGameRecommendation(true);
-    setNextGameRecommendationError(null);
-
     try {
-      const response = await client.mutations.submitNextGameRecommendationJob({
-        input: recommendationInput,
-      });
-      if (response.errors?.length) {
-        setNextGameRecommendationError(formatAmplifyErrors(response.errors));
-        setIsRefreshingNextGameRecommendation(false);
-        return;
-      }
-
-      await loadLatestNextGameRecommendation(recommendationInput);
-    } catch (error) {
-      setNextGameRecommendationError(formatClientError(error));
-    } finally {
-      setIsRefreshingNextGameRecommendation(false);
+      await nextGameRecommendationRefreshMutation.mutateAsync(
+        recommendationInput,
+      );
+    } catch {
+      // Mutation state carries the user-facing error.
     }
   }
 
@@ -1093,18 +1064,31 @@ function WorkspaceDashboard({
             eyebrow="Roster"
             title="Owner roster and lineup context"
           />
-          <HomeOwnerRosterTable roster={workspace.lineupHelper.roster} />
+          {workspace.lineupHelper ? (
+            <HomeOwnerRosterTable roster={workspace.lineupHelper.roster} />
+          ) : (
+            <p className={statusCopyClassName}>
+              Loading your owner roster context.
+            </p>
+          )}
         </Panel>
       ) : null}
 
       {activeSection === "lineups" ? (
-        <Panel>
-          <SectionHeading
-            eyebrow="Lineups"
-            title="Lineup helper and rating outputs"
-          />
-          <LineupHelper />
-        </Panel>
+        <PanelErrorBoundary
+          resetKeys={[activeSection, workspace.lineupHelper?.generatedAt ?? null]}
+          title="Lineup helper"
+        >
+          <Panel>
+            <SectionHeading
+              eyebrow="Lineups"
+              title="Lineup helper and rating outputs"
+            />
+            <LineupHelper
+              initialWorkspace={workspace.lineupHelper ?? undefined}
+            />
+          </Panel>
+        </PanelErrorBoundary>
       ) : null}
 
       {activeSection === "scout" ? (
@@ -1115,12 +1099,12 @@ function WorkspaceDashboard({
                 <Field className="w-full md:min-w-80" label="View team">
                   <Select
                     onChange={(event) =>
-                      setSelectedScoutTeamId(event.target.value)
+                      setScoutTeamDraftId(event.target.value)
                     }
-                    value={selectedScoutTeamId}
+                    value={scoutTeamDraftId}
                   >
                     <option value="">Select a league team</option>
-                    {scout.availableOpponents.map((opponent) => (
+                    {(scout?.availableOpponents ?? []).map((opponent) => (
                       <option
                         key={opponent.teamId ?? opponent.teamName ?? "unknown"}
                         value={opponent.teamId ?? ""}
@@ -1131,8 +1115,8 @@ function WorkspaceDashboard({
                   </Select>
                 </Field>
                 <Button
-                  disabled={!selectedScoutTeamId}
-                  loading={isLoadingScout}
+                  disabled={!scoutTeamDraftId}
+                  loading={isFetchingScout}
                   onClick={() => void handleScoutLoad()}
                   variant="secondary"
                 >
@@ -1141,10 +1125,10 @@ function WorkspaceDashboard({
               </>
             }
             eyebrow="Opponents"
-            title={scout.summary?.teamName ?? "Opponent and team view"}
+            title={scout?.summary?.teamName ?? "Opponent and team view"}
           />
           {scoutError ? <Alert>{scoutError}</Alert> : null}
-          {scout.summary ? (
+          {scout && scout.summary ? (
             <>
               <div className="grid gap-4 sm:grid-cols-3">
                 <StatCard
@@ -1168,27 +1152,72 @@ function WorkspaceDashboard({
                 />
               </div>
 
-              <div className={twoColumnGridClassName}>
-                <Panel as="article" padding="sm" variant="solid">
-                  <SectionHeading
-                    actions={
-                      <Button
-                        disabled={!canUsePredictions}
-                        loading={
-                          isRefreshingOpponentForecast ||
-                          (isLoadingOpponentForecast &&
-                            opponentForecast?.status !== "SUCCEEDED")
-                        }
-                        onClick={() => void handleRefreshOpponentForecast()}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        Refresh forecast
-                      </Button>
+              <PanelErrorBoundary
+                resetKeys={[
+                  scout.teamId ?? scout.requestedTeamId ?? null,
+                  scout.schedule?.selectedSeason ?? null,
+                  (scout.schedule?.selectedCompetitionKeys ?? []).join(","),
+                ]}
+                title="Scout schedule"
+              >
+                <OpponentSchedulePanel
+                  isLoading={isFetchingScout}
+                  onApplyFilters={async (input) => {
+                    const nextCompetitionKeys = input.competitionKeys.length
+                      ? [...input.competitionKeys].sort()
+                      : null;
+                    const currentCompetitionKeys = (
+                      selectedScoutCompetitionKeysParam ?? []
+                    )
+                      .slice()
+                      .sort();
+                    const competitionChanged = !areStringArraysEqual(
+                      currentCompetitionKeys,
+                      nextCompetitionKeys ?? [],
+                    );
+                    const seasonChanged =
+                      (selectedScoutSeasonParam ?? null) !==
+                      (input.season ?? null);
+
+                    await setSelectedScoutSeasonParam(input.season ?? null);
+                    await setSelectedScoutCompetitionKeysParam(
+                      nextCompetitionKeys,
+                    );
+                    if (seasonChanged || competitionChanged) {
+                      return;
                     }
-                    title="Scout forecast"
-                    titleAs="h4"
-                  />
+                    await scoutScheduleQuery.refetch();
+                  }}
+                  schedule={scout.schedule}
+                  teamName={scout.summary.teamName}
+                />
+              </PanelErrorBoundary>
+
+              <div className={twoColumnGridClassName}>
+                <PanelErrorBoundary
+                  resetKeys={[forecastTeamId ?? null, opponentForecast?.jobId ?? null]}
+                  title="Scout forecast"
+                >
+                  <Panel as="article" padding="sm" variant="solid">
+                    <SectionHeading
+                      actions={
+                        <Button
+                          disabled={!canUsePredictions}
+                          loading={
+                            isRefreshingOpponentForecast ||
+                            (isLoadingOpponentForecast &&
+                              opponentForecast?.status !== "SUCCEEDED")
+                          }
+                          onClick={() => void handleRefreshOpponentForecast()}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          Refresh forecast
+                        </Button>
+                      }
+                      title="Scout forecast"
+                      titleAs="h4"
+                    />
                   {opponentForecastError ? (
                     <Alert>{opponentForecastError}</Alert>
                   ) : null}
@@ -1251,7 +1280,7 @@ function WorkspaceDashboard({
                               )}
                             />
                             <StatCard
-                              detail={`Recent ${opponentForecast.result.coverage.recentGamesConsidered} • H2H ${opponentForecast.result.coverage.headToHeadGamesConsidered}`}
+                              detail={`Recent ${opponentForecast.result.coverage.recentGamesConsidered} • Serious ${opponentForecast.result.coverage.seriousGamesConsidered} • Support ${opponentForecast.result.coverage.supportingGamesConsidered}`}
                               label="Analogs"
                               value={
                                 opponentForecast.result.coverage
@@ -1476,34 +1505,43 @@ function WorkspaceDashboard({
                         : "No stored opponent forecast is available yet."}
                     </p>
                   )}
-                </Panel>
+                  </Panel>
+                </PanelErrorBoundary>
 
-                <Panel as="article" padding="sm" variant="solid">
-                  <SectionHeading
-                    actions={
-                      isScoutViewingNextOpponent && canUsePredictions ? (
-                        <Button
-                          disabled={Boolean(nextGameRecommendationBlockedReason)}
-                          loading={
-                            isRefreshingNextGameRecommendation ||
-                            (isLoadingNextGameRecommendation &&
-                              nextGameRecommendation?.status !== "SUCCEEDED")
-                          }
-                          onClick={() =>
-                            void handleRefreshNextGameRecommendation()
-                          }
-                          size="sm"
-                          variant="secondary"
-                        >
-                          {nextGameRecommendation
-                            ? "Refresh recommendation"
-                            : "Generate recommendation"}
-                        </Button>
-                      ) : null
-                    }
-                    title="Next-game recommendation"
-                    titleAs="h4"
-                  />
+                <PanelErrorBoundary
+                  resetKeys={[
+                    nextOpponentTeamId,
+                    nextGameRecommendation?.jobId ?? null,
+                    recommendationInput.enthusiasm,
+                  ]}
+                  title="Next-game recommendation"
+                >
+                  <Panel as="article" padding="sm" variant="solid">
+                    <SectionHeading
+                      actions={
+                        isScoutViewingNextOpponent && canUsePredictions ? (
+                          <Button
+                            disabled={Boolean(nextGameRecommendationBlockedReason)}
+                            loading={
+                              isRefreshingNextGameRecommendation ||
+                              (isLoadingNextGameRecommendation &&
+                                nextGameRecommendation?.status !== "SUCCEEDED")
+                            }
+                            onClick={() =>
+                              void handleRefreshNextGameRecommendation()
+                            }
+                            size="sm"
+                            variant="secondary"
+                          >
+                            {nextGameRecommendation
+                              ? "Refresh recommendation"
+                              : "Generate recommendation"}
+                          </Button>
+                        ) : null
+                      }
+                      title="Next-game recommendation"
+                      titleAs="h4"
+                    />
                   {!canUsePredictions ? (
                     <p className={statusCopyClassName}>
                       Premium access is required to generate next-game
@@ -1749,7 +1787,8 @@ function WorkspaceDashboard({
                         : "No stored recommendation is available for these settings yet."}
                     </p>
                   )}
-                </Panel>
+                  </Panel>
+                </PanelErrorBoundary>
 
                 <Panel as="article" padding="sm" variant="solid">
                   <SectionHeading title="Team tendencies" titleAs="h4" />
@@ -1910,7 +1949,9 @@ function WorkspaceDashboard({
             </>
           ) : (
             <p className={statusCopyClassName}>
-              {scout.message ?? "No opponent view is available yet."}
+              {scout
+                ? (scout.message ?? "No opponent view is available yet.")
+                : "Loading opponent scouting data."}
             </p>
           )}
         </Panel>
@@ -1918,11 +1959,29 @@ function WorkspaceDashboard({
 
       {activeSection === "predictions" ? (
         canUsePredictions ? (
-          <PredictionPanel
-            draft={predictionDraft}
-            onDraftChange={setPredictionDraft}
-            workspace={displayWorkspace}
-          />
+          scout ? (
+            <PanelErrorBoundary
+              resetKeys={[scout.teamId ?? scout.requestedTeamId ?? null]}
+              title="Matchup preview"
+            >
+              <PredictionPanel
+                draft={predictionDraft}
+                onDraftChange={setPredictionDraft}
+                workspace={displayWorkspace}
+              />
+            </PanelErrorBoundary>
+          ) : (
+            <Panel>
+              <SectionHeading
+                eyebrow="Predictions"
+                title="Loading opponent forecast context"
+              />
+              <p className={statusCopyClassName}>
+                Pulling the selected opponent&apos;s scouting history before the
+                matchup preview tools load.
+              </p>
+            </Panel>
+          )
         ) : (
           <PremiumFeatureGatePanel
             billingSummary={billingSummary}
@@ -1963,59 +2022,76 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "league" ? (
-        <Panel>
-          <SectionHeading
-            eyebrow="League"
-            title={workspace.leagueIntel.league?.name ?? "League standings"}
-          />
-          <div className={twoColumnGridClassName}>
-            {workspace.leagueIntel.standings.length ? (
-              workspace.leagueIntel.standings.map((conference) => (
-                <Panel
-                  as="article"
-                  key={conference.index}
-                  padding="sm"
-                  variant="solid"
-                >
-                  <SectionHeading
-                    title={`Conference ${conference.index + 1}`}
-                    titleAs="h4"
-                  />
-                  <TableShell compact>
-                    <thead>
-                      <tr>
-                        <TableHeadCell className="pl-0">Team</TableHeadCell>
-                        <TableHeadCell>W-L</TableHeadCell>
-                        <TableHeadCell>Margin</TableHeadCell>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {conference.teams.map((team) => (
-                        <tr key={team.teamId ?? team.teamName}>
-                          <TableCell className="pl-0">
-                            {team.teamName ?? "Unknown team"}
-                          </TableCell>
-                          <TableCell>
-                            {team.wins ?? 0}-{team.losses ?? 0}
-                          </TableCell>
-                          <TableCell>
-                            {formatSigned(team.pointMargin)}
-                          </TableCell>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableShell>
-                </Panel>
-              ))
-            ) : (
-              <Panel as="article" padding="sm" variant="solid">
-                <p className={statusCopyClassName}>
-                  No standings are ready yet.
-                </p>
-              </Panel>
-            )}
-          </div>
-        </Panel>
+        workspace.leagueIntel ? (
+          <PanelErrorBoundary
+            resetKeys={[
+              workspace.leagueIntel.league?.id ?? null,
+              workspace.leagueIntel.standings.length,
+            ]}
+            title="League standings"
+          >
+            <Panel>
+              <SectionHeading
+                eyebrow="League"
+                title={workspace.leagueIntel.league?.name ?? "League standings"}
+              />
+              <div className={twoColumnGridClassName}>
+                {workspace.leagueIntel.standings.length ? (
+                  workspace.leagueIntel.standings.map((conference) => (
+                    <Panel
+                      as="article"
+                      key={conference.index}
+                      padding="sm"
+                      variant="solid"
+                    >
+                      <SectionHeading
+                        title={`Conference ${conference.index + 1}`}
+                        titleAs="h4"
+                      />
+                      <TableShell compact>
+                        <thead>
+                          <tr>
+                            <TableHeadCell className="pl-0">Team</TableHeadCell>
+                            <TableHeadCell>W-L</TableHeadCell>
+                            <TableHeadCell>Margin</TableHeadCell>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {conference.teams.map((team) => (
+                            <tr key={team.teamId ?? team.teamName}>
+                              <TableCell className="pl-0">
+                                {team.teamName ?? "Unknown team"}
+                              </TableCell>
+                              <TableCell>
+                                {team.wins ?? 0}-{team.losses ?? 0}
+                              </TableCell>
+                              <TableCell>
+                                {formatSigned(team.pointMargin)}
+                              </TableCell>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </TableShell>
+                    </Panel>
+                  ))
+                ) : (
+                  <Panel as="article" padding="sm" variant="solid">
+                    <p className={statusCopyClassName}>
+                      No standings are ready yet.
+                    </p>
+                  </Panel>
+                )}
+              </div>
+            </Panel>
+          </PanelErrorBoundary>
+        ) : (
+          <Panel>
+            <SectionHeading eyebrow="League" title="Loading league standings" />
+            <p className={statusCopyClassName}>
+              Pulling the current conference table for this section.
+            </p>
+          </Panel>
+        )
       ) : null}
 
       {activeSection === "league-history" ? (
@@ -2027,143 +2103,160 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "players" ? (
-        <Panel>
-          <SectionHeading
-            eyebrow="Players"
-            title="Trend lines, salary movement, and roster calls"
-          />
-          {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
-          {salaryProjectionError ? (
-            <Alert>{salaryProjectionError}</Alert>
-          ) : null}
-          <TableShell>
-            <thead>
-              <tr>
-                <TableHeadCell>Player</TableHeadCell>
-                <TableHeadCell>Role</TableHeadCell>
-                <TableHeadCell>Salary</TableHeadCell>
-                <TableHeadCell>Shape</TableHeadCell>
-                <TableHeadCell>DMI</TableHeadCell>
-                <TableHeadCell>Starts</TableHeadCell>
-                <TableHeadCell>Analysis</TableHeadCell>
-              </tr>
-            </thead>
-            <tbody>
-              {workspace.playerLab.players.length ? (
-                workspace.playerLab.players.map((player) => (
-                  <tr key={player.playerId ?? player.fullName}>
-                    <TableCell>{player.fullName}</TableCell>
-                    <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
-                    <TableCell>{formatCurrency(player.salary)}</TableCell>
-                    <TableCell>
-                      <BuzzerBeaterRatingText
-                        label={player.gameShape}
-                        scale="game_shape"
-                      >
-                        {player.gameShape ?? "N/A"}
-                      </BuzzerBeaterRatingText>
-                    </TableCell>
-                    <TableCell>{player.dmi ?? "N/A"}</TableCell>
-                    <TableCell>{player.projectedStarterCount ?? 0}</TableCell>
-                    <TableCell className="flex flex-wrap gap-2">
-                      <Button
-                        disabled={!player.playerId}
-                        loading={loadingTrendPlayerId === player.playerId}
-                        onClick={() => void handleLoadPlayerTrend(player)}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        Trend
-                      </Button>
-                      <Button
-                        disabled={!player.playerId}
-                        loading={loadingSalaryPlayerId === player.playerId}
-                        onClick={() => void handleLoadSalaryProjection(player)}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        Salary
-                      </Button>
+        workspace.playerLab ? (
+          <PanelErrorBoundary
+            resetKeys={[workspace.playerLab.syncedAt ?? null]}
+            title="Player lab"
+          >
+            <Panel>
+              <SectionHeading
+                eyebrow="Players"
+                title="Trend lines, salary movement, and roster calls"
+              />
+            {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
+            {salaryProjectionError ? (
+              <Alert>{salaryProjectionError}</Alert>
+            ) : null}
+            <TableShell>
+              <thead>
+                <tr>
+                  <TableHeadCell>Player</TableHeadCell>
+                  <TableHeadCell>Role</TableHeadCell>
+                  <TableHeadCell>Salary</TableHeadCell>
+                  <TableHeadCell>Shape</TableHeadCell>
+                  <TableHeadCell>DMI</TableHeadCell>
+                  <TableHeadCell>Starts</TableHeadCell>
+                  <TableHeadCell>Analysis</TableHeadCell>
+                </tr>
+              </thead>
+              <tbody>
+                {workspace.playerLab.players.length ? (
+                  workspace.playerLab.players.map((player) => (
+                    <tr key={player.playerId ?? player.fullName}>
+                      <TableCell>{player.fullName}</TableCell>
+                      <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
+                      <TableCell>{formatCurrency(player.salary)}</TableCell>
+                      <TableCell>
+                        <BuzzerBeaterRatingText
+                          label={player.gameShape}
+                          scale="game_shape"
+                        >
+                          {player.gameShape ?? "N/A"}
+                        </BuzzerBeaterRatingText>
+                      </TableCell>
+                      <TableCell>{player.dmi ?? "N/A"}</TableCell>
+                      <TableCell>{player.projectedStarterCount ?? 0}</TableCell>
+                      <TableCell className="flex flex-wrap gap-2">
+                        <Button
+                          disabled={!player.playerId}
+                          loading={loadingTrendPlayerId === player.playerId}
+                          onClick={() => void handleLoadPlayerTrend(player)}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          Trend
+                        </Button>
+                        <Button
+                          disabled={!player.playerId}
+                          loading={loadingSalaryPlayerId === player.playerId}
+                          onClick={() => void handleLoadSalaryProjection(player)}
+                          size="sm"
+                          variant="secondary"
+                        >
+                          Salary
+                        </Button>
+                      </TableCell>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <TableCell className="text-ink-muted" colSpan={7}>
+                      Player data is not available yet.
                     </TableCell>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <TableCell className="text-ink-muted" colSpan={7}>
-                    Player data is not available yet.
-                  </TableCell>
-                </tr>
-              )}
-            </tbody>
-          </TableShell>
+                )}
+              </tbody>
+            </TableShell>
 
-          <div className={twoColumnGridClassName}>
-            <Panel as="article" padding="sm" variant="solid">
-              <SectionHeading
-                description="Weekly updates from your saved club history."
-                title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
-                titleAs="h4"
-              />
-              {playerTrend ? (
-                playerTrend.history.length > 1 ? (
-                  <PlayerTrendChart
-                    formatCurrency={formatCurrency}
-                    formatInjury={formatInjury}
-                    formatTimestamp={formatTimestamp}
-                    history={playerTrend.history}
-                  />
+            <div className={twoColumnGridClassName}>
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading
+                  description="Weekly updates from your saved club history."
+                  title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
+                  titleAs="h4"
+                />
+                {playerTrend ? (
+                  playerTrend.history.length > 1 ? (
+                    <PlayerTrendChart
+                      formatCurrency={formatCurrency}
+                      formatInjury={formatInjury}
+                      formatTimestamp={formatTimestamp}
+                      history={playerTrend.history}
+                    />
+                  ) : (
+                    <p className={statusCopyClassName}>
+                      Need at least two weekly updates to draw a trend chart.
+                    </p>
+                  )
                 ) : (
                   <p className={statusCopyClassName}>
-                    Need at least two weekly updates to draw a trend chart.
+                    Load a player trend to inspect weekly salary, DMI, and
+                    availability changes.
                   </p>
-                )
-              ) : (
-                <p className={statusCopyClassName}>
-                  Load a player trend to inspect weekly salary, DMI, and
-                  availability changes.
-                </p>
-              )}
-            </Panel>
+                )}
+              </Panel>
 
-            <Panel as="article" padding="sm" variant="solid">
-              <SectionHeading title="Salary projection" titleAs="h4" />
-              {salaryProjection ? (
-                <div className={summaryGridClassName}>
-                  <StatCard
-                    detail={salaryProjection.bestPosition ?? "No listed role"}
-                    label="Player"
-                    value={salaryProjection.fullName}
-                  />
-                  <StatCard
-                    detail={`Trend ${salaryProjection.trend}`}
-                    label="Current salary"
-                    value={formatCurrency(salaryProjection.currentSalary)}
-                  />
-                  <StatCard
-                    detail={`Δ ${formatSigned((salaryProjection.weeklyDelta ?? 0) / 1)}`}
-                    label="Projected next week"
-                    value={formatCurrency(salaryProjection.projectedSalary)}
-                  />
-                  <StatCard
-                    detail={
-                      salaryProjection.flagReason ??
-                      "No flag guidance available."
-                    }
-                    label="Flag fit"
-                    value={
-                      salaryProjection.isFlagTarget ? "Aligned" : "Not aligned"
-                    }
-                  />
-                </div>
-              ) : (
-                <p className={statusCopyClassName}>
-                  Load a salary projection to estimate next-week movement and
-                  flag fit.
-                </p>
-              )}
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading title="Salary projection" titleAs="h4" />
+                {salaryProjection ? (
+                  <div className={summaryGridClassName}>
+                    <StatCard
+                      detail={salaryProjection.bestPosition ?? "No listed role"}
+                      label="Player"
+                      value={salaryProjection.fullName}
+                    />
+                    <StatCard
+                      detail={`Trend ${salaryProjection.trend}`}
+                      label="Current salary"
+                      value={formatCurrency(salaryProjection.currentSalary)}
+                    />
+                    <StatCard
+                      detail={`Δ ${formatSigned((salaryProjection.weeklyDelta ?? 0) / 1)}`}
+                      label="Projected next week"
+                      value={formatCurrency(salaryProjection.projectedSalary)}
+                    />
+                    <StatCard
+                      detail={
+                        salaryProjection.flagReason ??
+                        "No flag guidance available."
+                      }
+                      label="Flag fit"
+                      value={
+                        salaryProjection.isFlagTarget ? "Aligned" : "Not aligned"
+                      }
+                    />
+                  </div>
+                ) : (
+                  <p className={statusCopyClassName}>
+                    Load a salary projection to estimate next-week movement and
+                    flag fit.
+                  </p>
+                )}
+              </Panel>
+            </div>
             </Panel>
-          </div>
-        </Panel>
+          </PanelErrorBoundary>
+        ) : (
+          <Panel>
+            <SectionHeading
+              eyebrow="Players"
+              title="Loading player trend context"
+            />
+            <p className={statusCopyClassName}>
+              Pulling roster trend and salary data for this section.
+            </p>
+          </Panel>
+        )
       ) : null}
 
       {activeSection === "ops" ? (
@@ -2224,7 +2317,13 @@ function renderTrendChips(prefix: string, values: TrendCountEntry[]) {
   ));
 }
 
-function resolveForecastTeamId(scout: ScoutWorkspacePayload): string | null {
+function resolveForecastTeamId(
+  scout: ScoutWorkspacePayload | null,
+): string | null {
+  if (!scout) {
+    return null;
+  }
+
   return (
     scout.summary?.matchupPerspective.opponentTeamId ??
     scout.requestedTeamId ??
@@ -2342,7 +2441,7 @@ function BoxscoreLink({ matchId }: { matchId: string }) {
 function HomeOwnerRosterTable({
   roster,
 }: {
-  roster: DashboardWorkspace["lineupHelper"]["roster"];
+  roster: LineupHelperWorkspaceRecord["roster"];
 }) {
   const [sortKey, setSortKey] = useState<OwnerRosterSortKey>("player");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
@@ -2644,14 +2743,14 @@ function formatNumericTableValue(value: number | null | undefined): string {
 }
 
 function formatLineupHelperSkillValue(
-  player: DashboardWorkspace["lineupHelper"]["roster"][number],
+  player: LineupHelperWorkspaceRecord["roster"][number],
   key: OwnerRosterSkillKey,
 ): string {
   return player.available ? String(player.skills[key]) : "--";
 }
 
 function sortLineupHelperRoster(
-  roster: DashboardWorkspace["lineupHelper"]["roster"],
+  roster: LineupHelperWorkspaceRecord["roster"],
   sortKey: OwnerRosterSortKey,
   sortDirection: "asc" | "desc",
 ) {
@@ -2695,8 +2794,19 @@ function compareOwnerRosterValues(
   return String(left).localeCompare(String(right));
 }
 
+function areStringArraysEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
+}
+
 function readOwnerRosterSortValue(
-  player: DashboardWorkspace["lineupHelper"]["roster"][number],
+  player: LineupHelperWorkspaceRecord["roster"][number],
   sortKey: OwnerRosterSortKey,
 ): number | string | null {
   switch (sortKey) {

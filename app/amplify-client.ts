@@ -52,6 +52,8 @@ type QueryOperationName =
   | "getPlayerTrend"
   | "getRivalsWorkspace"
   | "getSalaryProjection"
+  | "getScoutSchedule"
+  | "getScoutTeamSummary"
   | "getScoutWorkspace"
   | "listMyBillingPayments"
   | "optimizeLineupHelper"
@@ -256,25 +258,32 @@ export const client = {
     evaluateLineupHelper: (input: JsonObject) =>
       requestQuery("evaluateLineupHelper", input),
     getBillingSummary: () => requestQuery("getBillingSummary"),
-    getHomeWorkspace: () => requestQuery("getHomeWorkspace"),
+    getHomeWorkspace: (input?: JsonObject) =>
+      requestQuery("getHomeWorkspace", input),
     getLeagueHistory: (input?: JsonObject) =>
       requestQuery("getLeagueHistory", input),
-    getLeagueIntel: () => requestQuery("getLeagueIntel"),
+    getLeagueIntel: (input?: JsonObject) =>
+      requestQuery("getLeagueIntel", input),
     getLatestNextGameRecommendation: (input: JsonObject) =>
       requestQuery("getLatestNextGameRecommendation", input),
     getLatestOpponentForecast: (input: JsonObject) =>
       requestQuery("getLatestOpponentForecast", input),
-    getLineupHelperWorkspace: () => requestQuery("getLineupHelperWorkspace"),
+    getLineupHelperWorkspace: (input?: JsonObject) =>
+      requestQuery("getLineupHelperWorkspace", input),
     getMatchBoxscoreDetails: (input: JsonObject) =>
       requestQuery("getMatchBoxscoreDetails", input),
     getMyTeamHighlights: (input: JsonObject) =>
       requestQuery("getMyTeamHighlights", input),
-    getPlayerLab: () => requestQuery("getPlayerLab"),
+    getPlayerLab: (input?: JsonObject) => requestQuery("getPlayerLab", input),
     getPlayerTrend: (input: JsonObject) =>
       requestQuery("getPlayerTrend", input),
     getRivalsWorkspace: () => requestQuery("getRivalsWorkspace"),
     getSalaryProjection: (input: JsonObject) =>
       requestQuery("getSalaryProjection", input),
+    getScoutSchedule: (input?: JsonObject) =>
+      requestQuery("getScoutSchedule", input),
+    getScoutTeamSummary: (input?: JsonObject) =>
+      requestQuery("getScoutTeamSummary", input),
     getScoutWorkspace: (input?: JsonObject) =>
       requestQuery("getScoutWorkspace", input),
     listMyBillingPayments: (input?: JsonObject) =>

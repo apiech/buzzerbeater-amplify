@@ -138,6 +138,18 @@ test("boxscore helper scoreline and player sorting favor starters first", () => 
   );
 });
 
+test("boxscore helper tolerates missing player performance arrays", () => {
+  assert.equal(
+    boxscorePageTesting.readPlayerStat(
+      {
+        fullName: "Legacy Cache Guard",
+      } as any,
+      "pts",
+    ),
+    "N/A",
+  );
+});
+
 test("opponent forecast polling stops after terminal statuses", () => {
   assert.equal(
     dashboardTesting.isOpponentForecastTerminalStatus("SUCCEEDED"),

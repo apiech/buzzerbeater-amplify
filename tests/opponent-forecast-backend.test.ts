@@ -44,6 +44,9 @@ test("normalizeOpponentForecastResult fills required forecast fields", () => {
       headToHeadGamesConsidered: 3,
       recentGamesConsidered: 8,
       rosterPlayersConsidered: 10,
+      sampleStrategy: "CURRENT_SEASON_SERIOUS_PLUS_SUPPORTING",
+      seriousGamesConsidered: 5,
+      supportingGamesConsidered: 3,
     },
     featureSignals: [
       {
@@ -85,6 +88,12 @@ test("normalizeOpponentForecastResult fills required forecast fields", () => {
 
   assert.equal(result.modelVersion, "forecast-v1");
   assert.equal(result.coverage.recentGamesConsidered, 8);
+  assert.equal(result.coverage.seriousGamesConsidered, 5);
+  assert.equal(result.coverage.supportingGamesConsidered, 3);
+  assert.equal(
+    result.coverage.sampleStrategy,
+    "CURRENT_SEASON_SERIOUS_PLUS_SUPPORTING",
+  );
   const scenario = expectPresent(result.topScenarios[0], "scenario missing");
   const starter = expectPresent(scenario.starters[0], "starter missing");
   const analog = expectPresent(result.analogGames[0], "analog missing");

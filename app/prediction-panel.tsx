@@ -149,14 +149,14 @@ export function PredictionPanel({
     Boolean(match.matchId && match.hasBoxscore),
   );
   const awayMatchOptions =
-    workspace.scout.summary?.recentGames.filter((match) =>
+    workspace.scout?.summary?.recentGames.filter((match) =>
       Boolean(match.matchId && match.hasBoxscore),
     ) ?? [];
   const defaultHomeSourceMatchId = homeMatchOptions[0]?.matchId ?? "";
   const defaultAwaySourceMatchId = awayMatchOptions[0]?.matchId ?? "";
   const homeTeamId = workspace.home.team.teamId ?? null;
   const awayTeamId =
-    workspace.scout.summary?.matchupPerspective.opponentTeamId ?? null;
+    workspace.scout?.summary?.matchupPerspective.opponentTeamId ?? null;
   const currentPredictionRequestId = currentPrediction?.requestId ?? null;
   const currentPredictionUpdatedAt = currentPrediction?.updatedAt ?? null;
   const currentResult = readPredictionResult(currentPrediction);
@@ -529,7 +529,7 @@ export function PredictionPanel({
                     : "Refresh workspace data to load opponent box scores."
                 }
                 label="Away team"
-                value={workspace.scout.summary?.teamName ?? "No saved opponent"}
+                value={workspace.scout?.summary?.teamName ?? "No saved opponent"}
               />
             </div>
           </Panel>

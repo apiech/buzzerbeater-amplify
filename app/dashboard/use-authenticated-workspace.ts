@@ -1,204 +1,241 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 
 import { client } from "@/app/amplify-client";
-import { fetchBillingSummary } from "@/app/billing-client";
 import {
   COMMERCIAL_MODE_DISABLED_SENTINEL,
   formatAmplifyErrors,
   formatClientError,
 } from "@/app/dashboard/remote-errors";
+import {
+  billingSummaryQueryOptions,
+  connectionQueryOptions,
+  homeWorkspaceQueryOptions,
+  leagueIntelQueryOptions,
+  lineupHelperWorkspaceQueryOptions,
+  playerLabQueryOptions,
+  refreshHomeWorkspace,
+  refreshSharedWorkspaceSection,
+} from "@/app/dashboard/workspace-query-client";
 import type {
   BillingSummary,
   BbConnectionRecord,
   DashboardWorkspace,
+  HomeWorkspacePayload,
 } from "@/app/types";
+import type { WorkspaceSection } from "@/app/workspace-sections";
+
+type WorkspaceExtraSectionKey = "lineupHelper" | "leagueIntel" | "playerLab";
+
+const sectionDependencies: Record<WorkspaceSection, WorkspaceExtraSectionKey[]> = {
+  highlights: [],
+  home: ["lineupHelper"],
+  league: ["leagueIntel"],
+  "league-history": [],
+  lineups: ["lineupHelper"],
+  ops: [],
+  players: ["playerLab"],
+  predictions: [],
+  recaps: [],
+  rivals: [],
+  scout: [],
+};
+
+function createWorkspaceFromHome(
+  home: HomeWorkspacePayload,
+  sections: {
+    leagueIntel?: DashboardWorkspace["leagueIntel"];
+    lineupHelper?: DashboardWorkspace["lineupHelper"];
+    playerLab?: DashboardWorkspace["playerLab"];
+  },
+): DashboardWorkspace {
+  return {
+    home,
+    leagueIntel: sections.leagueIntel ?? null,
+    lineupHelper: sections.lineupHelper ?? null,
+    playerLab: sections.playerLab ?? null,
+    scout: null,
+    syncedAt: home.syncedAt ?? null,
+  };
+}
+
+function formatQueryErrorMessage(error: unknown): string | null {
+  if (!error) {
+    return null;
+  }
+
+  return formatClientError(error);
+}
 
 export function useAuthenticatedWorkspace(args: {
+  activeSection: WorkspaceSection;
   commercialModeEnabled: boolean;
 }) {
-  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(
+  const queryClient = useQueryClient();
+  const [showCredentialForm, setShowCredentialForm] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(
     null,
   );
-  const [connection, setConnection] = useState<BbConnectionRecord | null>(null);
-  const [workspace, setWorkspace] = useState<DashboardWorkspace | null>(null);
-  const [billingError, setBillingError] = useState<string | null>(
-    args.commercialModeEnabled ? null : COMMERCIAL_MODE_DISABLED_SENTINEL,
-  );
-  const [isLoadingBilling, setIsLoadingBilling] = useState(
-    args.commercialModeEnabled,
-  );
-  const [isLoadingConnection, setIsLoadingConnection] = useState(true);
-  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
-  const [isDisconnecting, setIsDisconnecting] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [showCredentialForm, setShowCredentialForm] = useState(false);
+  const requiredSections = sectionDependencies[args.activeSection];
+
+  const connectionQuery = useQuery(connectionQueryOptions());
+  const connected = connectionQuery.data?.status === "CONNECTED";
+
+  const billingQuery = useQuery({
+    ...billingSummaryQueryOptions(),
+    enabled: args.commercialModeEnabled,
+  });
+  const homeQuery = useQuery({
+    ...homeWorkspaceQueryOptions(),
+    enabled: connected,
+  });
+  const lineupHelperQuery = useQuery({
+    ...lineupHelperWorkspaceQueryOptions(),
+    enabled: connected && requiredSections.includes("lineupHelper"),
+  });
+  const leagueIntelQuery = useQuery({
+    ...leagueIntelQueryOptions(),
+    enabled: connected && requiredSections.includes("leagueIntel"),
+  });
+  const playerLabQuery = useQuery({
+    ...playerLabQueryOptions(),
+    enabled: connected && requiredSections.includes("playerLab"),
+  });
+
+  useEffect(() => {
+    if (connectionQuery.data?.status !== "CONNECTED") {
+      setShowCredentialForm(false);
+    }
+  }, [connectionQuery.data?.status]);
+
+  const workspace = homeQuery.data
+    ? createWorkspaceFromHome(homeQuery.data, {
+        leagueIntel: leagueIntelQuery.data ?? null,
+        lineupHelper: lineupHelperQuery.data ?? null,
+        playerLab: playerLabQuery.data ?? null,
+      })
+    : null;
+
+  const workspaceError =
+    workspaceActionError ??
+    formatQueryErrorMessage(homeQuery.error) ??
+    (requiredSections.includes("lineupHelper")
+      ? formatQueryErrorMessage(lineupHelperQuery.error)
+      : null) ??
+    (requiredSections.includes("leagueIntel")
+      ? formatQueryErrorMessage(leagueIntelQuery.error)
+      : null) ??
+    (requiredSections.includes("playerLab")
+      ? formatQueryErrorMessage(playerLabQuery.error)
+      : null);
+
+  const isLoadingWorkspace =
+    connected &&
+    (homeQuery.isPending ||
+      (requiredSections.includes("lineupHelper") && lineupHelperQuery.isPending) ||
+      (requiredSections.includes("leagueIntel") && leagueIntelQuery.isPending) ||
+      (requiredSections.includes("playerLab") && playerLabQuery.isPending));
 
   async function loadConnection(): Promise<BbConnectionRecord | null> {
-    setIsLoadingConnection(true);
-    setConnectionError(null);
-
-    const { data, errors } = await client.reads.getCurrentBbConnection();
-
-    if (errors?.length) {
-      setConnection(null);
-      setConnectionError(formatAmplifyErrors(errors));
-      setIsLoadingConnection(false);
+    try {
+      return await queryClient.fetchQuery(connectionQueryOptions());
+    } catch {
       return null;
     }
-
-    const record = data ?? null;
-    setConnection(record);
-    setIsLoadingConnection(false);
-    return record;
   }
 
   async function loadBilling(): Promise<BillingSummary | null> {
     if (!args.commercialModeEnabled) {
-      setBillingSummary(null);
-      setBillingError(COMMERCIAL_MODE_DISABLED_SENTINEL);
-      setIsLoadingBilling(false);
       return null;
     }
 
-    setIsLoadingBilling(true);
-    setBillingError(null);
-
     try {
-      const summary = await fetchBillingSummary();
-      setBillingSummary(summary);
-      setIsLoadingBilling(false);
-      return summary;
-    } catch (error) {
-      setBillingSummary(null);
-      setBillingError(formatClientError(error));
-      setIsLoadingBilling(false);
+      return await queryClient.fetchQuery(billingSummaryQueryOptions());
+    } catch {
       return null;
     }
   }
 
   async function loadWorkspace(force = false): Promise<void> {
-    setIsLoadingWorkspace(true);
-    setWorkspaceError(null);
-
-    const homeResponse = force
-      ? await client.mutations.refreshWorkspace()
-      : await client.queries.getHomeWorkspace();
-
-    if (homeResponse.errors?.length || !homeResponse.data) {
-      setWorkspace(null);
-      setWorkspaceError(formatAmplifyErrors(homeResponse.errors));
-      setIsLoadingWorkspace(false);
+    setWorkspaceActionError(null);
+    const connection = await loadConnection();
+    if (connection?.status !== "CONNECTED") {
       return;
     }
 
-    const [
-      lineupHelperResponse,
-      scoutResponse,
-      leagueIntelResponse,
-      playerLabResponse,
-    ] = await Promise.all([
-      client.queries.getLineupHelperWorkspace(),
-      client.queries.getScoutWorkspace({}),
-      client.queries.getLeagueIntel(),
-      client.queries.getPlayerLab(),
-    ]);
-
-    const allErrors = [
-      ...(lineupHelperResponse.errors ?? []),
-      ...(scoutResponse.errors ?? []),
-      ...(leagueIntelResponse.errors ?? []),
-      ...(playerLabResponse.errors ?? []),
-    ];
-
-    if (
-      allErrors.length ||
-      !lineupHelperResponse.data ||
-      !scoutResponse.data ||
-      !leagueIntelResponse.data ||
-      !playerLabResponse.data
-    ) {
-      setWorkspace(null);
-      setWorkspaceError(formatAmplifyErrors(allErrors));
-      setIsLoadingWorkspace(false);
+    if (force) {
+      await refreshHomeWorkspace(queryClient);
+      await Promise.all(
+        requiredSections.map((sectionKey) =>
+          refreshSharedWorkspaceSection(queryClient, sectionKey),
+        ),
+      );
       return;
     }
 
-    setWorkspace({
-      home: homeResponse.data,
-      lineupHelper: lineupHelperResponse.data,
-      scout: scoutResponse.data,
-      leagueIntel: leagueIntelResponse.data,
-      playerLab: playerLabResponse.data,
-      syncedAt: homeResponse.data.syncedAt ?? null,
-    });
-    setIsLoadingWorkspace(false);
+    await queryClient.ensureQueryData(homeWorkspaceQueryOptions());
+    await Promise.all(
+      requiredSections.map((sectionKey) => {
+        if (sectionKey === "lineupHelper") {
+          return queryClient.ensureQueryData(lineupHelperWorkspaceQueryOptions());
+        }
+        if (sectionKey === "leagueIntel") {
+          return queryClient.ensureQueryData(leagueIntelQueryOptions());
+        }
+
+        return queryClient.ensureQueryData(playerLabQueryOptions());
+      }),
+    );
   }
 
-  const initializeWorkspaceEffect = useEffectEvent(
-    async (isCancelled: () => boolean) => {
-      const [record] = await Promise.all([loadConnection(), loadBilling()]);
-      if (isCancelled()) {
-        return;
-      }
-
-      if (record?.status === "CONNECTED") {
-        await loadWorkspace(false);
-      } else {
-        setWorkspace(null);
-      }
-    },
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    void initializeWorkspaceEffect(() => cancelled);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   async function handleRefresh(): Promise<void> {
-    await loadWorkspace(true);
-    await loadConnection();
-    await loadBilling();
+    setWorkspaceActionError(null);
+    try {
+      await loadWorkspace(true);
+      await Promise.all([loadConnection(), loadBilling()]);
+    } catch (error) {
+      setWorkspaceActionError(formatClientError(error));
+    }
   }
 
   async function handleDisconnect(): Promise<void> {
     setIsDisconnecting(true);
+    setWorkspaceActionError(null);
 
     const result = await client.mutations.disconnectBbAccount();
     if (result.errors?.length) {
-      setWorkspaceError(formatAmplifyErrors(result.errors));
+      setWorkspaceActionError(formatAmplifyErrors(result.errors));
       setIsDisconnecting(false);
       return;
     }
 
-    setWorkspace(null);
+    queryClient.removeQueries({ queryKey: ["workspace"] });
+    queryClient.removeQueries({ queryKey: ["billing"] });
     setShowCredentialForm(false);
     await loadConnection();
     setIsDisconnecting(false);
   }
 
   return {
-    billingError,
-    billingSummary,
-    connected: connection?.status === "CONNECTED",
-    connection,
-    connectionError,
+    billingError: args.commercialModeEnabled
+      ? formatQueryErrorMessage(billingQuery.error)
+      : COMMERCIAL_MODE_DISABLED_SENTINEL,
+    billingSummary: billingQuery.data ?? null,
+    connected,
+    connection: connectionQuery.data ?? null,
+    connectionError: formatQueryErrorMessage(connectionQuery.error),
     handleDisconnect,
     handleRefresh,
     isDisconnecting,
-    isLoadingBilling,
-    isLoadingConnection,
+    isLoadingBilling: args.commercialModeEnabled ? billingQuery.isPending : false,
+    isLoadingConnection: connectionQuery.isPending,
     isLoadingWorkspace,
     loadConnection,
     loadWorkspace,
     setShowCredentialForm,
-    setWorkspace,
     showCredentialForm,
     workspace,
     workspaceError,

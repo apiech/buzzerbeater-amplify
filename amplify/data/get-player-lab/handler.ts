@@ -8,7 +8,9 @@ type Handler = Schema["getPlayerLab"]["functionHandler"];
 export const handler: Handler = async (event) => {
   const workspace = await getOrRefreshWorkspace({
     env,
+    force: event.arguments.force ?? false,
     identity: event.identity,
+    syncActiveTrackedTeams: event.arguments.force ?? false,
   });
 
   return workspace.playerLab;

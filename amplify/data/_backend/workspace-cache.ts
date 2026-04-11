@@ -1,4 +1,4 @@
-export const WORKSPACE_CACHE_VERSION = 2;
+export const WORKSPACE_CACHE_VERSION = 4;
 
 export type WorkspaceCachePayload = {
   version: number;

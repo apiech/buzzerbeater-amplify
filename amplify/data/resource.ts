@@ -120,6 +120,24 @@ export const getScoutWorkspace = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const getScoutTeamSummary = defineFunction({
+  resourceGroupName: "data",
+  name: "get-scout-team-summary",
+  entry: "./get-scout-team-summary/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
+export const getScoutSchedule = defineFunction({
+  resourceGroupName: "data",
+  name: "get-scout-schedule",
+  entry: "./get-scout-schedule/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
 export const getLatestOpponentForecast = defineFunction({
   resourceGroupName: "data",
   name: "get-latest-opponent-forecast",
@@ -373,6 +391,8 @@ export const maintenanceProtectedFunctions = [
   getHomeWorkspace,
   getTeamHub,
   getScoutWorkspace,
+  getScoutTeamSummary,
+  getScoutSchedule,
   getLatestOpponentForecast,
   getLatestNextGameRecommendation,
   getLeagueIntel,
@@ -604,6 +624,60 @@ const schema = a
       hasBoxscore: a.boolean(),
     }),
 
+    ScoutScheduleCompetitionOption: a.customType({
+      count: a.integer().required(),
+      key: a.string().required(),
+      label: a.string().required(),
+      selectedByDefault: a.boolean().required(),
+    }),
+
+    ScoutScheduleRow: a.customType({
+      matchId: a.string(),
+      startTime: a.datetime(),
+      season: a.integer().required(),
+      competitionKey: a.string().required(),
+      competitionLabel: a.string().required(),
+      stageLabel: a.string(),
+      isTvGame: a.boolean().required(),
+      venue: a.string(),
+      opponentTeamId: a.string(),
+      opponentTeamName: a.string(),
+      teamOffense: a.string(),
+      teamDefense: a.string(),
+      teamBbStatsTotal: a.integer(),
+      opponentOffense: a.string(),
+      opponentDefense: a.string(),
+      opponentBbStatsTotal: a.integer(),
+      teamScore: a.integer(),
+      opponentScore: a.integer(),
+      outcome: a.string(),
+      hasBoxscore: a.boolean().required(),
+      seriousness: a.string(),
+      seriousnessScore: a.float(),
+      seriousnessReason: a.string(),
+    }),
+
+    ScoutScheduleSummary: a.customType({
+      totalGames: a.integer().required(),
+      completedGames: a.integer().required(),
+      upcomingGames: a.integer().required(),
+      seriousGames: a.integer().required(),
+      missingBoxscores: a.integer().required(),
+    }),
+
+    ScoutSchedule: a.customType({
+      availableSeasons: a.integer().required().array().required(),
+      competitionOptions: a
+        .ref("ScoutScheduleCompetitionOption")
+        .required()
+        .array()
+        .required(),
+      rows: a.ref("ScoutScheduleRow").required().array().required(),
+      selectedCompetitionKeys: a.string().required().array().required(),
+      selectedSeason: a.integer(),
+      summary: a.ref("ScoutScheduleSummary").required(),
+    }),
+
     OpponentSummary: a.customType({
       teamId: a.string(),
       teamName: a.string(),
@@ -765,6 +839,7 @@ const schema = a
         .array()
         .required(),
       recentMatchups: a.ref("MatchSummary").required().array().required(),
+      schedule: a.ref("ScoutSchedule"),
       summary: a.ref("ScoutWorkspaceSummary"),
       requestedTeamId: a.string(),
       message: a.string(),
@@ -887,6 +962,9 @@ const schema = a
 
     OpponentForecastCoverage: a.customType({
       recentGamesConsidered: a.integer().required(),
+      seriousGamesConsidered: a.integer().required(),
+      supportingGamesConsidered: a.integer().required(),
+      sampleStrategy: a.string().required(),
       headToHeadGamesConsidered: a.integer().required(),
       analogGamesConsidered: a.integer().required(),
       rosterPlayersConsidered: a.integer().required(),
@@ -2019,6 +2097,9 @@ const schema = a
 
     getHomeWorkspace: a
       .query()
+      .arguments({
+        force: a.boolean(),
+      })
       .returns(a.ref("HomeWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getHomeWorkspace)),
@@ -2032,11 +2113,36 @@ const schema = a
     getScoutWorkspace: a
       .query()
       .arguments({
+        competitionKeys: a.string().array(),
+        force: a.boolean(),
+        season: a.integer(),
         teamId: a.string(),
       })
       .returns(a.ref("ScoutWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getScoutWorkspace)),
+
+    getScoutTeamSummary: a
+      .query()
+      .arguments({
+        force: a.boolean(),
+        teamId: a.string(),
+      })
+      .returns(a.ref("ScoutWorkspace"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getScoutTeamSummary)),
+
+    getScoutSchedule: a
+      .query()
+      .arguments({
+        competitionKeys: a.string().array(),
+        force: a.boolean(),
+        season: a.integer(),
+        teamId: a.string(),
+      })
+      .returns(a.ref("ScoutSchedule"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getScoutSchedule)),
 
     getLatestOpponentForecast: a
       .query()
@@ -2058,6 +2164,9 @@ const schema = a
 
     getLeagueIntel: a
       .query()
+      .arguments({
+        force: a.boolean(),
+      })
       .returns(a.ref("LeagueIntelWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLeagueIntel)),
@@ -2073,6 +2182,9 @@ const schema = a
 
     getPlayerLab: a
       .query()
+      .arguments({
+        force: a.boolean(),
+      })
       .returns(a.ref("PlayerLabWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getPlayerLab)),
@@ -2085,6 +2197,9 @@ const schema = a
 
     getLineupHelperWorkspace: a
       .query()
+      .arguments({
+        force: a.boolean(),
+      })
       .returns(a.ref("LineupHelperWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLineupHelperWorkspace)),

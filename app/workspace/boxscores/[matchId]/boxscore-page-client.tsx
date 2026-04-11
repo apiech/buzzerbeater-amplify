@@ -459,7 +459,10 @@ function readPlayerStat(
   player: MatchBoxscorePlayerLine,
   key: string,
 ): string {
-  const entry = player.performance.find(
+  const performance = Array.isArray(player.performance)
+    ? player.performance
+    : [];
+  const entry = performance.find(
     (metric) => metric.key.toLowerCase() === key.toLowerCase(),
   );
   return formatMetricEntry(entry);

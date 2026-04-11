@@ -2786,19 +2786,24 @@ function extractTopPlayers(
         scorePlayerPerformance(right) - scorePlayerPerformance(left),
     )
     .slice(0, 3)
-    .map((player) => ({
-      assists: asNumberFromUnknown(player.performanceStats.ast),
-      blocks: asNumberFromUnknown(player.performanceStats.blk),
-      minutes: Object.values(player.minutesByPosition).reduce<number>(
-        (sum, value) => sum + (value ?? 0),
-        0,
-      ),
-      name: player.fullName,
-      points: asNumberFromUnknown(player.performanceStats.pts),
-      rebounds: asNumberFromUnknown(player.performanceStats.reb),
-      steals: asNumberFromUnknown(player.performanceStats.stl),
-      turnovers: asNumberFromUnknown(player.performanceStats.to),
-    }));
+    .map((player) => {
+      const performanceStats = player.performanceStats ?? {};
+      return {
+        assists: asNumberFromUnknown(performanceStats.ast),
+        blocks: asNumberFromUnknown(performanceStats.blk),
+        minutes: Object.values(
+          toOptionalRecord(player.minutesByPosition) ?? {},
+        ).reduce<number>(
+          (sum, value) => sum + asNumberFromUnknown(value),
+          0,
+        ),
+        name: player.fullName,
+        points: asNumberFromUnknown(performanceStats.pts),
+        rebounds: asNumberFromUnknown(performanceStats.reb),
+        steals: asNumberFromUnknown(performanceStats.stl),
+        turnovers: asNumberFromUnknown(performanceStats.to),
+      };
+    });
 }
 
 function isRegularSeasonLeagueContextMatch(match: BBApiScheduleMatch): boolean {
@@ -2808,12 +2813,13 @@ function isRegularSeasonLeagueContextMatch(match: BBApiScheduleMatch): boolean {
 }
 
 function scorePlayerPerformance(player: BBApiBoxScorePlayer): number {
-  const points = asNumberFromUnknown(player.performanceStats.pts);
-  const rebounds = asNumberFromUnknown(player.performanceStats.reb);
-  const assists = asNumberFromUnknown(player.performanceStats.ast);
-  const steals = asNumberFromUnknown(player.performanceStats.stl);
-  const blocks = asNumberFromUnknown(player.performanceStats.blk);
-  const turnovers = asNumberFromUnknown(player.performanceStats.to);
+  const performanceStats = player.performanceStats ?? {};
+  const points = asNumberFromUnknown(performanceStats.pts);
+  const rebounds = asNumberFromUnknown(performanceStats.reb);
+  const assists = asNumberFromUnknown(performanceStats.ast);
+  const steals = asNumberFromUnknown(performanceStats.stl);
+  const blocks = asNumberFromUnknown(performanceStats.blk);
+  const turnovers = asNumberFromUnknown(performanceStats.to);
 
   return (
     points + rebounds * 0.7 + assists * 0.7 + steals + blocks - turnovers * 0.5
@@ -3598,6 +3604,12 @@ function asNumberFromUnknown(value: unknown): number {
     : typeof value === "string"
       ? Number(value) || 0
       : 0;
+}
+
+function toOptionalRecord(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
 }
 
 function resolveUserId(identity: unknown): string | null {

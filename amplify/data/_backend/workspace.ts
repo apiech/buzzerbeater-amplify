@@ -13,6 +13,7 @@ import type {
   BBApiCurrentWorkspace,
   BBApiOwnedRosterPlayer,
   BBApiRosterPlayer,
+  BBApiSchedule,
   BBApiScheduleMatch,
   BBApiStandings,
   BBApiTeamInfo,
@@ -41,6 +42,7 @@ import {
   createSyncRun,
   deleteBbCredential,
   getBbConnection,
+  getMatchBoxscore,
   getTrackedPlayer as getTrackedPlayerRecord,
   getSharedPlayerCardRecord,
   type PlayerSkillObservationRecord,
@@ -64,6 +66,11 @@ import {
   normalizeScheduleType,
   type CompetitiveRecentSample,
 } from "./match-importance";
+import {
+  buildOpponentCompetitionProfile,
+  type ForecastSampleSelection,
+  type OpponentCompetitionProfile,
+} from "./opponent-competition-profile";
 import { assertMaintenanceInactive } from "./maintenance";
 import {
   buildWorkspaceCachePayload,
@@ -86,6 +93,8 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 type HomeWorkspaceResult = ResolverResult<"getHomeWorkspace">;
 type TeamHubWorkspaceResult = ResolverResult<"getTeamHub">;
 type ScoutWorkspaceResult = ResolverResult<"getScoutWorkspace">;
+type ScoutTeamSummaryResult = ResolverResult<"getScoutTeamSummary">;
+type ScoutScheduleResult = NonNullable<ScoutWorkspaceResult["schedule"]>;
 type LeagueIntelWorkspaceResult = ResolverResult<"getLeagueIntel">;
 type PlayerLabWorkspaceResult = ResolverResult<"getPlayerLab">;
 type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
@@ -144,6 +153,8 @@ const defaultWorkspaceDependencies: WorkspaceDependencies = {
 export const __testing = {
   buildConnectionRecord,
   buildHomeCorePlayers,
+  buildHomeWorkspace,
+  countStarters,
   matchIncludesTeam,
   selectCompletedMatches,
   selectNextMatch,
@@ -412,10 +423,17 @@ export async function revokePlayerCard(
 }
 
 export async function getScoutWorkspaceForTeam(args: {
+  competitionKeys?: string[] | null;
   env: GraphqlEnv;
+  force?: boolean;
   identity: unknown;
+  season?: number | null;
   teamId?: string | null;
-}): Promise<{ connection: BbConnectionRecord; scout: ScoutWorkspaceResult }> {
+}): Promise<{
+  competitionProfile: OpponentCompetitionProfile | null;
+  connection: BbConnectionRecord;
+  scout: ScoutWorkspaceResult;
+}> {
   await assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
@@ -425,25 +443,18 @@ export async function getScoutWorkspaceForTeam(args: {
 
   const baseWorkspace = await getOrRefreshWorkspace({
     env: args.env,
+    force: args.force ?? false,
     identity: args.identity,
+    syncActiveTrackedTeams: args.force ?? false,
   });
 
-  const requestedTeamId = args.teamId?.trim() ?? "";
-  if (
-    !requestedTeamId ||
-    requestedTeamId === (baseWorkspace.scout.teamId ?? null)
-  ) {
+  const requestedTeamId = normalizeScoutRequestedTeamId(args.teamId);
+  const resolvedTeamId = resolveScoutTeamId(baseWorkspace, requestedTeamId);
+  if (!resolvedTeamId) {
     return {
+      competitionProfile: null,
       connection: baseWorkspace.connection,
-      scout: {
-        syncedAt: baseWorkspace.scout.syncedAt ?? null,
-        teamId: baseWorkspace.scout.teamId ?? null,
-        availableOpponents: baseWorkspace.scout.availableOpponents,
-        recentMatchups: baseWorkspace.scout.recentMatchups,
-        summary: baseWorkspace.scout.summary ?? null,
-        requestedTeamId: requestedTeamId || baseWorkspace.scout.teamId || null,
-        message: baseWorkspace.scout.message ?? null,
-      },
+      scout: buildScoutFallback(baseWorkspace, requestedTeamId),
     };
   }
 
@@ -460,9 +471,15 @@ export async function getScoutWorkspaceForTeam(args: {
   );
   const currentBoxScores = await fetchRecentBoxScores(client, recentMatches);
   const opponentWorkspace = await fetchOpponentWorkspace(
+    args.env,
+    userId,
     client,
-    requestedTeamId,
+    resolvedTeamId,
     currentWorkspace,
+    {
+      competitionKeys: args.competitionKeys ?? null,
+      selectedSeason: args.season ?? null,
+    },
   );
   const fetchedAt = new Date().toISOString();
 
@@ -477,15 +494,126 @@ export async function getScoutWorkspaceForTeam(args: {
   );
 
   return {
+    competitionProfile: opponentWorkspace?.competitionProfile ?? null,
     connection: baseWorkspace.connection,
     scout: buildScoutWorkspace(
       currentWorkspace,
       currentBoxScores,
       opponentWorkspace,
-      requestedTeamId,
+      resolvedTeamId,
       fetchedAt,
     ),
   };
+}
+
+export async function getScoutTeamSummaryForTeam(args: {
+  env: GraphqlEnv;
+  force?: boolean;
+  identity: unknown;
+  teamId?: string | null;
+}): Promise<{
+  connection: BbConnectionRecord;
+  scout: ScoutTeamSummaryResult;
+}> {
+  await assertMaintenanceInactive();
+
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+
+  const baseWorkspace = await getOrRefreshWorkspace({
+    env: args.env,
+    force: args.force ?? false,
+    identity: args.identity,
+    syncActiveTrackedTeams: args.force ?? false,
+  });
+
+  const requestedTeamId = normalizeScoutRequestedTeamId(args.teamId);
+  const resolvedTeamId = resolveScoutTeamId(baseWorkspace, requestedTeamId);
+  if (!resolvedTeamId) {
+    return {
+      connection: baseWorkspace.connection,
+      scout: buildScoutFallback(baseWorkspace, requestedTeamId),
+    };
+  }
+
+  const accessKey = await resolveAccessKey(args.env, userId);
+  const client = new BBXmlApiClient({
+    username: baseWorkspace.connection.bbLoginName,
+    securityCode: accessKey,
+  });
+  const currentWorkspace = await client.getCurrentWorkspace();
+  const recentMatches = selectRecentMatches(
+    currentWorkspace.schedule.matches,
+    currentWorkspace.teamInfo.teamId,
+  );
+  const currentBoxScores = await fetchRecentBoxScores(client, recentMatches);
+  const opponentWorkspace = await fetchHomeOpponentWorkspace(
+    args.env,
+    userId,
+    client,
+    resolvedTeamId,
+    currentWorkspace,
+  );
+  const fetchedAt = new Date().toISOString();
+
+  return {
+    connection: baseWorkspace.connection,
+    scout: buildScoutWorkspace(
+      currentWorkspace,
+      currentBoxScores,
+      opponentWorkspace,
+      resolvedTeamId,
+      fetchedAt,
+    ),
+  };
+}
+
+export async function getScoutScheduleForTeam(args: {
+  competitionKeys?: string[] | null;
+  env: GraphqlEnv;
+  force?: boolean;
+  identity: unknown;
+  season?: number | null;
+  teamId?: string | null;
+}): Promise<ScoutScheduleResult | null> {
+  await assertMaintenanceInactive();
+
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+
+  const baseWorkspace = await getOrRefreshWorkspace({
+    env: args.env,
+    force: args.force ?? false,
+    identity: args.identity,
+    syncActiveTrackedTeams: args.force ?? false,
+  });
+
+  const requestedTeamId = normalizeScoutRequestedTeamId(args.teamId);
+  const resolvedTeamId = resolveScoutTeamId(baseWorkspace, requestedTeamId);
+  if (!resolvedTeamId) {
+    return null;
+  }
+
+  const accessKey = await resolveAccessKey(args.env, userId);
+  const client = new BBXmlApiClient({
+    username: baseWorkspace.connection.bbLoginName,
+    securityCode: accessKey,
+  });
+  const currentWorkspace = await client.getCurrentWorkspace();
+
+  return fetchOpponentSchedule({
+    client,
+    competitionKeys: args.competitionKeys ?? null,
+    currentSeason: currentWorkspace.schedule.season ?? null,
+    env: args.env,
+    opponentTeamId: resolvedTeamId,
+    selectedSeason: args.season ?? null,
+    userId,
+  });
 }
 
 export async function lookupSharedPlayerCardByToken(
@@ -790,7 +918,9 @@ async function syncWorkspace(args: {
       : null;
 
     const opponentWorkspace = nextOpponentTeamId
-      ? await fetchOpponentWorkspace(
+      ? await fetchHomeOpponentWorkspace(
+          args.env,
+          args.userId,
           client,
           nextOpponentTeamId,
           currentWorkspace,
@@ -1003,7 +1133,7 @@ async function persistWorkspace(
 
   for (const boxScore of [
     ...currentBoxScores,
-    ...(opponentWorkspace?.recentBoxScores ?? []),
+    ...(opponentWorkspace?.hydratedBoxScores ?? []),
   ]) {
     await upsertMatchBoxscore(env, {
       userId,
@@ -1064,46 +1194,275 @@ async function syncOwnedActiveTrackedTeams(
 }
 
 type OpponentWorkspace = {
+  competitionProfile: OpponentCompetitionProfile | null;
+  forecastSample: ForecastSampleSelection | null;
+  hydratedBoxScores: BBApiBoxScore[];
   teamInfo: BBApiTeamInfo;
   roster: { players: BBApiRosterPlayer[] };
+  schedule: ScoutScheduleResult | null;
   teamStats: BBApiTeamStats | null;
   nextMatch: BBApiScheduleMatch | null;
   recentMatches: BBApiScheduleMatch[];
   recentBoxScores: BBApiBoxScore[];
 };
 
-async function fetchOpponentWorkspace(
+function normalizeScoutRequestedTeamId(teamId?: string | null): string {
+  return teamId?.trim() ?? "";
+}
+
+function resolveScoutTeamId(
+  baseWorkspace: WorkspaceBundle,
+  requestedTeamId: string,
+): string {
+  return (
+    requestedTeamId ||
+    baseWorkspace.home.nextMatch?.opponentTeamId ||
+    baseWorkspace.scout.teamId ||
+    ""
+  );
+}
+
+function buildScoutFallback(
+  baseWorkspace: WorkspaceBundle,
+  requestedTeamId: string,
+): ScoutTeamSummaryResult {
+  return {
+    syncedAt: baseWorkspace.scout.syncedAt ?? null,
+    teamId: baseWorkspace.scout.teamId ?? null,
+    availableOpponents: baseWorkspace.scout.availableOpponents,
+    recentMatchups: baseWorkspace.scout.recentMatchups,
+    schedule: null,
+    summary: baseWorkspace.scout.summary ?? null,
+    requestedTeamId: requestedTeamId || baseWorkspace.scout.requestedTeamId || null,
+    message: baseWorkspace.scout.message ?? null,
+  };
+}
+
+async function fetchHomeOpponentWorkspace(
+  env: GraphqlEnv,
+  userId: string,
   client: BBXmlApiClient,
   opponentTeamId: string,
   currentWorkspace: BBApiCurrentWorkspace,
 ): Promise<OpponentWorkspace> {
+  const currentSeason = currentWorkspace.schedule.season ?? undefined;
+  const emptySchedule: BBApiSchedule = {
+    matches: [],
+    retrievedAt: null,
+    season: currentWorkspace.schedule.season ?? null,
+    teamId: opponentTeamId,
+    version: "1",
+  };
   const [teamInfo, roster, teamStats, schedule] = await Promise.all([
     client.getTeamInfo(opponentTeamId),
     client.getRoster(opponentTeamId),
     client
-      .getTeamStats(
-        opponentTeamId,
-        currentWorkspace.schedule.season ?? undefined,
-        "averages",
-      )
+      .getTeamStats(opponentTeamId, currentSeason, "averages")
       .catch(() => null),
-    client.getSchedule(
-      opponentTeamId,
-      currentWorkspace.schedule.season ?? undefined,
-    ),
+    client.getSchedule(opponentTeamId, currentSeason).catch(() => emptySchedule),
   ]);
-
   const recentMatches = selectRecentMatches(schedule.matches, opponentTeamId);
-  const recentBoxScores = await fetchRecentBoxScores(client, recentMatches);
+  const recentBoxScores = await hydrateCompletedBoxScoresForMatches({
+    client,
+    env,
+    matches: recentMatches,
+    teamId: opponentTeamId,
+    userId,
+  });
 
   return {
+    competitionProfile: null,
+    forecastSample: null,
+    hydratedBoxScores: recentBoxScores,
     teamInfo,
     roster,
+    schedule: null,
     teamStats,
     nextMatch: selectNextMatch(schedule.matches, opponentTeamId),
     recentMatches,
     recentBoxScores,
   };
+}
+
+async function fetchOpponentWorkspace(
+  env: GraphqlEnv,
+  userId: string,
+  client: BBXmlApiClient,
+  opponentTeamId: string,
+  currentWorkspace: BBApiCurrentWorkspace,
+  options: {
+    competitionKeys: string[] | null;
+    selectedSeason: number | null;
+  },
+): Promise<OpponentWorkspace> {
+  const seasonsResponse = await client.getSeasons().catch(() => ({
+    seasons: [{ finish: null, id: currentWorkspace.schedule.season ?? null, start: null }],
+    version: "1",
+  }));
+  const availableSeasons = seasonsResponse.seasons
+    .map((season) => season.id)
+    .filter((seasonId): seasonId is number => Number.isInteger(seasonId))
+    .sort((left, right) => right - left);
+  const latestSeason =
+    availableSeasons[0] ?? currentWorkspace.schedule.season ?? null;
+  const selectedSeason =
+    options.selectedSeason !== null &&
+    availableSeasons.includes(options.selectedSeason)
+      ? options.selectedSeason
+      : latestSeason;
+  const forecastSeasons = [latestSeason, availableSeasons[1] ?? null, selectedSeason]
+    .filter((season): season is number => Number.isInteger(season));
+  const scheduleResults = await Promise.all(
+    Array.from(new Set(forecastSeasons)).map(async (season) => {
+      try {
+        const schedule = await client.getSchedule(opponentTeamId, season);
+        return { schedule, season };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const scheduleBySeason = new Map<number, BBApiSchedule>(
+    scheduleResults
+      .filter(
+        (result): result is { schedule: BBApiSchedule; season: number } =>
+          result !== null,
+      )
+      .map((result) => [result.season, result.schedule]),
+  );
+  const referenceSeason = latestSeason ?? selectedSeason;
+  const referenceSchedule = referenceSeason
+    ? (scheduleBySeason.get(referenceSeason) ?? null)
+    : null;
+
+  const [teamInfo, roster, teamStats] = await Promise.all([
+    client.getTeamInfo(opponentTeamId),
+    client.getRoster(opponentTeamId),
+    client
+      .getTeamStats(
+        opponentTeamId,
+        latestSeason ?? currentWorkspace.schedule.season ?? undefined,
+        "averages",
+      )
+      .catch(() => null),
+  ]);
+  const hydratedSeasons = await Promise.all(
+    Array.from(scheduleBySeason.entries()).map(async ([season, schedule]) => ({
+      boxScores: await hydrateCompletedBoxScoresForMatches({
+        client,
+        env,
+        matches: schedule.matches,
+        teamId: opponentTeamId,
+        userId,
+      }),
+      matches: schedule.matches,
+      season,
+    })),
+  );
+  const competitionProfile = buildOpponentCompetitionProfile({
+    availableSeasons,
+    competitionKeys: options.competitionKeys,
+    seasons: hydratedSeasons,
+    selectedSeason,
+    teamId: opponentTeamId,
+  });
+  const hydratedBoxScoreMap = new Map<string, BBApiBoxScore>();
+  for (const season of hydratedSeasons) {
+    for (const boxScore of season.boxScores) {
+      if (boxScore.matchId) {
+        hydratedBoxScoreMap.set(boxScore.matchId, boxScore);
+      }
+    }
+  }
+  const recentMatches = referenceSchedule
+    ? selectRecentMatches(referenceSchedule.matches, opponentTeamId)
+    : [];
+  const recentBoxScores = recentMatches
+    .map((match) => (match.id ? (hydratedBoxScoreMap.get(match.id) ?? null) : null))
+    .filter((boxScore): boxScore is BBApiBoxScore => boxScore !== null);
+
+  return {
+    competitionProfile,
+    forecastSample: competitionProfile.forecastSample,
+    hydratedBoxScores: Array.from(hydratedBoxScoreMap.values()),
+    teamInfo,
+    roster,
+    schedule: toScoutScheduleResult(competitionProfile),
+    teamStats,
+    nextMatch: referenceSchedule
+      ? selectNextMatch(referenceSchedule.matches, opponentTeamId)
+      : null,
+    recentMatches,
+    recentBoxScores,
+  };
+}
+
+async function fetchOpponentSchedule(args: {
+  client: BBXmlApiClient;
+  competitionKeys: string[] | null;
+  currentSeason: number | null;
+  env: GraphqlEnv;
+  opponentTeamId: string;
+  selectedSeason: number | null;
+  userId: string;
+}): Promise<ScoutScheduleResult | null> {
+  const seasonsResponse = await args.client.getSeasons().catch(() => ({
+    seasons: [{ finish: null, id: args.currentSeason ?? null, start: null }],
+    version: "1",
+  }));
+  const availableSeasons = seasonsResponse.seasons
+    .map((season) => season.id)
+    .filter((seasonId): seasonId is number => Number.isInteger(seasonId))
+    .sort((left, right) => right - left);
+  const latestSeason = availableSeasons[0] ?? args.currentSeason ?? null;
+  const selectedSeason =
+    args.selectedSeason !== null &&
+    availableSeasons.includes(args.selectedSeason)
+      ? args.selectedSeason
+      : latestSeason;
+  const forecastSeasons = [
+    latestSeason,
+    availableSeasons[1] ?? null,
+    selectedSeason,
+  ].filter((season): season is number => Number.isInteger(season));
+  const scheduleResults = await Promise.all(
+    Array.from(new Set(forecastSeasons)).map(async (season) => {
+      try {
+        const schedule = await args.client.getSchedule(args.opponentTeamId, season);
+        return { schedule, season };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const hydratedSeasons = await Promise.all(
+    scheduleResults
+      .filter(
+        (result): result is { schedule: BBApiSchedule; season: number } =>
+          result !== null,
+      )
+      .map(async ({ schedule, season }) => ({
+        boxScores: await hydrateCompletedBoxScoresForMatches({
+          client: args.client,
+          env: args.env,
+          matches: schedule.matches,
+          teamId: args.opponentTeamId,
+          userId: args.userId,
+        }),
+        matches: schedule.matches,
+        season,
+      })),
+  );
+
+  const competitionProfile = buildOpponentCompetitionProfile({
+    availableSeasons,
+    competitionKeys: args.competitionKeys,
+    seasons: hydratedSeasons,
+    selectedSeason,
+    teamId: args.opponentTeamId,
+  });
+
+  return toScoutScheduleResult(competitionProfile);
 }
 
 async function fetchRecentBoxScores(
@@ -1123,6 +1482,111 @@ async function fetchRecentBoxScores(
   return boxScores.filter(
     (boxScore): boxScore is BBApiBoxScore => boxScore !== null,
   );
+}
+
+async function hydrateCompletedBoxScoresForMatches(args: {
+  client: BBXmlApiClient;
+  env: GraphqlEnv;
+  matches: BBApiScheduleMatch[];
+  teamId: string | null;
+  userId: string;
+}): Promise<BBApiBoxScore[]> {
+  const completedMatchIds = Array.from(
+    new Set(
+      args.matches
+        .filter((match) => isCompletedScheduleMatch(match, args.teamId))
+        .map((match) => match.id)
+        .filter((matchId): matchId is string => Boolean(matchId)),
+    ),
+  );
+  if (!completedMatchIds.length) {
+    return [];
+  }
+
+  const storedRecords = await Promise.all(
+    completedMatchIds.map((matchId) => getMatchBoxscore(args.env, args.userId, matchId)),
+  );
+  const boxScoresByMatchId = new Map<string, BBApiBoxScore>();
+  const missingMatchIds: string[] = [];
+
+  completedMatchIds.forEach((matchId, index) => {
+    const record = storedRecords[index];
+    const boxScore = record?.boxscoreJson as BBApiBoxScore | undefined;
+    if (boxScore) {
+      boxScoresByMatchId.set(matchId, boxScore);
+      return;
+    }
+    missingMatchIds.push(matchId);
+  });
+
+  const fetchedBoxScores = await fetchBoxScoresWithConcurrency(
+    args.client,
+    missingMatchIds,
+    4,
+  );
+  for (const boxScore of fetchedBoxScores) {
+    if (!boxScore.matchId) {
+      continue;
+    }
+    boxScoresByMatchId.set(boxScore.matchId, boxScore);
+    await upsertMatchBoxscore(args.env, {
+      boxscoreJson: boxScore,
+      fetchedAt: boxScore.retrievedAt ?? new Date().toISOString(),
+      matchId: boxScore.matchId,
+      userId: args.userId,
+    });
+  }
+
+  return completedMatchIds
+    .map((matchId) => boxScoresByMatchId.get(matchId) ?? null)
+    .filter((boxScore): boxScore is BBApiBoxScore => boxScore !== null);
+}
+
+async function fetchBoxScoresWithConcurrency(
+  client: BBXmlApiClient,
+  matchIds: string[],
+  concurrency: number,
+): Promise<BBApiBoxScore[]> {
+  const results: BBApiBoxScore[] = [];
+  const resolvedConcurrency = Math.max(1, concurrency);
+
+  for (let index = 0; index < matchIds.length; index += resolvedConcurrency) {
+    const chunk = matchIds.slice(index, index + resolvedConcurrency);
+    const chunkResults = await Promise.all(
+      chunk.map(async (matchId) => {
+        try {
+          return await client.getBoxScore(matchId);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    results.push(
+      ...chunkResults.filter(
+        (boxScore): boxScore is BBApiBoxScore => boxScore !== null,
+      ),
+    );
+  }
+
+  return results;
+}
+
+function toScoutScheduleResult(
+  profile: OpponentCompetitionProfile,
+): ScoutScheduleResult {
+  return {
+    availableSeasons: profile.availableSeasons,
+    competitionOptions: profile.competitionOptions.map((option) => ({
+      count: option.count,
+      key: option.key,
+      label: option.label,
+      selectedByDefault: option.selectedByDefault,
+    })),
+    rows: profile.rows,
+    selectedCompetitionKeys: profile.selectedCompetitionKeys,
+    selectedSeason: profile.selectedSeason,
+    summary: profile.summary,
+  };
 }
 
 function buildHomeWorkspace(
@@ -1249,6 +1713,7 @@ export function buildScoutWorkspace(
       teamId: null,
       availableOpponents,
       recentMatchups: [],
+      schedule: null,
       summary: null,
       requestedTeamId,
       message: "No upcoming opponent is available yet.",
@@ -1284,6 +1749,7 @@ export function buildScoutWorkspace(
     teamId: opponentWorkspace.teamInfo.teamId,
     availableOpponents,
     recentMatchups,
+    schedule: opponentWorkspace.schedule ?? null,
     requestedTeamId: requestedTeamId ?? opponentWorkspace.teamInfo.teamId,
     summary: {
       teamName: opponentWorkspace.teamInfo.teamName,
@@ -1653,6 +2119,17 @@ function selectCompletedMatches(
     .slice(0, limit);
 }
 
+function isCompletedScheduleMatch(
+  match: BBApiScheduleMatch,
+  teamId: string | null,
+): boolean {
+  return (
+    isClubMatchForTeam(match, teamId) &&
+    deriveTeamScore(match, teamId) !== null &&
+    deriveOpponentScore(match, teamId) !== null
+  );
+}
+
 function selectRecentMatches(
   matches: BBApiScheduleMatch[],
   teamId: string | null,
@@ -1670,7 +2147,7 @@ function countStarters(
       return accumulator;
     }
     for (const player of team.players) {
-      const started = asBoolean(player.details.isStarter) ?? false;
+      const started = asBoolean(toRecord(player.details)?.isStarter) ?? false;
       if (started && player.id) {
         accumulator[player.id] = (accumulator[player.id] ?? 0) + 1;
       }
@@ -2000,7 +2477,8 @@ function summarizeRecentUsage(
       };
       current.totalMinutes += minutes;
       current.totalActivityScore += calculateRecentActivityScore(player);
-      current.recentStartCount += asBoolean(player.details.isStarter) ? 1 : 0;
+      current.recentStartCount +=
+        asBoolean(toRecord(player.details)?.isStarter) ? 1 : 0;
       current.recentGamesPlayed += minutes > 0 ? 1 : 0;
       usageByPlayerId.set(player.id, current);
     }
@@ -2039,7 +2517,7 @@ function resolveBoxScoreTeamForTeam(
 
 function totalMinutesPlayed(player: BBApiBoxScorePlayer): number {
   let total = 0;
-  for (const minutes of Object.values(player.minutesByPosition)) {
+  for (const minutes of Object.values(toRecord(player.minutesByPosition) ?? {})) {
     if (typeof minutes === "number" && Number.isFinite(minutes)) {
       total += minutes;
     }
@@ -2048,12 +2526,13 @@ function totalMinutesPlayed(player: BBApiBoxScorePlayer): number {
 }
 
 function calculateRecentActivityScore(player: BBApiBoxScorePlayer): number {
-  const pts = asNumber(player.performanceStats.pts) ?? 0;
-  const reb = asNumber(player.performanceStats.reb) ?? 0;
-  const ast = asNumber(player.performanceStats.ast) ?? 0;
-  const stl = asNumber(player.performanceStats.stl) ?? 0;
-  const blk = asNumber(player.performanceStats.blk) ?? 0;
-  const turnovers = asNumber(player.performanceStats.to) ?? 0;
+  const performanceStats = player.performanceStats ?? {};
+  const pts = asNumber(performanceStats.pts) ?? 0;
+  const reb = asNumber(performanceStats.reb) ?? 0;
+  const ast = asNumber(performanceStats.ast) ?? 0;
+  const stl = asNumber(performanceStats.stl) ?? 0;
+  const blk = asNumber(performanceStats.blk) ?? 0;
+  const turnovers = asNumber(performanceStats.to) ?? 0;
 
   return pts + 0.7 * reb + 0.7 * ast + 1.5 * (stl + blk) - turnovers;
 }

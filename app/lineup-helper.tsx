@@ -69,23 +69,40 @@ const EMPTY_ROSTER: LineupHelperRosterPlayer[] = [];
 const ENTHUSIASM_OPTIONS = [...allScaleValues("enthusiasm")].reverse();
 const minuteSummaryGridClassName = "grid gap-3 md:grid-cols-3 xl:grid-cols-6";
 
-export function LineupHelper() {
-  const [workspace, setWorkspace] =
-    useState<DecodedLineupHelperWorkspace | null>(null);
+export function LineupHelper({
+  initialWorkspace,
+}: {
+  initialWorkspace?: LineupHelperWorkspaceRecord;
+}) {
+  const [workspace, setWorkspace] = useState<DecodedLineupHelperWorkspace | null>(
+    () =>
+      initialWorkspace ? decodeLineupHelperWorkspace(initialWorkspace) : null,
+  );
   const [evaluation, setEvaluation] = useState<LineupHelperEvaluation | null>(
-    null,
+    () =>
+      initialWorkspace
+        ? decodeLineupHelperWorkspace(initialWorkspace).evaluation
+        : null,
   );
   const [lineupLayout, setLineupLayout] = useState<LineupSlotLayout>(() =>
-    emptyLineupLayout(),
+    initialWorkspace
+      ? lineupLayoutFromAssignments(
+          decodeLineupHelperWorkspace(initialWorkspace).defaultAssignments,
+        )
+      : emptyLineupLayout(),
   );
   const [context, setContext] = useState<LineupHelperContext>(() =>
-    normalizeHelperContext({}),
+    initialWorkspace
+      ? decodeLineupHelperWorkspace(initialWorkspace).defaultContext
+      : normalizeHelperContext({}),
   );
   const [algorithm, setAlgorithm] =
     useState<LineupHelperAlgorithm>("EXACT");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
-  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true);
+  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(
+    !initialWorkspace,
+  );
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [workspaceLoadVersion, setWorkspaceLoadVersion] = useState(0);
@@ -108,7 +125,32 @@ export function LineupHelper() {
   const visibleEvaluation = canEvaluate ? evaluation : null;
 
   useEffect(() => {
+    if (!initialWorkspace) {
+      return;
+    }
+
+    const nextWorkspace = decodeLineupHelperWorkspace(initialWorkspace);
+    setWorkspace(nextWorkspace);
+    setEvaluation(nextWorkspace.evaluation);
+    setContext(nextWorkspace.defaultContext);
+    suppressNextEvaluationRef.current = true;
+    setLineupLayout(
+      lineupLayoutFromAssignments(nextWorkspace.defaultAssignments),
+    );
+    setWorkspaceError(null);
+    setEvaluationError(null);
+    setIsLoadingWorkspace(false);
+  }, [initialWorkspace]);
+
+  useEffect(() => {
     let cancelled = false;
+
+    if (workspaceLoadVersion === 0 && initialWorkspace) {
+      setIsLoadingWorkspace(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     async function run() {
       setIsLoadingWorkspace(true);
@@ -131,7 +173,7 @@ export function LineupHelper() {
       }
 
       const nextWorkspace = decodeLineupHelperWorkspace(response.data);
-    setWorkspace(nextWorkspace);
+      setWorkspace(nextWorkspace);
       setEvaluation(nextWorkspace.evaluation);
       setContext(nextWorkspace.defaultContext);
       suppressNextEvaluationRef.current = true;
@@ -147,7 +189,7 @@ export function LineupHelper() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceLoadVersion]);
+  }, [initialWorkspace, workspaceLoadVersion]);
 
   useEffect(() => {
     if (

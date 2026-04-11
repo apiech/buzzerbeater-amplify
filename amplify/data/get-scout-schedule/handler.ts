@@ -1,15 +1,17 @@
-import { env } from "$amplify/env/get-scout-workspace";
+import { env } from "$amplify/env/get-scout-schedule";
 
 import type { Schema } from "../resource";
-import { getScoutWorkspaceForTeam } from "../_backend/workspace";
+import { getScoutScheduleForTeam } from "../_backend/workspace";
 
-type Handler = Schema["getScoutWorkspace"]["functionHandler"];
+type Handler = Schema["getScoutSchedule"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
   const competitionKeys = event.arguments.competitionKeys?.filter(
-    (value): value is string => typeof value === "string" && value.trim().length > 0,
+    (value): value is string =>
+      typeof value === "string" && value.trim().length > 0,
   );
-  const workspace = await getScoutWorkspaceForTeam({
+
+  return getScoutScheduleForTeam({
     competitionKeys: competitionKeys?.length ? competitionKeys : undefined,
     env,
     force: event.arguments.force ?? false,
@@ -17,6 +19,4 @@ export const handler: Handler = async (event) => {
     season: event.arguments.season ?? undefined,
     teamId: event.arguments.teamId ?? null,
   });
-
-  return workspace.scout;
 };

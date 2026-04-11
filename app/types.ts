@@ -128,6 +128,12 @@ export type TeamHubPayload = NonNullable<Schema["getTeamHub"]["returnType"]>;
 export type ScoutWorkspacePayload = NonNullable<
   Schema["getScoutWorkspace"]["returnType"]
 >;
+export type ScoutTeamSummaryPayload = NonNullable<
+  Schema["getScoutTeamSummary"]["returnType"]
+>;
+export type ScoutSchedulePayload = NonNullable<
+  Schema["getScoutSchedule"]["returnType"]
+>;
 export type LeagueIntelPayload = NonNullable<
   Schema["getLeagueIntel"]["returnType"]
 >;
@@ -335,10 +341,10 @@ export type LeagueHistoryRow = LeagueHistoryPayload["rows"][number];
 
 export type DashboardWorkspace = {
   home: HomeWorkspacePayload;
-  lineupHelper: LineupHelperWorkspaceRecord;
-  scout: ScoutWorkspacePayload;
-  leagueIntel: LeagueIntelPayload;
-  playerLab: PlayerLabPayload;
+  lineupHelper: LineupHelperWorkspaceRecord | null;
+  scout: ScoutWorkspacePayload | null;
+  leagueIntel: LeagueIntelPayload | null;
+  playerLab: PlayerLabPayload | null;
   syncedAt: string | null;
 };
 

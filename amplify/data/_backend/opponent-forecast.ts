@@ -220,7 +220,8 @@ dependencies: {
       env: args.env,
       identity,
     });
-    const { scout } = await runtimeDependencies.getScoutWorkspaceForTeam({
+    const { competitionProfile, scout } =
+      await runtimeDependencies.getScoutWorkspaceForTeam({
       env: args.env,
       identity,
       teamId: job.teamId,
@@ -230,6 +231,7 @@ dependencies: {
     }
 
     const resolvedContext = await buildOpponentForecastContext({
+      competitionProfile,
       env: args.env,
       scout,
       userId: message.userId,
@@ -276,6 +278,9 @@ dependencies: {
 }
 
 async function buildOpponentForecastContext(args: {
+  competitionProfile: Awaited<
+    ReturnType<typeof getScoutWorkspaceForTeam>
+  >["competitionProfile"];
   env: GraphqlEnv;
   scout: ResolverResult<"getScoutWorkspace">;
   userId: string;
@@ -286,15 +291,32 @@ async function buildOpponentForecastContext(args: {
     throw new Error("Scout workspace is missing the selected team summary.");
   }
 
-  const recentGameBoxscores = await loadStoredBoxscores(
-    args.env,
-    args.userId,
-    summary.recentGames
-      .map((match) => match.matchId)
-      .filter((matchId): matchId is string => Boolean(matchId))
-      .slice(0, 8),
-    args.scout.teamId ?? null,
-  );
+  const recentGameBoxscores = args.competitionProfile
+    ? args.competitionProfile.forecastSample.games.map((game) =>
+        adaptStoredBoxscoreForForecast(
+          {
+            boxscoreJson: game.boxScore,
+            matchId: game.row.matchId,
+          },
+          {
+            effortDelta: game.forecastEffortDelta,
+            seriousness: game.seriousness,
+            seriousnessReason: game.seriousnessReason,
+            seriousnessScore: game.seriousnessScore,
+            season: game.season,
+            teamId: args.scout.teamId ?? null,
+          },
+        ),
+      )
+    : await loadStoredBoxscores(
+        args.env,
+        args.userId,
+        summary.recentGames
+          .map((match) => match.matchId)
+          .filter((matchId): matchId is string => Boolean(matchId))
+          .slice(0, 8),
+        args.scout.teamId ?? null,
+      );
   const headToHeadBoxscores = await loadStoredBoxscores(
     args.env,
     args.userId,
@@ -320,8 +342,19 @@ async function buildOpponentForecastContext(args: {
       nextMatch: summary.nextMatch,
       publicRoster: summary.roster,
       recentGames: summary.recentGames,
-      recentGameBoxscores,
+      recentGameBoxscores: recentGameBoxscores.filter(
+        (entry): entry is JsonRecord => Boolean(entry),
+      ),
       record: summary.record,
+      sampleSummary: {
+        sampleStrategy:
+          args.competitionProfile?.forecastSample.sampleStrategy ??
+          "LEGACY_RECENT_GAMES",
+        seriousGamesConsidered:
+          args.competitionProfile?.forecastSample.seriousGamesConsidered ?? 0,
+        supportingGamesConsidered:
+          args.competitionProfile?.forecastSample.supportingGamesConsidered ?? 0,
+      },
       teamId: args.scout.teamId,
       teamName: summary.teamName,
       tendencies: summary.tendencies,
@@ -344,7 +377,11 @@ async function loadStoredBoxscores(
   const results = await Promise.all(
     Array.from(new Set(matchIds)).map(async (matchId) => {
       const record = await getMatchBoxscore(env, userId, matchId);
-      return record ? adaptStoredBoxscoreForForecast(record, teamId) : null;
+      return record
+        ? adaptStoredBoxscoreForForecast(record, {
+            teamId,
+          })
+        : null;
     }),
   );
 
@@ -420,6 +457,12 @@ export function normalizeOpponentForecastResult(
       recentGamesConsidered:
         asFiniteInteger(coverageInput.recentGamesConsidered) ??
         topScenariosInput.length,
+      seriousGamesConsidered:
+        asFiniteInteger(coverageInput.seriousGamesConsidered) ?? 0,
+      supportingGamesConsidered:
+        asFiniteInteger(coverageInput.supportingGamesConsidered) ?? 0,
+      sampleStrategy:
+        asOptionalString(coverageInput.sampleStrategy) ?? "UNKNOWN",
       headToHeadGamesConsidered:
         asFiniteInteger(coverageInput.headToHeadGamesConsidered) ??
         analogGamesInput.length,
@@ -502,10 +545,17 @@ function normalizeFeatureSignal(
 
 function adaptStoredBoxscoreForForecast(
   matchBoxscore: Record<string, unknown>,
-  teamId: string | null,
+  args: {
+    effortDelta?: number | null;
+    seriousness?: string | null;
+    seriousnessReason?: string | null;
+    seriousnessScore?: number | null;
+    season?: number | null;
+    teamId: string | null;
+  },
 ): JsonRecord | null {
   const boxscore = requireRecord(matchBoxscore.boxscoreJson, "stored boxscore payload");
-  const perspective = selectBoxscorePerspective(boxscore, teamId);
+  const perspective = selectBoxscorePerspective(boxscore, args.teamId);
   const teamSide = perspective.team;
   const opponentSide = perspective.opponent;
 
@@ -514,9 +564,14 @@ function adaptStoredBoxscoreForForecast(
   }
 
   return {
-    effortDelta: asFiniteInteger(boxscore.effortDelta),
+    effortDelta:
+      asFiniteInteger(args.effortDelta) ?? asFiniteInteger(boxscore.effortDelta),
     matchId: asOptionalString(matchBoxscore.matchId),
     neutral: asOptionalBoolean(boxscore.neutral),
+    season: asFiniteInteger(args.season),
+    seriousness: asOptionalString(args.seriousness),
+    seriousnessReason: asOptionalString(args.seriousnessReason),
+    seriousnessScore: asFiniteNumber(args.seriousnessScore),
     opponent: {
       defStrategy: asOptionalString(opponentSide.defStrategy),
       efficiency: asOptionalRecord(opponentSide.efficiency) ?? {},

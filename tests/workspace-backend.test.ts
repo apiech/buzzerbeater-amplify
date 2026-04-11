@@ -36,6 +36,18 @@ const refreshWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "refresh-workspace", "handler.ts"),
   "utf8",
 );
+const scoutWorkspaceHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "get-scout-workspace", "handler.ts"),
+  "utf8",
+);
+const dashboardAppSource = readFileSync(
+  join(repoRoot, "app", "dashboard-app.tsx"),
+  "utf8",
+);
+const authenticatedWorkspaceHookSource = readFileSync(
+  join(repoRoot, "app", "dashboard", "use-authenticated-workspace.ts"),
+  "utf8",
+);
 
 test("buildScoutWorkspace includes arbitrary scout targets, league options, and matchup history", () => {
   const currentWorkspace = {
@@ -233,6 +245,289 @@ test("browse-time workspace refresh defaults to app-only persistence while expli
     refreshWorkspaceHandlerSource,
     /syncActiveTrackedTeams:\s*true/,
   );
+});
+
+test("base workspace refresh keeps next-opponent scouting lightweight", () => {
+  assert.match(
+    workspaceSource,
+    /const opponentWorkspace = nextOpponentTeamId\s*\?\s*await fetchHomeOpponentWorkspace\(/,
+  );
+  assert.doesNotMatch(
+    workspaceSource,
+    /const opponentWorkspace = nextOpponentTeamId\s*\?\s*await fetchOpponentWorkspace\(/,
+  );
+});
+
+test("buildHomeWorkspace keeps next-opponent summary available when scout schedule is deferred", () => {
+  const home = workspaceTesting.buildHomeWorkspace(
+    {
+      roster: { players: [] },
+      schedule: { matches: [] },
+      standings: {
+        conferences: [
+          {
+            index: 0,
+            teams: [
+              {
+                id: "OUR",
+                losses: 6,
+                pa: 91,
+                pf: 97,
+                teamName: "Our Team",
+                wins: 10,
+              },
+              {
+                id: "OPP",
+                losses: 8,
+                pa: 94,
+                pf: 95,
+                teamName: "Opp Team",
+                wins: 8,
+              },
+            ],
+          },
+        ],
+        league: { id: "L1", name: "League One" },
+      },
+      teamInfo: {
+        teamId: "OUR",
+        teamName: "Our Team",
+      },
+      teamStats: null,
+    } as any,
+    null,
+    [],
+    [],
+    [],
+    [],
+    {
+      competitionProfile: null,
+      forecastSample: null,
+      hydratedBoxScores: [],
+      nextMatch: null,
+      recentBoxScores: [
+        {
+          awayTeam: {
+            defStrategy: "23Zone",
+            id: "ALT",
+            offStrategy: "Base",
+            teamName: "Alt Team",
+          },
+          homeTeam: {
+            defStrategy: "ManToMan",
+            id: "OPP",
+            offStrategy: "Push",
+            teamName: "Opp Team",
+          },
+          matchId: "m-1",
+        },
+      ],
+      recentMatches: [],
+      roster: {
+        players: [
+          {
+            fullName: "Injured Wing",
+            id: "p-1",
+            injuryWeeks: 2,
+          },
+        ],
+      },
+      schedule: null,
+      teamInfo: {
+        teamId: "OPP",
+        teamName: "Opp Team",
+      },
+      teamStats: null,
+    } as any,
+    {
+      lastSyncAt: "2026-04-11T00:00:00.000Z",
+    } as any,
+  );
+
+  assert.ok(home.nextOpponent);
+  assert.equal(home.nextOpponent.teamName, "Opp Team");
+  assert.deepStrictEqual(home.nextOpponent.record, { losses: 8, wins: 8 });
+  assert.equal(home.nextOpponent.injuries[0]?.fullName, "Injured Wing");
+  assert.deepStrictEqual(home.nextOpponent.tendencies.offense, [
+    { count: 1, key: "Push" },
+  ]);
+});
+
+test("buildHomeCorePlayers tolerates box score players without performance stats", () => {
+  const topPlayers = workspaceTesting.buildHomeCorePlayers({
+    rosterPlayers: [
+      createOwnerTrackedPlayerProfile({
+        block: 2,
+        driving: 7,
+        experience: 6,
+        freeThrow: 7,
+        gameShape: 8,
+        handling: 8,
+        insideDef: 3,
+        insideShot: 4,
+        jumpShot: 7,
+        outsideDef: 5,
+        passing: 9,
+        potential: 10,
+        range: 6,
+        rebound: 4,
+        stamina: 8,
+      }),
+    ],
+    teamId: "team-1",
+    teamStats: null,
+    competitiveSample: {
+      excludedGames: [],
+      includedGames: [
+        {
+          boxScore: {
+            awayTeam: {
+              id: "opp-1",
+              players: [],
+            },
+            homeTeam: {
+              id: "team-1",
+              players: [
+                {
+                  details: { isStarter: true },
+                  fullName: "Lead Guard",
+                  id: "p1",
+                  minutesByPosition: { PG: 32 },
+                },
+              ],
+            },
+          },
+          competition: {
+            competitionKey: "LEAGUE_REGULAR_SEASON",
+          },
+          margin: 8,
+          match: {
+            awayTeam: { id: "opp-1", score: 82, teamName: "Opponent" },
+            homeTeam: { id: "team-1", score: 90, teamName: "Alpha" },
+            id: "m-1",
+            startTime: "2026-04-11T20:00:00Z",
+            type: "League",
+          },
+        },
+      ],
+      rawMatchesConsidered: 1,
+    } as any,
+  });
+
+  const firstPlayer = topPlayers[0];
+  assert.ok(firstPlayer);
+  assert.equal(firstPlayer.playerId, "p1");
+  assert.equal(firstPlayer.fullName, "Lead Guard");
+});
+
+test("workspace boxscore helpers tolerate missing starter details and minute positions", () => {
+  const starterCounts = workspaceTesting.countStarters(
+    [
+      {
+        awayTeam: {
+          id: "opp-1",
+          players: [],
+        },
+        homeTeam: {
+          id: "team-1",
+          players: [
+            {
+              fullName: "Lead Guard",
+              id: "p1",
+            },
+          ],
+        },
+      },
+    ] as any,
+    "team-1",
+  );
+
+  assert.deepStrictEqual(starterCounts, {});
+
+  const topPlayers = workspaceTesting.buildHomeCorePlayers({
+    rosterPlayers: [
+      createOwnerTrackedPlayerProfile({
+        block: 2,
+        driving: 7,
+        experience: 6,
+        freeThrow: 7,
+        gameShape: 8,
+        handling: 8,
+        insideDef: 3,
+        insideShot: 4,
+        jumpShot: 7,
+        outsideDef: 5,
+        passing: 9,
+        potential: 10,
+        range: 6,
+        rebound: 4,
+        stamina: 8,
+      }),
+    ],
+    teamId: "team-1",
+    teamStats: null,
+    competitiveSample: {
+      excludedGames: [],
+      includedGames: [
+        {
+          boxScore: {
+            awayTeam: {
+              id: "opp-1",
+              players: [],
+            },
+            homeTeam: {
+              id: "team-1",
+              players: [
+                {
+                  fullName: "Lead Guard",
+                  id: "p1",
+                  performanceStats: {},
+                },
+              ],
+            },
+          },
+          competition: {
+            competitionKey: "LEAGUE_REGULAR_SEASON",
+          },
+          margin: 8,
+          match: {
+            awayTeam: { id: "opp-1", score: 82, teamName: "Opponent" },
+            homeTeam: { id: "team-1", score: 90, teamName: "Alpha" },
+            id: "m-1",
+            startTime: "2026-04-11T20:00:00Z",
+            type: "League",
+          },
+        },
+      ],
+      rawMatchesConsidered: 1,
+    } as any,
+  });
+
+  assert.equal(topPlayers[0]?.playerId, "p1");
+});
+
+test("scout workspace force refreshes home/core first and forwards the section force flag", () => {
+  assert.match(
+    workspaceSource,
+    /const baseWorkspace = await getOrRefreshWorkspace\(\{\s*env: args\.env,\s*force: args\.force \?\? false,\s*identity: args\.identity,\s*syncActiveTrackedTeams: args\.force \?\? false,\s*\}\);/s,
+  );
+  assert.match(
+    scoutWorkspaceHandlerSource,
+    /force:\s*event\.arguments\.force \?\? false/,
+  );
+});
+
+test("authenticated workspace hook only loads the active section's shared payloads", () => {
+  assert.match(
+    authenticatedWorkspaceHookSource,
+    /const sectionDependencies:[\s\S]*highlights:\s*\[\][\s\S]*home:\s*\["lineupHelper"\][\s\S]*players:\s*\["playerLab"\][\s\S]*predictions:\s*\[\][\s\S]*scout:\s*\[\]/,
+  );
+  assert.doesNotMatch(
+    authenticatedWorkspaceHookSource,
+    /client\.queries\.getScoutWorkspace\(/,
+  );
+  assert.match(dashboardAppSource, /scoutTeamSummaryQueryOptions/);
+  assert.match(dashboardAppSource, /scoutScheduleQueryOptions/);
 });
 
 test("getPlayerTrend preserves multiple observations captured in the same week", async () => {

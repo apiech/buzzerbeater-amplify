@@ -35,12 +35,18 @@ const queryOperations = {
       requiredInput(input) as never,
     ),
   getBillingSummary: async () => (await runtime.getServerDataClient()).queries.getBillingSummary(),
-  getHomeWorkspace: async () => (await runtime.getServerDataClient()).queries.getHomeWorkspace(),
+  getHomeWorkspace: async (input) =>
+    (await runtime.getServerDataClient()).queries.getHomeWorkspace(
+      optionalInput(input) as never,
+    ),
   getLeagueHistory: async (input) =>
     (await runtime.getServerDataClient()).queries.getLeagueHistory(
       optionalInput(input) as never,
     ),
-  getLeagueIntel: async () => (await runtime.getServerDataClient()).queries.getLeagueIntel(),
+  getLeagueIntel: async (input) =>
+    ((await runtime.getServerDataClient()).queries.getLeagueIntel as (
+      queryInput?: OperationInput,
+    ) => Promise<OperationResult<unknown>>)(optionalInput(input)),
   getLatestNextGameRecommendation: async (input) =>
     (await runtime.getServerDataClient()).queries.getLatestNextGameRecommendation(
       requiredInput(input) as never,
@@ -49,8 +55,10 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.getLatestOpponentForecast(
       requiredInput(input) as never,
     ),
-  getLineupHelperWorkspace: async () =>
-    (await runtime.getServerDataClient()).queries.getLineupHelperWorkspace(),
+  getLineupHelperWorkspace: async (input) =>
+    ((await runtime.getServerDataClient()).queries.getLineupHelperWorkspace as (
+      queryInput?: OperationInput,
+    ) => Promise<OperationResult<unknown>>)(optionalInput(input)),
   getMatchBoxscoreDetails: async (input) =>
     (await runtime.getServerDataClient()).queries.getMatchBoxscoreDetails(
       requiredInput(input) as never,
@@ -59,7 +67,10 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.getMyTeamHighlights(
       optionalInput(input) as never,
     ),
-  getPlayerLab: async () => (await runtime.getServerDataClient()).queries.getPlayerLab(),
+  getPlayerLab: async (input) =>
+    ((await runtime.getServerDataClient()).queries.getPlayerLab as (
+      queryInput?: OperationInput,
+    ) => Promise<OperationResult<unknown>>)(optionalInput(input)),
   getPlayerTrend: async (input) =>
     (await runtime.getServerDataClient()).queries.getPlayerTrend(
       requiredInput(input) as never,
@@ -69,6 +80,14 @@ const queryOperations = {
   getSalaryProjection: async (input) =>
     (await runtime.getServerDataClient()).queries.getSalaryProjection(
       requiredInput(input) as never,
+    ),
+  getScoutSchedule: async (input) =>
+    (await runtime.getServerDataClient()).queries.getScoutSchedule(
+      optionalInput(input) as never,
+    ),
+  getScoutTeamSummary: async (input) =>
+    (await runtime.getServerDataClient()).queries.getScoutTeamSummary(
+      optionalInput(input) as never,
     ),
   getScoutWorkspace: async (input) =>
     (await runtime.getServerDataClient()).queries.getScoutWorkspace(
