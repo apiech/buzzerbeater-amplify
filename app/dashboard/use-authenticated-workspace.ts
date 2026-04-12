@@ -1,17 +1,16 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { client } from "@/app/amplify-client";
 import {
   COMMERCIAL_MODE_DISABLED_SENTINEL,
-  formatAmplifyErrors,
   formatClientError,
 } from "@/app/dashboard/remote-errors";
 import {
   billingSummaryQueryOptions,
   connectionQueryOptions,
+  disconnectBbAccountMutation,
   homeWorkspaceQueryOptions,
   leagueIntelQueryOptions,
   lineupHelperWorkspaceQueryOptions,
@@ -22,7 +21,7 @@ import {
 import type {
   BillingSummary,
   BbConnectionRecord,
-  DashboardWorkspace,
+  DashboardShellData,
   HomeWorkspacePayload,
 } from "@/app/types";
 import type { WorkspaceSection } from "@/app/workspace-sections";
@@ -46,17 +45,16 @@ const sectionDependencies: Record<WorkspaceSection, WorkspaceExtraSectionKey[]> 
 function createWorkspaceFromHome(
   home: HomeWorkspacePayload,
   sections: {
-    leagueIntel?: DashboardWorkspace["leagueIntel"];
-    lineupHelper?: DashboardWorkspace["lineupHelper"];
-    playerLab?: DashboardWorkspace["playerLab"];
+    leagueIntel?: DashboardShellData["leagueIntel"];
+    lineupHelper?: DashboardShellData["lineupHelper"];
+    playerLab?: DashboardShellData["playerLab"];
   },
-): DashboardWorkspace {
+): DashboardShellData {
   return {
     home,
     leagueIntel: sections.leagueIntel ?? null,
     lineupHelper: sections.lineupHelper ?? null,
     playerLab: sections.playerLab ?? null,
-    scout: null,
     syncedAt: home.syncedAt ?? null,
   };
 }
@@ -75,7 +73,6 @@ export function useAuthenticatedWorkspace(args: {
 }) {
   const queryClient = useQueryClient();
   const [showCredentialForm, setShowCredentialForm] = useState(false);
-  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(
     null,
   );
@@ -103,6 +100,9 @@ export function useAuthenticatedWorkspace(args: {
   const playerLabQuery = useQuery({
     ...playerLabQueryOptions(),
     enabled: connected && requiredSections.includes("playerLab"),
+  });
+  const disconnectMutation = useMutation({
+    mutationFn: disconnectBbAccountMutation,
   });
 
   useEffect(() => {
@@ -202,21 +202,17 @@ export function useAuthenticatedWorkspace(args: {
   }
 
   async function handleDisconnect(): Promise<void> {
-    setIsDisconnecting(true);
     setWorkspaceActionError(null);
 
-    const result = await client.mutations.disconnectBbAccount();
-    if (result.errors?.length) {
-      setWorkspaceActionError(formatAmplifyErrors(result.errors));
-      setIsDisconnecting(false);
-      return;
+    try {
+      await disconnectMutation.mutateAsync();
+      queryClient.removeQueries({ queryKey: ["workspace"] });
+      queryClient.removeQueries({ queryKey: ["billing"] });
+      setShowCredentialForm(false);
+      await loadConnection();
+    } catch (error) {
+      setWorkspaceActionError(formatClientError(error));
     }
-
-    queryClient.removeQueries({ queryKey: ["workspace"] });
-    queryClient.removeQueries({ queryKey: ["billing"] });
-    setShowCredentialForm(false);
-    await loadConnection();
-    setIsDisconnecting(false);
   }
 
   return {
@@ -229,7 +225,7 @@ export function useAuthenticatedWorkspace(args: {
     connectionError: formatQueryErrorMessage(connectionQuery.error),
     handleDisconnect,
     handleRefresh,
-    isDisconnecting,
+    isDisconnecting: disconnectMutation.isPending,
     isLoadingBilling: args.commercialModeEnabled ? billingQuery.isPending : false,
     isLoadingConnection: connectionQuery.isPending,
     isLoadingWorkspace,

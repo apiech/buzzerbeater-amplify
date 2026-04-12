@@ -1,14 +1,15 @@
 "use client";
 
+import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
-  createBillingCheckoutUrl,
-  createBillingLifetimeCheckoutUrl,
-  createBillingPortalUrl,
-  fetchBillingSummary,
-} from "@/app/billing-client";
+  billingSummaryQueryOptions,
+  createBillingCheckoutUrlMutation,
+  createBillingLifetimeCheckoutUrlMutation,
+  createBillingPortalUrlMutation,
+} from "@/app/dashboard/workspace-query-client";
 import type { BillingSummary } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
@@ -31,84 +32,58 @@ export function Storefront({
   isSignedIn,
   viewerLabel,
 }: StorefrontProps) {
-  const [summary, setSummary] = useState<BillingSummary | null>(null);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [isLoadingSummary, setIsLoadingSummary] = useState(isSignedIn);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isStartingSubscription, setIsStartingSubscription] = useState(false);
-  const [isStartingLifetime, setIsStartingLifetime] = useState(false);
-  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!isSignedIn) {
-      setSummary(null);
-      setSummaryError(null);
-      setIsLoadingSummary(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setIsLoadingSummary(true);
-    setSummaryError(null);
-
-    void fetchBillingSummary()
-      .then((nextSummary) => {
-        if (!cancelled) {
-          setSummary(nextSummary);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setSummaryError(formatClientError(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingSummary(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isSignedIn]);
+  const summaryQuery = useQuery({
+    ...billingSummaryQueryOptions(),
+    enabled: isSignedIn,
+    placeholderData: (previousData) => previousData,
+  });
+  const summary = summaryQuery.data ?? null;
+  const summaryError = summaryQuery.error ? formatClientError(summaryQuery.error) : null;
+  const isLoadingSummary = isSignedIn && summaryQuery.isPending;
+  const subscriptionCheckoutMutation = useMutation({
+    mutationFn: (returnPath?: string) =>
+      createBillingCheckoutUrlMutation(returnPath),
+  });
+  const lifetimeCheckoutMutation = useMutation({
+    mutationFn: (returnPath?: string) =>
+      createBillingLifetimeCheckoutUrlMutation(returnPath),
+  });
+  const portalMutation = useMutation({
+    mutationFn: (returnPath?: string) =>
+      createBillingPortalUrlMutation(returnPath),
+  });
 
   async function handleSubscriptionCheckout(): Promise<void> {
     setActionError(null);
-    setIsStartingSubscription(true);
 
     try {
-      window.location.assign(await createBillingCheckoutUrl("/store"));
+      const url = await subscriptionCheckoutMutation.mutateAsync("/store");
+      window.location.assign(url);
     } catch (error) {
       setActionError(formatClientError(error));
-      setIsStartingSubscription(false);
     }
   }
 
   async function handleLifetimeCheckout(): Promise<void> {
     setActionError(null);
-    setIsStartingLifetime(true);
 
     try {
-      window.location.assign(await createBillingLifetimeCheckoutUrl("/store"));
+      const url = await lifetimeCheckoutMutation.mutateAsync("/store");
+      window.location.assign(url);
     } catch (error) {
       setActionError(formatClientError(error));
-      setIsStartingLifetime(false);
     }
   }
 
   async function handlePortal(): Promise<void> {
     setActionError(null);
-    setIsOpeningPortal(true);
 
     try {
-      window.location.assign(await createBillingPortalUrl("/store"));
+      const url = await portalMutation.mutateAsync("/store");
+      window.location.assign(url);
     } catch (error) {
       setActionError(formatClientError(error));
-      setIsOpeningPortal(false);
     }
   }
 
@@ -177,7 +152,7 @@ export function Storefront({
               </Link>
               {summary?.hasBillingCustomer ? (
                 <Button
-                  loading={isOpeningPortal}
+                  loading={portalMutation.isPending}
                   onClick={() => void handlePortal()}
                   variant="secondary"
                 >
@@ -247,7 +222,7 @@ export function Storefront({
               isSignedIn ? (
                 shouldOfferSubscription ? (
                   <Button
-                    loading={isStartingSubscription}
+                    loading={subscriptionCheckoutMutation.isPending}
                     onClick={() => void handleSubscriptionCheckout()}
                   >
                     Start monthly Premium
@@ -292,7 +267,7 @@ export function Storefront({
               isSignedIn ? (
                 shouldOfferLifetime ? (
                   <Button
-                    loading={isStartingLifetime}
+                    loading={lifetimeCheckoutMutation.isPending}
                     onClick={() => void handleLifetimeCheckout()}
                     variant="secondary"
                   >

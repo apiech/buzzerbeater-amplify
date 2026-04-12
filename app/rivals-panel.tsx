@@ -1,9 +1,17 @@
 "use client";
 
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useDeferredValue, useEffect, useState } from "react";
 
-import { client } from "@/app/amplify-client";
-import type { DashboardWorkspace, RivalsWorkspacePayload } from "@/app/types";
+import {
+  rivalsWorkspaceQueryOptions,
+  submitRivalsBackfillMutation,
+} from "@/app/dashboard/workspace-query-client";
+import type {
+  RivalsBackfillStatus,
+  RivalsPanelContext,
+  RivalsWorkspacePayload,
+} from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input, Select } from "@/app/ui/primitives/field";
@@ -18,7 +26,7 @@ import {
 import { cn } from "@/app/ui/primitives/cn";
 
 type RivalsPanelProps = {
-  workspace: DashboardWorkspace;
+  context: RivalsPanelContext;
 };
 
 type RivalryMatchRecord = RivalsWorkspacePayload["matches"][number];
@@ -185,10 +193,17 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
 });
 
-export function RivalsPanel({ workspace }: RivalsPanelProps) {
-  const [payload, setPayload] = useState<RivalsWorkspacePayload | null>(null);
-  const [panelError, setPanelError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+export function RivalsPanel({ context }: RivalsPanelProps) {
+  const refreshMutation = useMutation({
+    mutationFn: submitRivalsBackfillMutation,
+  });
+  const rivalsQuery = useQuery({
+    ...rivalsWorkspaceQueryOptions(),
+    enabled: Boolean(context.team.teamId),
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) =>
+      hasActiveRivalsStatus(query.state.data?.status) ? 5000 : false,
+  });
   const [searchText, setSearchText] = useState("");
   const [selectedCompetitions, setSelectedCompetitions] = useState<string[]>(
     [],
@@ -213,39 +228,29 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
     useState<SortDirection>("desc");
 
   const deferredSearchText = useDeferredValue(searchText);
+  const payload = rivalsQuery.data ?? null;
+  const panelError =
+    readQueryError(refreshMutation.error) ?? readQueryError(rivalsQuery.error);
+  const isLoading = rivalsQuery.isPending || refreshMutation.isPending;
+  const statusMessage = resolveRivalsStatusMessage(payload?.status ?? null);
 
   useEffect(() => {
-    void loadRivals();
-  }, [workspace.home.team.teamId]);
-
-  async function loadRivals(): Promise<void> {
-    setIsLoading(true);
-    setPanelError(null);
-
-    const response = await client.queries.getRivalsWorkspace();
-    if (response.errors?.length || !response.data) {
-      setPayload(null);
-      setPanelError(formatAmplifyErrors(response.errors));
-      setIsLoading(false);
+    if (!payload) {
       return;
     }
 
-    setPayload(response.data);
     setSelectedCompetitions(
-      buildCompetitionOptions(response.data.matches).map(
-        (option) => option.value,
-      ),
+      buildCompetitionOptions(payload.matches).map((option) => option.value),
     );
     setSelectedVenues(venueFilterOptions.map((option) => option.value));
     setSelectedOutcomes(outcomeFilterOptions.map((option) => option.value));
     setSelectedTvScopes(tvScopeFilterOptions.map((option) => option.value));
     const defaultSeasonRange = buildDefaultSeasonRange(
-      buildSeasonValues(response.data.matches),
+      buildSeasonValues(payload.matches),
     );
     setStartSeason(defaultSeasonRange.startSeason);
     setEndSeason(defaultSeasonRange.endSeason);
-    setIsLoading(false);
-  }
+  }, [payload]);
 
   const matches = payload?.matches ?? [];
   const competitionOptions = buildCompetitionOptions(matches);
@@ -314,7 +319,7 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
   const seasonBreakdown = buildSeasonBreakdown(selectedMatches);
 
   const activeTeamName =
-    payload?.team.teamName ?? workspace.home.team.teamName ?? "Your club";
+    payload?.team.teamName ?? context.team.teamName ?? "Your club";
   const filterSummary = `Showing ${rivalryRows.length} rival${
     rivalryRows.length === 1 ? "" : "s"
   } across ${filteredMatches.length} meeting${
@@ -327,10 +332,16 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
         actions={
           <Button
             loading={isLoading}
-            onClick={() => void loadRivals()}
+            onClick={() =>
+              void refreshMutation.mutateAsync(undefined, {
+                onSuccess: () => {
+                  void rivalsQuery.refetch();
+                },
+              })
+            }
             variant="secondary"
           >
-            Refresh
+            {payload?.status ? "Refresh history" : "Build history"}
           </Button>
         }
         description="Scan every completed game on the active club's schedule history, aggregate the record by opponent, and drill into league, playoff, cup, TV, venue, and season splits."
@@ -344,6 +355,7 @@ export function RivalsPanel({ workspace }: RivalsPanelProps) {
       </p>
 
       {panelError ? <Alert>{panelError}</Alert> : null}
+      {statusMessage ? <Alert>{statusMessage}</Alert> : null}
       {payload?.warning ? <Alert>{payload.warning}</Alert> : null}
 
       <div className={summaryGridClassName}>
@@ -1431,14 +1443,50 @@ function parseTimestamp(value: string | null | undefined): number {
   return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
 }
 
-function formatAmplifyErrors(
-  errors: ReadonlyArray<{ message?: string }> | null | undefined,
-): string {
-  const messages = (errors ?? [])
-    .map((error) => error.message?.trim())
-    .filter((message): message is string => Boolean(message));
+function readQueryError(error: unknown): string | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
 
-  return messages[0] ?? "The request failed without a detailed error message.";
+  const message = error.message.trim();
+  return message.length ? message : null;
+}
+
+function hasActiveRivalsStatus(
+  status: RivalsBackfillStatus | null | undefined,
+): boolean {
+  return Boolean(
+    status &&
+      (status.status === "QUEUED" ||
+        status.status === "FETCHING_SEASONS" ||
+        status.status === "FETCHING_SCHEDULES" ||
+        status.status === "BUILDING_DATASET"),
+  );
+}
+
+function resolveRivalsStatusMessage(
+  status: RivalsBackfillStatus | null,
+): string | null {
+  if (!status) {
+    return null;
+  }
+
+  switch (status.status) {
+    case "SUCCEEDED":
+      return null;
+    case "QUEUED":
+      return "Rivals history refresh is queued. Cached data will stay visible while the backfill starts.";
+    case "FETCHING_SEASONS":
+      return "Rivals history is loading the season list in the background.";
+    case "FETCHING_SCHEDULES":
+      return "Rivals history is fetching season schedules in the background.";
+    case "BUILDING_DATASET":
+      return "Rivals history is rebuilding the cached rivalry dataset.";
+    case "FAILED":
+      return status.error ?? "The latest rivals refresh failed.";
+    default:
+      return null;
+  }
 }
 
 function formatRecord(wins: number, losses: number): string {

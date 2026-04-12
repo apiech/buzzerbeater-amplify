@@ -54,6 +54,14 @@ export type LeagueHistoryBackfillState =
   | "SUCCEEDED"
   | "FAILED";
 
+export type RivalsBackfillState =
+  | "QUEUED"
+  | "FETCHING_SEASONS"
+  | "FETCHING_SCHEDULES"
+  | "BUILDING_DATASET"
+  | "SUCCEEDED"
+  | "FAILED";
+
 export type BbConnectionRecord = {
   userId: string;
   bbLoginName: string;
@@ -347,6 +355,34 @@ export type LeagueHistoryBackfillRecord = {
   historicalSeasonsExpected?: number | null;
   historicalSeasonsStored?: number | null;
   lastCompletedSeason?: number | null;
+  updatedAt: string;
+};
+
+export type RivalsWorkspaceCacheRecord = {
+  userId: string;
+  teamId: string;
+  teamName?: string | null;
+  shortName?: string | null;
+  generatedAt: string;
+  syncedAt?: string | null;
+  warning?: string | null;
+  summaryJson: unknown;
+  matchesJson: unknown;
+};
+
+export type RivalsBackfillRecord = {
+  userId: string;
+  teamId: string;
+  teamName?: string | null;
+  status: RivalsBackfillState;
+  requestedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  error?: string | null;
+  executionArn?: string | null;
+  generatedAt?: string | null;
+  totalCompletedGames?: number | null;
+  totalOpponents?: number | null;
   updatedAt: string;
 };
 
@@ -1372,6 +1408,53 @@ export async function listLeagueHistoryStandingCachesByLeagueId(
     nextToken: page.nextToken,
     records: decodeAwsJsonList("LeagueHistoryStandingCache", page.records),
   };
+}
+
+export async function getRivalsWorkspaceCache(
+  env: RepositoryEnv,
+  userId: string,
+  teamId: string,
+): Promise<RivalsWorkspaceCacheRecord | null> {
+  const record = await getModelRecord<RivalsWorkspaceCacheRecord>(
+    env,
+    "RivalsWorkspaceCache",
+    { teamId, userId },
+    "load rivals workspace cache",
+  );
+
+  return decodeAwsJsonFields("RivalsWorkspaceCache", record);
+}
+
+export async function upsertRivalsWorkspaceCache(
+  env: RepositoryEnv,
+  input: RivalsWorkspaceCacheRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "RivalsWorkspaceCache",
+    ["userId", "teamId"],
+    input,
+  );
+}
+
+export async function getRivalsBackfill(
+  env: RepositoryEnv,
+  userId: string,
+  teamId: string,
+): Promise<RivalsBackfillRecord | null> {
+  return getModelRecord<RivalsBackfillRecord>(
+    env,
+    "RivalsBackfill",
+    { teamId, userId },
+    "load rivals backfill",
+  );
+}
+
+export async function upsertRivalsBackfill(
+  env: RepositoryEnv,
+  input: RivalsBackfillRecord,
+): Promise<void> {
+  await upsertModelRecord(env, "RivalsBackfill", ["userId", "teamId"], input);
 }
 
 export async function createSharedPlayerCard(

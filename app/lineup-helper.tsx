@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { client } from "@/app/amplify-client";
+import {
+  lineupHelperEvaluationQueryOptions,
+  lineupHelperWorkspaceQueryOptions,
+  optimizeLineupHelperQuery,
+} from "@/app/dashboard/workspace-query-client";
 import {
   LINEUP_POSITION_LABELS,
   LINEUP_POSITIONS,
@@ -74,9 +79,17 @@ export function LineupHelper({
 }: {
   initialWorkspace?: LineupHelperWorkspaceRecord;
 }) {
-  const [workspace, setWorkspace] = useState<DecodedLineupHelperWorkspace | null>(
+  const workspaceQuery = useQuery({
+    ...lineupHelperWorkspaceQueryOptions(),
+    initialData: initialWorkspace ?? undefined,
+    placeholderData: (previousData) => previousData,
+  });
+  const workspace = useMemo<DecodedLineupHelperWorkspace | null>(
     () =>
-      initialWorkspace ? decodeLineupHelperWorkspace(initialWorkspace) : null,
+      workspaceQuery.data
+        ? decodeLineupHelperWorkspace(workspaceQuery.data)
+        : null,
+    [workspaceQuery.data],
   );
   const [evaluation, setEvaluation] = useState<LineupHelperEvaluation | null>(
     () =>
@@ -98,15 +111,31 @@ export function LineupHelper({
   );
   const [algorithm, setAlgorithm] =
     useState<LineupHelperAlgorithm>("EXACT");
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
-  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(
-    !initialWorkspace,
-  );
-  const [isEvaluating, setIsEvaluating] = useState(false);
-  const [isOptimizing, setIsOptimizing] = useState(false);
-  const [workspaceLoadVersion, setWorkspaceLoadVersion] = useState(0);
+  const [debouncedEvaluationInput, setDebouncedEvaluationInput] = useState<{
+    assignments: ReturnType<typeof assignmentsFromLineupLayout>;
+    context: ReturnType<typeof encodeLineupHelperContext>;
+    roster: ReturnType<typeof encodeLineupHelperRosterPlayer>[];
+  } | null>(null);
   const suppressNextEvaluationRef = useRef(false);
+  const optimizeMutation = useMutation({
+    mutationFn: (input: {
+      algorithm?: string | null;
+      context: unknown;
+      roster: unknown[];
+    }) => optimizeLineupHelperQuery(input),
+  });
+  const evaluationQuery = useQuery({
+    ...lineupHelperEvaluationQueryOptions(
+      debouncedEvaluationInput ?? {
+        assignments: [],
+        context: {},
+        roster: [],
+      },
+    ),
+    enabled: Boolean(debouncedEvaluationInput),
+    placeholderData: (previousData) => previousData,
+  });
 
   const roster = workspace?.roster ?? EMPTY_ROSTER;
   const validation = validateLineupLayout(
@@ -123,73 +152,24 @@ export function LineupHelper({
     availableRosterCount > 0 &&
     validation.errors.length === 0;
   const visibleEvaluation = canEvaluate ? evaluation : null;
+  const workspaceError = readQueryError(workspaceQuery.error);
+  const isLoadingWorkspace = workspaceQuery.isPending;
+  const isEvaluating = evaluationQuery.isFetching;
+  const isOptimizing = optimizeMutation.isPending;
 
   useEffect(() => {
-    if (!initialWorkspace) {
+    if (!workspace) {
       return;
     }
 
-    const nextWorkspace = decodeLineupHelperWorkspace(initialWorkspace);
-    setWorkspace(nextWorkspace);
-    setEvaluation(nextWorkspace.evaluation);
-    setContext(nextWorkspace.defaultContext);
+    setEvaluation(workspace.evaluation);
+    setContext(workspace.defaultContext);
     suppressNextEvaluationRef.current = true;
     setLineupLayout(
-      lineupLayoutFromAssignments(nextWorkspace.defaultAssignments),
+      lineupLayoutFromAssignments(workspace.defaultAssignments),
     );
-    setWorkspaceError(null);
     setEvaluationError(null);
-    setIsLoadingWorkspace(false);
-  }, [initialWorkspace]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (workspaceLoadVersion === 0 && initialWorkspace) {
-      setIsLoadingWorkspace(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    async function run() {
-      setIsLoadingWorkspace(true);
-      setWorkspaceError(null);
-      setEvaluationError(null);
-
-      const response = await client.queries.getLineupHelperWorkspace();
-      if (cancelled) {
-        return;
-      }
-
-      if (response.errors?.length || !response.data) {
-        setWorkspace(null);
-        setEvaluation(null);
-        suppressNextEvaluationRef.current = true;
-        setLineupLayout(emptyLineupLayout());
-        setWorkspaceError(formatAmplifyErrors(response.errors));
-        setIsLoadingWorkspace(false);
-        return;
-      }
-
-      const nextWorkspace = decodeLineupHelperWorkspace(response.data);
-      setWorkspace(nextWorkspace);
-      setEvaluation(nextWorkspace.evaluation);
-      setContext(nextWorkspace.defaultContext);
-      suppressNextEvaluationRef.current = true;
-      setLineupLayout(
-        lineupLayoutFromAssignments(nextWorkspace.defaultAssignments),
-      );
-      setWorkspaceError(null);
-      setEvaluationError(null);
-      setIsLoadingWorkspace(false);
-    }
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [initialWorkspace, workspaceLoadVersion]);
+  }, [workspace]);
 
   useEffect(() => {
     if (
@@ -202,14 +182,15 @@ export function LineupHelper({
 
   useEffect(() => {
     if (!workspace) {
+      setDebouncedEvaluationInput(null);
       return;
     }
 
     const nextRoster = workspace.roster;
     if (suppressNextEvaluationRef.current) {
       suppressNextEvaluationRef.current = false;
-      setIsEvaluating(false);
       setEvaluationError(null);
+      setDebouncedEvaluationInput(null);
       return;
     }
 
@@ -219,49 +200,42 @@ export function LineupHelper({
       context.defensiveSwitch,
     );
     if (!nextRoster.length || !nextRoster.some((player) => player.available)) {
-      setIsEvaluating(false);
       setEvaluationError(null);
       setEvaluation(null);
+      setDebouncedEvaluationInput(null);
       return;
     }
 
     if (nextValidation.errors.length) {
-      setIsEvaluating(false);
       setEvaluationError(null);
+      setDebouncedEvaluationInput(null);
       return;
     }
 
-    let cancelled = false;
     const timer = window.setTimeout(() => {
-      void (async () => {
-        setIsEvaluating(true);
-        const response = await client.queries.evaluateLineupHelper({
-          roster: nextRoster.map(encodeLineupHelperRosterPlayer),
-          assignments: assignmentsFromLineupLayout(lineupLayout),
-          context: encodeLineupHelperContext(context),
-        });
-
-        if (cancelled) {
-          return;
-        }
-
-        if (response.errors?.length || !response.data) {
-          setEvaluationError(formatAmplifyErrors(response.errors));
-          setIsEvaluating(false);
-          return;
-        }
-
-        setEvaluation(decodeLineupHelperEvaluation(response.data));
-        setEvaluationError(null);
-        setIsEvaluating(false);
-      })();
+      setDebouncedEvaluationInput({
+        assignments: assignmentsFromLineupLayout(lineupLayout),
+        context: encodeLineupHelperContext(context),
+        roster: nextRoster.map(encodeLineupHelperRosterPlayer),
+      });
     }, 260);
 
     return () => {
-      cancelled = true;
       window.clearTimeout(timer);
     };
   }, [context, lineupLayout, workspace]);
+
+  useEffect(() => {
+    if (!evaluationQuery.data) {
+      if (evaluationQuery.error) {
+        setEvaluationError(readQueryError(evaluationQuery.error));
+      }
+      return;
+    }
+
+    setEvaluation(decodeLineupHelperEvaluation(evaluationQuery.data));
+    setEvaluationError(null);
+  }, [evaluationQuery.data, evaluationQuery.error]);
 
   function updatePlayerSlot(
     position: PositionCode,
@@ -343,32 +317,29 @@ export function LineupHelper({
       return;
     }
 
-    setIsOptimizing(true);
     setEvaluationError(null);
-    const response = await client.queries.optimizeLineupHelper({
-      algorithm,
-      roster: workspace.roster.map(encodeLineupHelperRosterPlayer),
-      context: encodeLineupHelperContext(context),
-    });
+    try {
+      const nextEvaluationRecord = await optimizeMutation.mutateAsync({
+        algorithm,
+        roster: workspace.roster.map(encodeLineupHelperRosterPlayer),
+        context: encodeLineupHelperContext(context),
+      });
+      const nextEvaluation = decodeLineupHelperEvaluation(nextEvaluationRecord);
 
-    if (response.errors?.length || !response.data) {
-      setEvaluationError(formatAmplifyErrors(response.errors));
-      setIsOptimizing(false);
-      return;
+      if (!nextEvaluation) {
+        setEvaluationError("The optimizer did not return a usable lineup.");
+        return;
+      }
+
+      suppressNextEvaluationRef.current = true;
+      setEvaluation(nextEvaluation);
+      setContext(nextEvaluation.context);
+      setLineupLayout(
+        lineupLayoutFromAssignments(nextEvaluation.normalizedLineup),
+      );
+    } catch (error) {
+      setEvaluationError(readQueryError(error));
     }
-
-    const nextEvaluation = decodeLineupHelperEvaluation(response.data);
-    if (!nextEvaluation) {
-      setEvaluationError("The optimizer did not return a usable lineup.");
-      setIsOptimizing(false);
-      return;
-    }
-
-    suppressNextEvaluationRef.current = true;
-    setEvaluation(nextEvaluation);
-    setContext(nextEvaluation.context);
-    setLineupLayout(lineupLayoutFromAssignments(nextEvaluation.normalizedLineup));
-    setIsOptimizing(false);
   }
 
   const legacyAlgorithmDisabled = !isIdentityDefensiveSwitch(
@@ -398,8 +369,8 @@ export function LineupHelper({
               </Select>
             </Field>
             <Button
-              loading={isLoadingWorkspace}
-              onClick={() => setWorkspaceLoadVersion((current) => current + 1)}
+              loading={workspaceQuery.isFetching}
+              onClick={() => void workspaceQuery.refetch()}
               variant="secondary"
             >
               Refresh roster data
@@ -1320,11 +1291,10 @@ function formatTimestamp(value: string | null) {
   });
 }
 
-function formatAmplifyErrors(
-  errors: ReadonlyArray<{ message?: string } | null> | null | undefined,
-) {
-  const messages = (errors ?? [])
-    .map((error) => error?.message?.trim())
-    .filter((message): message is string => Boolean(message));
-  return messages.join(" ") || "The request did not complete.";
+function readQueryError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  return "The request did not complete.";
 }

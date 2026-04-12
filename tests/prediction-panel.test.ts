@@ -28,6 +28,7 @@ import {
   buildModelInputFromPredictionInput,
   normalizePredictionRatingsFromBoxscore,
 } from "../lib/prediction/normalization";
+import type { PredictionPanelContext } from "../app/types";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -36,6 +37,28 @@ const fixturePath = join(
   "fixtures",
   "prediction-resolved-input.json",
 );
+
+function createPredictionContext(args?: {
+  awayMatchId?: string;
+  homeMatchId?: string;
+}): PredictionPanelContext {
+  return {
+    home: {
+      recentMatches: args?.homeMatchId
+        ? [{ hasBoxscore: true, matchId: args.homeMatchId }]
+        : [],
+      team: {
+        teamId: "home-team",
+        teamName: "Home Club",
+      },
+    },
+    scoutSummary: args?.awayMatchId
+      ? {
+          recentGames: [{ hasBoxscore: true, matchId: args.awayMatchId }],
+        }
+      : null,
+  } as PredictionPanelContext;
+}
 
 test("resolved prediction fixture stays aligned with the model payload shape", () => {
   const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as Record<
@@ -61,14 +84,7 @@ test("prediction submission uses the editable grid as the source of truth", () =
   };
   const submission = buildSubmissionRequest({
     draft: {
-      ...createDefaultPredictionDraft({
-        home: {
-          recentMatches: [],
-        },
-        scout: {
-          summary: null,
-        },
-      } as any),
+      ...createDefaultPredictionDraft(createPredictionContext()),
       forecastPrefill: {
         appliedValues: {
           effortDelta: -1,
@@ -174,16 +190,16 @@ test("boxscore normalization removes source tactics and home court exactly once"
 
 test("forecast scenario prefill can be cleared without removing later edits", () => {
   const draft = applyForecastScenarioToDraft({
-    draft: createDefaultPredictionDraft({
-      home: {
-        recentMatches: [{ hasBoxscore: true, matchId: "home-match" }],
-      },
-      scout: {
-        summary: {
-          recentGames: [{ hasBoxscore: true, matchId: "away-match" }],
-        },
-      },
-    } as any),
+    context: createPredictionContext({
+      awayMatchId: "away-match",
+      homeMatchId: "home-match",
+    }),
+    draft: createDefaultPredictionDraft(
+      createPredictionContext({
+        awayMatchId: "away-match",
+        homeMatchId: "home-match",
+      }),
+    ),
     scenario: {
       defense: "23Zone",
       effortChoice: "Crunch Time",
@@ -210,16 +226,6 @@ test("forecast scenario prefill can be cleared without removing later edits", ()
       teamName: "Forecast Club",
     },
     sourceTeamId: "team-1",
-    workspace: {
-      home: {
-        recentMatches: [{ hasBoxscore: true, matchId: "home-match" }],
-      },
-      scout: {
-        summary: {
-          recentGames: [{ hasBoxscore: true, matchId: "away-match" }],
-        },
-      },
-    } as any,
   });
 
   const edited = {
@@ -239,14 +245,7 @@ test("forecast scenario prefill can be cleared without removing later edits", ()
 
 test("reconcilePredictionDraft resets stale GDP values back to N/A", () => {
   const reconciled = reconcilePredictionDraft(
-    {
-      home: {
-        recentMatches: [],
-      },
-      scout: {
-        summary: null,
-      },
-    } as any,
+    createPredictionContext(),
     {
       input: {
         ...createDefaultPredictionInput(),

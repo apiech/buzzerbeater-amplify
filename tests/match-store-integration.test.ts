@@ -45,11 +45,9 @@ test("active tracked team wiring is limited to explicit enrollment and refresh p
 test("browse-time workspace writers keep player snapshot access without active tracked team wiring", () => {
   assert.match(source, /const workspaceSnapshotWriteFunctions = \[/);
   assert.match(source, /backend\.getHomeWorkspace/);
-  assert.match(source, /backend\.getTeamHub/);
-  assert.match(source, /backend\.getScoutWorkspace/);
   assert.match(source, /backend\.getLeagueIntel/);
   assert.match(source, /backend\.getPlayerLab/);
-  assert.match(source, /backend\.getRivalsWorkspace/);
+  assert.doesNotMatch(source, /backend\.getRivalsWorkspace/);
   assert.match(source, /PLAYER_SKILL_SNAPSHOT_TABLE_NAME/);
 });
 

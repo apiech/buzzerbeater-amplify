@@ -102,24 +102,6 @@ export const getHomeWorkspace = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
-export const getTeamHub = defineFunction({
-  resourceGroupName: "data",
-  name: "get-team-hub",
-  entry: "./get-team-hub/handler.ts",
-  timeoutSeconds: 60,
-  memoryMB: 1024,
-  environment: secureFunctionEnvironment,
-});
-
-export const getScoutWorkspace = defineFunction({
-  resourceGroupName: "data",
-  name: "get-scout-workspace",
-  entry: "./get-scout-workspace/handler.ts",
-  timeoutSeconds: 60,
-  memoryMB: 1024,
-  environment: secureFunctionEnvironment,
-});
-
 export const getScoutTeamSummary = defineFunction({
   resourceGroupName: "data",
   name: "get-scout-team-summary",
@@ -187,7 +169,25 @@ export const getRivalsWorkspace = defineFunction({
   resourceGroupName: "data",
   name: "get-rivals-workspace",
   entry: "./get-rivals-workspace/handler.ts",
-  timeoutSeconds: 120,
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: secureFunctionEnvironment,
+});
+
+export const submitRivalsBackfill = defineFunction({
+  resourceGroupName: "data",
+  name: "submit-rivals-backfill",
+  entry: "./submit-rivals-backfill/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  environment: secureFunctionEnvironment,
+});
+
+export const rivalsWorker = defineFunction({
+  resourceGroupName: "data",
+  name: "rivals-worker",
+  entry: "./rivals-worker/handler.ts",
+  timeoutSeconds: 300,
   memoryMB: 1024,
   environment: secureFunctionEnvironment,
 });
@@ -389,8 +389,6 @@ export const maintenanceProtectedFunctions = [
   disconnectBbAccount,
   refreshWorkspace,
   getHomeWorkspace,
-  getTeamHub,
-  getScoutWorkspace,
   getScoutTeamSummary,
   getScoutSchedule,
   getLatestOpponentForecast,
@@ -399,6 +397,7 @@ export const maintenanceProtectedFunctions = [
   getLeagueHistory,
   getPlayerLab,
   getRivalsWorkspace,
+  submitRivalsBackfill,
   getLineupHelperWorkspace,
   evaluateLineupHelper,
   getPlayerTrend,
@@ -423,6 +422,7 @@ export const maintenanceProtectedFunctions = [
   revokeSharedPlayerCard,
   lookupSharedPlayerCard,
   leagueHistoryWorker,
+  rivalsWorker,
   gameDayRecapSubmit,
   gameDayRecapWorker,
   nextGameRecommendationSubmit,
@@ -509,6 +509,15 @@ const schema = a
       "QUEUED",
       "RESOLVING_SEASONS",
       "FETCHING_STANDINGS",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
+
+    RivalsBackfillState: a.enum([
+      "QUEUED",
+      "FETCHING_SEASONS",
+      "FETCHING_SCHEDULES",
+      "BUILDING_DATASET",
       "SUCCEEDED",
       "FAILED",
     ]),
@@ -778,6 +787,31 @@ const schema = a
       requestedAt: a.datetime().required(),
     }),
 
+    RivalsBackfillStatus: a.customType({
+      userId: a.string().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+      executionArn: a.string(),
+      status: a.ref("RivalsBackfillState").required(),
+      requestedAt: a.datetime().required(),
+      startedAt: a.datetime(),
+      completedAt: a.datetime(),
+      error: a.string(),
+      generatedAt: a.datetime(),
+      totalCompletedGames: a.integer(),
+      totalOpponents: a.integer(),
+      updatedAt: a.datetime().required(),
+    }),
+
+    RivalsBackfillSubmitResult: a.customType({
+      executionArn: a.string(),
+      queued: a.boolean().required(),
+      requestedAt: a.datetime().required(),
+      status: a.ref("RivalsBackfillState").required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+    }),
+
     LeagueHistory: a.customType({
       league: a.ref("NamedReference").required(),
       requestedLeagueId: a.string(),
@@ -895,6 +929,7 @@ const schema = a
     RivalsWorkspace: a.customType({
       generatedAt: a.datetime().required(),
       matches: a.ref("RivalryMatch").required().array().required(),
+      status: a.ref("RivalsBackfillStatus"),
       summary: a.ref("RivalsWorkspaceSummary").required(),
       syncedAt: a.datetime(),
       team: a.ref("RivalsWorkspaceTeam").required(),
@@ -1814,6 +1849,44 @@ const schema = a
       .identifier(["leagueId"])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
+    RivalsWorkspaceCache: a
+      .model({
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
+        teamId: a.string().required(),
+        teamName: a.string(),
+        shortName: a.string(),
+        generatedAt: a.datetime().required(),
+        syncedAt: a.datetime(),
+        warning: a.string(),
+        summaryJson: a.json().required(),
+        matchesJson: a.json().required(),
+      })
+      .identifier(["userId", "teamId"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    RivalsBackfill: a
+      .model({
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
+        teamId: a.string().required(),
+        teamName: a.string(),
+        status: a.ref("RivalsBackfillState").required(),
+        requestedAt: a.datetime().required(),
+        startedAt: a.datetime(),
+        completedAt: a.datetime(),
+        error: a.string(),
+        executionArn: a.string(),
+        generatedAt: a.datetime(),
+        totalCompletedGames: a.integer(),
+        totalOpponents: a.integer(),
+        updatedAt: a.datetime().required(),
+      })
+      .identifier(["userId", "teamId"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
     SyncRun: a
       .model({
         userId: a.string().required().authorization((allow) => [
@@ -2105,24 +2178,6 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getHomeWorkspace)),
 
-    getTeamHub: a
-      .query()
-      .returns(a.ref("TeamHubWorkspace"))
-      .authorization((allow) => [allow.authenticated()])
-      .handler(a.handler.function(getTeamHub)),
-
-    getScoutWorkspace: a
-      .query()
-      .arguments({
-        competitionKeys: a.string().array(),
-        force: a.boolean(),
-        season: a.integer(),
-        teamId: a.string(),
-      })
-      .returns(a.ref("ScoutWorkspace"))
-      .authorization((allow) => [allow.authenticated()])
-      .handler(a.handler.function(getScoutWorkspace)),
-
     getScoutTeamSummary: a
       .query()
       .arguments({
@@ -2195,6 +2250,12 @@ const schema = a
       .returns(a.ref("RivalsWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getRivalsWorkspace)),
+
+    submitRivalsBackfill: a
+      .mutation()
+      .returns(a.ref("RivalsBackfillSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(submitRivalsBackfill)),
 
     getLineupHelperWorkspace: a
       .query()

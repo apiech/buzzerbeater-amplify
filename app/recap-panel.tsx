@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 
-import { client } from "@/app/amplify-client";
+import {
+  recapHistoryQueryOptions,
+  setBbLeagueTimeZoneMutation,
+  submitGameDayRecapMutation,
+  submitLeagueGameDayRecapMutation,
+  submitSingleGameSummaryMutation,
+} from "@/app/dashboard/workspace-query-client";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Field, Input } from "@/app/ui/primitives/field";
@@ -15,10 +22,10 @@ import {
 } from "@/app/ui/primitives/status-badge";
 import { formatWriteupStatus } from "@/app/ui/presentation";
 import type {
-  DashboardWorkspace,
   GameDayRecapRecord,
   GameDayRecapCoveragePayload,
   GameDayRecapResultPayload,
+  RecapPanelContext,
   RecapHistoryKind,
   RecapHistoryRecord,
 } from "@/app/types";
@@ -38,15 +45,10 @@ const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 const twoColumnGridClassName = "grid gap-4 xl:grid-cols-[1.5fr_0.9fr]";
 
 type RecapPanelProps = {
-  workspace: DashboardWorkspace;
+  context: RecapPanelContext;
 };
 
 type RecapMode = RecapHistoryKind;
-
-type MutationResultLike = {
-  data?: { targetKey: string } | null;
-  errors?: Array<{ message?: string }> | null;
-};
 
 const recapModes: Array<{
   description: string;
@@ -70,31 +72,46 @@ const recapModes: Array<{
   },
 ];
 
-export function RecapPanel({ workspace }: RecapPanelProps) {
-  const defaultLeagueId = workspace.home.connection.leagueId ?? "";
-  const defaultLeagueTimeZone = resolveWorkspaceLeagueTimeZone(workspace);
+export function RecapPanel({ context }: RecapPanelProps) {
+  const defaultLeagueId = context.connection.leagueId ?? "";
+  const defaultLeagueTimeZone = resolveWorkspaceLeagueTimeZone(context);
   const [mode, setMode] = useState<RecapMode>("LEAGUE_DATE");
   const [leagueId, setLeagueId] = useState(defaultLeagueId);
   const [leagueTimeZone, setLeagueTimeZone] = useState(defaultLeagueTimeZone ?? "");
-  const [gameDate, setGameDate] = useState(resolveDefaultRecapDate(workspace));
+  const [gameDate, setGameDate] = useState(resolveDefaultRecapDate(context));
   const [gameDayNumber, setGameDayNumber] = useState("1");
   const [season, setSeason] = useState("");
   const [matchId, setMatchId] = useState("");
-  const [recaps, setRecaps] = useState<RecapHistoryRecord[]>([]);
   const [selectedRecapKey, setSelectedRecapKey] = useState<string | null>(null);
   const [recapError, setRecapError] = useState<string | null>(null);
-  const [isLoadingRecaps, setIsLoadingRecaps] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<{
     message: string;
     tone: "error" | "success";
   } | null>(null);
-
-  const loadRecapsEffect = useEffectEvent(
-    (preferredKey: string | null = selectedRecapKey) => {
-      void loadRecaps(preferredKey);
-    },
+  const recapHistoryQuery = useQuery({
+    ...recapHistoryQueryOptions({ limit: 8 }),
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) =>
+      hasActiveRecapHistory(query.state.data?.items ?? []) ? 4000 : false,
+  });
+  const submitRecapMutation = useMutation({
+    mutationFn: (input: {
+      gameDate: string;
+      gameDayNumber: string;
+      leagueId: string;
+      leagueTimeZone: string;
+      matchId: string;
+      mode: RecapMode;
+      season: string;
+      context: RecapPanelContext;
+    }) => submitRecapRequest(input),
+  });
+  const recaps = useMemo(
+    () => sortRecapHistory(recapHistoryQuery.data?.items ?? []),
+    [recapHistoryQuery.data?.items],
   );
+  const isLoadingRecaps = recapHistoryQuery.isPending;
+  const isSubmitting = submitRecapMutation.isPending;
 
   useEffect(() => {
     if (!leagueId && defaultLeagueId) {
@@ -109,22 +126,10 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   }, [defaultLeagueTimeZone, leagueTimeZone]);
 
   useEffect(() => {
-    loadRecapsEffect();
-  }, []);
-
-  useEffect(() => {
-    if (!hasActiveRecapHistory(recaps)) {
-      return;
+    if (recapHistoryQuery.error) {
+      setRecapError(readQueryError(recapHistoryQuery.error));
     }
-
-    const intervalId = window.setInterval(() => {
-      loadRecapsEffect(selectedRecapKey);
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [recaps, selectedRecapKey]);
+  }, [recapHistoryQuery.error]);
 
   useEffect(() => {
     if (!copyFeedback) {
@@ -139,64 +144,38 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
       window.clearTimeout(timeoutId);
     };
   }, [copyFeedback]);
-
-  async function loadRecaps(preferredKey: string | null = selectedRecapKey) {
-    setIsLoadingRecaps(true);
-    setRecapError(null);
-
-    const response = await client.reads.getRecapHistory({ limit: 8 });
-
-    if (response.errors?.length || !response.data) {
-      setRecapError(formatAmplifyErrors(response.errors));
-      setRecaps([]);
-      setSelectedRecapKey(null);
-      setIsLoadingRecaps(false);
-      return;
-    }
-
-    const combined = sortRecapHistory(response.data.items);
-
-    setRecaps(combined);
+  useEffect(() => {
     setSelectedRecapKey((current) => {
-      const targetKey = preferredKey ?? current;
-      if (targetKey && combined.some((recap) => recap.selectionKey === targetKey)) {
+      const targetKey = current;
+      if (targetKey && recaps.some((recap) => recap.selectionKey === targetKey)) {
         return targetKey;
       }
 
-      return combined[0]?.selectionKey ?? null;
+      return recaps[0]?.selectionKey ?? null;
     });
-    setIsLoadingRecaps(false);
-  }
+  }, [recaps]);
 
   async function handleSubmit() {
-    setIsSubmitting(true);
     setRecapError(null);
 
     try {
-      const result = await submitRecapRequest({
+      const result = await submitRecapMutation.mutateAsync({
         gameDate,
         gameDayNumber,
         leagueId,
         leagueTimeZone,
         mode,
         season,
-        workspace,
+        context,
         matchId,
       });
-      if (result.errors?.length || !result.data) {
-        setRecapError(formatAmplifyErrors(result.errors));
-        setIsSubmitting(false);
-        return;
-      }
 
-      const selectionKey = toRecapSelectionKey(mode, result.data.targetKey);
+      const selectionKey = toRecapSelectionKey(mode, result.targetKey);
       setSelectedRecapKey(selectionKey);
-      await loadRecaps(selectionKey);
+      await recapHistoryQuery.refetch();
     } catch (error) {
-      setRecapError(error instanceof Error ? error.message : String(error));
+      setRecapError(readQueryError(error));
     }
-
-    setIsSubmitting(false);
   }
 
   async function handleCopyForumPost() {
@@ -227,7 +206,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
   const recapDetail = selectedRecap
     ? describeRecapRecord(selectedRecap)
     : "No recap selected";
-  const currentLeagueName = workspace.home.connection.leagueName ?? "Your league";
+  const currentLeagueName = context.connection.leagueName ?? "Your league";
   const normalizedLeagueTimeZone = normalizeLeagueTimeZone(leagueTimeZone);
   const maxGameDate = resolveRecapInputMaxDate(leagueTimeZone);
   const activeMode = recapModes.find((entry) => entry.value === mode) ?? recapModes[0];
@@ -417,7 +396,7 @@ export function RecapPanel({ workspace }: RecapPanelProps) {
             actions={
               <Button
                 loading={isLoadingRecaps}
-                onClick={() => void loadRecaps(selectedRecapKey)}
+                onClick={() => void recapHistoryQuery.refetch()}
                 size="sm"
                 variant="secondary"
               >
@@ -572,8 +551,8 @@ async function submitRecapRequest(args: {
   matchId: string;
   mode: RecapMode;
   season: string;
-  workspace: DashboardWorkspace;
-}): Promise<MutationResultLike> {
+  context: RecapPanelContext;
+}): Promise<{ targetKey: string }> {
   const normalizedLeagueId = args.leagueId.trim();
   const normalizedTimeZone = normalizeLeagueTimeZone(args.leagueTimeZone);
 
@@ -586,22 +565,17 @@ async function submitRecapRequest(args: {
         throw new Error("Enter a valid league time zone before requesting a date-based recap.");
       }
 
-      const currentTimeZone = resolveWorkspaceLeagueTimeZone(args.workspace);
+      const currentTimeZone = resolveWorkspaceLeagueTimeZone(args.context);
       if (currentTimeZone !== normalizedTimeZone) {
-        const updateResult = await client.mutations.setBbLeagueTimeZone({
+        await setBbLeagueTimeZoneMutation({
           leagueTimeZone: normalizedTimeZone,
         });
-        if (updateResult.errors?.length) {
-          return {
-            data: null,
-            errors: updateResult.errors,
-          };
-        }
       }
 
-      return client.mutations.submitGameDayRecap({
+      return submitGameDayRecapMutation({
         gameDate: args.gameDate,
         leagueId: normalizedLeagueId,
+        leagueTimeZone: normalizedTimeZone,
       });
     }
     case "LEAGUE_GAME_DAY": {
@@ -620,7 +594,7 @@ async function submitRecapRequest(args: {
         throw new Error("Season must be a positive integer when provided.");
       }
 
-      return client.mutations.submitLeagueGameDayRecap({
+      return submitLeagueGameDayRecapMutation({
         gameDayNumber: numericGameDay,
         leagueId: normalizedLeagueId,
         ...(seasonValue ? { season: seasonValue } : {}),
@@ -632,7 +606,7 @@ async function submitRecapRequest(args: {
         throw new Error("Enter a numeric BuzzerBeater game number.");
       }
 
-      return client.mutations.submitSingleGameSummary({
+      return submitSingleGameSummaryMutation({
         matchId: normalizedMatchId,
       });
     }
@@ -723,13 +697,13 @@ function getSubmissionBlockReason(args: {
 }
 
 export function resolveWorkspaceLeagueTimeZone(
-  workspace: DashboardWorkspace,
+  context: RecapPanelContext,
 ): string | null {
   return (
-    normalizeLeagueTimeZone(workspace.home.connection.leagueTimeZone) ??
+    normalizeLeagueTimeZone(context.connection.leagueTimeZone) ??
     inferLeagueTimeZone({
-      countryId: workspace.home.connection.countryId ?? null,
-      countryName: workspace.home.connection.countryName ?? null,
+      countryId: context.connection.countryId ?? null,
+      countryName: context.connection.countryName ?? null,
     })
   );
 }
@@ -741,9 +715,9 @@ export function resolveRecapInputMaxDate(timeZone: string | null | undefined): s
   );
 }
 
-export function resolveDefaultRecapDate(workspace: DashboardWorkspace): string {
-  const timeZone = resolveWorkspaceLeagueTimeZone(workspace);
-  const recentMatchDate = workspace.home.recentMatches
+export function resolveDefaultRecapDate(context: RecapPanelContext): string {
+  const timeZone = resolveWorkspaceLeagueTimeZone(context);
+  const recentMatchDate = context.recentMatches
     .map((match) => resolveCalendarDateKey(match.startTime, timeZone))
     .find((startTime): startTime is string => Boolean(startTime));
 
@@ -863,17 +837,12 @@ function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function formatAmplifyErrors(
-  errors: Array<{ message?: string }> | null | undefined,
-): string {
-  if (!errors?.length) {
-    return "The operation failed without a detailed error message.";
+function readQueryError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
   }
 
-  return errors
-    .map((error) => error.message?.trim())
-    .filter((message): message is string => Boolean(message))
-    .join(" ");
+  return "The request failed without a detailed error message.";
 }
 
 function formatTimestamp(value: string | null | undefined): string {

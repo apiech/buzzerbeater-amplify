@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState, type FormEvent } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 
-import { client } from "@/app/amplify-client";
+import {
+  leagueHistoryQueryOptions,
+  submitLeagueHistoryBackfillMutation,
+} from "@/app/dashboard/workspace-query-client";
 import type {
-  DashboardWorkspace,
+  LeagueHistoryPanelContext,
   LeagueHistoryBackfillStatus,
   LeagueHistoryPayload,
   LeagueHistoryRow,
@@ -32,7 +36,7 @@ const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-3";
 
 type LeagueHistoryPanelProps = {
-  workspace: DashboardWorkspace;
+  context: LeagueHistoryPanelContext;
 };
 
 type SortKey =
@@ -59,18 +63,41 @@ const defaultSortState: SortState = {
   key: "wins",
 };
 
-export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
-  const defaultLeagueId = workspace.home.connection.leagueId ?? null;
-  const defaultLeagueName = workspace.home.connection.leagueName ?? null;
+export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
+  const defaultLeagueId = context.connection.leagueId ?? null;
+  const defaultLeagueName = context.connection.leagueName ?? null;
   const [leagueIdInput, setLeagueIdInput] = useState(defaultLeagueId ?? "");
   const [requestedLeagueId, setRequestedLeagueId] = useState<string | null>(
     defaultLeagueId,
   );
-  const [payload, setPayload] = useState<LeagueHistoryPayload | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [sortState, setSortState] = useState<SortState>(defaultSortState);
+  const submitBackfillMutation = useMutation({
+    mutationFn: (leagueId: string | null) =>
+      submitLeagueHistoryBackfillMutation(
+        leagueId && leagueId !== defaultLeagueId ? { leagueId } : undefined,
+      ),
+  });
+  const historyQuery = useQuery({
+    ...leagueHistoryQueryOptions(
+      requestedLeagueId && requestedLeagueId !== defaultLeagueId
+        ? { leagueId: requestedLeagueId }
+        : undefined,
+    ),
+    enabled: Boolean(requestedLeagueId),
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) =>
+      hasActiveLeagueHistoryBackfill(query.state.data?.status ?? null)
+        ? 4000
+        : false,
+  });
+  const payload = historyQuery.data ?? null;
+  const refetchHistory = historyQuery.refetch;
+  const isLoading =
+    Boolean(requestedLeagueId) &&
+    (historyQuery.isPending || submitBackfillMutation.isPending);
+  const isSubmitting = submitBackfillMutation.isPending;
+  const submitBackfill = submitBackfillMutation.mutateAsync;
 
   useEffect(() => {
     if (!requestedLeagueId && defaultLeagueId) {
@@ -79,20 +106,28 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
     }
   }, [defaultLeagueId, requestedLeagueId]);
 
-  const loadHistoryEffect = useEffectEvent(
-    (options: { ensureBackfill?: boolean; showSpinner?: boolean } = {}) => {
-      void loadHistory({
-        ensureBackfill: options.ensureBackfill ?? false,
-        leagueId: requestedLeagueId,
-        showSpinner: options.showSpinner ?? true,
-      });
-    },
-  );
+  const handleHistoryRefresh = useCallback(async (args: {
+    ensureBackfill: boolean;
+    leagueId: string | null;
+  }): Promise<void> => {
+    if (!args.leagueId) {
+      return;
+    }
+
+    setPanelError(null);
+
+    try {
+      if (args.ensureBackfill) {
+        await submitBackfill(args.leagueId);
+      }
+      await refetchHistory();
+    } catch (error) {
+      setPanelError(readQueryError(error));
+    }
+  }, [refetchHistory, submitBackfill]);
 
   useEffect(() => {
     if (!requestedLeagueId) {
-      setPayload(null);
-      setIsLoading(false);
       setPanelError(
         "Connect a BuzzerBeater team with a league first, or enter a league ID override.",
       );
@@ -100,70 +135,19 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
     }
 
     setSortState(defaultSortState);
-    loadHistoryEffect({
+    setPanelError(null);
+    void handleHistoryRefresh({
       ensureBackfill: true,
-      showSpinner: true,
+      leagueId: requestedLeagueId,
     });
-  }, [requestedLeagueId]);
+  }, [handleHistoryRefresh, requestedLeagueId]);
 
   useEffect(() => {
-    if (!hasActiveLeagueHistoryBackfill(payload?.status ?? null)) {
+    if (!historyQuery.error) {
       return;
     }
-
-    const intervalId = window.setInterval(() => {
-      loadHistoryEffect({
-        ensureBackfill: false,
-        showSpinner: false,
-      });
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [payload?.status]);
-
-  async function loadHistory(args: {
-    ensureBackfill: boolean;
-    leagueId: string | null;
-    showSpinner: boolean;
-  }): Promise<void> {
-    if (!args.leagueId) {
-      return;
-    }
-
-    if (args.showSpinner) {
-      setIsLoading(true);
-    }
-    setPanelError(null);
-
-    if (args.ensureBackfill) {
-      setIsSubmitting(true);
-      const submitResponse = await client.mutations.submitLeagueHistoryBackfill(
-        args.leagueId === defaultLeagueId ? {} : { leagueId: args.leagueId },
-      );
-      if (submitResponse.errors?.length) {
-        setPanelError(formatAmplifyErrors(submitResponse.errors));
-        setIsLoading(false);
-        setIsSubmitting(false);
-        return;
-      }
-      setIsSubmitting(false);
-    }
-
-    const response = await client.queries.getLeagueHistory(
-      args.leagueId === defaultLeagueId ? {} : { leagueId: args.leagueId },
-    );
-    if (response.errors?.length || !response.data) {
-      setPayload(null);
-      setPanelError(formatAmplifyErrors(response.errors));
-      setIsLoading(false);
-      return;
-    }
-
-    setPayload(response.data);
-    setIsLoading(false);
-  }
+    setPanelError(readQueryError(historyQuery.error));
+  }, [historyQuery.error]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -212,10 +196,9 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
             <Button
               loading={isLoading && !isSubmitting}
               onClick={() =>
-                void loadHistory({
+                void handleHistoryRefresh({
                   ensureBackfill: false,
                   leagueId: requestedLeagueId,
-                  showSpinner: true,
                 })
               }
               variant="secondary"
@@ -225,10 +208,9 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
             <Button
               loading={isSubmitting}
               onClick={() =>
-                void loadHistory({
+                void handleHistoryRefresh({
                   ensureBackfill: true,
                   leagueId: requestedLeagueId,
-                  showSpinner: true,
                 })
               }
             >
@@ -306,10 +288,9 @@ export function LeagueHistoryPanel({ workspace }: LeagueHistoryPanelProps) {
             <Button
               loading={isSubmitting}
               onClick={() =>
-                void loadHistory({
+                void handleHistoryRefresh({
                   ensureBackfill: true,
                   leagueId: requestedLeagueId,
-                  showSpinner: true,
                 })
               }
             >
@@ -553,16 +534,10 @@ function normalizeLeagueId(value: string): string | null {
   return normalized.length ? normalized : null;
 }
 
-function formatAmplifyErrors(
-  errors: ReadonlyArray<{ message?: string }> | null | undefined,
-): string {
-  if (!errors?.length) {
-    return "The request failed without a detailed error message.";
-  }
-
-  return errors
-    .map((error) => error.message?.trim() || "Unknown Amplify error")
-    .join("; ");
+function readQueryError(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "The request failed without a detailed error message.";
 }
 
 function formatPercent(value: number): string {

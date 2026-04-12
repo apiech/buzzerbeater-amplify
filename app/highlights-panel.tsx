@@ -1,10 +1,20 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 
-import { client } from "@/app/amplify-client";
+import {
+  clearMyTeamHighlightsDataMutation,
+  fetchTeamHighlightsQuery,
+  submitMyTeamHighlightsScanMutation,
+  workspaceQueryKeys,
+} from "@/app/dashboard/workspace-query-client";
 import type {
-  DashboardWorkspace,
+  HighlightsPanelContext,
   TeamHighlightsMoment,
   TeamHighlightsPayload,
   TeamHighlightsScanStatus,
@@ -34,16 +44,10 @@ const inactiveFilterButtonClassName =
   "border-black/10 bg-white/70 text-ink hover:border-accent/35 hover:bg-white";
 
 type HighlightsPanelProps = {
-  workspace: DashboardWorkspace;
+  context: HighlightsPanelContext;
 };
 
 type HighlightsFilterPerspective = "against" | "both" | "for";
-
-type LoadHighlightsOptions = {
-  append?: boolean;
-  cursor?: string | null;
-  silent?: boolean;
-};
 
 const ACTIVE_SCAN_STATUSES = new Set([
   "ENQUEUING_MATCHES",
@@ -63,83 +67,72 @@ type HighlightsCredentialErrorKind =
   | "secret_mismatch"
   | "secret_unavailable";
 
-export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
+export function HighlightsPanel({ context }: HighlightsPanelProps) {
+  const queryClient = useQueryClient();
   const [perspective, setPerspective] =
     useState<HighlightsFilterPerspective>("both");
   const [onlyOutcomeChange, setOnlyOutcomeChange] = useState(true);
-  const [payload, setPayload] = useState<TeamHighlightsPayload | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-
-  const loadHighlightsEffect = useEffectEvent((options: LoadHighlightsOptions = {}) => {
-    void loadHighlights(options);
-  });
-
-  useEffect(() => {
-    loadHighlightsEffect();
-  }, [perspective, onlyOutcomeChange]);
-
-  async function loadHighlights(
-    options: LoadHighlightsOptions = {},
-  ): Promise<void> {
-    if (options.append) {
-      setIsLoadingMore(true);
-    } else if (!options.silent) {
-      setIsLoading(true);
-    }
-    if (!options.silent) {
-      setLoadError(null);
-    }
-
-    const response = await client.queries.getMyTeamHighlights({
-      cursor: options.cursor,
+  const perspectiveValue = perspective.toUpperCase();
+  const highlightsQuery = useInfiniteQuery({
+    queryKey: workspaceQueryKeys.highlights({
       onlyOutcomeChange,
-      perspective: perspective.toUpperCase(),
-    });
-
-    if (response.errors?.length || !response.data) {
-      setLoadError(formatAmplifyErrors(response.errors));
-      if (!options.silent) {
-        setIsLoading(false);
-      }
-      setIsLoadingMore(false);
-      return;
-    }
-
-    const nextPayload = response.data;
-    setPayload((current) => {
-      if (!options.append || !current) {
-        return nextPayload;
-      }
-
-      return {
-        ...nextPayload,
-        items: [...current.items, ...nextPayload.items],
-      };
-    });
-    if (!options.silent) {
-      setIsLoading(false);
-    }
-    setIsLoadingMore(false);
-  }
+      perspective: perspectiveValue,
+    }),
+    queryFn: ({ pageParam }) =>
+      fetchTeamHighlightsQuery({
+        cursor:
+          typeof pageParam === "string" && pageParam.trim().length
+            ? pageParam
+            : undefined,
+        onlyOutcomeChange,
+        perspective: perspectiveValue,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage?.nextCursor ?? undefined,
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) => {
+      const latestPayload = mergeHighlightsPages(query.state.data?.pages ?? []);
+      return hasActiveTeamHighlightsScan(latestPayload?.scanStatus ?? null) &&
+        !isTeamHighlightsScanStale(latestPayload?.scanStatus ?? null)
+        ? 4000
+        : false;
+    },
+  });
+  const submitScanMutation = useMutation({
+    mutationFn: submitMyTeamHighlightsScanMutation,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["workspace", "highlights"],
+      });
+    },
+  });
+  const clearDataMutation = useMutation({
+    mutationFn: clearMyTeamHighlightsDataMutation,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["workspace", "highlights"],
+      });
+    },
+  });
+  const payload = useMemo(
+    () => mergeHighlightsPages(highlightsQuery.data?.pages ?? []),
+    [highlightsQuery.data?.pages],
+  );
+  const loadError = readQueryError(highlightsQuery.error);
+  const submitError =
+    readQueryError(submitScanMutation.error) ??
+    readQueryError(clearDataMutation.error);
+  const isLoading = highlightsQuery.isPending;
+  const isLoadingMore = highlightsQuery.isFetchingNextPage;
+  const isSubmitting = submitScanMutation.isPending;
+  const isClearing = clearDataMutation.isPending;
 
   async function handleSubmit(): Promise<void> {
-    setIsSubmitting(true);
-    setSubmitError(null);
-
-    const response = await client.mutations.submitMyTeamHighlightsScan();
-    if (response.errors?.length || !response.data) {
-      setSubmitError(formatAmplifyErrors(response.errors));
-      setIsSubmitting(false);
-      return;
+    try {
+      await submitScanMutation.mutateAsync();
+    } catch {
+      // Mutation state carries the user-facing error.
     }
-
-    await loadHighlights();
-    setIsSubmitting(false);
   }
 
   async function handleLoadMore(): Promise<void> {
@@ -147,10 +140,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
       return;
     }
 
-    await loadHighlights({
-      append: true,
-      cursor: payload.nextCursor,
-    });
+    await highlightsQuery.fetchNextPage();
   }
 
   async function handleClear(): Promise<void> {
@@ -163,22 +153,15 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
       return;
     }
 
-    setIsClearing(true);
-    setSubmitError(null);
-
-    const response = await client.mutations.clearMyTeamHighlightsData();
-    if (response.errors?.length || !response.data) {
-      setSubmitError(formatAmplifyErrors(response.errors));
-      setIsClearing(false);
-      return;
+    try {
+      await clearDataMutation.mutateAsync();
+    } catch {
+      // Mutation state carries the user-facing error.
     }
-
-    await loadHighlights();
-    setIsClearing(false);
   }
 
   const focusTeamName =
-    payload?.team.teamName ?? workspace.home.team.teamName ?? "Your club";
+    payload?.team.teamName ?? context.team.teamName ?? "Your club";
   const scanStatus = payload?.scanStatus ?? null;
   const isScanStale = isTeamHighlightsScanStale(scanStatus);
   const hasActiveScan = hasActiveTeamHighlightsScan(scanStatus) && !isScanStale;
@@ -195,20 +178,6 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
     outcomeChangeMoments: 0,
     totalMoments: 0,
   };
-
-  useEffect(() => {
-    if (!hasActiveScan) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      loadHighlightsEffect({ silent: true });
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [hasActiveScan]);
 
   const failedMatches = scanStatus?.matchesFailed ?? 0;
   const brokenMatches = scanStatus?.brokenMatches ?? [];
@@ -268,7 +237,7 @@ export function HighlightsPanel({ workspace }: HighlightsPanelProps) {
             </div>
             <Button
               loading={isLoading}
-              onClick={() => void loadHighlights()}
+              onClick={() => void highlightsQuery.refetch()}
               size="sm"
               variant="secondary"
             >
@@ -744,6 +713,37 @@ function buildMomentHeadline(moment: TeamHighlightsMoment): string {
   return `${player} delivered one for ${opponent} against ${moment.teamName ?? "your team"}`;
 }
 
+function mergeHighlightsPages(
+  pages: ReadonlyArray<TeamHighlightsPayload | null | undefined>,
+): TeamHighlightsPayload | null {
+  const firstPage = pages.find(
+    (page): page is TeamHighlightsPayload => Boolean(page),
+  );
+  if (!firstPage) {
+    return null;
+  }
+
+  const items = pages.flatMap((page) => page?.items ?? []);
+  const lastPageWithCursor = [...pages]
+    .reverse()
+    .find((page): page is TeamHighlightsPayload => Boolean(page));
+
+  return {
+    ...firstPage,
+    items,
+    nextCursor: lastPageWithCursor?.nextCursor ?? null,
+  };
+}
+
+function readQueryError(error: unknown): string | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  const message = error.message.trim();
+  return message.length ? message : null;
+}
+
 function buildMomentDetail(moment: TeamHighlightsMoment): string {
   const action = describeMomentAction(moment);
   const scoreSwing =
@@ -893,16 +893,6 @@ function formatTimestamp(value: string | null | undefined): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(parsed));
-}
-
-function formatAmplifyErrors(
-  errors: ReadonlyArray<{ message?: string | null }> | null | undefined,
-): string {
-  const messages = (errors ?? [])
-    .map((error) => error.message?.trim())
-    .filter((message): message is string => Boolean(message));
-
-  return messages[0] ?? "The request failed.";
 }
 
 export function isReconnectRequiredHighlightsError(

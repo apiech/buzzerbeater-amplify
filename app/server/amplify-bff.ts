@@ -89,10 +89,6 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.getScoutTeamSummary(
       optionalInput(input) as never,
     ),
-  getScoutWorkspace: async (input) =>
-    (await runtime.getServerDataClient()).queries.getScoutWorkspace(
-      optionalInput(input) as never,
-    ),
   listMyBillingPayments: async (input) =>
     (await runtime.getServerDataClient()).queries.listMyBillingPayments(
       optionalInput(input) as never,
@@ -101,7 +97,6 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.optimizeLineupHelper(
       requiredInput(input) as never,
     ),
-  getTeamHub: async () => (await runtime.getServerDataClient()).queries.getTeamHub(),
 } satisfies Record<string, QueryOperation>;
 
 const mutationOperations = {
@@ -127,6 +122,8 @@ const mutationOperations = {
     (await runtime.getServerDataClient()).mutations.disconnectBbAccount(),
   refreshWorkspace: async () =>
     (await runtime.getServerDataClient()).mutations.refreshWorkspace(),
+  submitRivalsBackfill: async () =>
+    (await runtime.getServerDataClient()).mutations.submitRivalsBackfill(),
   setBbLeagueTimeZone: async (input) =>
     (await runtime.getServerDataClient()).mutations.setBbLeagueTimeZone(
       requiredInput(input) as never,

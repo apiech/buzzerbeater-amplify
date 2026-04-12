@@ -44,7 +44,7 @@ import {
   type OpponentForecastJobRecord,
 } from "./repository";
 import { buildExecutionName, startStateMachineExecution } from "./step-functions";
-import { getOrRefreshWorkspace, getScoutWorkspaceForTeam } from "./workspace";
+import { getOrRefreshWorkspace, getScoutTeamSummaryForTeam } from "./workspace";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -77,6 +77,9 @@ type RecommendedLineupRow = RecommendedGamePlan["lineup"][number];
 type LineupHelperWorkspace = ResolverResult<"getLineupHelperWorkspace">;
 type LineupHelperRosterPlayer = LineupHelperWorkspace["roster"][number];
 type LineupHelperEvaluation = ResolverResult<"optimizeLineupHelper">;
+type ScoutWorkspaceShape = Awaited<
+  ReturnType<typeof getScoutTeamSummaryForTeam>
+>["scout"];
 type OpponentForecastScenario = NonNullable<
   NonNullable<ResolverResult<"getLatestOpponentForecast">["result"]>["topScenarios"][number]
 >;
@@ -86,7 +89,7 @@ type SubmitDependencies = {
   createNextGameRecommendationJob: typeof createNextGameRecommendationJob;
   getMatchBoxscore: typeof getMatchBoxscore;
   getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutWorkspaceForTeam: typeof getScoutWorkspaceForTeam;
+  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
   listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
   requireFeatureAccess: typeof requireFeatureAccess;
   startWorkflowExecution: (
@@ -101,7 +104,7 @@ type GetLatestDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
   getMatchBoxscore: typeof getMatchBoxscore;
   getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutWorkspaceForTeam: typeof getScoutWorkspaceForTeam;
+  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
   listNextGameRecommendationJobsByUser: typeof listNextGameRecommendationJobsByUser;
   listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
 };
@@ -112,7 +115,7 @@ type ProcessDependencies = {
   getMatchBoxscore: typeof getMatchBoxscore;
   getNextGameRecommendationJob: typeof getNextGameRecommendationJob;
   getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutWorkspaceForTeam: typeof getScoutWorkspaceForTeam;
+  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
   invokePredictionEndpoint: (
     endpointName: string,
     payload: JsonRecord,
@@ -126,7 +129,7 @@ type RecommendationContext = {
   nextMatch: NonNullable<ResolverResult<"getHomeWorkspace">["nextMatch"]>;
   opponentTeamId: string;
   opponentTeamName: string;
-  scout: ResolverResult<"getScoutWorkspace">;
+  scout: ScoutWorkspaceShape;
 };
 
 type ForecastContext = {
@@ -208,7 +211,7 @@ const defaultSubmitDependencies: SubmitDependencies = {
   createNextGameRecommendationJob,
   getMatchBoxscore,
   getOrRefreshWorkspace,
-  getScoutWorkspaceForTeam,
+  getScoutTeamSummaryForTeam,
   listOpponentForecastJobsByUser,
   requireFeatureAccess,
   startWorkflowExecution: async (stateMachineArn, executionName, message) =>
@@ -224,7 +227,7 @@ const defaultGetLatestDependencies: GetLatestDependencies = {
   assertMaintenanceInactive,
   getMatchBoxscore,
   getOrRefreshWorkspace,
-  getScoutWorkspaceForTeam,
+  getScoutTeamSummaryForTeam,
   listNextGameRecommendationJobsByUser,
   listOpponentForecastJobsByUser,
 };
@@ -235,7 +238,7 @@ const defaultProcessDependencies: ProcessDependencies = {
   getMatchBoxscore,
   getNextGameRecommendationJob,
   getOrRefreshWorkspace,
-  getScoutWorkspaceForTeam,
+  getScoutTeamSummaryForTeam,
   invokePredictionEndpoint,
   listOpponentForecastJobsByUser,
   optimizeLineupHelper,
@@ -283,7 +286,7 @@ export async function submitNextGameRecommendationJob(
   const context = await resolveRecommendationContext({
     env: args.env,
     getOrRefreshWorkspace: deps.getOrRefreshWorkspace,
-    getScoutWorkspaceForTeam: deps.getScoutWorkspaceForTeam,
+    getScoutTeamSummaryForTeam: deps.getScoutTeamSummaryForTeam,
     identity: args.identity,
   });
   await resolveLatestForecastContext({
@@ -372,7 +375,7 @@ export async function getLatestNextGameRecommendation(
   const context = await resolveRecommendationContext({
     env: args.env,
     getOrRefreshWorkspace: deps.getOrRefreshWorkspace,
-    getScoutWorkspaceForTeam: deps.getScoutWorkspaceForTeam,
+    getScoutTeamSummaryForTeam: deps.getScoutTeamSummaryForTeam,
     identity: args.identity,
   });
   const forecast = await resolveLatestForecastContext({
@@ -458,7 +461,7 @@ export async function processNextGameRecommendationJob(
     const context = await resolveRecommendationContext({
       env: args.env,
       getOrRefreshWorkspace: deps.getOrRefreshWorkspace,
-      getScoutWorkspaceForTeam: deps.getScoutWorkspaceForTeam,
+      getScoutTeamSummaryForTeam: deps.getScoutTeamSummaryForTeam,
       identity,
     });
     if (
@@ -795,7 +798,7 @@ export function jobMatchesRecommendationSettings(
 async function resolveRecommendationContext(args: {
   env: GraphqlEnv;
   getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutWorkspaceForTeam: typeof getScoutWorkspaceForTeam;
+  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
   identity: unknown;
 }): Promise<RecommendationContext> {
   const workspace = await args.getOrRefreshWorkspace({
@@ -810,7 +813,7 @@ async function resolveRecommendationContext(args: {
     throw new Error("The next match does not have an opponent yet.");
   }
 
-  const scoutWorkspace = await args.getScoutWorkspaceForTeam({
+  const scoutWorkspace = await args.getScoutTeamSummaryForTeam({
     env: args.env,
     identity: args.identity,
     teamId: nextMatch.opponentTeamId,

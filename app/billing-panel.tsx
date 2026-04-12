@@ -1,14 +1,15 @@
 "use client";
 
+import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
-  createBillingCheckoutUrl,
-  createBillingLifetimeCheckoutUrl,
-  createBillingPortalUrl,
-  fetchBillingPayments,
-} from "@/app/billing-client";
+  billingPaymentsQueryOptions,
+  createBillingCheckoutUrlMutation,
+  createBillingLifetimeCheckoutUrlMutation,
+  createBillingPortalUrlMutation,
+} from "@/app/dashboard/workspace-query-client";
 import type { BillingPaymentEntry, BillingSummary } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
@@ -45,90 +46,55 @@ export function BillingPanel({
   summary,
 }: BillingPanelProps) {
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isStartingCheckout, setIsStartingCheckout] = useState(false);
-  const [isStartingLifetimeCheckout, setIsStartingLifetimeCheckout] =
-    useState(false);
-  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
-  const [payments, setPayments] = useState<BillingPaymentEntry[]>([]);
-  const [paymentsError, setPaymentsError] = useState<string | null>(null);
-  const [isLoadingPayments, setIsLoadingPayments] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!summary) {
-      setPayments([]);
-      setPaymentsError(null);
-      setIsLoadingPayments(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setIsLoadingPayments(true);
-    setPaymentsError(null);
-
-    void fetchBillingPayments({ limit: 5 })
-      .then((page) => {
-        if (cancelled) {
-          return;
-        }
-
-        setPayments(page.items);
-      })
-      .catch((paymentsFetchError) => {
-        if (cancelled) {
-          return;
-        }
-
-        setPaymentsError(formatClientError(paymentsFetchError));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingPayments(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [summary]);
+  const checkoutMutation = useMutation({
+    mutationFn: () => createBillingCheckoutUrlMutation(billingReturnPath),
+  });
+  const lifetimeCheckoutMutation = useMutation({
+    mutationFn: () =>
+      createBillingLifetimeCheckoutUrlMutation(billingReturnPath),
+  });
+  const portalMutation = useMutation({
+    mutationFn: () => createBillingPortalUrlMutation(billingReturnPath),
+  });
+  const paymentsQuery = useQuery({
+    ...billingPaymentsQueryOptions({ limit: 5 }),
+    enabled: Boolean(summary),
+    placeholderData: (previousData) => previousData,
+  });
+  const payments = paymentsQuery.data?.items ?? [];
+  const paymentsError = readQueryError(paymentsQuery.error);
+  const isLoadingPayments = paymentsQuery.isPending;
+  const isStartingCheckout = checkoutMutation.isPending;
+  const isStartingLifetimeCheckout = lifetimeCheckoutMutation.isPending;
+  const isOpeningPortal = portalMutation.isPending;
 
   async function handleCheckout(): Promise<void> {
     setActionError(null);
-    setIsStartingCheckout(true);
 
     try {
-      window.location.assign(await createBillingCheckoutUrl(billingReturnPath));
+      window.location.assign(await checkoutMutation.mutateAsync());
     } catch (checkoutError) {
       setActionError(formatClientError(checkoutError));
-      setIsStartingCheckout(false);
     }
   }
 
   async function handleLifetimeCheckout(): Promise<void> {
     setActionError(null);
-    setIsStartingLifetimeCheckout(true);
 
     try {
-      window.location.assign(
-        await createBillingLifetimeCheckoutUrl(billingReturnPath),
-      );
+      window.location.assign(await lifetimeCheckoutMutation.mutateAsync());
     } catch (checkoutError) {
       setActionError(formatClientError(checkoutError));
-      setIsStartingLifetimeCheckout(false);
     }
   }
 
   async function handlePortal(): Promise<void> {
     setActionError(null);
-    setIsOpeningPortal(true);
 
     try {
-      window.location.assign(await createBillingPortalUrl(billingReturnPath));
+      window.location.assign(await portalMutation.mutateAsync());
     } catch (portalError) {
       setActionError(formatClientError(portalError));
-      setIsOpeningPortal(false);
     }
   }
 
@@ -269,17 +235,17 @@ export function PremiumFeatureGatePanel({
   message,
 }: PremiumFeatureGatePanelProps) {
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
+  const portalMutation = useMutation({
+    mutationFn: () => createBillingPortalUrlMutation(billingReturnPath),
+  });
 
   async function handlePortal(): Promise<void> {
     setActionError(null);
-    setIsOpeningPortal(true);
 
     try {
-      window.location.assign(await createBillingPortalUrl(billingReturnPath));
+      window.location.assign(await portalMutation.mutateAsync());
     } catch (portalError) {
       setActionError(formatClientError(portalError));
-      setIsOpeningPortal(false);
     }
   }
 
@@ -293,7 +259,7 @@ export function PremiumFeatureGatePanel({
             </Link>
             {billingSummary?.hasBillingCustomer ? (
               <Button
-                loading={isOpeningPortal}
+                loading={portalMutation.isPending}
                 onClick={() => void handlePortal()}
                 variant="secondary"
               >
@@ -431,6 +397,15 @@ function formatTimestamp(timestamp: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(timestamp));
+}
+
+function readQueryError(error: unknown): string | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  const message = error.message.trim();
+  return message.length ? message : null;
 }
 
 function formatClientError(error: unknown): string {

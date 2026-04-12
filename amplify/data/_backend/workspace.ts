@@ -98,9 +98,24 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 >;
 
 type HomeWorkspaceResult = ResolverResult<"getHomeWorkspace">;
-type TeamHubWorkspaceResult = ResolverResult<"getTeamHub">;
-type ScoutWorkspaceResult = ResolverResult<"getScoutWorkspace">;
 type ScoutTeamSummaryResult = ResolverResult<"getScoutTeamSummary">;
+type PlayerSummaryRecord = ResolverResult<"getPlayerLab">["players"][number];
+type TeamInfoSummary = {
+  country: { id: string | null; name: string | null } | null;
+  isBot: boolean;
+  league: { id: string | null; name: string | null } | null;
+  ownerName: string | null;
+  rival: { id: string | null; name: string | null } | null;
+  shortName: string | null;
+  teamId: string | null;
+  teamName: string | null;
+};
+type TeamHubWorkspaceResult = {
+  roster: PlayerSummaryRecord[];
+  syncedAt: string | null;
+  team: TeamInfoSummary;
+};
+type ScoutWorkspaceResult = ScoutTeamSummaryResult;
 type ScoutScheduleResult = NonNullable<ScoutWorkspaceResult["schedule"]>;
 type LeagueIntelWorkspaceResult = ResolverResult<"getLeagueIntel">;
 type PlayerLabWorkspaceResult = ResolverResult<"getPlayerLab">;
@@ -108,8 +123,6 @@ type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
 type SharedPlayerCardResult = ResolverResult<"generateSharedPlayerCard">;
 type SalaryProjectionResult = ResolverResult<"getSalaryProjection">;
 
-type PlayerSummaryRecord = TeamHubWorkspaceResult["roster"][number];
-type TeamInfoSummary = NonNullable<TeamHubWorkspaceResult["team"]>;
 type HomeNextMatchResult = NonNullable<HomeWorkspaceResult["nextMatch"]>;
 type MatchSummaryRecord = HomeWorkspaceResult["recentMatches"][number];
 type TendenciesSummary = NonNullable<
@@ -502,7 +515,7 @@ export async function revokePlayerCard(
   });
 }
 
-export async function getScoutWorkspaceForTeam(args: {
+async function _getScoutWorkspaceForTeam(args: {
   competitionKeys?: string[] | null;
   env: GraphqlEnv;
   force?: boolean;
@@ -586,7 +599,7 @@ export async function getScoutWorkspaceForTeam(args: {
     };
   } catch (error) {
     if (isMatchInProgressWorkspaceError(error)) {
-      logWorkspaceWarn("getScoutWorkspace.match_in_progress_fallback", {
+      logWorkspaceWarn("getScoutTeamSummary.match_in_progress_fallback", {
         requestedTeamId: requestedTeamId || null,
         resolvedTeamId,
         userId,
@@ -766,6 +779,7 @@ export async function getScoutScheduleForTeamWithMeta(args: {
   season?: number | null;
   teamId?: string | null;
 }): Promise<{
+  competitionProfile: OpponentCompetitionProfile | null;
   meta: ScoutScheduleMeta;
   schedule: ScoutScheduleResult | null;
 }> {
@@ -800,6 +814,7 @@ export async function getScoutScheduleForTeamWithMeta(args: {
   const resolvedTeamId = resolveScoutTeamId(baseWorkspace, requestedTeamId);
   if (!resolvedTeamId) {
     return {
+      competitionProfile: null,
       meta: {
         cacheHitBoxscoreCount: 0,
         competitionFilterCount: args.competitionKeys?.length ?? 0,
@@ -855,6 +870,7 @@ export async function getScoutScheduleForTeamWithMeta(args: {
     });
 
     return {
+      competitionProfile: scheduleResult.competitionProfile,
       meta: {
         ...scheduleResult.meta,
         currentSeason: currentWorkspace.schedule.season ?? null,
@@ -889,6 +905,7 @@ export async function getScoutScheduleForTeamWithMeta(args: {
         ...toLoggableError(error),
       });
       return {
+        competitionProfile: null,
         meta: {
           cacheHitBoxscoreCount: 0,
           competitionFilterCount: args.competitionKeys?.length ?? 0,
@@ -1962,6 +1979,7 @@ async function fetchOpponentSchedule(args: {
   selectedSeason: number | null;
   userId: string;
 }): Promise<{
+  competitionProfile: OpponentCompetitionProfile;
   meta: Omit<
     ScoutScheduleMeta,
     "currentSeason" | "requestedTeamId" | "resolvedTeamId" | "usedCachedBaseWorkspace"
@@ -2113,6 +2131,7 @@ async function fetchOpponentSchedule(args: {
     : 0;
 
   return {
+    competitionProfile,
     meta: {
       ...hydrationMetrics,
       competitionFilterCount: args.competitionKeys?.length ?? 0,

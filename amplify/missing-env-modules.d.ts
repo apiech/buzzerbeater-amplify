@@ -14,6 +14,10 @@ declare module "$amplify/env/league-history-worker" {
   export const env: Record<string, string | undefined>;
 }
 
+declare module "$amplify/env/rivals-worker" {
+  export const env: Record<string, string | undefined>;
+}
+
 declare module "$amplify/env/next-game-recommendation-submit" {
   export const env: Record<string, string | undefined>;
 }
@@ -27,6 +31,10 @@ declare module "$amplify/env/opponent-forecast-worker" {
 }
 
 declare module "$amplify/env/submit-league-history-backfill" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/submit-rivals-backfill" {
   export const env: Record<string, string | undefined>;
 }
 

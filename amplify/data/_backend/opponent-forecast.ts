@@ -17,7 +17,8 @@ import {
 } from "./repository";
 import {
   getOrRefreshWorkspace,
-  getScoutWorkspaceForTeam,
+  getScoutScheduleForTeamWithMeta,
+  getScoutTeamSummaryForTeamWithMeta,
   type WorkspaceBundle,
 } from "./workspace";
 import {
@@ -48,6 +49,12 @@ type OpponentForecastScenario = OpponentForecastResult["topScenarios"][number];
 type OpponentForecastPlayerProjection = OpponentForecastScenario["starters"][number];
 type OpponentForecastAnalogGame = OpponentForecastResult["analogGames"][number];
 type OpponentForecastSignal = OpponentForecastResult["featureSignals"][number];
+type ScoutWorkspaceShape = Awaited<
+  ReturnType<typeof getScoutTeamSummaryForTeamWithMeta>
+>["scout"];
+type ScoutCompetitionProfile = Awaited<
+  ReturnType<typeof getScoutScheduleForTeamWithMeta>
+>["competitionProfile"];
 
 type SubmitOpponentForecastDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
@@ -176,7 +183,8 @@ dependencies: {
   assertMaintenanceInactive?: () => Promise<void>;
   getOpponentForecastJob?: typeof getOpponentForecastJob;
   getOrRefreshWorkspace?: typeof getOrRefreshWorkspace;
-  getScoutWorkspaceForTeam?: typeof getScoutWorkspaceForTeam;
+  getScoutScheduleForTeamWithMeta?: typeof getScoutScheduleForTeamWithMeta;
+  getScoutTeamSummaryForTeamWithMeta?: typeof getScoutTeamSummaryForTeamWithMeta;
   invokeOpponentForecastEndpoint?: typeof invokeOpponentForecastEndpoint;
   updateOpponentForecastJob?: typeof updateOpponentForecastJob;
 } = {}): Promise<void> {
@@ -184,7 +192,8 @@ dependencies: {
     assertMaintenanceInactive,
     getOpponentForecastJob,
     getOrRefreshWorkspace,
-    getScoutWorkspaceForTeam,
+    getScoutScheduleForTeamWithMeta,
+    getScoutTeamSummaryForTeamWithMeta,
     invokeOpponentForecastEndpoint,
     updateOpponentForecastJob,
     ...dependencies,
@@ -220,8 +229,14 @@ dependencies: {
       env: args.env,
       identity,
     });
-    const { competitionProfile, scout } =
-      await runtimeDependencies.getScoutWorkspaceForTeam({
+    const { scout } =
+      await runtimeDependencies.getScoutTeamSummaryForTeamWithMeta({
+      env: args.env,
+      identity,
+      teamId: job.teamId,
+    });
+    const { competitionProfile } =
+      await runtimeDependencies.getScoutScheduleForTeamWithMeta({
       env: args.env,
       identity,
       teamId: job.teamId,
@@ -278,11 +293,9 @@ dependencies: {
 }
 
 async function buildOpponentForecastContext(args: {
-  competitionProfile: Awaited<
-    ReturnType<typeof getScoutWorkspaceForTeam>
-  >["competitionProfile"];
+  competitionProfile: ScoutCompetitionProfile;
   env: GraphqlEnv;
-  scout: ResolverResult<"getScoutWorkspace">;
+  scout: ScoutWorkspaceShape;
   userId: string;
   workspace: WorkspaceBundle;
 }): Promise<JsonRecord> {

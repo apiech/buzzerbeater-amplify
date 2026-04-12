@@ -9,68 +9,32 @@ import {
   sortGameDayRecaps,
 } from "../app/recap-panel";
 import type {
-  DashboardWorkspace,
   GameDayRecapRecord,
   RecapHistoryRecord,
+  RecapPanelContext,
 } from "../app/types";
 
-function createWorkspace(): DashboardWorkspace {
+function createContext(): RecapPanelContext {
   return {
-    home: {
-      connection: {
-        bbLoginName: "coach-alpha",
-        leagueId: "100",
-        leagueName: "Elite League",
-        lastSyncAt: "2026-03-15T22:00:00Z",
-        status: "CONNECTED",
+    connection: {
+      countryId: "1",
+      countryName: "USA",
+      leagueId: "100",
+      leagueName: "Elite League",
+      leagueTimeZone: "America/New_York",
+    },
+    recentMatches: [
+      {
+        hasBoxscore: true,
+        matchId: "m-1",
+        opponentScore: 81,
+        opponentTeamName: "Beta",
+        outcome: "W",
+        startTime: "2026-03-15T19:00:00Z",
+        teamScore: 85,
+        type: "League",
       },
-      league: {
-        league: { id: "100", name: "Elite League" },
-        standings: [],
-      },
-      nextMatch: null,
-      nextOpponent: null,
-      recentMatches: [
-        {
-          hasBoxscore: true,
-          matchId: "m-1",
-          opponentScore: 81,
-          opponentTeamName: "Beta",
-          outcome: "W",
-          startTime: "2026-03-15T19:00:00Z",
-          teamScore: 85,
-          type: "League",
-        },
-      ],
-      team: {
-        injuries: [],
-        record: { losses: 4, wins: 12 },
-        shortName: "ALP",
-        teamId: "A",
-        teamName: "Alpha",
-        topPlayers: [],
-      },
-    },
-    leagueIntel: {
-      league: { id: "100", name: "Elite League" },
-      standings: [],
-    },
-    playerLab: {
-      players: [],
-    },
-    scout: {
-      availableOpponents: [],
-      recentMatchups: [],
-      summary: null,
-      teamId: null,
-    },
-    syncedAt: "2026-03-15T22:00:00Z",
-    teamHub: {
-      roster: [],
-      team: {
-        isBot: false,
-      },
-    },
+    ],
   };
 }
 
@@ -123,7 +87,7 @@ function createRecapHistoryRecord(args: {
 }
 
 test("resolveDefaultRecapDate uses the latest recent match date", () => {
-  assert.equal(resolveDefaultRecapDate(createWorkspace()), "2026-03-15");
+  assert.equal(resolveDefaultRecapDate(createContext()), "2026-03-15");
 });
 
 test("sortGameDayRecaps orders the most recent recap first", () => {

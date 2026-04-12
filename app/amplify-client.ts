@@ -54,10 +54,8 @@ type QueryOperationName =
   | "getSalaryProjection"
   | "getScoutSchedule"
   | "getScoutTeamSummary"
-  | "getScoutWorkspace"
   | "listMyBillingPayments"
-  | "optimizeLineupHelper"
-  | "getTeamHub";
+  | "optimizeLineupHelper";
 type MutationOperationName =
   | "clearMyTeamHighlightsData"
   | "connectBbAccount"
@@ -68,6 +66,7 @@ type MutationOperationName =
   | "refreshWorkspace"
   | "setBbLeagueTimeZone"
   | "submitGameDayRecap"
+  | "submitRivalsBackfill"
   | "submitLeagueHistoryBackfill"
   | "submitLeagueGameDayRecap"
   | "submitMyTeamHighlightsScan"
@@ -239,6 +238,7 @@ export const client = {
       requestMutation("setBbLeagueTimeZone", input),
     submitGameDayRecap: (input: JsonObject) =>
       requestMutation("submitGameDayRecap", input),
+    submitRivalsBackfill: () => requestMutation("submitRivalsBackfill"),
     submitLeagueHistoryBackfill: (input?: JsonObject) =>
       requestMutation("submitLeagueHistoryBackfill", input),
     submitLeagueGameDayRecap: (input: JsonObject) =>
@@ -284,12 +284,9 @@ export const client = {
       requestQuery("getScoutSchedule", input),
     getScoutTeamSummary: (input?: JsonObject) =>
       requestQuery("getScoutTeamSummary", input),
-    getScoutWorkspace: (input?: JsonObject) =>
-      requestQuery("getScoutWorkspace", input),
     listMyBillingPayments: (input?: JsonObject) =>
       requestQuery("listMyBillingPayments", input),
     optimizeLineupHelper: (input: JsonObject) =>
       requestQuery("optimizeLineupHelper", input),
-    getTeamHub: () => requestQuery("getTeamHub"),
   },
 };

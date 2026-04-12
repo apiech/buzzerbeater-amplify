@@ -152,12 +152,28 @@ test("client theme updates and data access go through internal app routes", () =
     "theme",
     "route.ts",
   );
+  const workspaceQueryClientSource = readRepoFile(
+    "app",
+    "dashboard",
+    "workspace-query-client.ts",
+  );
   const clientSource = readRepoFile("app", "amplify-client.ts");
 
-  assert.match(themeSelectSource, /fetch\("\/api\/app\/theme"/);
+  assert.match(themeSelectSource, /useMutation/);
+  assert.match(themeSelectSource, /saveThemePreferenceMutation/);
+  assert.doesNotMatch(themeSelectSource, /\bfetch\(/);
   assert.doesNotMatch(themeSelectSource, /localStorage/);
   assert.match(themeRouteSource, /requireServerCurrentUser/);
   assert.match(themeRouteSource, /upsertServerThemePreference/);
+  assert.match(workspaceQueryClientSource, /fetch\("\/api\/app\/theme"/);
+  assert.match(
+    themeSelectSource,
+    /document\.documentElement\.setAttribute\("data-theme", nextTheme\)/,
+  );
+  assert.match(
+    themeSelectSource,
+    /document\.documentElement\.setAttribute\("data-theme", previousTheme\)/,
+  );
   assert.match(clientSource, /\/api\/app\/reads\//);
   assert.match(clientSource, /\/api\/app\/queries\//);
   assert.match(clientSource, /\/api\/app\/mutations\//);

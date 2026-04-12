@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
-import { client } from "@/app/amplify-client";
+import { operationsActivityQueryOptions } from "@/app/dashboard/workspace-query-client";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
@@ -32,94 +32,42 @@ const threeColumnGridClassName = "grid gap-4 xl:grid-cols-3";
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 
 export function OperationsPanel() {
-  const [gameDayRecaps, setGameDayRecaps] = useState<GameDayRecapRecord[]>([]);
-  const [leagueGameDayRecaps, setLeagueGameDayRecaps] = useState<
-    LeagueGameDayRecapRecord[]
-  >([]);
-  const [singleGameSummaries, setSingleGameSummaries] = useState<
-    SingleGameSummaryRecord[]
-  >([]);
-  const [syncRuns, setSyncRuns] = useState<SyncRunRecord[]>([]);
-  const [currentPrediction, setCurrentPrediction] =
-    useState<CurrentPredictionPreview | null>(null);
-  const [opsError, setOpsError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const loadOperationsEffect = useEffectEvent(() => {
-    void loadOperations();
+  const operationsQuery = useQuery({
+    ...operationsActivityQueryOptions({ limit: 8 }),
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) => {
+      const payload = query.state.data;
+      if (
+        !payload ||
+        !hasActiveOperationsActivity({
+          currentPrediction: payload.currentPrediction,
+          gameDayRecaps: payload.gameDayRecaps,
+          leagueGameDayRecaps: payload.leagueGameDayRecaps,
+          singleGameSummaries: payload.singleGameSummaries,
+          syncRuns: payload.syncRuns,
+        })
+      ) {
+        return false;
+      }
+
+      return 4000;
+    },
   });
 
-  useEffect(() => {
-    loadOperationsEffect();
-  }, []);
-
-  useEffect(() => {
-    if (
-      !hasActiveOperationsActivity({
-        currentPrediction,
-        gameDayRecaps,
-        leagueGameDayRecaps,
-        singleGameSummaries,
-        syncRuns,
-      })
-    ) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      loadOperationsEffect();
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [
-    currentPrediction,
-    gameDayRecaps,
-    leagueGameDayRecaps,
-    singleGameSummaries,
-    syncRuns,
-  ]);
-
-  async function loadOperations() {
-    setIsLoading(true);
-    setOpsError(null);
-
-    const response = await client.reads.getOperationsActivity({ limit: 8 });
-
-    if (response.errors?.length || !response.data) {
-      setOpsError(formatAmplifyErrors(response.errors));
-      setGameDayRecaps([]);
-      setLeagueGameDayRecaps([]);
-      setSingleGameSummaries([]);
-      setSyncRuns([]);
-      setCurrentPrediction(null);
-      setIsLoading(false);
-      return;
-    }
-
-    setSyncRuns(
-      [...response.data.syncRuns].sort((left, right) =>
-        right.startedAt.localeCompare(left.startedAt),
-      ),
-    );
-    setGameDayRecaps(
-      [...response.data.gameDayRecaps].sort((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      ),
-    );
-    setLeagueGameDayRecaps(
-      [...response.data.leagueGameDayRecaps].sort((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      ),
-    );
-    setSingleGameSummaries(
-      [...response.data.singleGameSummaries].sort((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      ),
-    );
-    setCurrentPrediction(response.data.currentPrediction);
-    setIsLoading(false);
-  }
+  const syncRuns = [...(operationsQuery.data?.syncRuns ?? [])].sort((left, right) =>
+    right.startedAt.localeCompare(left.startedAt),
+  );
+  const gameDayRecaps = [...(operationsQuery.data?.gameDayRecaps ?? [])].sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt),
+  );
+  const leagueGameDayRecaps = [
+    ...(operationsQuery.data?.leagueGameDayRecaps ?? []),
+  ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const singleGameSummaries = [
+    ...(operationsQuery.data?.singleGameSummaries ?? []),
+  ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const currentPrediction = operationsQuery.data?.currentPrediction ?? null;
+  const opsError = readQueryError(operationsQuery.error);
 
   const activeSyncCount = syncRuns.filter((run) => isActiveSyncStatus(run.status)).length;
   const failedSyncCount = syncRuns.filter((run) => run.status === "FAILED").length;
@@ -140,7 +88,11 @@ export function OperationsPanel() {
     <Panel>
       <SectionHeading
         actions={
-          <Button loading={isLoading} onClick={() => void loadOperations()} variant="secondary">
+          <Button
+            loading={operationsQuery.isRefetching}
+            onClick={() => void operationsQuery.refetch()}
+            variant="secondary"
+          >
             Refresh activity
           </Button>
         }
@@ -254,17 +206,8 @@ export function OperationsPanel() {
   );
 }
 
-function formatAmplifyErrors(
-  errors: Array<{ message?: string }> | null | undefined,
-): string {
-  if (!errors?.length) {
-    return "The operation failed without a detailed error message.";
-  }
-
-  return errors
-    .map((error) => error.message?.trim())
-    .filter((message): message is string => Boolean(message))
-    .join(" ");
+function readQueryError(error: unknown): string | null {
+  return error instanceof Error ? error.message : null;
 }
 
 function formatTimestamp(value: string | null | undefined): string {

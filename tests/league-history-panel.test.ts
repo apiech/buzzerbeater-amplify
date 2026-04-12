@@ -112,10 +112,14 @@ test("league history silently polls active backfills without browser realtime su
     "utf8",
   );
 
-  assert.match(source, /window\.setInterval/);
-  assert.match(source, /hasActiveLeagueHistoryBackfill\(payload\?\.status \?\? null\)/);
+  assert.match(source, /useQuery\(/);
+  assert.match(source, /leagueHistoryQueryOptions/);
+  assert.match(source, /refetchInterval: \(query\) =>/);
+  assert.match(
+    source,
+    /hasActiveLeagueHistoryBackfill\(query\.state\.data\?\.status \?\? null\)/,
+  );
   assert.match(source, /ensureBackfill: false/);
-  assert.match(source, /showSpinner: false/);
   assert.doesNotMatch(source, /amplify-realtime/);
   assert.doesNotMatch(source, /getRealtimeClient/);
   assert.doesNotMatch(source, /\.subscribe\(/);

@@ -28,10 +28,7 @@ type MatchStoreBackend = {
   getMyTeamHighlights: FunctionResource;
   getPlayerLab: FunctionResource;
   getPlayerTrend: FunctionResource;
-  getRivalsWorkspace: FunctionResource;
   getSalaryProjection: FunctionResource;
-  getScoutWorkspace: FunctionResource;
-  getTeamHub: FunctionResource;
   listAccessibleMatches: FunctionResource;
   refreshWorkspace: FunctionResource;
   submitMyTeamHighlightsScan: FunctionResource;
@@ -97,11 +94,8 @@ export function configureMatchStoreIntegration(
   const workspaceSnapshotWriteFunctions = [
     backend.connectBbAccount,
     backend.getHomeWorkspace,
-    backend.getTeamHub,
-    backend.getScoutWorkspace,
     backend.getLeagueIntel,
     backend.getPlayerLab,
-    backend.getRivalsWorkspace,
     backend.refreshWorkspace,
   ];
   const playerSnapshotReadFunctions = [

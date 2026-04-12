@@ -1,8 +1,12 @@
 "use client";
 
 import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
   useEffect,
-  useEffectEvent,
   useId,
   useRef,
   useState,
@@ -11,7 +15,12 @@ import {
   type SetStateAction,
 } from "react";
 
-import { client } from "@/app/amplify-client";
+import {
+  boxscoreQueryOptions,
+  currentPredictionQueryOptions,
+  submitPredictionJobMutation,
+  workspaceQueryKeys,
+} from "@/app/dashboard/workspace-query-client";
 import {
   findBestPredictionGridCell,
   hasRenderablePredictionGrid,
@@ -23,10 +32,10 @@ import {
 } from "@/app/prediction-panel-state";
 import type {
   CurrentPredictionPreview,
-  DashboardWorkspace,
   MatchBoxscorePayload,
   PredictionDraftState,
   PredictionGridCell,
+  PredictionPanelContext,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
@@ -91,9 +100,9 @@ const RATING_FIELDS: Array<{
 ];
 
 type PredictionPanelProps = {
+  context: PredictionPanelContext;
   draft: PredictionDraftState;
   onDraftChange: Dispatch<SetStateAction<PredictionDraftState>>;
-  workspace: DashboardWorkspace;
 };
 
 type NumericPredictionField =
@@ -126,37 +135,55 @@ const incompletePredictionResultMessage =
   "Prediction completed without any usable tactics-grid cells. Rerun the preview.";
 
 export function PredictionPanel({
+  context,
   draft,
   onDraftChange,
-  workspace,
 }: PredictionPanelProps) {
+  const queryClient = useQueryClient();
   const predictionFormId = useId();
   const predictionMatrixRef = useRef<HTMLDivElement | null>(null);
   const hasInitializedPredictionLoadRef = useRef(false);
   const previousRenderablePredictionKeyRef = useRef<string | null>(null);
-  const [currentPrediction, setCurrentPrediction] =
-    useState<CurrentPredictionPreview | null>(null);
   const [predictionError, setPredictionError] = useState<string | null>(null);
-  const [isLoadingPrediction, setIsLoadingPrediction] = useState(true);
   const [isLoadingSource, setIsLoadingSource] = useState<SourceSide | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const currentPredictionQuery = useQuery({
+    ...currentPredictionQueryOptions(),
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) => {
+      const snapshot = query.state.data;
+      if (!snapshot || terminalPredictionStatuses.has(snapshot.status)) {
+        return false;
+      }
+
+      return 4000;
+    },
+  });
+  const submitPredictionMutation = useMutation({
+    mutationFn: (request: unknown) => submitPredictionJobMutation({ request }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: workspaceQueryKeys.currentPrediction,
+      });
+    },
+  });
 
   const input = draft.input;
   const forecastPrefill = draft.forecastPrefill;
   const sourceSelection = draft.sourceSelection;
 
-  const homeMatchOptions = workspace.home.recentMatches.filter((match) =>
+  const homeMatchOptions = context.home.recentMatches.filter((match) =>
     Boolean(match.matchId && match.hasBoxscore),
   );
   const awayMatchOptions =
-    workspace.scout?.summary?.recentGames.filter((match) =>
+    context.scoutSummary?.recentGames.filter((match) =>
       Boolean(match.matchId && match.hasBoxscore),
     ) ?? [];
   const defaultHomeSourceMatchId = homeMatchOptions[0]?.matchId ?? "";
   const defaultAwaySourceMatchId = awayMatchOptions[0]?.matchId ?? "";
-  const homeTeamId = workspace.home.team.teamId ?? null;
+  const homeTeamId = context.home.team.teamId ?? null;
   const awayTeamId =
-    workspace.scout?.summary?.matchupPerspective.opponentTeamId ?? null;
+    context.scoutSummary?.matchupPerspective.opponentTeamId ?? null;
+  const currentPrediction = currentPredictionQuery.data ?? null;
   const currentPredictionRequestId = currentPrediction?.requestId ?? null;
   const currentPredictionUpdatedAt = currentPrediction?.updatedAt ?? null;
   const currentResult = readPredictionResult(currentPrediction);
@@ -184,10 +211,6 @@ export function PredictionPanel({
     : null;
   const forecastContext = currentPrediction?.forecastContext ?? null;
 
-  const loadCurrentPredictionEffect = useEffectEvent((silent = false) => {
-    void loadCurrentPrediction(silent);
-  });
-
   useEffect(() => {
     onDraftChange((current) => {
       const nextHome =
@@ -212,28 +235,7 @@ export function PredictionPanel({
   }, [defaultAwaySourceMatchId, defaultHomeSourceMatchId, onDraftChange]);
 
   useEffect(() => {
-    loadCurrentPredictionEffect();
-  }, []);
-
-  useEffect(() => {
-    if (
-      !currentPrediction ||
-      terminalPredictionStatuses.has(currentPrediction.status)
-    ) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      loadCurrentPredictionEffect(true);
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [currentPrediction]);
-
-  useEffect(() => {
-    if (isLoadingPrediction) {
+    if (currentPredictionQuery.isPending) {
       return;
     }
 
@@ -266,48 +268,24 @@ export function PredictionPanel({
     canRenderCurrentGrid,
     currentPredictionRequestId,
     currentPredictionUpdatedAt,
-    isLoadingPrediction,
+    currentPredictionQuery.isPending,
   ]);
 
-  async function loadCurrentPrediction(silent = false) {
-    if (!silent) {
-      setIsLoadingPrediction(true);
-    }
-
-    const { data, errors } = await client.reads.getCurrentPrediction();
-
-    if (errors?.length) {
-      setPredictionError(formatAmplifyErrors(errors));
-      setCurrentPrediction(null);
-      setIsLoadingPrediction(false);
-      return;
-    }
-
-    setPredictionError(null);
-    setCurrentPrediction(data ?? null);
-    setIsLoadingPrediction(false);
-  }
-
   async function handleSubmit() {
-    if (isSubmitting) {
+    if (submitPredictionMutation.isPending) {
       return;
     }
 
-    setIsSubmitting(true);
     setPredictionError(null);
 
-    const result = await client.mutations.submitPredictionJob({
-      request: buildSubmissionRequest({ draft }),
-    });
-
-    if (result.errors?.length || !result.data) {
-      setPredictionError(formatAmplifyErrors(result.errors));
-      setIsSubmitting(false);
-      return;
+    try {
+      await submitPredictionMutation.mutateAsync(
+        buildSubmissionRequest({ draft }),
+      );
+      await currentPredictionQuery.refetch();
+    } catch (error) {
+      setPredictionError(formatClientError(error));
     }
-
-    await loadCurrentPrediction(true);
-    setIsSubmitting(false);
   }
 
   function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
@@ -338,15 +316,15 @@ export function PredictionPanel({
     setIsLoadingSource(side);
     setPredictionError(null);
 
-    const response = await client.queries.getMatchBoxscoreDetails({ matchId });
-    if (response.errors?.length || !response.data) {
-      setPredictionError(formatAmplifyErrors(response.errors));
-      setIsLoadingSource(null);
-      return;
-    }
-
     try {
-      const resolvedSource = resolvePredictionSourceTeam(response.data, teamId);
+      const payload = await queryClient.fetchQuery(
+        boxscoreQueryOptions({ matchId }),
+      );
+      if (!payload) {
+        throw new Error("The selected box score is unavailable.");
+      }
+
+      const resolvedSource = resolvePredictionSourceTeam(payload, teamId);
       onDraftChange((current) => ({
         ...current,
         input: applyBoxscoreRatingsToPredictionInput({
@@ -362,6 +340,13 @@ export function PredictionPanel({
       setIsLoadingSource(null);
     }
   }
+
+  const isLoadingPrediction = currentPredictionQuery.isPending;
+  const isSubmitting = submitPredictionMutation.isPending;
+  const effectivePredictionError =
+    predictionError ??
+    readQueryError(currentPredictionQuery.error) ??
+    readQueryError(submitPredictionMutation.error);
 
   function updateSourceSelection(field: "homeSourceMatchId" | "awaySourceMatchId", value: string) {
     onDraftChange((current) => ({
@@ -412,7 +397,7 @@ export function PredictionPanel({
         back to a Base offense / Man-to-man defense baseline.
       </p>
 
-      {predictionError ? <Alert>{predictionError}</Alert> : null}
+      {effectivePredictionError ? <Alert>{effectivePredictionError}</Alert> : null}
 
       {forecastPrefill ? (
         <Alert tone="note">
@@ -520,7 +505,7 @@ export function PredictionPanel({
               <StatCard
                 detail="Saved box scores are a shortcut only. You can still edit every number below."
                 label="Home team"
-                value={workspace.home.team.teamName ?? "Unavailable"}
+                value={context.home.team.teamName ?? "Unavailable"}
               />
               <StatCard
                 detail={
@@ -529,7 +514,7 @@ export function PredictionPanel({
                     : "Refresh workspace data to load opponent box scores."
                 }
                 label="Away team"
-                value={workspace.scout?.summary?.teamName ?? "No saved opponent"}
+                value={context.scoutSummary?.teamName ?? "No saved opponent"}
               />
             </div>
           </Panel>
@@ -856,17 +841,13 @@ function readPredictionResult(
   };
 }
 
-function formatAmplifyErrors(
-  errors: Array<{ message?: string }> | null | undefined,
-): string {
-  if (!errors?.length) {
-    return "The operation failed without a detailed error message.";
+function readQueryError(error: unknown): string | null {
+  if (!(error instanceof Error)) {
+    return null;
   }
 
-  return errors
-    .map((error) => error.message?.trim())
-    .filter((message): message is string => Boolean(message))
-    .join(" ");
+  const message = error.message.trim();
+  return message.length ? message : null;
 }
 
 function formatClientError(error: unknown): string {

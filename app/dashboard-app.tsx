@@ -21,20 +21,23 @@ import {
   type FormEvent,
 } from "react";
 
-import { client } from "@/app/amplify-client";
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import {
   COMMERCIAL_MODE_DISABLED_SENTINEL,
-  formatAmplifyErrors,
   formatClientError,
 } from "@/app/dashboard/remote-errors";
 import { PanelErrorBoundary } from "@/app/dashboard/panel-error-boundary";
 import { useAuthenticatedWorkspace } from "@/app/dashboard/use-authenticated-workspace";
 import {
+  connectBbAccountMutation,
   nextGameRecommendationQueryOptions,
   opponentForecastQueryOptions,
+  playerTrendQueryOptions,
+  salaryProjectionQueryOptions,
   scoutScheduleQueryOptions,
   scoutTeamSummaryQueryOptions,
+  submitNextGameRecommendationJobMutation,
+  submitOpponentForecastJobMutation,
   workspaceQueryKeys,
 } from "@/app/dashboard/workspace-query-client";
 import { HighlightsPanel } from "@/app/highlights-panel";
@@ -64,16 +67,20 @@ import type {
   BbConnectionRecord,
   ConnectBbAccountInput,
   ConnectBbAccountResult,
-  DashboardWorkspace,
+  DashboardShellData,
+  HighlightsPanelContext,
+  HomeWorkspacePayload,
+  LeagueHistoryPanelContext,
   LineupHelperWorkspaceRecord,
   LineupHelperRosterPlayer,
   NextGameRecommendationInput,
   OpponentForecastSnapshot,
   PredictionDraftState,
+  PredictionPanelContext,
   PlayerSummary,
   RecommendationMode,
-  PlayerTrendPayload,
-  SalaryProjection,
+  RecapPanelContext,
+  RivalsPanelContext,
   ScoutWorkspacePayload,
   TrendCountEntry,
 } from "@/app/types";
@@ -410,7 +417,9 @@ function ConnectionOnboarding({
   const [submitError, setSubmitError] = useState<string | null>(
     connection?.lastSyncError ?? null,
   );
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const connectMutation = useMutation({
+    mutationFn: connectBbAccountMutation,
+  });
 
   useEffect(() => {
     setFormState({
@@ -422,32 +431,30 @@ function ConnectionOnboarding({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setIsSubmitting(true);
     setSubmitError(null);
 
-    const result = await client.mutations.connectBbAccount({
-      bbLoginName: formState.bbLoginName.trim(),
-      accessKey: formState.accessKey.trim(),
-    });
+    try {
+      const result = await connectMutation.mutateAsync({
+        bbLoginName: formState.bbLoginName.trim(),
+        accessKey: formState.accessKey.trim(),
+      });
 
-    if (result.errors?.length || !result.data) {
-      setSubmitError(formatAmplifyErrors(result.errors));
-      setIsSubmitting(false);
+      if (result.status !== "CONNECTED") {
+        setSubmitError(
+          result.lastSyncError ?? "Unable to validate those credentials.",
+        );
+        await onConnected(result.status);
+        return;
+      }
+
+      await onConnected(result.status);
+    } catch (error) {
+      setSubmitError(formatClientError(error));
       return;
     }
-
-    if (result.data.status !== "CONNECTED") {
-      setSubmitError(
-        result.data.lastSyncError ?? "Unable to validate those credentials.",
-      );
-      setIsSubmitting(false);
-      await onConnected(result.data.status);
-      return;
-    }
-
-    await onConnected(result.data.status);
-    setIsSubmitting(false);
   }
+
+  const isSubmitting = connectMutation.isPending;
 
   return (
     <Panel>
@@ -527,7 +534,7 @@ function WorkspaceDashboard({
   billingError: string | null;
   billingSummary: BillingSummary | null;
   isLoadingBilling: boolean;
-  workspace: DashboardWorkspace;
+  workspace: DashboardShellData;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -550,19 +557,10 @@ function WorkspaceDashboard({
   const [scoutTeamDraftId, setScoutTeamDraftId] = useState(
     selectedScoutTeamIdParam ?? nextOpponentTeamId ?? "",
   );
-  const [playerTrend, setPlayerTrend] = useState<PlayerTrendPayload | null>(
-    null,
-  );
-  const [playerTrendError, setPlayerTrendError] = useState<string | null>(null);
-  const [loadingTrendPlayerId, setLoadingTrendPlayerId] = useState<
+  const [selectedTrendPlayerId, setSelectedTrendPlayerId] = useState<
     string | null
   >(null);
-  const [salaryProjection, setSalaryProjection] =
-    useState<SalaryProjection | null>(null);
-  const [salaryProjectionError, setSalaryProjectionError] = useState<
-    string | null
-  >(null);
-  const [loadingSalaryPlayerId, setLoadingSalaryPlayerId] = useState<
+  const [selectedSalaryPlayerId, setSelectedSalaryPlayerId] = useState<
     string | null
   >(null);
   const didRestoreRecommendationSettingsRef = useRef(false);
@@ -570,9 +568,69 @@ function WorkspaceDashboard({
     useState<NextGameRecommendationInput>(NEXT_GAME_RECOMMENDATION_DEFAULTS);
   const [selectedRecommendationMode, setSelectedRecommendationMode] =
     useState<RecommendationMode>("BIGGEST_WIN");
+  const predictionBaseContext = useMemo<PredictionPanelContext>(
+    () => ({
+      home: {
+        recentMatches: home.recentMatches,
+        team: {
+          teamId: home.team.teamId,
+          teamName: home.team.teamName,
+        },
+      },
+      scoutSummary: null,
+    }),
+    [home.recentMatches, home.team.teamId, home.team.teamName],
+  );
+  const recapContext = useMemo<RecapPanelContext>(
+    () => ({
+      connection: {
+        countryId: home.connection.countryId,
+        countryName: home.connection.countryName,
+        leagueId: home.connection.leagueId,
+        leagueName: home.connection.leagueName,
+        leagueTimeZone: home.connection.leagueTimeZone,
+      },
+      recentMatches: home.recentMatches,
+    }),
+    [
+      home.connection.countryId,
+      home.connection.countryName,
+      home.connection.leagueId,
+      home.connection.leagueName,
+      home.connection.leagueTimeZone,
+      home.recentMatches,
+    ],
+  );
+  const highlightsContext = useMemo<HighlightsPanelContext>(
+    () => ({
+      team: {
+        teamId: home.team.teamId,
+        teamName: home.team.teamName,
+      },
+    }),
+    [home.team.teamId, home.team.teamName],
+  );
+  const leagueHistoryContext = useMemo<LeagueHistoryPanelContext>(
+    () => ({
+      connection: {
+        leagueId: home.connection.leagueId,
+        leagueName: home.connection.leagueName,
+      },
+    }),
+    [home.connection.leagueId, home.connection.leagueName],
+  );
+  const rivalsContext = useMemo<RivalsPanelContext>(
+    () => ({
+      team: {
+        teamId: home.team.teamId,
+        teamName: home.team.teamName,
+      },
+    }),
+    [home.team.teamId, home.team.teamName],
+  );
   const didRestorePredictionDraftRef = useRef(false);
   const [predictionDraft, setPredictionDraft] = useState<PredictionDraftState>(
-    () => createDefaultPredictionDraft(workspace),
+    () => createDefaultPredictionDraft(predictionBaseContext),
   );
   const scoutSummaryQuery = useQuery({
     ...scoutTeamSummaryQueryOptions({
@@ -614,6 +672,13 @@ function WorkspaceDashboard({
     activeSection === "scout" ? readClientError(scoutScheduleQuery.error) : null;
   const scoutError = scoutSummaryError;
   const scoutContextMessage = scout?.message ?? scoutEventWindowMessage;
+  const predictionContext = useMemo<PredictionPanelContext>(
+    () => ({
+      ...predictionBaseContext,
+      scoutSummary: scout?.summary ?? null,
+    }),
+    [predictionBaseContext, scout?.summary],
+  );
   const scoutScheduleStatusMessage = resolveScoutScheduleStatusMessage({
     hasSchedule: Boolean(scout?.schedule),
     hasSummary: Boolean(scout?.summary),
@@ -639,14 +704,7 @@ function WorkspaceDashboard({
     },
   });
   const opponentForecastRefreshMutation = useMutation({
-    mutationFn: async (teamId: string) => {
-      const response = await client.mutations.submitOpponentForecastJob({
-        teamId,
-      });
-      if (response.errors?.length) {
-        throw new Error(formatAmplifyErrors(response.errors));
-      }
-    },
+    mutationFn: (teamId: string) => submitOpponentForecastJobMutation({ teamId }),
     onSuccess: async (_, teamId) => {
       await queryClient.invalidateQueries({
         queryKey: workspaceQueryKeys.opponentForecast(teamId),
@@ -688,14 +746,8 @@ function WorkspaceDashboard({
     },
   });
   const nextGameRecommendationRefreshMutation = useMutation({
-    mutationFn: async (input: NextGameRecommendationInput) => {
-      const response = await client.mutations.submitNextGameRecommendationJob({
-        input,
-      });
-      if (response.errors?.length) {
-        throw new Error(formatAmplifyErrors(response.errors));
-      }
-    },
+    mutationFn: (input: NextGameRecommendationInput) =>
+      submitNextGameRecommendationJobMutation({ input }),
     onSuccess: async (_, input) => {
       await queryClient.invalidateQueries({
         queryKey: workspaceQueryKeys.nextGameRecommendation(input),
@@ -759,28 +811,19 @@ function WorkspaceDashboard({
 
     const storedDraft = readPredictionDraftFromStorage(
       typeof window === "undefined" ? null : window.sessionStorage,
-      {
-        ...workspace,
-        scout,
-      },
+      predictionContext,
     );
     if (!storedDraft) {
       return;
     }
     setPredictionDraft(storedDraft);
-  }, [scout, workspace]);
+  }, [predictionContext]);
 
   useEffect(() => {
     setPredictionDraft((current) =>
-      reconcilePredictionDraft(
-        {
-          ...workspace,
-          scout,
-        },
-        current,
-      ),
+      reconcilePredictionDraft(predictionContext, current),
     );
-  }, [scout, workspace]);
+  }, [predictionContext]);
 
   useEffect(() => {
     writePredictionDraftToStorage(
@@ -789,13 +832,6 @@ function WorkspaceDashboard({
     );
   }, [predictionDraft]);
 
-  const displayWorkspace = useMemo(
-    () => ({
-      ...workspace,
-      scout,
-    }),
-    [scout, workspace],
-  );
   const commercialModeDisabled =
     billingError === COMMERCIAL_MODE_DISABLED_SENTINEL;
   const billingPlanId =
@@ -829,6 +865,28 @@ function WorkspaceDashboard({
       ? nextGameRecommendation.result.efficientWinPlan
       : nextGameRecommendation.result.biggestWinPlan
     : null;
+  const playerTrendQuery = useQuery({
+    ...playerTrendQueryOptions({
+      playerId: selectedTrendPlayerId ?? "",
+    }),
+    enabled: Boolean(selectedTrendPlayerId),
+    placeholderData: (previousData) => previousData,
+  });
+  const salaryProjectionQuery = useQuery({
+    ...salaryProjectionQueryOptions({
+      playerId: selectedSalaryPlayerId ?? "",
+    }),
+    enabled: Boolean(selectedSalaryPlayerId),
+    placeholderData: (previousData) => previousData,
+  });
+  const playerTrend = playerTrendQuery.data ?? null;
+  const playerTrendError = readClientError(playerTrendQuery.error);
+  const loadingTrendPlayerId =
+    playerTrendQuery.isFetching ? selectedTrendPlayerId : null;
+  const salaryProjection = salaryProjectionQuery.data ?? null;
+  const salaryProjectionError = readClientError(salaryProjectionQuery.error);
+  const loadingSalaryPlayerId =
+    salaryProjectionQuery.isFetching ? selectedSalaryPlayerId : null;
 
   function handleUseScenarioInPreview(
     scenario: NonNullable<
@@ -841,11 +899,11 @@ function WorkspaceDashboard({
     }
 
     const nextDraft = applyForecastScenarioToDraft({
+      context: predictionContext,
       draft: predictionDraft,
       scenario,
       snapshot: opponentForecast,
       sourceTeamId,
-      workspace: displayWorkspace,
     });
     writePredictionDraftToStorage(
       typeof window === "undefined" ? null : window.sessionStorage,
@@ -919,46 +977,14 @@ function WorkspaceDashboard({
     if (!player.playerId) {
       return;
     }
-
-    setLoadingTrendPlayerId(player.playerId);
-    setPlayerTrendError(null);
-
-    const response = await client.queries.getPlayerTrend({
-      playerId: player.playerId,
-    });
-
-    if (response.errors?.length || !response.data) {
-      setPlayerTrend(null);
-      setPlayerTrendError(formatAmplifyErrors(response.errors));
-      setLoadingTrendPlayerId(null);
-      return;
-    }
-
-    setPlayerTrend(response.data);
-    setLoadingTrendPlayerId(null);
+    setSelectedTrendPlayerId(player.playerId);
   }
 
   async function handleLoadSalaryProjection(player: PlayerSummary) {
     if (!player.playerId) {
       return;
     }
-
-    setLoadingSalaryPlayerId(player.playerId);
-    setSalaryProjectionError(null);
-
-    const response = await client.queries.getSalaryProjection({
-      playerId: player.playerId,
-    });
-
-    if (response.errors?.length || !response.data) {
-      setSalaryProjection(null);
-      setSalaryProjectionError(formatAmplifyErrors(response.errors));
-      setLoadingSalaryPlayerId(null);
-      return;
-    }
-
-    setSalaryProjection(response.data);
-    setLoadingSalaryPlayerId(null);
+    setSelectedSalaryPlayerId(player.playerId);
   }
 
   return (
@@ -1978,9 +2004,9 @@ function WorkspaceDashboard({
             >
               {scoutContextMessage ? <Alert>{scoutContextMessage}</Alert> : null}
               <PredictionPanel
+                context={predictionContext}
                 draft={predictionDraft}
                 onDraftChange={setPredictionDraft}
-                workspace={displayWorkspace}
               />
             </PanelErrorBoundary>
           ) : (
@@ -2008,7 +2034,7 @@ function WorkspaceDashboard({
 
       {activeSection === "highlights" ? (
         canUseTeamHighlights ? (
-          <HighlightsPanel workspace={displayWorkspace} />
+          <HighlightsPanel context={highlightsContext} />
         ) : (
           <PremiumFeatureGatePanel
             billingSummary={billingSummary}
@@ -2022,7 +2048,7 @@ function WorkspaceDashboard({
 
       {activeSection === "recaps" ? (
         canUseLeagueWriteups ? (
-          <RecapPanel workspace={displayWorkspace} />
+          <RecapPanel context={recapContext} />
         ) : (
           <PremiumFeatureGatePanel
             billingSummary={billingSummary}
@@ -2108,11 +2134,11 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "league-history" ? (
-        <LeagueHistoryPanel workspace={displayWorkspace} />
+        <LeagueHistoryPanel context={leagueHistoryContext} />
       ) : null}
 
       {activeSection === "rivals" ? (
-        <RivalsPanel workspace={displayWorkspace} />
+        <RivalsPanel context={rivalsContext} />
       ) : null}
 
       {activeSection === "players" ? (
@@ -2372,7 +2398,7 @@ function resolveNextGameRecommendationBlockedReason(args: {
   isScoutViewingNextOpponent: boolean;
   isLoadingOpponentForecast: boolean;
   nextGameRecommendationError: string | null;
-  nextMatch: DashboardWorkspace["home"]["nextMatch"];
+  nextMatch: HomeWorkspacePayload["nextMatch"];
   opponentForecast: OpponentForecastSnapshot | null;
 }): string | null {
   if (!args.nextMatch) {
@@ -2401,8 +2427,8 @@ function resolveNextGameRecommendationBlockedReason(args: {
 }
 
 function resolveScoutEventWindowMessage(args: {
-  nextMatch: DashboardWorkspace["home"]["nextMatch"];
-  nextScoutMatch: DashboardWorkspace["home"]["nextScoutMatch"];
+  nextMatch: HomeWorkspacePayload["nextMatch"];
+  nextScoutMatch: HomeWorkspacePayload["nextScoutMatch"];
   selectedScoutTeamId: string | null | undefined;
 }): string | null {
   if (normalizeScoutTeamId(args.selectedScoutTeamId)) {
@@ -2426,8 +2452,8 @@ function normalizeScoutTeamId(value: string | null | undefined): string | null {
 }
 
 function didScoutTargetRollForward(
-  nextMatch: DashboardWorkspace["home"]["nextMatch"],
-  nextScoutMatch: DashboardWorkspace["home"]["nextScoutMatch"],
+  nextMatch: HomeWorkspacePayload["nextMatch"],
+  nextScoutMatch: HomeWorkspacePayload["nextScoutMatch"],
 ): boolean {
   if (!nextMatch || !nextScoutMatch) {
     return false;

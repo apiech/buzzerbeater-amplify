@@ -1,14 +1,19 @@
 "use client";
 
+import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { saveThemePreferenceMutation } from "@/app/dashboard/workspace-query-client";
 import { DEFAULT_THEME_ID, themeOptions, type ThemeId } from "@/app/theme";
 import { Field, Select } from "@/app/ui/primitives/field";
 
 export function ThemeSelect() {
   const [theme, setTheme] = useState<ThemeId>(DEFAULT_THEME_ID);
-  const [isSaving, setIsSaving] = useState(false);
   const [themeError, setThemeError] = useState<string | null>(null);
+  const saveThemeMutation = useMutation({
+    mutationFn: saveThemePreferenceMutation,
+  });
+  const isSaving = saveThemeMutation.isPending;
 
   useEffect(() => {
     const currentTheme =
@@ -23,26 +28,8 @@ export function ThemeSelect() {
     setThemeError(null);
     document.documentElement.setAttribute("data-theme", nextTheme);
 
-    setIsSaving(true);
     try {
-      const response = await fetch("/api/app/theme", {
-        body: JSON.stringify({ themeId: nextTheme }),
-        credentials: "same-origin",
-        headers: {
-          "content-type": "application/json",
-        },
-        method: "PUT",
-      });
-
-      const payload = (await response.json().catch(() => null)) as {
-        errors?: Array<{ message?: string }>;
-      } | null;
-      if (!response.ok) {
-        throw new Error(
-          payload?.errors?.[0]?.message ??
-            "Unable to save your theme preference.",
-        );
-      }
+      await saveThemeMutation.mutateAsync(nextTheme);
     } catch (error) {
       setTheme(previousTheme);
       document.documentElement.setAttribute("data-theme", previousTheme);
@@ -51,8 +38,6 @@ export function ThemeSelect() {
           ? error.message
           : "Unable to save your theme preference.",
       );
-    } finally {
-      setIsSaving(false);
     }
   }
 

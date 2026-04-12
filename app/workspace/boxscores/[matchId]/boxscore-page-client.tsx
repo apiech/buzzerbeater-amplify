@@ -1,9 +1,10 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
-import { client } from "@/app/amplify-client";
+import { boxscoreQueryOptions } from "@/app/dashboard/workspace-query-client";
 import type {
   MatchBoxscorePayload,
   MatchBoxscorePlayerLine,
@@ -24,39 +25,13 @@ const numericCellClassName = "text-right tabular-nums";
 const panelMetaClassName = "text-sm leading-7 text-ink-muted";
 
 export function BoxscorePageClient({ matchId }: { matchId: string }) {
-  const [payload, setPayload] = useState<MatchBoxscorePayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadBoxscore() {
-      setIsLoading(true);
-      setError(null);
-
-      const response = await client.queries.getMatchBoxscoreDetails({ matchId });
-      if (cancelled) {
-        return;
-      }
-
-      if (response.errors?.length || !response.data) {
-        setPayload(null);
-        setError(formatAmplifyErrors(response.errors));
-        setIsLoading(false);
-        return;
-      }
-
-      setPayload(response.data);
-      setIsLoading(false);
-    }
-
-    void loadBoxscore();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [matchId]);
+  const boxscoreQuery = useQuery({
+    ...boxscoreQueryOptions({ matchId }),
+    placeholderData: (previousData) => previousData,
+  });
+  const payload = boxscoreQuery.data ?? null;
+  const error = readQueryError(boxscoreQuery.error);
+  const isLoading = boxscoreQuery.isPending;
 
   return (
     <main className="grid min-h-screen gap-6 p-4 sm:p-6">
@@ -537,17 +512,8 @@ function humanizeKey(value: string): string {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
-function formatAmplifyErrors(
-  errors: Array<{ message?: string }> | null | undefined,
-): string {
-  if (!errors?.length) {
-    return "The operation failed without a detailed error message.";
-  }
-
-  return errors
-    .map((error) => error.message?.trim())
-    .filter((message): message is string => Boolean(message))
-    .join(" ");
+function readQueryError(error: unknown): string | null {
+  return error instanceof Error ? error.message : null;
 }
 
 function formatTimestamp(value: string | null | undefined): string {

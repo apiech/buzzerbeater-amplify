@@ -382,8 +382,13 @@ test("highlights panel polls active scans silently", () => {
   );
 
   assert.doesNotMatch(source, /\bRefresh\b/);
-  assert.match(source, /window\.setInterval/);
-  assert.match(source, /loadHighlightsEffect\(\{ silent: true \}\)/);
+  assert.match(source, /useInfiniteQuery/);
+  assert.match(source, /workspaceQueryKeys\.highlights/);
+  assert.match(source, /refetchInterval: \(query\) =>/);
+  assert.match(
+    source,
+    /hasActiveTeamHighlightsScan\(latestPayload\?\.scanStatus \?\? null\)/,
+  );
   assert.match(source, /Clear data/);
   assert.match(source, /\bTry again\b/);
   assert.match(source, /label=\"Found\"/);

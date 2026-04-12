@@ -11,6 +11,8 @@ const AWS_JSON_FIELDS = {
   LeagueStanding: ["standingJson"],
   LeagueHistoryStandingCache: [],
   LeagueHistoryBackfill: [],
+  RivalsWorkspaceCache: ["summaryJson", "matchesJson"],
+  RivalsBackfill: [],
   SyncRun: ["detailsJson"],
   SharedPlayerCard: ["payloadJson"],
   OpponentForecastJob: ["requestJson", "resolvedContextJson", "resultJson"],

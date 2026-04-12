@@ -115,6 +115,7 @@ test("externally configurable and injected env names are all classified", () => 
     "OPPONENT_FORECAST_JOB_STATE_MACHINE_ARN",
     "PREDICTION_ENDPOINT_NAME",
     "PREDICTION_JOB_STATE_MACHINE_ARN",
+    "RIVALS_BACKFILL_STATE_MACHINE_ARN",
     "TEAM_HIGHLIGHTS_SCAN_STATE_MACHINE_ARN",
   ]);
   assert.equal(documentedNames.has("BB_SHARED_ENVIRONMENT_NAME"), true);

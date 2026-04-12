@@ -1,9 +1,9 @@
 "use client";
 
 import type {
-  DashboardWorkspace,
   OpponentForecastScenario,
   OpponentForecastSnapshot,
+  PredictionPanelContext,
   PredictionDraftState,
   PredictionForecastAppliedValues,
   PredictionForecastContext,
@@ -39,35 +39,35 @@ export function createDefaultPredictionInput(): PredictionInput {
 }
 
 export function createDefaultPredictionSourceSelection(
-  workspace: DashboardWorkspace,
+  context: PredictionPanelContext,
 ): PredictionSourceSelection {
   return {
     homeSourceMatchId:
-      workspace.home.recentMatches.find(
+      context.home.recentMatches.find(
         (match) => Boolean(match.matchId && match.hasBoxscore),
       )?.matchId ?? "",
     awaySourceMatchId:
-      workspace.scout?.summary?.recentGames.find(
+      context.scoutSummary?.recentGames.find(
         (match) => Boolean(match.matchId && match.hasBoxscore),
       )?.matchId ?? "",
   };
 }
 
 export function createDefaultPredictionDraft(
-  workspace: DashboardWorkspace,
+  context: PredictionPanelContext,
 ): PredictionDraftState {
   return {
     input: createDefaultPredictionInput(),
     forecastPrefill: null,
-    sourceSelection: createDefaultPredictionSourceSelection(workspace),
+    sourceSelection: createDefaultPredictionSourceSelection(context),
   };
 }
 
 export function reconcilePredictionDraft(
-  workspace: DashboardWorkspace,
+  context: PredictionPanelContext,
   draft: Partial<PredictionDraftState> | null | undefined,
 ): PredictionDraftState {
-  const defaults = createDefaultPredictionDraft(workspace);
+  const defaults = createDefaultPredictionDraft(context);
   if (!draft) {
     return defaults;
   }
@@ -118,9 +118,9 @@ export function applyForecastScenarioToDraft(args: {
   scenario: OpponentForecastScenario;
   snapshot: OpponentForecastSnapshot;
   sourceTeamId: string;
-  workspace: DashboardWorkspace;
+  context: PredictionPanelContext;
 }): PredictionDraftState {
-  const selectionDefaults = createDefaultPredictionSourceSelection(args.workspace);
+  const selectionDefaults = createDefaultPredictionSourceSelection(args.context);
   const appliedValues: PredictionForecastAppliedValues = {
     effortDelta: mapOpponentEffortChoiceToRelativeDelta(args.scenario.effortChoice),
   };
@@ -188,7 +188,7 @@ export function clearForecastPrefill(
 
 export function readPredictionDraftFromStorage(
   storage: Storage | null | undefined,
-  workspace: DashboardWorkspace,
+  context: PredictionPanelContext,
 ): PredictionDraftState | null {
   if (!storage) {
     return null;
@@ -201,7 +201,7 @@ export function readPredictionDraftFromStorage(
 
   try {
     const parsed = JSON.parse(raw) as Partial<PredictionDraftState>;
-    return reconcilePredictionDraft(workspace, parsed);
+    return reconcilePredictionDraft(context, parsed);
   } catch {
     return null;
   }

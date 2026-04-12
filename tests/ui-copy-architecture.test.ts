@@ -65,7 +65,7 @@ test("home dashboard uses dedicated boxscore routes and owner roster copy", () =
   assert.match(dashboardSource, /label="DMI"/);
   assert.doesNotMatch(dashboardSource, /label="Starts"/);
   assert.doesNotMatch(dashboardSource, /title="Lineup Planner"/);
-  assert.match(boxscoreRouteSource, /client\.queries\.getMatchBoxscoreDetails/);
+  assert.match(boxscoreRouteSource, /boxscoreQueryOptions\(\{ matchId \}\)/);
   assert.doesNotMatch(boxscoreRouteSource, /Your tactics|Opponent tactics/);
 });
 

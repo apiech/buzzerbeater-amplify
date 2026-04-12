@@ -27,8 +27,8 @@ test("billing panel keeps checkout available for environment-based premium acces
   assert.match(source, /summary\.planId !== "premium" \|\| summary\.accessSource === "environment"/);
   assert.match(source, /sandbox or dev environment/);
   assert.match(source, /href="\/store"/);
-  assert.match(source, /createBillingLifetimeCheckoutUrl/);
-  assert.match(source, /fetchBillingPayments/);
+  assert.match(source, /createBillingLifetimeCheckoutUrlMutation/);
+  assert.match(source, /billingPaymentsQueryOptions/);
 });
 
 test("store route is public and drives billing through the new store-facing APIs", () => {
@@ -47,9 +47,10 @@ test("store route is public and drives billing through the new store-facing APIs
     /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
   );
   assert.match(pageSource, /notFound\(\)/);
-  assert.match(storefrontSource, /createBillingCheckoutUrl\("\/store"\)/);
-  assert.match(storefrontSource, /createBillingLifetimeCheckoutUrl\("\/store"\)/);
-  assert.match(storefrontSource, /createBillingPortalUrl\("\/store"\)/);
+  assert.match(storefrontSource, /createBillingCheckoutUrlMutation\(returnPath\)/);
+  assert.match(storefrontSource, /createBillingLifetimeCheckoutUrlMutation\(returnPath\)/);
+  assert.match(storefrontSource, /createBillingPortalUrlMutation\(returnPath\)/);
+  assert.match(storefrontSource, /billingSummaryQueryOptions\(\)/);
   assert.match(storefrontSource, /href="\/login"/);
   assert.match(storefrontSource, /href="\/workspace\/ops"/);
 });

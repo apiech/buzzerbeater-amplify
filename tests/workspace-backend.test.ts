@@ -40,10 +40,6 @@ const homeWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "get-home-workspace", "handler.ts"),
   "utf8",
 );
-const scoutWorkspaceHandlerSource = readFileSync(
-  join(repoRoot, "amplify", "data", "get-scout-workspace", "handler.ts"),
-  "utf8",
-);
 const scoutTeamSummaryHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "get-scout-team-summary", "handler.ts"),
   "utf8",
@@ -550,14 +546,18 @@ test("workspace boxscore helpers tolerate missing starter details and minute pos
   assert.equal(topPlayers[0]?.playerId, "p1");
 });
 
-test("scout workspace force refreshes home/core first and forwards the section force flag", () => {
+test("scout section handlers forward force flags and refresh home/core first when requested", () => {
   assert.match(
     workspaceSource,
     /const baseWorkspace = await getOrRefreshWorkspace\(\{\s*env: args\.env,\s*force: args\.force \?\? false,\s*identity: args\.identity,\s*syncActiveTrackedTeams: args\.force \?\? false,\s*\}\);/s,
   );
   assert.match(
-    scoutWorkspaceHandlerSource,
-    /force:\s*event\.arguments\.force \?\? false/,
+    scoutTeamSummaryHandlerSource,
+    /const force = event\.arguments\.force \?\? false;/,
+  );
+  assert.match(
+    scoutScheduleHandlerSource,
+    /const force = event\.arguments\.force \?\? false;/,
   );
 });
 

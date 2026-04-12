@@ -85,11 +85,17 @@ export type ConnectBbAccountResult = NonNullable<
 export type DisconnectBbAccountResult = NonNullable<
   Schema["disconnectBbAccount"]["returnType"]
 >;
+export type SetBbLeagueTimeZoneResult = NonNullable<
+  Schema["setBbLeagueTimeZone"]["returnType"]
+>;
 export type SubmitGameDayRecapResult = NonNullable<
   Schema["submitGameDayRecap"]["returnType"]
 >;
 export type SubmitLeagueHistoryBackfillResult = NonNullable<
   Schema["submitLeagueHistoryBackfill"]["returnType"]
+>;
+export type SubmitRivalsBackfillResult = NonNullable<
+  Schema["submitRivalsBackfill"]["returnType"]
 >;
 export type SubmitLeagueGameDayRecapResult = NonNullable<
   Schema["submitLeagueGameDayRecap"]["returnType"]
@@ -124,16 +130,15 @@ export type SalaryProjection = NonNullable<
 export type HomeWorkspacePayload = NonNullable<
   Schema["getHomeWorkspace"]["returnType"]
 >;
-export type TeamHubPayload = NonNullable<Schema["getTeamHub"]["returnType"]>;
-export type ScoutWorkspacePayload = NonNullable<
-  Schema["getScoutWorkspace"]["returnType"]
->;
 export type ScoutTeamSummaryPayload = NonNullable<
   Schema["getScoutTeamSummary"]["returnType"]
 >;
 export type ScoutSchedulePayload = NonNullable<
   Schema["getScoutSchedule"]["returnType"]
 >;
+export type ScoutWorkspacePayload = ScoutTeamSummaryPayload & {
+  schedule: ScoutSchedulePayload | null;
+};
 export type LeagueIntelPayload = NonNullable<
   Schema["getLeagueIntel"]["returnType"]
 >;
@@ -152,6 +157,9 @@ export type PlayerLabPayload = NonNullable<
 export type RivalsWorkspacePayload = NonNullable<
   Schema["getRivalsWorkspace"]["returnType"]
 >;
+export type RivalsBackfillStatus = NonNullable<
+  NonNullable<RivalsWorkspacePayload["status"]>
+>;
 export type PlayerTrendPayload = NonNullable<
   Schema["getPlayerTrend"]["returnType"]
 >;
@@ -169,7 +177,7 @@ export type TeamRecordSummary = NonNullable<
   HomeWorkspacePayload["team"]["record"]
 >;
 export type InjurySummary = HomeWorkspacePayload["team"]["injuries"][number];
-export type PlayerSummary = TeamHubPayload["roster"][number];
+export type PlayerSummary = PlayerLabPayload["players"][number];
 export type TrendCountEntry = NonNullable<
   NonNullable<HomeWorkspacePayload["nextOpponent"]>["tendencies"]
 >["offense"][number];
@@ -339,13 +347,44 @@ export type LeagueHistoryBackfillStatus = NonNullable<
 >;
 export type LeagueHistoryRow = LeagueHistoryPayload["rows"][number];
 
-export type DashboardWorkspace = {
+export type DashboardShellData = {
   home: HomeWorkspacePayload;
   lineupHelper: LineupHelperWorkspaceRecord | null;
-  scout: ScoutWorkspacePayload | null;
   leagueIntel: LeagueIntelPayload | null;
   playerLab: PlayerLabPayload | null;
   syncedAt: string | null;
+};
+
+export type DashboardWorkspace = DashboardShellData & {
+  scout: ScoutWorkspacePayload | null;
+};
+
+export type PredictionPanelContext = {
+  home: {
+    recentMatches: HomeWorkspacePayload["recentMatches"];
+    team: Pick<HomeWorkspacePayload["team"], "teamId" | "teamName">;
+  };
+  scoutSummary: ScoutTeamSummaryPayload["summary"] | null;
+};
+
+export type RecapPanelContext = {
+  connection: Pick<
+    HomeWorkspacePayload["connection"],
+    "countryId" | "countryName" | "leagueId" | "leagueName" | "leagueTimeZone"
+  >;
+  recentMatches: HomeWorkspacePayload["recentMatches"];
+};
+
+export type HighlightsPanelContext = {
+  team: Pick<HomeWorkspacePayload["team"], "teamId" | "teamName">;
+};
+
+export type LeagueHistoryPanelContext = {
+  connection: Pick<HomeWorkspacePayload["connection"], "leagueId" | "leagueName">;
+};
+
+export type RivalsPanelContext = {
+  team: Pick<HomeWorkspacePayload["team"], "teamId" | "teamName">;
 };
 
 export type PredictionInput = {
