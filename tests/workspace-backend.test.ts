@@ -36,8 +36,30 @@ const refreshWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "refresh-workspace", "handler.ts"),
   "utf8",
 );
+const homeWorkspaceHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "get-home-workspace", "handler.ts"),
+  "utf8",
+);
 const scoutWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "get-scout-workspace", "handler.ts"),
+  "utf8",
+);
+const scoutTeamSummaryHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "get-scout-team-summary", "handler.ts"),
+  "utf8",
+);
+const scoutScheduleHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "get-scout-schedule", "handler.ts"),
+  "utf8",
+);
+const workspaceLoggingSource = readFileSync(
+  join(
+    repoRoot,
+    "amplify",
+    "data",
+    "_backend",
+    "workspace-request-logging.ts",
+  ),
   "utf8",
 );
 const dashboardAppSource = readFileSync(
@@ -48,6 +70,18 @@ const authenticatedWorkspaceHookSource = readFileSync(
   join(repoRoot, "app", "dashboard", "use-authenticated-workspace.ts"),
   "utf8",
 );
+const scoutTeamSummarySection =
+  workspaceSource.match(
+    /export async function getScoutTeamSummaryForTeamWithMeta[\s\S]*?export async function getScoutScheduleForTeam/,
+  )?.[0] ?? "";
+const scoutScheduleSection =
+  workspaceSource.match(
+    /export async function getScoutScheduleForTeamWithMeta[\s\S]*?export async function lookupSharedPlayerCardByToken/,
+  )?.[0] ?? "";
+const syncWorkspaceSection =
+  workspaceSource.match(
+    /async function syncWorkspace[\s\S]*?async function persistWorkspace/,
+  )?.[0] ?? "";
 
 test("buildScoutWorkspace includes arbitrary scout targets, league options, and matchup history", () => {
   const currentWorkspace = {
@@ -256,6 +290,14 @@ test("base workspace refresh keeps next-opponent scouting lightweight", () => {
     workspaceSource,
     /const opponentWorkspace = nextOpponentTeamId\s*\?\s*await fetchOpponentWorkspace\(/,
   );
+  assert.doesNotMatch(
+    homeWorkspaceHandlerSource,
+    /getScoutScheduleForTeam|getScoutWorkspaceForTeam/,
+  );
+  assert.doesNotMatch(
+    refreshWorkspaceHandlerSource,
+    /getScoutScheduleForTeam|getScoutWorkspaceForTeam/,
+  );
 });
 
 test("buildHomeWorkspace keeps next-opponent summary available when scout schedule is deferred", () => {
@@ -295,6 +337,7 @@ test("buildHomeWorkspace keeps next-opponent summary available when scout schedu
       },
       teamStats: null,
     } as any,
+    null,
     null,
     [],
     [],
@@ -345,6 +388,7 @@ test("buildHomeWorkspace keeps next-opponent summary available when scout schedu
   );
 
   assert.ok(home.nextOpponent);
+  assert.equal(home.nextScoutMatch, null);
   assert.equal(home.nextOpponent.teamName, "Opp Team");
   assert.deepStrictEqual(home.nextOpponent.record, { losses: 8, wins: 8 });
   assert.equal(home.nextOpponent.injuries[0]?.fullName, "Injured Wing");
@@ -517,6 +561,212 @@ test("scout workspace force refreshes home/core first and forwards the section f
   );
 });
 
+test("scout team summary stays on the lightweight home-opponent path", () => {
+  assert.match(
+    scoutTeamSummarySection,
+    /await fetchHomeOpponentWorkspace\(/,
+  );
+  assert.doesNotMatch(
+    scoutTeamSummarySection,
+    /await fetchOpponentWorkspace\(/,
+  );
+  assert.match(
+    scoutTeamSummaryHandlerSource,
+    /getScoutTeamSummary\.start/,
+  );
+  assert.match(
+    scoutTeamSummaryHandlerSource,
+    /getScoutTeamSummary\.completed/,
+  );
+  assert.match(
+    scoutTeamSummaryHandlerSource,
+    /getScoutTeamSummary\.failed/,
+  );
+});
+
+test("scout schedule remains the only owner of heavy schedule hydration and timing logs", () => {
+  assert.match(
+    scoutScheduleSection,
+    /await fetchOpponentSchedule\(/,
+  );
+  assert.match(
+    workspaceSource,
+    /getScoutSchedule\.base_workspace\.ready/,
+  );
+  assert.match(
+    workspaceSource,
+    /getScoutSchedule\.seasons\.ready/,
+  );
+  assert.match(
+    workspaceSource,
+    /getScoutSchedule\.season_schedules\.ready/,
+  );
+  assert.match(
+    workspaceSource,
+    /getScoutSchedule\.boxscore_hydration\.ready/,
+  );
+  assert.match(
+    workspaceSource,
+    /getScoutSchedule\.competition_profile\.ready/,
+  );
+  assert.match(
+    scoutScheduleHandlerSource,
+    /getScoutSchedule\.start/,
+  );
+  assert.match(
+    scoutScheduleHandlerSource,
+    /getScoutSchedule\.completed/,
+  );
+  assert.match(
+    scoutScheduleHandlerSource,
+    /getScoutSchedule\.failed/,
+  );
+});
+
+test("home/core handlers emit request lifecycle logs without reintroducing scout schedule work", () => {
+  assert.match(homeWorkspaceHandlerSource, /getHomeWorkspace\.start/);
+  assert.match(homeWorkspaceHandlerSource, /getHomeWorkspace\.completed/);
+  assert.match(homeWorkspaceHandlerSource, /getHomeWorkspace\.failed/);
+  assert.match(refreshWorkspaceHandlerSource, /refreshWorkspace\.start/);
+  assert.match(refreshWorkspaceHandlerSource, /refreshWorkspace\.completed/);
+  assert.match(refreshWorkspaceHandlerSource, /refreshWorkspace\.failed/);
+});
+
+test("workspace request logging writes explicit CloudWatch-safe log lines", () => {
+  assert.match(workspaceLoggingSource, /process\.stdout\.write/);
+  assert.match(workspaceLoggingSource, /process\.stderr\.write/);
+  assert.match(workspaceLoggingSource, /JSON\.stringify/);
+  assert.match(workspaceLoggingSource, /\[workspace\]/);
+});
+
+test("refresh workspace keeps refresh-only persistence bounded and observable", () => {
+  assert.match(
+    syncWorkspaceSection,
+    /const homeCoreBoxScores = await fetchRecentBoxScores\(client, homeCoreMatches\);/,
+  );
+  assert.doesNotMatch(
+    syncWorkspaceSection,
+    /const currentBoxScores = await fetchRecentBoxScores\(client, recentMatches\);/,
+  );
+  assert.match(
+    workspaceSource,
+    /syncWorkspace\.persist_workspace\.ready/,
+  );
+  assert.match(
+    workspaceSource,
+    /await mapWithConcurrency\(\s*workspace\.roster\.players,/s,
+  );
+  assert.match(
+    workspaceSource,
+    /await mapWithConcurrency\(\s*boxScoresToPersist,/s,
+  );
+});
+
+test("live-match workspace refresh falls back to cached data instead of flipping the connection into an error state", () => {
+  assert.match(workspaceSource, /isMatchInProgressWorkspaceError/);
+  assert.match(syncWorkspaceSection, /syncWorkspace\.match_in_progress_fallback/);
+  assert.match(syncWorkspaceSection, /status:\s*"CONNECTED"/);
+  assert.match(syncWorkspaceSection, /usedCachedWorkspace:\s*true/);
+});
+
+test("scout loaders degrade to cached or partial data when a live match blocks current workspace reads", () => {
+  assert.match(
+    scoutTeamSummarySection,
+    /getScoutTeamSummary\.match_in_progress_fallback/,
+  );
+  assert.match(
+    scoutScheduleSection,
+    /getScoutSchedule\.match_in_progress_fallback/,
+  );
+  assert.match(
+    workspaceSource,
+    /buildMatchInProgressScoutFallback/,
+  );
+  assert.match(
+    workspaceSource,
+    /home\.nextScoutMatch\?\.opponentTeamId/,
+  );
+});
+
+test("scout default target prefers an explicit team id over the next-scout rollover target", () => {
+  assert.equal(
+    workspaceTesting.resolveScoutTeamId(
+      {
+        home: {
+          nextScoutMatch: {
+            opponentTeamId: "next-opp",
+          },
+        },
+        scout: {
+          teamId: "cached-opp",
+        },
+      } as any,
+      "manual-opp",
+    ),
+    "manual-opp",
+  );
+
+  assert.equal(
+    workspaceTesting.resolveScoutTeamId(
+      {
+        home: {
+          nextScoutMatch: {
+            opponentTeamId: "next-opp",
+          },
+        },
+        scout: {
+          teamId: "cached-opp",
+        },
+      } as any,
+      "",
+    ),
+    "next-opp",
+  );
+});
+
+test("live-match scout fallback references the next future opponent when the default target rolls forward", () => {
+  const fallback = workspaceTesting.buildMatchInProgressScoutFallback(
+    {
+      home: {
+        nextMatch: {
+          opponentTeamId: "live-opp",
+          opponentTeamName: "Live Opponent",
+        },
+        nextScoutMatch: {
+          opponentTeamId: "next-opp",
+          opponentTeamName: "Next Opponent",
+        },
+        syncedAt: "2026-04-11T20:00:00.000Z",
+      },
+      scout: {
+        availableOpponents: [
+          {
+            teamId: "next-opp",
+            teamName: "Next Opponent",
+          },
+        ],
+        message: null,
+        recentMatchups: [],
+        requestedTeamId: null,
+        schedule: null,
+        summary: {
+          teamName: "Next Opponent",
+        },
+        syncedAt: "2026-04-11T20:00:00.000Z",
+        teamId: "next-opp",
+      },
+    } as any,
+    "",
+    "next-opp",
+  );
+
+  assert.match(
+    fallback.message ?? "",
+    /next scheduled opponent, Next Opponent/i,
+  );
+  assert.equal(fallback.teamId, "next-opp");
+});
+
 test("authenticated workspace hook only loads the active section's shared payloads", () => {
   assert.match(
     authenticatedWorkspaceHookSource,
@@ -528,6 +778,44 @@ test("authenticated workspace hook only loads the active section's shared payloa
   );
   assert.match(dashboardAppSource, /scoutTeamSummaryQueryOptions/);
   assert.match(dashboardAppSource, /scoutScheduleQueryOptions/);
+  assert.match(
+    dashboardAppSource,
+    /useQueryStates\(\s*\n?\s*scoutUrlStateParsers\s*,?/s,
+  );
+});
+
+test("connection state remains the only gate for the credential form", () => {
+  assert.match(
+    authenticatedWorkspaceHookSource,
+    /if \(connectionQuery\.data\?\.status !== "CONNECTED"\) \{\s*setShowCredentialForm\(false\);/s,
+  );
+  assert.match(
+    dashboardAppSource,
+    /!connected \|\| showCredentialForm/,
+  );
+});
+
+test("scout schedule failures stay local to Scout instead of replacing top-level workspace state", () => {
+  assert.match(
+    dashboardAppSource,
+    /const scoutError = scoutSummaryError;/,
+  );
+  assert.match(
+    dashboardAppSource,
+    /const scoutScheduleStatusMessage = resolveScoutScheduleStatusMessage/,
+  );
+  assert.match(
+    dashboardAppSource,
+    /const scoutContextMessage = scout\?\.message \?\? scoutEventWindowMessage;/,
+  );
+  assert.match(
+    dashboardAppSource,
+    /scoutMessage:\s*scoutContextMessage \?\? null/,
+  );
+  assert.match(
+    dashboardAppSource,
+    /const nextScoutMatch = home\.nextScoutMatch \?\? null;/,
+  );
 });
 
 test("getPlayerTrend preserves multiple observations captured in the same week", async () => {

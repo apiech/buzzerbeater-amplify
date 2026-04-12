@@ -1,17 +1,48 @@
 import { env } from "$amplify/env/get-home-workspace";
 
 import type { Schema } from "../resource";
-import { getOrRefreshWorkspace } from "../_backend/workspace";
+import { getOrRefreshWorkspaceWithMeta } from "../_backend/workspace";
+import {
+  elapsedMs,
+  logWorkspaceError,
+  logWorkspaceInfo,
+  toLoggableError,
+} from "../_backend/workspace-request-logging";
 
 type Handler = Schema["getHomeWorkspace"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
-  const workspace = await getOrRefreshWorkspace({
-    env,
-    force: event.arguments.force ?? false,
-    identity: event.identity,
-    syncActiveTrackedTeams: event.arguments.force ?? false,
+  const startedAt = Date.now();
+  const force = event.arguments.force ?? false;
+
+  logWorkspaceInfo("getHomeWorkspace.start", {
+    force,
   });
 
-  return workspace.home;
+  try {
+    const { meta, workspace } = await getOrRefreshWorkspaceWithMeta({
+      env,
+      force,
+      identity: event.identity,
+      syncActiveTrackedTeams: force,
+    });
+
+    logWorkspaceInfo("getHomeWorkspace.completed", {
+      cacheState: meta.cacheState,
+      elapsedMs: elapsedMs(startedAt),
+      force,
+      nextOpponentTeamId: meta.nextOpponentTeamId,
+      recentMatchCount: workspace.home.recentMatches.length,
+      usedCachedWorkspace: meta.usedCachedWorkspace,
+    });
+
+    return workspace.home;
+  } catch (error) {
+    logWorkspaceError("getHomeWorkspace.failed", {
+      elapsedMs: elapsedMs(startedAt),
+      force,
+      ...toLoggableError(error),
+    });
+    throw error;
+  }
 };

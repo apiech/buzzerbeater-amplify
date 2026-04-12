@@ -11,7 +11,7 @@ import {
   parseAsArrayOf,
   parseAsInteger,
   parseAsString,
-  useQueryState,
+  useQueryStates,
 } from "nuqs";
 import {
   useEffect,
@@ -150,6 +150,17 @@ const terminalNextGameRecommendationStatuses = new Set([
   "SUCCEEDED",
   "FAILED",
 ]);
+const scoutUrlStateParsers = {
+  scoutSeason: parseAsInteger.withOptions({ history: "replace" }),
+  scoutTeam: parseAsString.withOptions({ history: "replace" }),
+  scoutTypes: parseAsArrayOf(parseAsString).withOptions({ history: "replace" }),
+};
+
+type ScoutUrlState = {
+  scoutSeason: number | null;
+  scoutTeam: string | null;
+  scoutTypes: string[] | null;
+};
 
 function readClientError(error: unknown): string | null {
   return error ? formatClientError(error) : null;
@@ -521,22 +532,21 @@ function WorkspaceDashboard({
   const router = useRouter();
   const queryClient = useQueryClient();
   const home = workspace.home;
-  const nextOpponentTeamId = home.nextMatch?.opponentTeamId ?? null;
+  const nextScoutMatch = home.nextScoutMatch ?? null;
+  const nextOpponentTeamId = nextScoutMatch?.opponentTeamId ?? null;
   const shouldLoadScoutContext =
     activeSection === "scout" || activeSection === "predictions";
-  const [selectedScoutTeamIdParam, setSelectedScoutTeamIdParam] = useQueryState(
-    "scoutTeam",
-    parseAsString.withOptions({ history: "replace" }),
+  const [scoutUrlState, setScoutUrlState] = useQueryStates(
+    scoutUrlStateParsers,
   );
-  const [selectedScoutSeasonParam, setSelectedScoutSeasonParam] = useQueryState(
-    "scoutSeason",
-    parseAsInteger.withOptions({ history: "replace" }),
-  );
-  const [selectedScoutCompetitionKeysParam, setSelectedScoutCompetitionKeysParam] =
-    useQueryState(
-      "scoutTypes",
-      parseAsArrayOf(parseAsString).withOptions({ history: "replace" }),
-    );
+  const selectedScoutTeamIdParam = scoutUrlState.scoutTeam;
+  const selectedScoutSeasonParam = scoutUrlState.scoutSeason;
+  const selectedScoutCompetitionKeysParam = scoutUrlState.scoutTypes;
+  const scoutEventWindowMessage = resolveScoutEventWindowMessage({
+    nextMatch: home.nextMatch ?? null,
+    nextScoutMatch,
+    selectedScoutTeamId: selectedScoutTeamIdParam ?? null,
+  });
   const [scoutTeamDraftId, setScoutTeamDraftId] = useState(
     selectedScoutTeamIdParam ?? nextOpponentTeamId ?? "",
   );
@@ -569,6 +579,7 @@ function WorkspaceDashboard({
       teamId: selectedScoutTeamIdParam ?? undefined,
     }),
     enabled: shouldLoadScoutContext,
+    placeholderData: (previous) => previous,
   });
   const resolvedScoutTeamId =
     selectedScoutTeamIdParam ??
@@ -583,6 +594,7 @@ function WorkspaceDashboard({
       teamId: resolvedScoutTeamId,
     }),
     enabled: activeSection === "scout" && Boolean(resolvedScoutTeamId),
+    placeholderData: (previous) => previous,
   });
   const scout: ScoutWorkspacePayload | null = useMemo(() => {
     if (!scoutSummaryQuery.data) {
@@ -597,10 +609,16 @@ function WorkspaceDashboard({
           : scoutSummaryQuery.data.schedule ?? null,
     };
   }, [activeSection, scoutScheduleQuery.data, scoutSummaryQuery.data]);
-  const scoutError =
-    (activeSection === "scout"
-      ? readClientError(scoutScheduleQuery.error)
-      : null) ?? readClientError(scoutSummaryQuery.error);
+  const scoutSummaryError = readClientError(scoutSummaryQuery.error);
+  const scoutScheduleError =
+    activeSection === "scout" ? readClientError(scoutScheduleQuery.error) : null;
+  const scoutError = scoutSummaryError;
+  const scoutContextMessage = scout?.message ?? scoutEventWindowMessage;
+  const scoutScheduleStatusMessage = resolveScoutScheduleStatusMessage({
+    hasSchedule: Boolean(scout?.schedule),
+    hasSummary: Boolean(scout?.summary),
+    scheduleError: scoutScheduleError,
+  });
   const isFetchingScout =
     shouldLoadScoutContext &&
     (scoutSummaryQuery.isFetching ||
@@ -610,7 +628,7 @@ function WorkspaceDashboard({
     ...opponentForecastQueryOptions({
       teamId: forecastTeamId ?? "",
     }),
-    enabled: Boolean(forecastTeamId),
+    enabled: shouldLoadScoutContext && Boolean(forecastTeamId),
     refetchInterval: (query) => {
       const snapshot = query.state.data;
       if (!snapshot || isOpponentForecastTerminalStatus(snapshot.status)) {
@@ -656,7 +674,7 @@ function WorkspaceDashboard({
     ...nextGameRecommendationQueryOptions({
       input: recommendationInput,
     }),
-    enabled: nextGameRecommendationEnabled,
+    enabled: shouldLoadScoutContext && nextGameRecommendationEnabled,
     refetchInterval: (query) => {
       const snapshot = query.state.data;
       if (
@@ -802,7 +820,7 @@ function WorkspaceDashboard({
       isScoutViewingNextOpponent,
       isLoadingOpponentForecast,
       nextGameRecommendationError,
-      nextMatch: home.nextMatch,
+      nextMatch: nextScoutMatch,
       opponentForecast,
     });
   const nextGameRecommendationResult = nextGameRecommendation?.result ?? null;
@@ -838,22 +856,17 @@ function WorkspaceDashboard({
   }
 
   async function handleScoutLoad() {
-    if (!scoutTeamDraftId) {
+    const action = resolveScoutTeamSelectionAction({
+      nextTeamId: scoutTeamDraftId,
+      resolvedTeamId: resolvedScoutTeamId,
+      urlTeamId: selectedScoutTeamIdParam ?? null,
+    });
+    if (action.kind === "noop") {
       return;
     }
 
-    const currentTeamId =
-      selectedScoutTeamIdParam ??
-      scout?.requestedTeamId ??
-      scout?.teamId ??
-      nextOpponentTeamId ??
-      null;
-    const teamChanged = currentTeamId !== scoutTeamDraftId;
-
-    await setSelectedScoutTeamIdParam(scoutTeamDraftId);
-    if (teamChanged) {
-      await setSelectedScoutSeasonParam(null);
-      await setSelectedScoutCompetitionKeysParam(null);
+    if (action.kind === "update-url") {
+      await setScoutUrlState(action.nextState);
       return;
     }
 
@@ -1128,6 +1141,7 @@ function WorkspaceDashboard({
             title={scout?.summary?.teamName ?? "Opponent and team view"}
           />
           {scoutError ? <Alert>{scoutError}</Alert> : null}
+          {scoutContextMessage ? <Alert>{scoutContextMessage}</Alert> : null}
           {scout && scout.summary ? (
             <>
               <div className="grid gap-4 sm:grid-cols-3">
@@ -1160,34 +1174,32 @@ function WorkspaceDashboard({
                 ]}
                 title="Scout schedule"
               >
+                {scoutScheduleStatusMessage ? (
+                  <Alert>{scoutScheduleStatusMessage}</Alert>
+                ) : null}
                 <OpponentSchedulePanel
                   isLoading={isFetchingScout}
                   onApplyFilters={async (input) => {
-                    const nextCompetitionKeys = input.competitionKeys.length
-                      ? [...input.competitionKeys].sort()
-                      : null;
-                    const currentCompetitionKeys = (
-                      selectedScoutCompetitionKeysParam ?? []
-                    )
-                      .slice()
-                      .sort();
-                    const competitionChanged = !areStringArraysEqual(
-                      currentCompetitionKeys,
-                      nextCompetitionKeys ?? [],
-                    );
-                    const seasonChanged =
-                      (selectedScoutSeasonParam ?? null) !==
-                      (input.season ?? null);
+                    const action = resolveScoutFilterApplyAction({
+                      currentCompetitionKeys:
+                        selectedScoutCompetitionKeysParam ?? null,
+                      currentSeason: selectedScoutSeasonParam ?? null,
+                      nextCompetitionKeys: input.competitionKeys,
+                      nextSeason: input.season ?? null,
+                    });
 
-                    await setSelectedScoutSeasonParam(input.season ?? null);
-                    await setSelectedScoutCompetitionKeysParam(
-                      nextCompetitionKeys,
-                    );
-                    if (seasonChanged || competitionChanged) {
+                    if (action.kind === "update-url") {
+                      await setScoutUrlState(action.nextState);
                       return;
                     }
+
                     await scoutScheduleQuery.refetch();
                   }}
+                  emptyStateMessage={resolveScoutScheduleEmptyStateMessage({
+                    hasSummary: true,
+                    scoutMessage: scoutContextMessage ?? null,
+                    scheduleError: scoutScheduleError,
+                  })}
                   schedule={scout.schedule}
                   teamName={scout.summary.teamName}
                 />
@@ -1569,7 +1581,7 @@ function WorkspaceDashboard({
                       ) : null}
                     </div>
                   ) : null}
-                  {isScoutViewingNextOpponent && home.nextMatch ? (
+                  {isScoutViewingNextOpponent && nextScoutMatch ? (
                     <div className="mt-4 grid gap-4">
                       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                         <Field
@@ -1950,7 +1962,7 @@ function WorkspaceDashboard({
           ) : (
             <p className={statusCopyClassName}>
               {scout
-                ? (scout.message ?? "No opponent view is available yet.")
+                ? (scoutContextMessage ?? "No opponent view is available yet.")
                 : "Loading opponent scouting data."}
             </p>
           )}
@@ -1964,6 +1976,7 @@ function WorkspaceDashboard({
               resetKeys={[scout.teamId ?? scout.requestedTeamId ?? null]}
               title="Matchup preview"
             >
+              {scoutContextMessage ? <Alert>{scoutContextMessage}</Alert> : null}
               <PredictionPanel
                 draft={predictionDraft}
                 onDraftChange={setPredictionDraft}
@@ -2385,6 +2398,162 @@ function resolveNextGameRecommendationBlockedReason(args: {
     return "No usable opponent source boxscore with ratings is available yet.";
   }
   return null;
+}
+
+function resolveScoutEventWindowMessage(args: {
+  nextMatch: DashboardWorkspace["home"]["nextMatch"];
+  nextScoutMatch: DashboardWorkspace["home"]["nextScoutMatch"];
+  selectedScoutTeamId: string | null | undefined;
+}): string | null {
+  if (normalizeScoutTeamId(args.selectedScoutTeamId)) {
+    return null;
+  }
+  if (!args.nextMatch || !args.nextScoutMatch) {
+    return null;
+  }
+  if (!didScoutTargetRollForward(args.nextMatch, args.nextScoutMatch)) {
+    return null;
+  }
+
+  const opponentName =
+    args.nextScoutMatch.opponentTeamName ?? "your next scheduled opponent";
+  return `A live BuzzerBeater match is in progress, so this view is showing ${opponentName} as your next scheduled opponent until the current game window ends.`;
+}
+
+function normalizeScoutTeamId(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized.length ? normalized : null;
+}
+
+function didScoutTargetRollForward(
+  nextMatch: DashboardWorkspace["home"]["nextMatch"],
+  nextScoutMatch: DashboardWorkspace["home"]["nextScoutMatch"],
+): boolean {
+  if (!nextMatch || !nextScoutMatch) {
+    return false;
+  }
+
+  if (nextMatch.matchId && nextScoutMatch.matchId) {
+    return nextMatch.matchId !== nextScoutMatch.matchId;
+  }
+
+  return (
+    nextMatch.opponentTeamId !== nextScoutMatch.opponentTeamId ||
+    nextMatch.startTime !== nextScoutMatch.startTime
+  );
+}
+
+function normalizeScoutCompetitionKeys(
+  value: readonly string[] | null | undefined,
+): string[] | null {
+  const normalized = (value ?? [])
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .slice()
+    .sort();
+  return normalized.length ? normalized : null;
+}
+
+function resolveScoutTeamSelectionAction(args: {
+  nextTeamId: string | null | undefined;
+  resolvedTeamId: string | null | undefined;
+  urlTeamId: string | null | undefined;
+}):
+  | { kind: "noop" }
+  | { kind: "refetch" }
+  | { kind: "update-url"; nextState: Partial<ScoutUrlState> } {
+  const nextTeamId = normalizeScoutTeamId(args.nextTeamId);
+  if (!nextTeamId) {
+    return { kind: "noop" };
+  }
+
+  const resolvedTeamId = normalizeScoutTeamId(args.resolvedTeamId);
+  const urlTeamId = normalizeScoutTeamId(args.urlTeamId);
+
+  if (resolvedTeamId !== nextTeamId) {
+    return {
+      kind: "update-url",
+      nextState: {
+        scoutSeason: null,
+        scoutTeam: nextTeamId,
+        scoutTypes: null,
+      },
+    };
+  }
+
+  if (urlTeamId !== nextTeamId) {
+    return {
+      kind: "update-url",
+      nextState: {
+        scoutTeam: nextTeamId,
+      },
+    };
+  }
+
+  return { kind: "refetch" };
+}
+
+function resolveScoutFilterApplyAction(args: {
+  currentCompetitionKeys: readonly string[] | null | undefined;
+  currentSeason: number | null | undefined;
+  nextCompetitionKeys: readonly string[] | null | undefined;
+  nextSeason: number | null | undefined;
+}):
+  | { kind: "refetch" }
+  | { kind: "update-url"; nextState: Partial<ScoutUrlState> } {
+  const currentCompetitionKeys =
+    normalizeScoutCompetitionKeys(args.currentCompetitionKeys);
+  const nextCompetitionKeys = normalizeScoutCompetitionKeys(
+    args.nextCompetitionKeys,
+  );
+  const currentSeason = args.currentSeason ?? null;
+  const nextSeason = args.nextSeason ?? null;
+  const seasonChanged = currentSeason !== nextSeason;
+  const competitionChanged = !areStringArraysEqual(
+    currentCompetitionKeys ?? [],
+    nextCompetitionKeys ?? [],
+  );
+
+  if (!seasonChanged && !competitionChanged) {
+    return { kind: "refetch" };
+  }
+
+  return {
+    kind: "update-url",
+    nextState: {
+      scoutSeason: nextSeason,
+      scoutTypes: nextCompetitionKeys,
+    },
+  };
+}
+
+function resolveScoutScheduleStatusMessage(args: {
+  hasSchedule: boolean;
+  hasSummary: boolean;
+  scheduleError: string | null;
+}): string | null {
+  if (!args.scheduleError || !args.hasSummary) {
+    return null;
+  }
+
+  return args.hasSchedule
+    ? "The opponent summary stayed loaded, but the season schedule could not be refreshed. Showing the last successful schedule snapshot."
+    : "The opponent summary stayed loaded, but the season schedule could not be refreshed. Try Apply again or reopen the team view.";
+}
+
+function resolveScoutScheduleEmptyStateMessage(args: {
+  hasSummary: boolean;
+  scoutMessage: string | null;
+  scheduleError: string | null;
+}): string | undefined {
+  if (args.scheduleError && args.hasSummary) {
+    return "The season schedule is unavailable right now. Try Apply again or reopen the team view.";
+  }
+
+  if (args.hasSummary && args.scoutMessage) {
+    return args.scoutMessage;
+  }
+
+  return undefined;
 }
 
 function formatPercent(value: number | null | undefined): string {
@@ -2887,6 +3056,7 @@ function readPayload<T>(response: { payload: T | string }): T {
 }
 
 export const __testing = {
+  areStringArraysEqual,
   compareOwnerRosterValues,
   formatPlayerMeta,
   isNextGameRecommendationTerminalStatus,
@@ -2894,6 +3064,12 @@ export const __testing = {
   readGameShapeSortValue,
   readOwnerRosterSortValue,
   readPayload,
+  resolveForecastTeamId,
   resolveNextGameRecommendationBlockedReason,
+  resolveScoutEventWindowMessage,
+  resolveScoutFilterApplyAction,
+  resolveScoutScheduleEmptyStateMessage,
+  resolveScoutScheduleStatusMessage,
+  resolveScoutTeamSelectionAction,
   sortLineupHelperRoster,
 };

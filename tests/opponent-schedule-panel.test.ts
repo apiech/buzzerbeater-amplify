@@ -30,3 +30,14 @@ test("schedule helpers map seriousness badges to the right tones", () => {
   assert.equal(scheduleTesting.toneForSeriousness("MAYBE"), "note");
   assert.equal(scheduleTesting.toneForSeriousness("NO"), "danger");
 });
+
+test("schedule helpers keep the default and filtered empty-state copy stable", () => {
+  assert.equal(
+    scheduleTesting.defaultScheduleEmptyStateMessage(),
+    "No schedule is available until a scout target is selected.",
+  );
+  assert.equal(
+    scheduleTesting.scheduleTableEmptyStateMessage(),
+    "No games match the current season and game-type filters.",
+  );
+});

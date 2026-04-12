@@ -326,6 +326,123 @@ test("home next-match selector ignores all-star and unrelated upcoming rows", ()
   assert.equal(match.id, "next-real-game");
 });
 
+test("home next-scout selector matches the next upcoming game when no live match is in progress", () => {
+  const matches = [
+    {
+      id: "next-real-game",
+      startTime: "2026-03-18T19:00:00Z",
+      type: "league.rs",
+      homeTeam: {
+        id: TEAM_ID,
+        teamName: "Visionaries",
+        score: null,
+      },
+      awayTeam: {
+        id: "OPP",
+        teamName: "Opponent",
+        score: null,
+      },
+    },
+    {
+      id: "later-game",
+      startTime: "2026-03-20T19:00:00Z",
+      type: "league.rs",
+      homeTeam: {
+        id: TEAM_ID,
+        teamName: "Visionaries",
+        score: null,
+      },
+      awayTeam: {
+        id: "NEXT",
+        teamName: "Next Opponent",
+        score: null,
+      },
+    },
+  ];
+
+  const nextMatch = workspaceTesting.selectNextMatch(matches as any, TEAM_ID);
+  const nextScoutMatch = workspaceTesting.selectNextScoutMatch(
+    matches as any,
+    TEAM_ID,
+    "2026-03-18T17:00:00Z",
+  );
+
+  assert.ok(nextMatch);
+  assert.ok(nextScoutMatch);
+  assert.equal(nextMatch.id, "next-real-game");
+  assert.equal(nextScoutMatch.id, "next-real-game");
+});
+
+test("home next-scout selector skips an already started live match and rolls forward to the next future game", () => {
+  const matches = [
+    {
+      id: "live-game",
+      startTime: "2026-03-18T19:00:00Z",
+      type: "league.rs",
+      homeTeam: {
+        id: TEAM_ID,
+        teamName: "Visionaries",
+        score: null,
+      },
+      awayTeam: {
+        id: "LIVE",
+        teamName: "Live Opponent",
+        score: null,
+      },
+    },
+    {
+      id: "next-future-game",
+      startTime: "2026-03-20T19:00:00Z",
+      type: "league.rs",
+      homeTeam: {
+        id: TEAM_ID,
+        teamName: "Visionaries",
+        score: null,
+      },
+      awayTeam: {
+        id: "NEXT",
+        teamName: "Next Opponent",
+        score: null,
+      },
+    },
+  ];
+
+  const match = workspaceTesting.selectNextScoutMatch(
+    matches as any,
+    TEAM_ID,
+    "2026-03-18T20:00:00Z",
+  );
+  assert.ok(match);
+  assert.equal(match.id, "next-future-game");
+});
+
+test("home next-scout selector returns null when a live match has no later future game", () => {
+  const matches = [
+    {
+      id: "live-game",
+      startTime: "2026-03-18T19:00:00Z",
+      type: "league.rs",
+      homeTeam: {
+        id: TEAM_ID,
+        teamName: "Visionaries",
+        score: null,
+      },
+      awayTeam: {
+        id: "LIVE",
+        teamName: "Live Opponent",
+        score: null,
+      },
+    },
+  ];
+
+  const match = workspaceTesting.selectNextScoutMatch(
+    matches as any,
+    TEAM_ID,
+    "2026-03-18T20:00:00Z",
+  );
+  assert.equal(match, null);
+});
+
 test("punt-game blowout losses are ignored for home core usage", () => {
   const matches = [
     createScheduleMatch("punt-loss", "2026-03-10T19:00:00Z", "league.rs", 70, 101),

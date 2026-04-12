@@ -220,6 +220,183 @@ test("next-game recommendation blocked reasons prioritize next-opponent visibili
   );
 });
 
+test("forecast context can still resolve from scout summary when schedule data is absent", () => {
+  assert.equal(
+    dashboardTesting.resolveForecastTeamId({
+      requestedTeamId: "opp-1",
+      schedule: null,
+      summary: {
+        matchupPerspective: {
+          opponentTeamId: "opp-1",
+        },
+        teamName: "Rivals",
+      },
+      teamId: "opp-1",
+    } as any),
+    "opp-1",
+  );
+});
+
+test("live-match scout rollover messaging only appears for the default next-scout target", () => {
+  assert.equal(
+    dashboardTesting.resolveScoutEventWindowMessage({
+      nextMatch: {
+        matchId: "live-match",
+        opponentTeamId: "live-opp",
+        opponentTeamName: "Live Opponent",
+        startTime: "2026-04-11T19:00:00.000Z",
+        type: "League",
+        isHome: true,
+      },
+      nextScoutMatch: {
+        matchId: "next-match",
+        opponentTeamId: "next-opp",
+        opponentTeamName: "Next Opponent",
+        startTime: "2026-04-14T19:00:00.000Z",
+        type: "League",
+        isHome: false,
+      },
+      selectedScoutTeamId: null,
+    }),
+    "A live BuzzerBeater match is in progress, so this view is showing Next Opponent as your next scheduled opponent until the current game window ends.",
+  );
+
+  assert.equal(
+    dashboardTesting.resolveScoutEventWindowMessage({
+      nextMatch: {
+        matchId: "live-match",
+        opponentTeamId: "live-opp",
+        opponentTeamName: "Live Opponent",
+        startTime: "2026-04-11T19:00:00.000Z",
+        type: "League",
+        isHome: true,
+      },
+      nextScoutMatch: {
+        matchId: "next-match",
+        opponentTeamId: "next-opp",
+        opponentTeamName: "Next Opponent",
+        startTime: "2026-04-14T19:00:00.000Z",
+        type: "League",
+        isHome: false,
+      },
+      selectedScoutTeamId: "manual-opp",
+    }),
+    null,
+  );
+
+  assert.equal(
+    dashboardTesting.resolveScoutEventWindowMessage({
+      nextMatch: {
+        matchId: "next-match",
+        opponentTeamId: "next-opp",
+        opponentTeamName: "Next Opponent",
+        startTime: "2026-04-14T19:00:00.000Z",
+        type: "League",
+        isHome: false,
+      },
+      nextScoutMatch: {
+        matchId: "next-match",
+        opponentTeamId: "next-opp",
+        opponentTeamName: "Next Opponent",
+        startTime: "2026-04-14T19:00:00.000Z",
+        type: "League",
+        isHome: false,
+      },
+      selectedScoutTeamId: null,
+    }),
+    null,
+  );
+});
+
+test("scout team changes clear dependent filters exactly once while same-team opens refetch", () => {
+  assert.deepStrictEqual(
+    dashboardTesting.resolveScoutTeamSelectionAction({
+      nextTeamId: "opp-2",
+      resolvedTeamId: "opp-1",
+      urlTeamId: "opp-1",
+    }),
+    {
+      kind: "update-url",
+      nextState: {
+        scoutSeason: null,
+        scoutTeam: "opp-2",
+        scoutTypes: null,
+      },
+    },
+  );
+
+  assert.deepStrictEqual(
+    dashboardTesting.resolveScoutTeamSelectionAction({
+      nextTeamId: "opp-1",
+      resolvedTeamId: "opp-1",
+      urlTeamId: "opp-1",
+    }),
+    {
+      kind: "refetch",
+    },
+  );
+});
+
+test("same scout filters refetch while changed filters update the URL state", () => {
+  assert.deepStrictEqual(
+    dashboardTesting.resolveScoutFilterApplyAction({
+      currentCompetitionKeys: ["LEAGUE", "TV"],
+      currentSeason: 71,
+      nextCompetitionKeys: ["TV", "LEAGUE"],
+      nextSeason: 71,
+    }),
+    {
+      kind: "refetch",
+    },
+  );
+
+  assert.deepStrictEqual(
+    dashboardTesting.resolveScoutFilterApplyAction({
+      currentCompetitionKeys: ["LEAGUE"],
+      currentSeason: 71,
+      nextCompetitionKeys: ["LEAGUE", "PLAYOFFS"],
+      nextSeason: 70,
+    }),
+    {
+      kind: "update-url",
+      nextState: {
+        scoutSeason: 70,
+        scoutTypes: ["LEAGUE", "PLAYOFFS"],
+      },
+    },
+  );
+});
+
+test("scout schedule status copy distinguishes stale-snapshot fallback from missing schedule fallback", () => {
+  assert.equal(
+    dashboardTesting.resolveScoutScheduleStatusMessage({
+      hasSchedule: true,
+      hasSummary: true,
+      scheduleError: "execution timed out",
+    }),
+    "The opponent summary stayed loaded, but the season schedule could not be refreshed. Showing the last successful schedule snapshot.",
+  );
+
+  assert.equal(
+    dashboardTesting.resolveScoutScheduleEmptyStateMessage({
+      hasSummary: true,
+      scoutMessage: null,
+      scheduleError: "execution timed out",
+    }),
+    "The season schedule is unavailable right now. Try Apply again or reopen the team view.",
+  );
+
+  assert.equal(
+    dashboardTesting.resolveScoutScheduleEmptyStateMessage({
+      hasSummary: true,
+      scoutMessage:
+        "A live BuzzerBeater match is in progress, so this page is showing the last ready scout snapshot for your next opponent until the game window ends.",
+      scheduleError: null,
+    }),
+    "A live BuzzerBeater match is in progress, so this page is showing the last ready scout snapshot for your next opponent until the game window ends.",
+  );
+});
+
 function createRosterPlayer(
   name: string,
   overrides: Partial<{

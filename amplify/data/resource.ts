@@ -792,6 +792,7 @@ const schema = a
       connection: a.ref("ConnectionResult").required(),
       team: a.ref("HomeWorkspaceTeam").required(),
       nextMatch: a.ref("HomeNextMatch"),
+      nextScoutMatch: a.ref("HomeNextMatch"),
       nextOpponent: a.ref("HomeWorkspaceOpponent"),
       recentMatches: a.ref("MatchSummary").required().array().required(),
       league: a.ref("LeagueIntelWorkspace").required(),

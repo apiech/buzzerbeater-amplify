@@ -30,6 +30,7 @@ const boxscoreLinkClassName =
 const tableCellClassName = "align-top";
 
 type OpponentSchedulePanelProps = {
+  emptyStateMessage?: string;
   isLoading: boolean;
   onApplyFilters: (input: {
     competitionKeys: string[];
@@ -42,6 +43,7 @@ type OpponentSchedulePanelProps = {
 type ScheduleRow = ScoutSchedulePayload["rows"][number];
 
 export function OpponentSchedulePanel({
+  emptyStateMessage,
   isLoading,
   onApplyFilters,
   schedule,
@@ -168,7 +170,7 @@ export function OpponentSchedulePanel({
           titleAs="h4"
         />
         <p className="text-sm leading-7 text-ink-muted">
-          No schedule is available until a scout target is selected.
+          {emptyStateMessage ?? defaultScheduleEmptyStateMessage()}
         </p>
       </Panel>
     );
@@ -300,7 +302,7 @@ export function OpponentSchedulePanel({
               ) : (
                 <tr>
                   <TableCell className="text-ink-muted" colSpan={13}>
-                    No games match the current season and game-type filters.
+                    {scheduleTableEmptyStateMessage()}
                   </TableCell>
                 </tr>
               )}
@@ -348,6 +350,14 @@ function formatBbstats(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : String(value);
 }
 
+function defaultScheduleEmptyStateMessage(): string {
+  return "No schedule is available until a scout target is selected.";
+}
+
+function scheduleTableEmptyStateMessage(): string {
+  return "No games match the current season and game-type filters.";
+}
+
 function formatResult(
   row: ScheduleRow,
 ): string {
@@ -370,7 +380,9 @@ function toneForSeriousness(seriousness: string) {
 }
 
 export const __testing = {
+  defaultScheduleEmptyStateMessage,
   formatBbstats,
   formatResult,
+  scheduleTableEmptyStateMessage,
   toneForSeriousness,
 };
