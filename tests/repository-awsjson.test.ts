@@ -7,6 +7,7 @@ import {
   createOpponentForecastJob,
   createSyncRun,
   getBbConnection,
+  getRivalsBackfill,
   getPredictionJob,
   getUserPreference,
   listPredictionGridCellsByUserAndRequestId,
@@ -14,6 +15,7 @@ import {
   listExpiredSyncRuns,
   updateSyncRun,
   upsertBbConnection,
+  upsertRivalsBackfill,
   upsertPredictionGridCells,
   upsertPredictionJob,
   upsertUserPreference,
@@ -306,6 +308,160 @@ test("generic upserts serialize AWSJSON payloads before model.create", async (t)
     fullName: "Prospect",
     profileJson: '{"playerId":"p1","skills":{"outsideScoring":12}}',
   });
+});
+
+test("upsertRivalsBackfill keeps failedSeasons as a typed array on create", async (t) => {
+  let createInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          RivalsBackfill: {
+            get: async () => ({ data: null }),
+            create: async (input: Record<string, unknown>) => {
+              createInput = input;
+              return { data: { ...input } };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertRivalsBackfill({} as any, {
+    completedAt: null,
+    error: null,
+    executionArn: null,
+    failedSeasons: [69, 71],
+    requestedAt: "2026-04-11T15:00:00.000Z",
+    startedAt: null,
+    status: "QUEUED",
+    teamId: "t1",
+    updatedAt: "2026-04-11T15:00:00.000Z",
+    userId: "u1",
+  });
+
+  assert.deepStrictEqual(createInput, {
+    completedAt: null,
+    error: null,
+    executionArn: null,
+    failedSeasons: [69, 71],
+    requestedAt: "2026-04-11T15:00:00.000Z",
+    startedAt: null,
+    status: "QUEUED",
+    teamId: "t1",
+    updatedAt: "2026-04-11T15:00:00.000Z",
+    userId: "u1",
+  });
+});
+
+test("upsertRivalsBackfill keeps failedSeasons as a typed array on update", async (t) => {
+  let updateInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          RivalsBackfill: {
+            get: async () => ({
+              data: {
+                teamId: "t1",
+                userId: "u1",
+              },
+            }),
+            update: async (input: Record<string, unknown>) => {
+              updateInput = input;
+              return { data: { ...input } };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertRivalsBackfill({} as any, {
+    completedAt: null,
+    error: null,
+    executionArn: null,
+    failedSeasons: [70],
+    requestedAt: "2026-04-11T15:00:00.000Z",
+    startedAt: null,
+    status: "FAILED",
+    teamId: "t1",
+    updatedAt: "2026-04-11T15:01:00.000Z",
+    userId: "u1",
+  });
+
+  assert.deepStrictEqual(updateInput, {
+    completedAt: null,
+    error: null,
+    executionArn: null,
+    failedSeasons: [70],
+    requestedAt: "2026-04-11T15:00:00.000Z",
+    startedAt: null,
+    status: "FAILED",
+    teamId: "t1",
+    updatedAt: "2026-04-11T15:01:00.000Z",
+    userId: "u1",
+  });
+});
+
+test("getRivalsBackfill normalizes missing failedSeasons to an empty array", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          RivalsBackfill: {
+            get: async () => ({
+              data: {
+                requestedAt: "2026-04-11T15:00:00.000Z",
+                status: "SUCCEEDED",
+                teamId: "t1",
+                updatedAt: "2026-04-11T15:01:00.000Z",
+                userId: "u1",
+              },
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getRivalsBackfill({} as any, "u1", "t1");
+
+  assert.deepStrictEqual(record?.failedSeasons, []);
+});
+
+test("getRivalsBackfill preserves stored failedSeasons arrays", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          RivalsBackfill: {
+            get: async () => ({
+              data: {
+                failedSeasons: [69, 71],
+                requestedAt: "2026-04-11T15:00:00.000Z",
+                status: "SUCCEEDED",
+                teamId: "t1",
+                updatedAt: "2026-04-11T15:01:00.000Z",
+                userId: "u1",
+              },
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getRivalsBackfill({} as any, "u1", "t1");
+
+  assert.deepStrictEqual(record?.failedSeasons, [69, 71]);
 });
 
 test("upsertBbConnection preserves the explicit connection payload on create", async (t) => {

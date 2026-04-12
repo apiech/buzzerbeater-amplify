@@ -662,6 +662,17 @@ test("refresh workspace keeps refresh-only persistence bounded and observable", 
   );
 });
 
+test("workspace sync only performs rivals incremental upkeep after a completed backfill exists", () => {
+  assert.match(workspaceSource, /getRivalsBackfill/);
+  assert.match(syncWorkspaceSection, /rivalsStatus\?\.status === "SUCCEEDED"/);
+  assert.match(syncWorkspaceSection, /syncRivalryMatchFactsFromSchedule/);
+});
+
+test("workspace sync keeps rivals incremental upkeep best-effort and observable", () => {
+  assert.match(syncWorkspaceSection, /syncWorkspace\.rivalry_facts\.ready/);
+  assert.match(syncWorkspaceSection, /syncWorkspace\.rivalry_facts\.failed/);
+});
+
 test("live-match workspace refresh falls back to cached data instead of flipping the connection into an error state", () => {
   assert.match(workspaceSource, /isMatchInProgressWorkspaceError/);
   assert.match(syncWorkspaceSection, /syncWorkspace\.match_in_progress_fallback/);

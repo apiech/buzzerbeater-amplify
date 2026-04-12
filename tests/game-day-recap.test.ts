@@ -261,6 +261,9 @@ function createBoxScore(args: {
 function createExpectedPromptGame(matchId: string) {
   return {
     effortDelta: 0,
+    effortSummary: null,
+    gameDayPrepSummaries: [],
+    rotationSummaries: [],
     evidenceSignals: [],
     finalMargin: 4,
     matchId,
@@ -321,12 +324,15 @@ function createExpectedPromptGame(matchId: string) {
         conferencePosition: 1,
         defStrategy: "23 Zone",
         efficiency: {},
+        foulTroubleLimitationCount: 0,
         gdp: {},
         lastFive: "3-2",
         lastFiveEnteringGame: "4-1",
+        keyAbsenceCount: 0,
         name: "Away",
         offStrategy: "Motion",
         ratingLabels: {},
+        ratingTotal: 66.9,
         recentAverageMargin: 5,
         recentSignalFlags: [],
         record: "10-6",
@@ -341,12 +347,15 @@ function createExpectedPromptGame(matchId: string) {
         conferencePosition: 1,
         defStrategy: "Man To Man",
         efficiency: {},
+        foulTroubleLimitationCount: 0,
         gdp: {},
         lastFive: "5-0",
         lastFiveEnteringGame: "5-0",
+        keyAbsenceCount: 0,
         name: "Home",
         offStrategy: "Push",
         ratingLabels: {},
+        ratingTotal: 62.1,
         recentAverageMargin: 7,
         recentSignalFlags: [],
         record: "13-3",
@@ -1186,7 +1195,13 @@ test("buildGameDayRecapPromptPayload uses postgame-first records and retains ent
   assert.equal(firstGame.teams.away.recordEnteringGame, "1-0");
   assert.equal(firstGame.teams.away.streakEnteringGame, "W1");
   assert.equal(firstGame.teams.home.ratingLabels.outsideDefense, "prominent");
+  assert.equal(firstGame.teams.home.ratingTotal, 62.1);
   assert.equal(firstGame.teams.away.ratingLabels.outsideScoring, "sensational");
+  assert.equal(firstGame.teams.away.ratingTotal, 66.9);
+  assert.deepStrictEqual(firstGame.gameDayPrepSummaries, [
+    "Alpha came out well prepared to protect the paint.",
+    "Beta looked well prepared for a balanced attack.",
+  ]);
 });
 
 test("buildGameDayRecapPromptPayload ignores non-regular-season competitions in league context", async () => {
@@ -3920,6 +3935,139 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
     schema,
     /"games"/,
   );
+
+  const systemText = request.system[0]?.text ?? "";
+  assert.match(systemText, /never cite the raw effortDelta value/i);
+  assert.match(systemText, /never cite raw GDP focus codes/i);
+  assert.match(systemText, /not a checklist of facts/i);
+  assert.match(systemText, /do not invent reasons such as injuries, load management, or discipline/i);
+});
+
+test("describeEffortDeltaForRecap uses natural language for nonzero effort deltas", () => {
+  assert.equal(
+    __testing.describeEffortDeltaForRecap({
+      awayTeamName: "Beta",
+      effortDelta: 1,
+      homeTeamName: "Alpha",
+    }),
+    "Alpha appeared to be trying a bit harder than Beta.",
+  );
+  assert.equal(
+    __testing.describeEffortDeltaForRecap({
+      awayTeamName: "Beta",
+      effortDelta: 2,
+      homeTeamName: "Alpha",
+    }),
+    "Alpha appeared to be trying a lot harder than Beta.",
+  );
+  assert.equal(
+    __testing.describeEffortDeltaForRecap({
+      awayTeamName: "Beta",
+      effortDelta: -1,
+      homeTeamName: "Alpha",
+    }),
+    "Beta appeared to be trying a bit harder than Alpha.",
+  );
+  assert.equal(
+    __testing.describeEffortDeltaForRecap({
+      awayTeamName: "Beta",
+      effortDelta: -2,
+      homeTeamName: "Alpha",
+    }),
+    "Beta appeared to be trying a lot harder than Alpha.",
+  );
+  assert.equal(
+    __testing.describeEffortDeltaForRecap({
+      awayTeamName: "Beta",
+      effortDelta: 0,
+      homeTeamName: "Alpha",
+    }),
+    null,
+  );
+});
+
+test("describeGameDayPrepFocusForRecap uses natural language for GDP focus hits and misses", () => {
+  assert.equal(
+    __testing.describeGameDayPrepFocusForRecap({
+      focus: "outside.hit",
+      teamName: "LA Lions",
+    }),
+    "LA Lions came out well prepared to guard the perimeter.",
+  );
+  assert.equal(
+    __testing.describeGameDayPrepFocusForRecap({
+      focus: "outside.miss",
+      teamName: "LA Lions",
+    }),
+    "LA Lions looked surprised and disorganized on the defensive perimeter.",
+  );
+  assert.equal(
+    __testing.describeGameDayPrepFocusForRecap({
+      focus: "Inside.hit",
+      teamName: "LA Lions",
+    }),
+    "LA Lions came out well prepared to protect the paint.",
+  );
+  assert.equal(
+    __testing.describeGameDayPrepFocusForRecap({
+      focus: "Balanced.miss",
+      teamName: "LA Lions",
+    }),
+    "LA Lions looked a step behind against a more balanced attack.",
+  );
+  assert.equal(
+    __testing.describeGameDayPrepFocusForRecap({
+      focus: "N/A",
+      teamName: "LA Lions",
+    }),
+    null,
+  );
+});
+
+test("buildRotationSummariesForRecap flags key absences and foul trouble without guessing causes", () => {
+  const boxScore = createBoxScore({
+    awayScore: 81,
+    awayTeamId: "B",
+    awayTeamName: "Beta",
+    homeScore: 85,
+    homeTeamId: "A",
+    homeTeamName: "LA Lions",
+    matchId: "m-1",
+  });
+  boxScore.homeTeam.players = [
+    createBoxScorePlayer({
+      didNotPlay: true,
+      firstName: "Leo",
+      id: "p-home-dnp-star",
+      lastName: "Star",
+      minutesByPosition: { C: 0, PF: 0, PG: 0, SF: 0, SG: 0 },
+      ratingRaw: "16",
+      ratingValue: 16,
+    }),
+    createBoxScorePlayer({
+      firstName: "Mason",
+      id: "p-home-foul",
+      lastName: "Key",
+      minutesByPosition: { C: 0, PF: 0, PG: 22, SF: 0, SG: 0 },
+      performanceStats: { pf: 5, pts: 12 },
+      ratingRaw: "15",
+      ratingValue: 15,
+    }),
+    createBoxScorePlayer({
+      firstName: "Rico",
+      id: "p-home-steady",
+      lastName: "Wing",
+      minutesByPosition: { C: 0, PF: 0, PG: 0, SF: 36, SG: 0 },
+      performanceStats: { pf: 2, pts: 15 },
+      ratingRaw: "12",
+      ratingValue: 12,
+    }),
+  ];
+
+  assert.deepStrictEqual(__testing.buildRotationSummariesForRecap(boxScore.homeTeam), [
+    "LA Lions came in without Leo Star, leaving them short-handed.",
+    "Mason Key spent much of the night in foul trouble and played only 22 minutes.",
+  ]);
 });
 
 test("assertSupportedBedrockRecapModel fails fast for unsupported configuration", () => {
@@ -3943,6 +4091,54 @@ test("assertSupportedBedrockRecapModel fails fast for unsupported configuration"
 });
 
 test("validateGameDayRecapResult accepts valid structured output for the expected slate", () => {
+  const upset = createExpectedPromptGame("m-1");
+  upset.finalMargin = 2;
+  upset.neutral = false;
+  upset.quarterFacts.periods.push({
+    awayScore: 9,
+    homeScore: 7,
+    label: "overtime",
+    margin: 2,
+    period: 5,
+    winningSide: "away",
+  });
+  upset.teams.away.conferencePosition = 6;
+  upset.teams.away.gdp = {
+    focus: "Outside.hit",
+    pace: "Fast.hit",
+  };
+  upset.teams.away.name = "Road Dogs";
+  upset.teams.away.ratingTotal = 60.4;
+  upset.teams.away.recordEnteringGame = "8-7";
+  upset.teams.away.score = 96;
+  upset.teams.home.conferencePosition = 1;
+  upset.teams.home.gdp = {
+    focus: "Outside.miss",
+  };
+  upset.teams.home.name = "Favorites";
+  upset.teams.home.ratingTotal = 67.8;
+  upset.teams.home.recordEnteringGame = "13-2";
+  upset.teams.home.score = 94;
+
+  const dud = createExpectedPromptGame("m-2");
+  dud.finalMargin = 21;
+  dud.teams.away.conferencePosition = 8;
+  dud.teams.away.foulTroubleLimitationCount = 1;
+  dud.teams.away.keyAbsenceCount = 2;
+  dud.teams.away.name = "Short Bench";
+  dud.teams.away.ratingTotal = 59.8;
+  dud.teams.away.recentSignalFlags = ["possible_strategic_deemphasis"];
+  dud.teams.away.recordEnteringGame = "4-11";
+  dud.teams.away.score = 80;
+  dud.teams.home.conferencePosition = 1;
+  dud.teams.home.gdp = {
+    focus: "Balanced.hit",
+  };
+  dud.teams.home.name = "Top Seed";
+  dud.teams.home.ratingTotal = 68.1;
+  dud.teams.home.recordEnteringGame = "14-1";
+  dud.teams.home.score = 101;
+
   const result = __testing.validateGameDayRecapResult(
     {
       games: [
@@ -3967,12 +4163,76 @@ test("validateGameDayRecapResult accepts valid structured output for the expecte
           "One game stayed competitive until the last few possessions while the other tilted sharply before the break and never really swung back.",
       },
     },
-    [createExpectedPromptGame("m-1"), createExpectedPromptGame("m-2")],
+    [upset, dud],
   );
 
   assert.equal(result.games.length, 2);
-  assert.equal(result.games[0]?.matchId, "m-1");
+  const firstGame = result.games[0];
+  const secondGame = result.games[1];
+  assert.ok(firstGame);
+  assert.ok(secondGame);
+  assert.equal(firstGame.matchId, "m-1");
+  assert.equal(result.summary.gameOfTheDayMatchId, "m-1");
+  assert.equal(
+    result.summary.gameOfTheDaySurpriseFactor,
+    firstGame.surpriseFactor,
+  );
   assert.equal(result.summary.headline, "Elite League delivers a split slate");
+  assert.ok((firstGame.surpriseFactor ?? 0) > (secondGame.surpriseFactor ?? 10));
+  assert.ok((firstGame.surpriseFactor ?? 0) >= 9);
+  assert.ok((secondGame.surpriseFactor ?? 10) <= 1.5);
+});
+
+test("computeSurpriseFactorForGame rewards road upsets and punishes short-handed mismatches", () => {
+  const upset = createExpectedPromptGame("m-1");
+  upset.finalMargin = 2;
+  upset.neutral = false;
+  upset.quarterFacts.periods.push({
+    awayScore: 11,
+    homeScore: 8,
+    label: "overtime",
+    margin: 3,
+    period: 5,
+    winningSide: "away",
+  });
+  upset.teams.away.conferencePosition = 7;
+  upset.teams.away.gdp = {
+    focus: "Inside.hit",
+  };
+  upset.teams.away.ratingTotal = 59.9;
+  upset.teams.away.recordEnteringGame = "7-8";
+  upset.teams.away.score = 93;
+  upset.teams.home.conferencePosition = 1;
+  upset.teams.home.gdp = {
+    focus: "Inside.miss",
+  };
+  upset.teams.home.ratingTotal = 68.4;
+  upset.teams.home.recordEnteringGame = "14-1";
+  upset.teams.home.score = 90;
+
+  const dud = createExpectedPromptGame("m-2");
+  dud.finalMargin = 24;
+  dud.teams.away.conferencePosition = 8;
+  dud.teams.away.foulTroubleLimitationCount = 1;
+  dud.teams.away.keyAbsenceCount = 2;
+  dud.teams.away.ratingTotal = 59.1;
+  dud.teams.away.recentSignalFlags = ["possible_strategic_deemphasis"];
+  dud.teams.away.recordEnteringGame = "3-12";
+  dud.teams.away.score = 74;
+  dud.teams.home.conferencePosition = 1;
+  dud.teams.home.gdp = {
+    focus: "Balanced.hit",
+  };
+  dud.teams.home.ratingTotal = 67.5;
+  dud.teams.home.recordEnteringGame = "14-1";
+  dud.teams.home.score = 98;
+
+  const upsetScore = __testing.computeSurpriseFactorForGame(upset);
+  const dudScore = __testing.computeSurpriseFactorForGame(dud);
+
+  assert.ok(upsetScore > dudScore);
+  assert.ok(upsetScore >= 8.5);
+  assert.ok(dudScore <= 1);
 });
 
 test("validateGameDayRecapResult rejects tied-quarter outscore claims", () => {

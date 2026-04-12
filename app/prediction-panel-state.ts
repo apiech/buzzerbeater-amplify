@@ -12,6 +12,11 @@ import type {
   PredictionSourceSelection,
   PredictionSubmissionRequest,
 } from "@/app/types";
+import {
+  asOptionalNumber,
+  asOptionalString,
+  toRecord,
+} from "@/app/prediction-parsing";
 
 export const PREDICTION_DRAFT_STORAGE_KEY = "bb.predictionDraft.v2";
 
@@ -299,26 +304,4 @@ function normalizePredictionForecastContext(
       : [],
     sourceTeamId,
   };
-}
-
-function toRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function asOptionalString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function asOptionalNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }

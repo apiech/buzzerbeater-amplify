@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   billingPaymentsQueryOptions,
@@ -16,6 +16,10 @@ import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
+import {
+  captureAnalyticsEvent,
+  trackBillingAccessTransition,
+} from "@/lib/analytics/client";
 
 type BillingPanelProps = {
   error: string | null;
@@ -40,11 +44,7 @@ const paymentListClassName = "grid gap-3";
 const paymentItemClassName =
   "grid gap-2 rounded-3xl border border-black/8 bg-white/65 p-4";
 
-export function BillingPanel({
-  error,
-  isLoading,
-  summary,
-}: BillingPanelProps) {
+export function BillingPanel({ error, isLoading, summary }: BillingPanelProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutMutation = useMutation({
     mutationFn: () => createBillingCheckoutUrlMutation(billingReturnPath),
@@ -70,26 +70,45 @@ export function BillingPanel({
 
   async function handleCheckout(): Promise<void> {
     setActionError(null);
+    captureAnalyticsEvent("billing_checkout_started", {
+      offer_type: "subscription",
+      source: "account_panel",
+    });
 
     try {
       window.location.assign(await checkoutMutation.mutateAsync());
     } catch (checkoutError) {
+      captureAnalyticsEvent("billing_checkout_failed", {
+        offer_type: "subscription",
+        source: "account_panel",
+      });
       setActionError(formatClientError(checkoutError));
     }
   }
 
   async function handleLifetimeCheckout(): Promise<void> {
     setActionError(null);
+    captureAnalyticsEvent("billing_checkout_started", {
+      offer_type: "lifetime",
+      source: "account_panel",
+    });
 
     try {
       window.location.assign(await lifetimeCheckoutMutation.mutateAsync());
     } catch (checkoutError) {
+      captureAnalyticsEvent("billing_checkout_failed", {
+        offer_type: "lifetime",
+        source: "account_panel",
+      });
       setActionError(formatClientError(checkoutError));
     }
   }
 
   async function handlePortal(): Promise<void> {
     setActionError(null);
+    captureAnalyticsEvent("billing_portal_opened", {
+      source: "account_panel",
+    });
 
     try {
       window.location.assign(await portalMutation.mutateAsync());
@@ -97,6 +116,18 @@ export function BillingPanel({
       setActionError(formatClientError(portalError));
     }
   }
+
+  useEffect(() => {
+    if (!summary) {
+      return;
+    }
+
+    trackBillingAccessTransition({
+      accessSource: summary.accessSource,
+      planId: summary.planId,
+      source: "account_panel",
+    });
+  }, [summary?.accessSource, summary?.planId, summary]);
 
   return (
     <Panel>
@@ -181,7 +212,9 @@ export function BillingPanel({
             />
             {paymentsError ? <Alert>{paymentsError}</Alert> : null}
             {isLoadingPayments ? (
-              <p className={statusCopyClassName}>Loading recent billing activity.</p>
+              <p className={statusCopyClassName}>
+                Loading recent billing activity.
+              </p>
             ) : payments.length ? (
               <div className={paymentListClassName}>
                 {payments.map((payment) => (
@@ -191,14 +224,14 @@ export function BillingPanel({
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="grid gap-1">
-                        <p className="text-sm font-semibold text-ink">
+                        <p className="text-ink text-sm font-semibold">
                           {humanizePaymentKind(payment.paymentKind)}
                         </p>
                         <p className={statusCopyClassName}>
                           {formatTimestamp(payment.occurredAt)}
                         </p>
                       </div>
-                      <p className="text-sm font-semibold text-ink">
+                      <p className="text-ink text-sm font-semibold">
                         {formatPaymentAmount(payment)}
                       </p>
                     </div>
@@ -284,7 +317,9 @@ export function PremiumFeatureGatePanel({
   );
 }
 
-function describeAccessSource(accessSource: BillingSummary["accessSource"]): string {
+function describeAccessSource(
+  accessSource: BillingSummary["accessSource"],
+): string {
   switch (accessSource) {
     case "environment":
       return "Premium access is currently granted by the sandbox or dev environment.";
@@ -343,7 +378,9 @@ function shouldOfferSubscription(summary: BillingSummary | null): boolean {
 }
 
 function shouldOfferLifetime(summary: BillingSummary | null): boolean {
-  return Boolean(summary?.lifetimePurchaseOfferEnabled && !summary.hasLifetimeAccess);
+  return Boolean(
+    summary?.lifetimePurchaseOfferEnabled && !summary.hasLifetimeAccess,
+  );
 }
 
 function humanizePaymentKind(paymentKind: string): string {
@@ -382,9 +419,7 @@ function humanizeStatus(value: string | null | undefined): string {
     .join(" ");
 }
 
-function humanizeSubscriptionStatus(
-  status: string | null | undefined,
-): string {
+function humanizeSubscriptionStatus(status: string | null | undefined): string {
   if (!status) {
     return "No subscription";
   }

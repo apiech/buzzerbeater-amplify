@@ -55,6 +55,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
     "layout.tsx",
   );
   const loginPageSource = readRepoFile("app", "login", "page.tsx");
+  const loginActionsSource = readRepoFile("app", "login", "login-actions.tsx");
   const storePageSource = readRepoFile("app", "store", "page.tsx");
   const storefrontSource = readRepoFile("app", "store", "storefront.tsx");
   const authRouteSource = readRepoFile(
@@ -95,10 +96,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
     workspaceDashboardLayoutSource,
     /viewerLabel=\{await resolveServerViewerLabel\(currentUser\)\}/,
   );
-  assert.match(loginPageSource, /href="\/api\/auth\/sign-in"/);
-  assert.match(loginPageSource, /href="\/api\/auth\/sign-up"/);
-  assert.match(loginPageSource, /<a[\s\S]*?href="\/api\/auth\/sign-in"/);
-  assert.match(loginPageSource, /<a[\s\S]*?href="\/api\/auth\/sign-up"/);
+  assert.match(loginPageSource, /<LoginActions/);
   assert.doesNotMatch(
     loginPageSource,
     /<Link[\s\S]*?href="\/api\/auth\/sign-in"/,
@@ -111,7 +109,19 @@ test("workspace requests are routed through server-authenticated Next entry poin
     loginPageSource,
     /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
   );
-  assert.match(loginPageSource, /href="\/store"/);
+  assert.match(loginActionsSource, /href="\/api\/auth\/sign-in"/);
+  assert.match(loginActionsSource, /href="\/api\/auth\/sign-up"/);
+  assert.match(loginActionsSource, /<a[\s\S]*?href="\/api\/auth\/sign-in"/);
+  assert.match(loginActionsSource, /<a[\s\S]*?href="\/api\/auth\/sign-up"/);
+  assert.doesNotMatch(
+    loginActionsSource,
+    /<Link[\s\S]*?href="\/api\/auth\/sign-in"/,
+  );
+  assert.doesNotMatch(
+    loginActionsSource,
+    /<Link[\s\S]*?href="\/api\/auth\/sign-up"/,
+  );
+  assert.match(loginActionsSource, /href="\/store"/);
   assert.match(storePageSource, /<Storefront/);
   assert.match(
     storePageSource,

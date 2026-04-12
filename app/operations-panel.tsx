@@ -14,6 +14,7 @@ import {
   formatSyncKind,
   formatWriteupStatus,
 } from "@/app/ui/presentation";
+import { captureAnalyticsEvent } from "@/lib/analytics/client";
 import type {
   CurrentPredictionPreview,
   GameDayRecapRecord,
@@ -84,13 +85,20 @@ export function OperationsPanel() {
     (recap) => isActiveRecapStatus(recap.status),
   ).length;
 
+  async function handleRefresh(): Promise<void> {
+    captureAnalyticsEvent("operations_refresh_requested", {
+      source: "operations_panel",
+    });
+    await operationsQuery.refetch();
+  }
+
   return (
     <Panel>
       <SectionHeading
         actions={
           <Button
             loading={operationsQuery.isRefetching}
-            onClick={() => void operationsQuery.refetch()}
+            onClick={() => void handleRefresh()}
             variant="secondary"
           >
             Refresh activity

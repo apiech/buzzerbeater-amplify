@@ -277,7 +277,8 @@ export const client = {
     getPlayerLab: (input?: JsonObject) => requestQuery("getPlayerLab", input),
     getPlayerTrend: (input: JsonObject) =>
       requestQuery("getPlayerTrend", input),
-    getRivalsWorkspace: () => requestQuery("getRivalsWorkspace"),
+    getRivalsWorkspace: (input?: JsonObject) =>
+      requestQuery("getRivalsWorkspace", input),
     getSalaryProjection: (input: JsonObject) =>
       requestQuery("getSalaryProjection", input),
     getScoutSchedule: (input?: JsonObject) =>

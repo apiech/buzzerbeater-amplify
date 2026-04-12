@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import {
   rivalsWorkspaceQueryOptions,
@@ -29,7 +29,16 @@ type RivalsPanelProps = {
   context: RivalsPanelContext;
 };
 
-type RivalryMatchRecord = RivalsWorkspacePayload["matches"][number];
+type RivalryRowRecord = RivalsWorkspacePayload["rows"][number];
+type RivalryMatchRecord = NonNullable<
+  NonNullable<RivalsWorkspacePayload["selectedRivalry"]>["matches"]
+>[number];
+type CompetitionBreakdownRow = NonNullable<
+  NonNullable<RivalsWorkspacePayload["selectedRivalry"]>["competitionBreakdown"]
+>[number];
+type SeasonBreakdownRow = NonNullable<
+  NonNullable<RivalsWorkspacePayload["selectedRivalry"]>["seasonBreakdown"]
+>[number];
 
 type AggregateSortKey =
   | "averageMargin"
@@ -59,65 +68,6 @@ type CheckboxFilterOption = {
 type SeasonRangeSelection = {
   endSeason: string;
   startSeason: string;
-};
-
-type RivalryMatchFilters = {
-  endSeason: string;
-  selectedCompetitions: readonly string[];
-  selectedOutcomes: readonly string[];
-  selectedTvScopes: readonly string[];
-  selectedVenues: readonly string[];
-  startSeason: string;
-};
-
-type RivalryRow = {
-  averageMargin: number;
-  currentStreak: string;
-  games: number;
-  homeLosses: number;
-  homeWins: number;
-  lastMatch: string | null;
-  leagueLosses: number;
-  leagueWins: number;
-  losses: number;
-  matches: RivalryMatchRecord[];
-  opponentTeamId: string;
-  opponentTeamName: string;
-  playoffLosses: number;
-  playoffWins: number;
-  roadLosses: number;
-  roadWins: number;
-  seasons: number[];
-  totalMargin: number;
-  tvGames: number;
-  winPct: number;
-  wins: number;
-};
-
-type CompetitionBreakdownRow = {
-  averageMargin: number;
-  competitionKey: string;
-  competitionLabel: string;
-  games: number;
-  homeLosses: number;
-  homeWins: number;
-  losses: number;
-  roadLosses: number;
-  roadWins: number;
-  tvGames: number;
-  wins: number;
-};
-
-type SeasonBreakdownRow = {
-  averageMargin: number;
-  games: number;
-  lastMatch: string | null;
-  leagueLosses: number;
-  leagueWins: number;
-  losses: number;
-  season: number;
-  tvGames: number;
-  wins: number;
 };
 
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-4";
@@ -153,17 +103,6 @@ const competitionOrder = [
   "OTHER",
 ] as const;
 
-const competitionLabelByKey: Record<string, string> = {
-  BUZZERBEATER_BEST: "BuzzerBeater's Best",
-  BUZZERBEATER_MADNESS: "BuzzerBeater Madness",
-  CUP: "Cup",
-  LEAGUE_REGULAR_SEASON: "League regular season",
-  OTHER: "Other",
-  PLAYOFFS: "Playoffs",
-  PRIVATE_LEAGUE: "Private league",
-  SCRIMMAGE: "Scrimmage",
-};
-
 const venueFilterOptions: CheckboxFilterOption[] = [
   { label: "Home", value: "HOME" },
   { label: "Road", value: "ROAD" },
@@ -197,28 +136,15 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
   const refreshMutation = useMutation({
     mutationFn: submitRivalsBackfillMutation,
   });
-  const rivalsQuery = useQuery({
-    ...rivalsWorkspaceQueryOptions(),
-    enabled: Boolean(context.team.teamId),
-    placeholderData: (previousData) => previousData,
-    refetchInterval: (query) =>
-      hasActiveRivalsStatus(query.state.data?.status) ? 5000 : false,
-  });
   const [searchText, setSearchText] = useState("");
-  const [selectedCompetitions, setSelectedCompetitions] = useState<string[]>(
-    [],
+  const [selectedCompetitions, setSelectedCompetitions] = useState<string[] | null>(
+    null,
   );
-  const [selectedVenues, setSelectedVenues] = useState<string[]>(() =>
-    venueFilterOptions.map((option) => option.value),
-  );
-  const [selectedOutcomes, setSelectedOutcomes] = useState<string[]>(() =>
-    outcomeFilterOptions.map((option) => option.value),
-  );
-  const [selectedTvScopes, setSelectedTvScopes] = useState<string[]>(() =>
-    tvScopeFilterOptions.map((option) => option.value),
-  );
-  const [startSeason, setStartSeason] = useState("");
-  const [endSeason, setEndSeason] = useState("");
+  const [selectedVenues, setSelectedVenues] = useState<string[] | null>(null);
+  const [selectedOutcomes, setSelectedOutcomes] = useState<string[] | null>(null);
+  const [selectedTvScopes, setSelectedTvScopes] = useState<string[] | null>(null);
+  const [startSeason, setStartSeason] = useState<string | null>(null);
+  const [endSeason, setEndSeason] = useState<string | null>(null);
   const [minimumGames, setMinimumGames] = useState("");
   const [sortKey, setSortKey] = useState<AggregateSortKey>("wins");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -227,6 +153,51 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
   const [matchSortDirection, setMatchSortDirection] =
     useState<SortDirection>("desc");
 
+  const payloadDefaults = useMemo(
+    () => ({
+      competitionOptions: [] as CheckboxFilterOption[],
+      seasonRange: { endSeason: "", startSeason: "" },
+      seasonValues: [] as string[],
+    }),
+    [],
+  );
+  const effectiveCompetitionOptions =
+    payloadDefaults.competitionOptions;
+  const effectiveSeasonValues = payloadDefaults.seasonValues;
+  const defaultSeasonRange = payloadDefaults.seasonRange;
+
+  const queryArgs = useMemo(
+    () => ({
+      competitionKeys:
+        selectedCompetitions === null ? undefined : selectedCompetitions,
+      endSeason:
+        endSeason === null ? undefined : parseSeasonValue(endSeason),
+      outcomes: selectedOutcomes === null ? undefined : selectedOutcomes,
+      selectedOpponentId: selectedOpponentId || undefined,
+      startSeason:
+        startSeason === null ? undefined : parseSeasonValue(startSeason),
+      tvScopes: selectedTvScopes === null ? undefined : selectedTvScopes,
+      venues: selectedVenues === null ? undefined : selectedVenues,
+    }),
+    [
+      endSeason,
+      selectedCompetitions,
+      selectedOpponentId,
+      selectedOutcomes,
+      selectedTvScopes,
+      selectedVenues,
+      startSeason,
+    ],
+  );
+
+  const rivalsQuery = useQuery({
+    ...rivalsWorkspaceQueryOptions(queryArgs),
+    enabled: Boolean(context.team.teamId),
+    placeholderData: (previousData) => previousData,
+    refetchInterval: (query) =>
+      hasActiveRivalsStatus(query.state.data?.status) ? 5000 : false,
+  });
+
   const deferredSearchText = useDeferredValue(searchText);
   const payload = rivalsQuery.data ?? null;
   const panelError =
@@ -234,46 +205,41 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
   const isLoading = rivalsQuery.isPending || refreshMutation.isPending;
   const statusMessage = resolveRivalsStatusMessage(payload?.status ?? null);
 
-  useEffect(() => {
-    if (!payload) {
-      return;
-    }
-
-    setSelectedCompetitions(
-      buildCompetitionOptions(payload.matches).map((option) => option.value),
-    );
-    setSelectedVenues(venueFilterOptions.map((option) => option.value));
-    setSelectedOutcomes(outcomeFilterOptions.map((option) => option.value));
-    setSelectedTvScopes(tvScopeFilterOptions.map((option) => option.value));
-    const defaultSeasonRange = buildDefaultSeasonRange(
-      buildSeasonValues(payload.matches),
-    );
-    setStartSeason(defaultSeasonRange.startSeason);
-    setEndSeason(defaultSeasonRange.endSeason);
-  }, [payload]);
-
-  const matches = payload?.matches ?? [];
-  const competitionOptions = buildCompetitionOptions(matches);
-  const seasonValues = buildSeasonValues(matches);
+  const competitionOptions = payload
+    ? payload.competitionOptions.map((option) => ({
+        label: option.label,
+        value: option.key,
+      }))
+    : effectiveCompetitionOptions;
+  const seasonValues = payload
+    ? payload.seasonRange.availableSeasons.map(String)
+    : effectiveSeasonValues;
   const effectiveSeasonRange = normalizeSeasonRange(
     seasonValues,
-    startSeason,
-    endSeason,
+    startSeason ?? toSeasonString(payload?.seasonRange.startSeason),
+    endSeason ?? toSeasonString(payload?.seasonRange.endSeason),
+  );
+  const selectedCompetitionValues = resolveSelectedValues(
+    selectedCompetitions,
+    competitionOptions.map((option) => option.value),
+  );
+  const selectedVenueValues = resolveSelectedValues(
+    selectedVenues,
+    venueFilterOptions.map((option) => option.value),
+  );
+  const selectedOutcomeValues = resolveSelectedValues(
+    selectedOutcomes,
+    outcomeFilterOptions.map((option) => option.value),
+  );
+  const selectedTvScopeValues = resolveSelectedValues(
+    selectedTvScopes,
+    tvScopeFilterOptions.map((option) => option.value),
   );
   const minimumGamesValue = Math.max(1, Number.parseInt(minimumGames, 10) || 1);
   const normalizedSearch = deferredSearchText.trim().toLowerCase();
 
-  const filteredMatches = filterRivalryMatches(matches, {
-    endSeason: effectiveSeasonRange.endSeason,
-    selectedCompetitions,
-    selectedOutcomes,
-    selectedTvScopes,
-    selectedVenues,
-    startSeason: effectiveSeasonRange.startSeason,
-  });
-
   const rivalryRows = sortRivalryRows(
-    buildRivalryRows(filteredMatches).filter((row) => {
+    (payload?.rows ?? []).filter((row) => {
       if (row.games < minimumGamesValue) {
         return false;
       }
@@ -308,22 +274,31 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
   }, [rivalryRows, selectedOpponentId]);
 
   const selectedRivalry =
-    rivalryRows.find((row) => row.opponentTeamId === selectedOpponentId) ??
-    null;
+    payload?.selectedRivalry &&
+    (!selectedOpponentId ||
+      payload.selectedRivalry.row.opponentTeamId === selectedOpponentId)
+      ? payload.selectedRivalry
+      : null;
   const selectedMatches = sortRivalryMatches(
     selectedRivalry?.matches ?? [],
     matchSortKey,
     matchSortDirection,
   );
-  const competitionBreakdown = buildCompetitionBreakdown(selectedMatches);
-  const seasonBreakdown = buildSeasonBreakdown(selectedMatches);
+  const competitionBreakdown: CompetitionBreakdownRow[] =
+    selectedRivalry?.competitionBreakdown ?? [];
+  const seasonBreakdown: SeasonBreakdownRow[] =
+    selectedRivalry?.seasonBreakdown ?? [];
 
   const activeTeamName =
     payload?.team.teamName ?? context.team.teamName ?? "Your club";
+  const filteredMatchCount = (payload?.rows ?? []).reduce(
+    (total, row) => total + row.games,
+    0,
+  );
   const filterSummary = `Showing ${rivalryRows.length} rival${
     rivalryRows.length === 1 ? "" : "s"
-  } across ${filteredMatches.length} meeting${
-    filteredMatches.length === 1 ? "" : "s"
+  } across ${filteredMatchCount} meeting${
+    filteredMatchCount === 1 ? "" : "s"
   }.`;
 
   return (
@@ -432,7 +407,9 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   setStartSeason(nextRange.startSeason);
                   setEndSeason(nextRange.endSeason);
                 }}
-                value={effectiveSeasonRange.startSeason}
+                value={
+                  effectiveSeasonRange.startSeason || defaultSeasonRange.startSeason
+                }
               >
                 {seasonValues.length ? (
                   seasonValues.map((season) => (
@@ -455,7 +432,7 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   setStartSeason(nextRange.startSeason);
                   setEndSeason(nextRange.endSeason);
                 }}
-                value={effectiveSeasonRange.endSeason}
+                value={effectiveSeasonRange.endSeason || defaultSeasonRange.endSeason}
               >
                 {seasonValues.length ? (
                   seasonValues.map((season) => (
@@ -472,73 +449,73 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
 
           <Field label="Competition">
             <CheckboxFilterGroup
-              onSelectAll={() =>
-                setSelectedCompetitions(
-                  competitionOptions.map((option) => option.value),
-                )
-              }
+              onSelectAll={() => setSelectedCompetitions(null)}
               onSelectNone={() => setSelectedCompetitions([])}
               onToggleValue={(value) =>
                 setSelectedCompetitions((current) =>
-                  toggleSelectedValue(current, value),
+                  toggleSelectedValue(
+                    current,
+                    value,
+                    competitionOptions.map((option) => option.value),
+                  ),
                 )
               }
               options={competitionOptions}
-              selectedValues={selectedCompetitions}
+              selectedValues={selectedCompetitionValues}
             />
           </Field>
 
           <Field label="Venue">
             <CheckboxFilterGroup
-              onSelectAll={() =>
-                setSelectedVenues(
-                  venueFilterOptions.map((option) => option.value),
-                )
-              }
+              onSelectAll={() => setSelectedVenues(null)}
               onSelectNone={() => setSelectedVenues([])}
               onToggleValue={(value) =>
                 setSelectedVenues((current) =>
-                  toggleSelectedValue(current, value),
+                  toggleSelectedValue(
+                    current,
+                    value,
+                    venueFilterOptions.map((option) => option.value),
+                  ),
                 )
               }
               options={venueFilterOptions}
-              selectedValues={selectedVenues}
+              selectedValues={selectedVenueValues}
             />
           </Field>
 
           <Field label="Outcome">
             <CheckboxFilterGroup
-              onSelectAll={() =>
-                setSelectedOutcomes(
-                  outcomeFilterOptions.map((option) => option.value),
-                )
-              }
+              onSelectAll={() => setSelectedOutcomes(null)}
               onSelectNone={() => setSelectedOutcomes([])}
               onToggleValue={(value) =>
                 setSelectedOutcomes((current) =>
-                  toggleSelectedValue(current, value),
+                  toggleSelectedValue(
+                    current,
+                    value,
+                    outcomeFilterOptions.map((option) => option.value),
+                  ),
                 )
               }
               options={outcomeFilterOptions}
-              selectedValues={selectedOutcomes}
+              selectedValues={selectedOutcomeValues}
             />
           </Field>
 
           <Field label="TV">
             <CheckboxFilterGroup
-              onSelectAll={() =>
-                setSelectedTvScopes(
-                  tvScopeFilterOptions.map((option) => option.value),
-                )
-              }
+              onSelectAll={() => setSelectedTvScopes(null)}
               onSelectNone={() => setSelectedTvScopes([])}
               onToggleValue={(value) =>
                 setSelectedTvScopes((current) =>
-                  toggleSelectedValue(current, value),
+                  toggleSelectedValue(
+                    current,
+                    value,
+                    tvScopeFilterOptions.map((option) => option.value),
+                  ),
                 )
               }
               options={tvScopeFilterOptions}
-              selectedValues={selectedTvScopes}
+              selectedValues={selectedTvScopeValues}
             />
           </Field>
         </div>
@@ -651,9 +628,7 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                     <TableCell className="min-w-[15rem]">
                       <button
                         className="grid gap-1 text-left"
-                        onClick={() =>
-                          setSelectedOpponentId(row.opponentTeamId)
-                        }
+                        onClick={() => setSelectedOpponentId(row.opponentTeamId)}
                         type="button"
                       >
                         <strong className="text-ink text-sm">
@@ -698,8 +673,8 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
       {selectedRivalry ? (
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading
-            description={`Current filters show ${selectedRivalry.games} meetings against team ${selectedRivalry.opponentTeamId}.`}
-            title={`Head-to-head: ${selectedRivalry.opponentTeamName}`}
+            description={`Current filters show ${selectedRivalry.row.games} meetings against team ${selectedRivalry.row.opponentTeamId}.`}
+            title={`Head-to-head: ${selectedRivalry.row.opponentTeamName}`}
             titleAs="h4"
           />
 
@@ -707,25 +682,28 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
             <StatCard
               detail="Filtered meetings in view."
               label="Meetings shown"
-              value={selectedRivalry.games}
+              value={selectedRivalry.row.games}
             />
             <StatCard
-              detail={formatWinPct(selectedRivalry.winPct)}
+              detail={formatWinPct(selectedRivalry.row.winPct)}
               label="Record"
-              value={formatRecord(selectedRivalry.wins, selectedRivalry.losses)}
-            />
-            <StatCard
-              detail={`Home ${formatRecord(selectedRivalry.homeWins, selectedRivalry.homeLosses)} • Road ${formatRecord(selectedRivalry.roadWins, selectedRivalry.roadLosses)}`}
-              label="League split"
               value={formatRecord(
-                selectedRivalry.leagueWins,
-                selectedRivalry.leagueLosses,
+                selectedRivalry.row.wins,
+                selectedRivalry.row.losses,
               )}
             />
             <StatCard
-              detail={formatDate(selectedRivalry.lastMatch)}
+              detail={`Home ${formatRecord(selectedRivalry.row.homeWins, selectedRivalry.row.homeLosses)} • Road ${formatRecord(selectedRivalry.row.roadWins, selectedRivalry.row.roadLosses)}`}
+              label="League split"
+              value={formatRecord(
+                selectedRivalry.row.leagueWins,
+                selectedRivalry.row.leagueLosses,
+              )}
+            />
+            <StatCard
+              detail={formatDate(selectedRivalry.row.lastMatch)}
               label="Current streak"
-              value={selectedRivalry.currentStreak}
+              value={selectedRivalry.row.currentStreak}
             />
           </div>
 
@@ -747,9 +725,7 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   {competitionBreakdown.map((row) => (
                     <tr key={row.competitionKey}>
                       <TableCell>{row.competitionLabel}</TableCell>
-                      <TableCell>
-                        {formatRecord(row.wins, row.losses)}
-                      </TableCell>
+                      <TableCell>{formatRecord(row.wins, row.losses)}</TableCell>
                       <TableCell>
                         {formatRecord(row.homeWins, row.homeLosses)}
                       </TableCell>
@@ -781,9 +757,7 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   {seasonBreakdown.map((row) => (
                     <tr key={row.season}>
                       <TableCell>{row.season}</TableCell>
-                      <TableCell>
-                        {formatRecord(row.wins, row.losses)}
-                      </TableCell>
+                      <TableCell>{formatRecord(row.wins, row.losses)}</TableCell>
                       <TableCell>
                         {formatRecord(row.leagueWins, row.leagueLosses)}
                       </TableCell>
@@ -899,16 +873,16 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
 
   function resetFilters() {
     setSearchText("");
-    setSelectedCompetitions(competitionOptions.map((option) => option.value));
-    setSelectedVenues(venueFilterOptions.map((option) => option.value));
-    setSelectedOutcomes(outcomeFilterOptions.map((option) => option.value));
-    setSelectedTvScopes(tvScopeFilterOptions.map((option) => option.value));
-    const defaultSeasonRange = buildDefaultSeasonRange(seasonValues);
-    setStartSeason(defaultSeasonRange.startSeason);
-    setEndSeason(defaultSeasonRange.endSeason);
+    setSelectedCompetitions(null);
+    setSelectedVenues(null);
+    setSelectedOutcomes(null);
+    setSelectedTvScopes(null);
+    setStartSeason(null);
+    setEndSeason(null);
     setMinimumGames("");
     setSortKey("wins");
     setSortDirection("desc");
+    setSelectedOpponentId("");
     setMatchSortKey("date");
     setMatchSortDirection("desc");
   }
@@ -936,285 +910,6 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
         : "desc",
     );
   }
-}
-
-function buildRivalryRows(
-  matches: readonly RivalryMatchRecord[],
-): RivalryRow[] {
-  const rows = new Map<string, RivalryRow>();
-
-  for (const match of matches) {
-    const current =
-      rows.get(match.opponentTeamId) ??
-      createEmptyRivalryRow(match.opponentTeamId, match.opponentTeamName);
-
-    current.games += 1;
-    current.matches.push(match);
-    current.totalMargin += match.margin;
-    current.lastMatch = pickLaterTimestamp(current.lastMatch, match.startTime);
-
-    if (!current.seasons.includes(match.season)) {
-      current.seasons.push(match.season);
-    }
-
-    if (match.outcome === "WIN") {
-      current.wins += 1;
-      if (match.venue === "HOME") {
-        current.homeWins += 1;
-      } else {
-        current.roadWins += 1;
-      }
-    } else {
-      current.losses += 1;
-      if (match.venue === "HOME") {
-        current.homeLosses += 1;
-      } else {
-        current.roadLosses += 1;
-      }
-    }
-
-    if (match.competitionKey === "LEAGUE_REGULAR_SEASON") {
-      if (match.outcome === "WIN") {
-        current.leagueWins += 1;
-      } else {
-        current.leagueLosses += 1;
-      }
-    }
-
-    if (match.competitionKey === "PLAYOFFS") {
-      if (match.outcome === "WIN") {
-        current.playoffWins += 1;
-      } else {
-        current.playoffLosses += 1;
-      }
-    }
-
-    if (match.isTvGame) {
-      current.tvGames += 1;
-    }
-
-    rows.set(match.opponentTeamId, current);
-  }
-
-  return Array.from(rows.values()).map((row) => {
-    row.seasons.sort((left, right) => left - right);
-    row.averageMargin = row.games ? row.totalMargin / row.games : 0;
-    row.winPct = row.games ? row.wins / row.games : 0;
-    row.currentStreak = buildCurrentStreak(row.matches);
-    return row;
-  });
-}
-
-function createEmptyRivalryRow(
-  opponentTeamId: string,
-  opponentTeamName: string,
-): RivalryRow {
-  return {
-    averageMargin: 0,
-    currentStreak: "N/A",
-    games: 0,
-    homeLosses: 0,
-    homeWins: 0,
-    lastMatch: null,
-    leagueLosses: 0,
-    leagueWins: 0,
-    losses: 0,
-    matches: [],
-    opponentTeamId,
-    opponentTeamName,
-    playoffLosses: 0,
-    playoffWins: 0,
-    roadLosses: 0,
-    roadWins: 0,
-    seasons: [],
-    totalMargin: 0,
-    tvGames: 0,
-    winPct: 0,
-    wins: 0,
-  };
-}
-
-function buildCompetitionBreakdown(
-  matches: readonly RivalryMatchRecord[],
-): CompetitionBreakdownRow[] {
-  const rows = new Map<string, CompetitionBreakdownRow>();
-
-  for (const match of matches) {
-    const current = rows.get(match.competitionKey) ?? {
-      averageMargin: 0,
-      competitionKey: match.competitionKey,
-      competitionLabel:
-        (match.competitionLabel ||
-          competitionLabelByKey[match.competitionKey]) ??
-        match.competitionKey,
-      games: 0,
-      homeLosses: 0,
-      homeWins: 0,
-      losses: 0,
-      roadLosses: 0,
-      roadWins: 0,
-      tvGames: 0,
-      wins: 0,
-    };
-
-    current.games += 1;
-    current.averageMargin += match.margin;
-    if (match.outcome === "WIN") {
-      current.wins += 1;
-      if (match.venue === "HOME") {
-        current.homeWins += 1;
-      } else {
-        current.roadWins += 1;
-      }
-    } else {
-      current.losses += 1;
-      if (match.venue === "HOME") {
-        current.homeLosses += 1;
-      } else {
-        current.roadLosses += 1;
-      }
-    }
-
-    if (match.isTvGame) {
-      current.tvGames += 1;
-    }
-
-    rows.set(match.competitionKey, current);
-  }
-
-  return Array.from(rows.values())
-    .map((row) => ({
-      ...row,
-      averageMargin: row.games ? row.averageMargin / row.games : 0,
-    }))
-    .sort((left, right) => {
-      const leftIndex = competitionOrder.indexOf(
-        left.competitionKey as (typeof competitionOrder)[number],
-      );
-      const rightIndex = competitionOrder.indexOf(
-        right.competitionKey as (typeof competitionOrder)[number],
-      );
-      return normalizeOrderValue(leftIndex) - normalizeOrderValue(rightIndex);
-    });
-}
-
-function buildSeasonBreakdown(
-  matches: readonly RivalryMatchRecord[],
-): SeasonBreakdownRow[] {
-  const rows = new Map<number, SeasonBreakdownRow>();
-
-  for (const match of matches) {
-    const current = rows.get(match.season) ?? {
-      averageMargin: 0,
-      games: 0,
-      lastMatch: null,
-      leagueLosses: 0,
-      leagueWins: 0,
-      losses: 0,
-      season: match.season,
-      tvGames: 0,
-      wins: 0,
-    };
-
-    current.games += 1;
-    current.averageMargin += match.margin;
-    current.lastMatch = pickLaterTimestamp(current.lastMatch, match.startTime);
-
-    if (match.outcome === "WIN") {
-      current.wins += 1;
-    } else {
-      current.losses += 1;
-    }
-
-    if (match.competitionKey === "LEAGUE_REGULAR_SEASON") {
-      if (match.outcome === "WIN") {
-        current.leagueWins += 1;
-      } else {
-        current.leagueLosses += 1;
-      }
-    }
-
-    if (match.isTvGame) {
-      current.tvGames += 1;
-    }
-
-    rows.set(match.season, current);
-  }
-
-  return Array.from(rows.values())
-    .map((row) => ({
-      ...row,
-      averageMargin: row.games ? row.averageMargin / row.games : 0,
-    }))
-    .sort((left, right) => right.season - left.season);
-}
-
-function buildCurrentStreak(matches: readonly RivalryMatchRecord[]): string {
-  if (!matches.length) {
-    return "N/A";
-  }
-
-  const ordered = [...matches].sort((left, right) =>
-    compareTimestamps(right.startTime, left.startTime),
-  );
-  const firstMatch = ordered[0];
-  if (!firstMatch) {
-    return "N/A";
-  }
-
-  const streakOutcome = firstMatch.outcome;
-  let streakLength = 0;
-
-  for (const match of ordered) {
-    if (match.outcome !== streakOutcome) {
-      break;
-    }
-    streakLength += 1;
-  }
-
-  return `${streakOutcome === "WIN" ? "W" : "L"}${streakLength}`;
-}
-
-function filterRivalryMatches(
-  matches: readonly RivalryMatchRecord[],
-  filters: RivalryMatchFilters,
-): RivalryMatchRecord[] {
-  const startSeasonNumber = parseSeasonValue(filters.startSeason);
-  const endSeasonNumber = parseSeasonValue(filters.endSeason);
-
-  return matches.filter((match) => {
-    if (!filters.selectedCompetitions.includes(match.competitionKey)) {
-      return false;
-    }
-
-    if (!filters.selectedVenues.includes(match.venue)) {
-      return false;
-    }
-
-    if (!filters.selectedOutcomes.includes(match.outcome)) {
-      return false;
-    }
-
-    if (!filters.selectedTvScopes.includes(resolveTvScope(match))) {
-      return false;
-    }
-
-    if (
-      startSeasonNumber !== null &&
-      endSeasonNumber !== null &&
-      (match.season < startSeasonNumber || match.season > endSeasonNumber)
-    ) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-function buildSeasonValues(matches: readonly RivalryMatchRecord[]): string[] {
-  return Array.from(new Set(matches.map((match) => String(match.season)))).sort(
-    (left, right) => Number(left) - Number(right),
-  );
 }
 
 function buildDefaultSeasonRange(
@@ -1254,8 +949,8 @@ function normalizeSeasonRange(
   }
 
   return {
-    endSeason: resolvedStart,
-    startSeason: resolvedEnd,
+    endSeason: resolvedEnd,
+    startSeason: resolvedStart,
   };
 }
 
@@ -1323,7 +1018,7 @@ function compareSeasonValues(left: string, right: string): number {
   return Number(left) - Number(right);
 }
 
-function parseSeasonValue(value: string): number | null {
+function parseSeasonValue(value: string | null | undefined): number | null {
   if (!value) {
     return null;
   }
@@ -1332,24 +1027,37 @@ function parseSeasonValue(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function toggleSelectedValue(
-  selectedValues: readonly string[],
-  value: string,
-): string[] {
-  return selectedValues.includes(value)
-    ? selectedValues.filter((entry) => entry !== value)
-    : [...selectedValues, value];
+function toSeasonString(value: number | null | undefined): string {
+  return value == null ? "" : String(value);
 }
 
-function resolveTvScope(match: RivalryMatchRecord): string {
-  return match.isTvGame ? "TV" : "NON_TV";
+function resolveSelectedValues(
+  selectedValues: readonly string[] | null,
+  allValues: readonly string[],
+): string[] {
+  if (selectedValues === null) {
+    return [...allValues];
+  }
+
+  return selectedValues.filter((value) => allValues.includes(value));
+}
+
+function toggleSelectedValue(
+  selectedValues: readonly string[] | null,
+  value: string,
+  allValues: readonly string[],
+): string[] {
+  const resolved = resolveSelectedValues(selectedValues, allValues);
+  return resolved.includes(value)
+    ? resolved.filter((entry) => entry !== value)
+    : [...resolved, value];
 }
 
 function sortRivalryRows(
-  rows: readonly RivalryRow[],
+  rows: readonly RivalryRowRecord[],
   sortKey: AggregateSortKey,
   direction: SortDirection,
-): RivalryRow[] {
+): RivalryRowRecord[] {
   const sorted = [...rows].sort((left, right) => {
     switch (sortKey) {
       case "averageMargin":
@@ -1418,15 +1126,6 @@ function normalizeOrderValue(value: number): number {
   return value === -1 ? Number.MAX_SAFE_INTEGER : value;
 }
 
-function pickLaterTimestamp(
-  current: string | null | undefined,
-  candidate: string | null | undefined,
-): string | null {
-  return compareTimestamps(current, candidate) >= 0
-    ? (current ?? null)
-    : (candidate ?? null);
-}
-
 function compareTimestamps(
   left: string | null | undefined,
   right: string | null | undefined,
@@ -1481,7 +1180,7 @@ function resolveRivalsStatusMessage(
     case "FETCHING_SCHEDULES":
       return "Rivals history is fetching season schedules in the background.";
     case "BUILDING_DATASET":
-      return "Rivals history is rebuilding the cached rivalry dataset.";
+      return "Rivals history is rebuilding the rivalry facts dataset.";
     case "FAILED":
       return status.error ?? "The latest rivals refresh failed.";
     default:
@@ -1547,25 +1246,6 @@ function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(parsed.getTime())
     ? value
     : dateTimeFormatter.format(parsed);
-}
-
-function buildCompetitionOptions(matches: readonly RivalryMatchRecord[]) {
-  const labels = new Map<string, string>();
-
-  for (const match of matches) {
-    if (!labels.has(match.competitionKey)) {
-      labels.set(
-        match.competitionKey,
-        (match.competitionLabel ||
-          competitionLabelByKey[match.competitionKey]) ??
-          match.competitionKey,
-      );
-    }
-  }
-
-  return Array.from(labels.entries())
-    .sort((left, right) => compareCompetition(left[0], right[0]))
-    .map(([value, label]) => ({ label, value }));
 }
 
 function CheckboxFilterGroup({
@@ -1670,8 +1350,6 @@ function SortDirectionButton({
 
 export const __testing = {
   buildDefaultSeasonRange,
-  buildSeasonValues,
-  filterRivalryMatches,
   normalizeSeasonRange,
   toggleSelectedValue,
   updateSeasonRangeFromEnd,

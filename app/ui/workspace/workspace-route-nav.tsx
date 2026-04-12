@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { cn } from "@/app/ui/primitives/cn";
 import { workspaceSections, type WorkspaceSection } from "@/app/workspace-sections";
+import { captureAnalyticsEvent } from "@/lib/analytics/client";
 
 type WorkspaceRouteNavProps = {
   activeSection: WorkspaceSection;
@@ -26,7 +27,38 @@ export function WorkspaceRouteNav({
   const [mobileOpen, setMobileOpen] = useState(false);
   const groupedSections = groupSections();
 
-  function renderSidebarContent() {
+  function setMobileMenuOpen(nextValue: boolean) {
+    setMobileOpen((currentValue) => {
+      if (currentValue === nextValue) {
+        return currentValue;
+      }
+
+      captureAnalyticsEvent("workspace_nav_menu_toggled", {
+        navigation_surface: "mobile_drawer",
+        state: nextValue ? "opened" : "closed",
+      });
+      return nextValue;
+    });
+  }
+
+  function handleSectionNavigation(
+    destinationSection: WorkspaceSection,
+    navigationSurface: "desktop_sidebar" | "mobile_drawer",
+  ) {
+    captureAnalyticsEvent("workspace_nav_clicked", {
+      destination_section: destinationSection,
+      from_section: activeSection,
+      navigation_surface: navigationSurface,
+    });
+
+    if (navigationSurface === "mobile_drawer") {
+      setMobileMenuOpen(false);
+    }
+  }
+
+  function renderSidebarContent(
+    navigationSurface: "desktop_sidebar" | "mobile_drawer",
+  ) {
     return (
       <div className="grid gap-6">
         <div className="grid gap-3">
@@ -84,7 +116,9 @@ export function WorkspaceRouteNav({
                           : "border-black/8 bg-white/45 hover:-translate-y-px hover:border-accent/20 hover:bg-white/70",
                       )}
                       href={`/workspace/${section.id}`}
-                      onClick={() => setMobileOpen(false)}
+                      onClick={() =>
+                        handleSectionNavigation(section.id, navigationSurface)
+                      }
                     >
                       <span className="font-semibold text-ink">{section.label}</span>
                       <span className="text-sm leading-5 text-ink-muted">
@@ -126,7 +160,7 @@ export function WorkspaceRouteNav({
         </div>
         <button
           className="inline-flex min-h-11 items-center justify-center rounded-full border border-border-soft bg-surface-strong px-4 text-sm font-semibold text-ink shadow-sm"
-          onClick={() => setMobileOpen(true)}
+          onClick={() => setMobileMenuOpen(true)}
           type="button"
         >
           Menu
@@ -138,7 +172,7 @@ export function WorkspaceRouteNav({
           "fixed inset-0 z-50 bg-black/35 transition lg:hidden",
           mobileOpen ? "opacity-100" : "pointer-events-none opacity-0",
         )}
-        onClick={() => setMobileOpen(false)}
+        onClick={() => setMobileMenuOpen(false)}
       >
         <aside
           className={cn(
@@ -150,18 +184,18 @@ export function WorkspaceRouteNav({
           <div className="mb-4 flex justify-end">
             <button
               className="inline-flex min-h-10 items-center justify-center rounded-full border border-border-soft px-4 text-sm font-semibold text-ink"
-              onClick={() => setMobileOpen(false)}
+              onClick={() => setMobileMenuOpen(false)}
               type="button"
             >
               Close
             </button>
           </div>
-          {renderSidebarContent()}
+          {renderSidebarContent("mobile_drawer")}
         </aside>
       </div>
 
       <aside className="sticky top-4 hidden max-h-[calc(100vh-2rem)] overflow-y-auto lg:block">
-        <PanelShell>{renderSidebarContent()}</PanelShell>
+        <PanelShell>{renderSidebarContent("desktop_sidebar")}</PanelShell>
       </aside>
     </>
   );

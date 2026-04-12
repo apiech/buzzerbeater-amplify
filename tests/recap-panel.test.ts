@@ -226,16 +226,20 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
         evidenceTags: [],
         headline: "Alpha closes strong [late]",
         matchId: "137828772",
+        surpriseFactor: 8.7,
         writeup: "Alpha handled Beta in the fourth quarter.",
       },
       {
         evidenceTags: [],
         headline: "Gamma keeps rolling",
         matchId: "scrim-like",
+        surpriseFactor: 2.1,
         writeup: "Gamma's offense stayed sharp all night.",
       },
     ],
     summary: {
+      gameOfTheDayMatchId: "137828772",
+      gameOfTheDaySurpriseFactor: 8.7,
       headline: "Elite League roundup",
       lede: "Two games gave the forum plenty to discuss.",
     },
@@ -247,7 +251,16 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
     forumPost,
     /\[quote]Two games gave the forum plenty to discuss\.\[\/quote]/,
   );
+  assert.match(
+    forumPost,
+    /\[i]Game of the day: Alpha closes strong \(late\) • Surprise factor: 8\.7\/10\[\/i]/,
+  );
   assert.match(forumPost, /\[b]Alpha closes strong \(late\)\[\/b]/);
+  assert.match(
+    forumPost,
+    /\[i]Surprise factor: 8\.7\/10 • Game of the day\[\/i]/,
+  );
+  assert.match(forumPost, /\[i]Surprise factor: 2\.1\/10\[\/i]/);
   assert.match(forumPost, /Match: \[match=137828772]/);
   assert.match(forumPost, /Match: scrim-like/);
 });

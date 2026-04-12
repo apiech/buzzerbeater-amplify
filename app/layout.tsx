@@ -6,6 +6,7 @@ import { AppProviders } from "@/app/providers";
 import { getServerCurrentUser } from "@/app/server/amplify-server";
 import { sharedMetadata, sharedViewport } from "@/app/site-config";
 import { resolveServerThemeId } from "@/app/server/theme-preferences";
+import { maintenanceEnvironmentName } from "@/config/maintenance-environment";
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -33,7 +34,15 @@ export default async function RootLayout({
         />
       </head>
       <body className={`${spaceGrotesk.variable} font-sans`}>
-        <AppProviders>{children}</AppProviders>
+        <AppProviders
+          analytics={{
+            environmentName: maintenanceEnvironmentName,
+            isAuthenticated: Boolean(currentUser),
+            userId: currentUser?.userId ?? null,
+          }}
+        >
+          {children}
+        </AppProviders>
       </body>
     </html>
   );

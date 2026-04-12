@@ -3,6 +3,14 @@ import type {
   PredictionResult,
   PredictionTacticsGrid,
 } from "@/app/types";
+import {
+  asOptionalNumber,
+  asOptionalString,
+  isPredictionAwayDefense,
+  isPredictionHomeOffense,
+  toRecord,
+  toStringArray,
+} from "@/app/prediction-parsing";
 
 type PredictionGridSelection = {
   awayDefense: PredictionGridCell["awayDefense"];
@@ -211,42 +219,6 @@ function toPredictionGridCell(value: unknown): PredictionGridCell | null {
   };
 }
 
-function toRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function asOptionalString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function asOptionalNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-function toStringArray(value: unknown): string[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
-  const entries = value.filter(
-    (entry): entry is string =>
-      typeof entry === "string" && Boolean(entry.trim()),
-  );
-  return entries.length === value.length ? entries : null;
-}
-
 function toPredictionHomeOffenseArray(
   value: unknown,
 ): PredictionGridCell["homeOffense"][] | null {
@@ -280,34 +252,4 @@ function createUnavailablePredictionGridCell(
     homeScore: null,
     pointDiff: null,
   };
-}
-
-function isPredictionHomeOffense(
-  value: string,
-): value is PredictionGridCell["homeOffense"] {
-  return [
-    "Base",
-    "Push",
-    "Patient",
-    "Motion",
-    "RunAndGun",
-    "Princeton",
-    "LookInside",
-    "LowPost",
-    "InsideIsolation",
-    "OutsideIsolation",
-  ].includes(value);
-}
-
-function isPredictionAwayDefense(
-  value: string,
-): value is PredictionGridCell["awayDefense"] {
-  return [
-    "ManToMan",
-    "23Zone",
-    "32Zone",
-    "131Zone",
-    "InsideBoxAndOne",
-    "OutsideBoxAndOne",
-  ].includes(value);
 }

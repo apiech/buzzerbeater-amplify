@@ -4,7 +4,6 @@ import {
   encodeAwsJsonFields,
   decodeAwsJsonFields,
   decodeAwsJsonList,
-  type AwsJsonModelName,
 } from "./awsjson";
 import { getDataClient, type AmplifyDataFunctionEnv } from "./data-client";
 import type { PredictionInputShape } from "../../../lib/prediction/normalization";
@@ -370,6 +369,29 @@ export type RivalsWorkspaceCacheRecord = {
   matchesJson: unknown;
 };
 
+export type RivalryMatchFactRecord = {
+  userId: string;
+  teamId: string;
+  matchId: string;
+  season: number;
+  startTime: string;
+  gameDate?: string | null;
+  opponentTeamId: string;
+  opponentTeamName: string;
+  competitionKey: string;
+  competitionLabel: string;
+  stageKey?: string | null;
+  stageLabel?: string | null;
+  venue: string;
+  isHome: boolean;
+  isTvGame: boolean;
+  teamScore: number;
+  opponentScore: number;
+  margin: number;
+  outcome: string;
+  rawType?: string | null;
+};
+
 export type RivalsBackfillRecord = {
   userId: string;
   teamId: string;
@@ -380,7 +402,9 @@ export type RivalsBackfillRecord = {
   completedAt?: string | null;
   error?: string | null;
   executionArn?: string | null;
+  failedSeasons?: number[] | null;
   generatedAt?: string | null;
+  seasonsScanned?: number | null;
   totalCompletedGames?: number | null;
   totalOpponents?: number | null;
   updatedAt: string;
@@ -1437,17 +1461,82 @@ export async function upsertRivalsWorkspaceCache(
   );
 }
 
+export async function listRivalryMatchFactsByUserAndTeamId(
+  env: RepositoryEnv,
+  userId: string,
+  teamId: string,
+): Promise<RivalryMatchFactRecord[]> {
+  const records: RivalryMatchFactRecord[] = [];
+  let nextToken: string | null | undefined = null;
+
+  do {
+    const page: PagedRecords<RivalryMatchFactRecord> =
+      await queryModelIndexPage<RivalryMatchFactRecord>(
+      env,
+      "RivalryMatchFact",
+      "listRivalryMatchFactsByUserIdAndTeamIdAndStartTime",
+      { teamId: { eq: teamId }, userId },
+      {
+        limit: 200,
+        nextToken,
+        sortDirection: "DESC",
+      },
+      "list rivalry match facts",
+    );
+    records.push(...page.records);
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  return records;
+}
+
+export async function upsertRivalryMatchFact(
+  env: RepositoryEnv,
+  input: RivalryMatchFactRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "RivalryMatchFact",
+    ["userId", "teamId", "matchId"],
+    input,
+  );
+}
+
+export async function deleteRivalryMatchFact(
+  env: RepositoryEnv,
+  input: Pick<RivalryMatchFactRecord, "userId" | "teamId" | "matchId">,
+): Promise<void> {
+  const model = await getModel<RivalryMatchFactRecord>(env, "RivalryMatchFact");
+  await assertSuccessful(
+    model.delete({
+      matchId: input.matchId,
+      teamId: input.teamId,
+      userId: input.userId,
+    }),
+    "delete rivalry match fact",
+  );
+}
+
 export async function getRivalsBackfill(
   env: RepositoryEnv,
   userId: string,
   teamId: string,
 ): Promise<RivalsBackfillRecord | null> {
-  return getModelRecord<RivalsBackfillRecord>(
+  const record = await getModelRecord<RivalsBackfillRecord>(
     env,
     "RivalsBackfill",
     { teamId, userId },
     "load rivals backfill",
   );
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    ...record,
+    failedSeasons: normalizeIntegerArray(record.failedSeasons),
+  };
 }
 
 export async function upsertRivalsBackfill(
@@ -1499,7 +1588,7 @@ export async function getSharedPlayerCardRecord(
 
 async function upsertModelRecord(
   env: RepositoryEnv,
-  modelName: AwsJsonModelName,
+  modelName: string,
   identifierFields: readonly string[],
   input: Record<string, unknown>,
 ): Promise<void> {
@@ -1520,7 +1609,7 @@ async function upsertModelRecord(
 }
 
 function prepareModelInput<TRecord extends Record<string, unknown>>(
-  modelName: AwsJsonModelName,
+  modelName: string,
   input: TRecord,
 ): TRecord {
   return omitUndefinedValues(encodeAwsJsonFields(modelName, input));
@@ -1639,6 +1728,14 @@ function pickFields(
     selected[field] = input[field];
     return selected;
   }, {});
+}
+
+function normalizeIntegerArray(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is number => Number.isInteger(entry));
 }
 
 function addDays(value: string, days: number): string {

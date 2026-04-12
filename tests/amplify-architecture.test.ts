@@ -22,7 +22,7 @@ const approvedLargeDependencyBags = new Map<string, number>([
   ["amplify/data/_backend/next-game-recommendation.ts", 24],
   ["amplify/data/_backend/opponent-forecast.ts", 9],
   ["amplify/data/_backend/prediction.ts", 9],
-  ["amplify/data/_backend/rivals.ts", 11],
+  ["amplify/data/_backend/rivals.ts", 15],
   ["amplify/data/_backend/team-highlights.ts", 11],
 ]);
 

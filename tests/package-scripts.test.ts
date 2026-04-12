@@ -35,6 +35,10 @@ test("sandbox scripts expose the happy path and raw escape hatch", () => {
     "tsc -p tsconfig.app.json --noEmit --incremental --tsBuildInfoFile ./.tsbuildinfo.deploy-sandbox",
   );
   assert.equal(
+    scripts["typecheck:amplify:sandbox"],
+    "node ./scripts/typecheck-amplify.mjs --allow-missing-generated-env",
+  );
+  assert.equal(
     scripts["verify:deploy:sandbox"],
     "npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox",
   );

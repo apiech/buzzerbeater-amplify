@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
   useId,
@@ -55,6 +51,7 @@ import {
 } from "@/app/ui/primitives/table-shell";
 import { formatPreviewStatus } from "@/app/ui/presentation";
 import { buzzerBeaterColorStyle } from "@/lib/buzzerbeater/rating-scale";
+import { captureAnalyticsEvent } from "@/lib/analytics/client";
 import {
   applyBoxscoreRatingsToPredictionInput,
   PREDICTION_HOME_COURT_FACTOR,
@@ -143,9 +140,13 @@ export function PredictionPanel({
   const predictionFormId = useId();
   const predictionMatrixRef = useRef<HTMLDivElement | null>(null);
   const hasInitializedPredictionLoadRef = useRef(false);
+  const hasInitializedTerminalTrackingRef = useRef(false);
+  const lastTrackedTerminalPredictionKeyRef = useRef<string | null>(null);
   const previousRenderablePredictionKeyRef = useRef<string | null>(null);
   const [predictionError, setPredictionError] = useState<string | null>(null);
-  const [isLoadingSource, setIsLoadingSource] = useState<SourceSide | null>(null);
+  const [isLoadingSource, setIsLoadingSource] = useState<SourceSide | null>(
+    null,
+  );
   const currentPredictionQuery = useQuery({
     ...currentPredictionQueryOptions(),
     placeholderData: (previousData) => previousData,
@@ -246,7 +247,8 @@ export function PredictionPanel({
 
     if (!hasInitializedPredictionLoadRef.current) {
       hasInitializedPredictionLoadRef.current = true;
-      previousRenderablePredictionKeyRef.current = currentRenderablePredictionKey;
+      previousRenderablePredictionKeyRef.current =
+        currentRenderablePredictionKey;
       return;
     }
 
@@ -271,12 +273,66 @@ export function PredictionPanel({
     currentPredictionQuery.isPending,
   ]);
 
+  useEffect(() => {
+    if (currentPredictionQuery.isPending) {
+      return;
+    }
+
+    const trackedStatus =
+      typeof currentPredictionStatus === "string"
+        ? currentPredictionStatus
+        : null;
+    const terminalKey =
+      currentPredictionRequestId &&
+      trackedStatus &&
+      terminalPredictionStatuses.has(trackedStatus)
+        ? `${currentPredictionRequestId}:${trackedStatus}:${currentPredictionUpdatedAt ?? ""}`
+        : null;
+
+    if (!hasInitializedTerminalTrackingRef.current) {
+      hasInitializedTerminalTrackingRef.current = true;
+      lastTrackedTerminalPredictionKeyRef.current = terminalKey;
+      return;
+    }
+
+    if (
+      !terminalKey ||
+      lastTrackedTerminalPredictionKeyRef.current === terminalKey
+    ) {
+      return;
+    }
+
+    lastTrackedTerminalPredictionKeyRef.current = terminalKey;
+    captureAnalyticsEvent("prediction_completed", {
+      has_forecast_context: Boolean(forecastContext),
+      has_issue: Boolean(currentPredictionIssue),
+      has_result: Boolean(currentResult),
+      status: trackedStatus?.toLowerCase(),
+    });
+  }, [
+    currentPredictionIssue,
+    currentPredictionQuery.isPending,
+    currentPredictionRequestId,
+    currentPredictionStatus,
+    currentPredictionUpdatedAt,
+    currentResult,
+    forecastContext,
+  ]);
+
   async function handleSubmit() {
     if (submitPredictionMutation.isPending) {
       return;
     }
 
     setPredictionError(null);
+    captureAnalyticsEvent("prediction_requested", {
+      effort_delta: draft.input.effortDelta,
+      has_away_source_match: Boolean(draft.sourceSelection.awaySourceMatchId),
+      has_forecast_prefill: Boolean(forecastPrefill),
+      has_home_source_match: Boolean(draft.sourceSelection.homeSourceMatchId),
+      has_scout_summary: Boolean(context.scoutSummary),
+      neutral_site: draft.input.neutral === "1",
+    });
 
     try {
       await submitPredictionMutation.mutateAsync(
@@ -284,6 +340,10 @@ export function PredictionPanel({
       );
       await currentPredictionQuery.refetch();
     } catch (error) {
+      captureAnalyticsEvent("prediction_request_failed", {
+        has_forecast_prefill: Boolean(forecastPrefill),
+        has_scout_summary: Boolean(context.scoutSummary),
+      });
       setPredictionError(formatClientError(error));
     }
   }
@@ -301,12 +361,20 @@ export function PredictionPanel({
     const teamId = side === "home" ? homeTeamId : awayTeamId;
 
     if (!matchId) {
+      captureAnalyticsEvent("prediction_source_load_failed", {
+        reason: "missing_match",
+        side,
+      });
       setPredictionError(
         `Select a ${side === "home" ? "home" : "away"} source game first.`,
       );
       return;
     }
     if (!teamId) {
+      captureAnalyticsEvent("prediction_source_load_failed", {
+        reason: "missing_team_metadata",
+        side,
+      });
       setPredictionError(
         `${side === "home" ? "Home" : "Away"} team metadata is unavailable.`,
       );
@@ -334,7 +402,20 @@ export function PredictionPanel({
           teamLocation: resolvedSource.teamLocation,
         }),
       }));
+      captureAnalyticsEvent("prediction_source_loaded", {
+        side,
+        team_location: resolvedSource.teamLocation,
+      });
     } catch (error) {
+      captureAnalyticsEvent("prediction_source_load_failed", {
+        reason:
+          error instanceof Error &&
+          error.message ===
+            "The selected box score does not contain the expected team."
+            ? "team_mismatch"
+            : "request_failed",
+        side,
+      });
       setPredictionError(formatClientError(error));
     } finally {
       setIsLoadingSource(null);
@@ -348,7 +429,10 @@ export function PredictionPanel({
     readQueryError(currentPredictionQuery.error) ??
     readQueryError(submitPredictionMutation.error);
 
-  function updateSourceSelection(field: "homeSourceMatchId" | "awaySourceMatchId", value: string) {
+  function updateSourceSelection(
+    field: "homeSourceMatchId" | "awaySourceMatchId",
+    value: string,
+  ) {
     onDraftChange((current) => ({
       ...current,
       sourceSelection: {
@@ -358,7 +442,10 @@ export function PredictionPanel({
     }));
   }
 
-  function updateNumericField(field: NumericPredictionField, nextValue: string) {
+  function updateNumericField(
+    field: NumericPredictionField,
+    nextValue: string,
+  ) {
     const parsed = Number(nextValue);
     onDraftChange((current) => ({
       ...current,
@@ -397,17 +484,19 @@ export function PredictionPanel({
         back to a Base offense / Man-to-man defense baseline.
       </p>
 
-      {effectivePredictionError ? <Alert>{effectivePredictionError}</Alert> : null}
+      {effectivePredictionError ? (
+        <Alert>{effectivePredictionError}</Alert>
+      ) : null}
 
       {forecastPrefill ? (
         <Alert tone="note">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="grid gap-1">
-              <strong className="text-sm text-ink">
+              <strong className="text-ink text-sm">
                 Forecast prefill: {forecastPrefill.context.scenarioLabel} (
                 {formatPercent(forecastPrefill.context.scenarioProbability)})
               </strong>
-              <span className="text-sm text-ink-muted">
+              <span className="text-ink-muted text-sm">
                 Model {forecastPrefill.context.forecastModelVersion} • Generated{" "}
                 {formatTimestamp(forecastPrefill.context.forecastGeneratedAt)} •
                 Effort stays relative to a Normal home effort.
@@ -426,7 +515,11 @@ export function PredictionPanel({
         </Alert>
       ) : null}
 
-      <form className="grid gap-4" id={predictionFormId} onSubmit={handleFormSubmit}>
+      <form
+        className="grid gap-4"
+        id={predictionFormId}
+        onSubmit={handleFormSubmit}
+      >
         <div className={twoColumnGridClassName}>
           <Panel as="article" padding="sm" variant="solid">
             <SectionHeading
@@ -440,7 +533,10 @@ export function PredictionPanel({
                 <Field label="Home source game">
                   <Select
                     onChange={(event) =>
-                      updateSourceSelection("homeSourceMatchId", event.target.value)
+                      updateSourceSelection(
+                        "homeSourceMatchId",
+                        event.target.value,
+                      )
                     }
                     value={sourceSelection.homeSourceMatchId}
                   >
@@ -472,7 +568,10 @@ export function PredictionPanel({
                 <Field label="Away source game">
                   <Select
                     onChange={(event) =>
-                      updateSourceSelection("awaySourceMatchId", event.target.value)
+                      updateSourceSelection(
+                        "awaySourceMatchId",
+                        event.target.value,
+                      )
                     }
                     value={sourceSelection.awaySourceMatchId}
                   >
@@ -531,13 +630,15 @@ export function PredictionPanel({
             ) : currentPrediction ? (
               <div className="grid gap-4">
                 <div className="rounded-card grid gap-2 border border-black/8 bg-white/70 p-4">
-                  <StatusBadge tone={statusToneFromValue(currentPredictionStatus)}>
+                  <StatusBadge
+                    tone={statusToneFromValue(currentPredictionStatus)}
+                  >
                     {formatPreviewStatus(currentPredictionStatus)}
                   </StatusBadge>
-                  <strong className="text-base text-ink">
+                  <strong className="text-ink text-base">
                     {currentPredictionSummary}
                   </strong>
-                  <span className="text-sm text-ink-muted">
+                  <span className="text-ink-muted text-sm">
                     Updated {formatTimestamp(currentPrediction.updatedAt)}
                   </span>
                 </div>
@@ -549,17 +650,17 @@ export function PredictionPanel({
                 {bestGridCell ? (
                   <Alert tone="note">
                     Best shown matchup: {bestGridCell.homeOffense} vs{" "}
-                    {bestGridCell.awayDefense} ({formatSigned(bestGridCell.pointDiff ?? 0)}
-                    )
+                    {bestGridCell.awayDefense} (
+                    {formatSigned(bestGridCell.pointDiff ?? 0)})
                   </Alert>
                 ) : null}
 
                 {forecastContext ? (
                   <div className="flex flex-wrap gap-2">
-                    <span className="inline-flex rounded-full bg-note-bg px-3 py-1.5 text-sm font-semibold text-note">
+                    <span className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold">
                       Forecast {forecastContext.scenarioLabel}
                     </span>
-                    <span className="inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold text-ink-muted">
+                    <span className="text-ink-muted inline-flex rounded-full bg-black/5 px-3 py-1.5 text-sm font-semibold">
                       {formatPercent(forecastContext.scenarioProbability)}
                     </span>
                   </div>
@@ -583,18 +684,20 @@ export function PredictionPanel({
 
             <div className="overflow-x-auto">
               <div className={ratingGridClassName}>
-                <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                   Metric
                 </div>
-                <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                   Home
                 </div>
-                <div className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                <div className="text-ink-muted text-[0.78rem] font-bold tracking-[0.08em] uppercase">
                   Away
                 </div>
                 {RATING_FIELDS.map((field) => (
                   <div className="contents" key={field.label}>
-                    <span className="font-semibold text-ink">{field.label}</span>
+                    <span className="text-ink font-semibold">
+                      {field.label}
+                    </span>
                     <Input
                       className="font-semibold"
                       onChange={(event) =>
@@ -666,7 +769,8 @@ export function PredictionPanel({
 
             <p className={statusCopyClassName}>
               Hidden fixed tactics stay locked to Base offense and Man-to-man
-              defense while the matrix compares home offense against away defense.
+              defense while the matrix compares home offense against away
+              defense.
             </p>
           </Panel>
         </div>
@@ -691,7 +795,8 @@ export function PredictionPanel({
               ) : null}
 
               <span className={statusCopyClassName}>
-                Current preview updated {formatTimestamp(currentPrediction?.updatedAt)}
+                Current preview updated{" "}
+                {formatTimestamp(currentPrediction?.updatedAt)}
               </span>
             </div>
 
@@ -736,14 +841,14 @@ export function PredictionPanel({
                               )}
                               style={predictionGridCellStyle(cell.pointDiff)}
                             >
-                              <strong className="text-sm text-ink">
+                              <strong className="text-ink text-sm">
                                 {formatGridScore(cell)}
                               </strong>
-                              <span className="text-xs font-semibold text-ink-muted">
+                              <span className="text-ink-muted text-xs font-semibold">
                                 {formatGridDiff(cell)}
                               </span>
                               {isBestCell ? (
-                                <span className="text-[0.68rem] font-bold uppercase tracking-[0.1em] text-accent">
+                                <span className="text-accent text-[0.68rem] font-bold tracking-[0.1em] uppercase">
                                   Best
                                 </span>
                               ) : null}
@@ -789,13 +894,11 @@ function resolvePredictionSourceTeam(
 
 function describePredictionSummary(input: {
   issue: string | null;
-  result:
-    | {
-        awayScore: number;
-        homeScore: number;
-        pointDiff: number;
-      }
-    | null;
+  result: {
+    awayScore: number;
+    homeScore: number;
+    pointDiff: number;
+  } | null;
   status: string | null | undefined;
   tacticsGridReady: boolean;
 }): string {
@@ -815,9 +918,7 @@ function describePredictionSummary(input: {
   return "Preview in progress";
 }
 
-function readPredictionResult(
-  prediction: CurrentPredictionPreview | null,
-): {
+function readPredictionResult(prediction: CurrentPredictionPreview | null): {
   awayScore: number;
   homeScore: number;
   pointDiff: number;

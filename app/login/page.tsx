@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
+import { LoginActions } from "@/app/login/login-actions";
 import { createPageMetadata } from "@/app/site-config";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
@@ -43,21 +43,11 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3">
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
-          <a className={authLinkClassName} href="/api/auth/sign-in">
-            Sign in
-          </a>
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
-          <a className={secondaryLinkClassName} href="/api/auth/sign-up">
-            Create account
-          </a>
-          {commercialModeEnabled ? (
-            <Link className={secondaryLinkClassName} href="/store">
-              Browse store
-            </Link>
-          ) : null}
-        </div>
+        <LoginActions
+          authLinkClassName={authLinkClassName}
+          commercialModeEnabled={commercialModeEnabled}
+          secondaryLinkClassName={secondaryLinkClassName}
+        />
       </Panel>
     </main>
   );

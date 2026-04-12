@@ -4,6 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { useState } from "react";
 
+import {
+  AnalyticsProvider,
+  type AnalyticsProviderProps,
+} from "@/app/analytics-provider";
+
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -20,12 +25,20 @@ function createQueryClient() {
   });
 }
 
-export function AppProviders({ children }: { children: React.ReactNode }) {
+export function AppProviders({
+  analytics,
+  children,
+}: {
+  analytics: Omit<AnalyticsProviderProps, "children">;
+  children: React.ReactNode;
+}) {
   const [queryClient] = useState(createQueryClient);
 
   return (
     <NuqsAdapter>
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <AnalyticsProvider {...analytics}>{children}</AnalyticsProvider>
+      </QueryClientProvider>
     </NuqsAdapter>
   );
 }

@@ -926,9 +926,92 @@ const schema = a
       venue: a.string().required(),
     }),
 
-    RivalsWorkspace: a.customType({
-      generatedAt: a.datetime().required(),
+    RivalsCompetitionOption: a.customType({
+      count: a.integer().required(),
+      key: a.string().required(),
+      label: a.string().required(),
+    }),
+
+    RivalsSeasonRange: a.customType({
+      availableSeasons: a.integer().required().array().required(),
+      endSeason: a.integer(),
+      startSeason: a.integer(),
+    }),
+
+    RivalryRow: a.customType({
+      averageMargin: a.float().required(),
+      currentStreak: a.string().required(),
+      games: a.integer().required(),
+      homeLosses: a.integer().required(),
+      homeWins: a.integer().required(),
+      lastMatch: a.datetime(),
+      leagueLosses: a.integer().required(),
+      leagueWins: a.integer().required(),
+      losses: a.integer().required(),
+      opponentTeamId: a.string().required(),
+      opponentTeamName: a.string().required(),
+      playoffLosses: a.integer().required(),
+      playoffWins: a.integer().required(),
+      roadLosses: a.integer().required(),
+      roadWins: a.integer().required(),
+      seasons: a.integer().required().array().required(),
+      tvGames: a.integer().required(),
+      winPct: a.float().required(),
+      wins: a.integer().required(),
+    }),
+
+    RivalryCompetitionBreakdownRow: a.customType({
+      averageMargin: a.float().required(),
+      competitionKey: a.string().required(),
+      competitionLabel: a.string().required(),
+      games: a.integer().required(),
+      homeLosses: a.integer().required(),
+      homeWins: a.integer().required(),
+      losses: a.integer().required(),
+      roadLosses: a.integer().required(),
+      roadWins: a.integer().required(),
+      tvGames: a.integer().required(),
+      wins: a.integer().required(),
+    }),
+
+    RivalrySeasonBreakdownRow: a.customType({
+      averageMargin: a.float().required(),
+      games: a.integer().required(),
+      lastMatch: a.datetime(),
+      leagueLosses: a.integer().required(),
+      leagueWins: a.integer().required(),
+      losses: a.integer().required(),
+      season: a.integer().required(),
+      tvGames: a.integer().required(),
+      wins: a.integer().required(),
+    }),
+
+    RivalryDetail: a.customType({
+      competitionBreakdown: a
+        .ref("RivalryCompetitionBreakdownRow")
+        .required()
+        .array()
+        .required(),
       matches: a.ref("RivalryMatch").required().array().required(),
+      row: a.ref("RivalryRow").required(),
+      seasonBreakdown: a
+        .ref("RivalrySeasonBreakdownRow")
+        .required()
+        .array()
+        .required(),
+    }),
+
+    RivalsWorkspace: a.customType({
+      competitionOptions: a
+        .ref("RivalsCompetitionOption")
+        .required()
+        .array()
+        .required(),
+      generatedAt: a.datetime().required(),
+      rows: a.ref("RivalryRow").required().array().required(),
+      seasonRange: a.ref("RivalsSeasonRange").required(),
+      selectedOpponentId: a.string(),
+      selectedRivalry: a.ref("RivalryDetail"),
       status: a.ref("RivalsBackfillStatus"),
       summary: a.ref("RivalsWorkspaceSummary").required(),
       syncedAt: a.datetime(),
@@ -1866,6 +1949,39 @@ const schema = a
       .identifier(["userId", "teamId"])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
+    RivalryMatchFact: a
+      .model({
+        userId: a.string().required().authorization((allow) => [
+          allow.ownerDefinedIn("userId").to(["read"]),
+        ]),
+        teamId: a.string().required(),
+        matchId: a.string().required(),
+        season: a.integer().required(),
+        startTime: a.datetime().required(),
+        gameDate: a.date(),
+        opponentTeamId: a.string().required(),
+        opponentTeamName: a.string().required(),
+        competitionKey: a.string().required(),
+        competitionLabel: a.string().required(),
+        stageKey: a.string(),
+        stageLabel: a.string(),
+        venue: a.string().required(),
+        isHome: a.boolean().required(),
+        isTvGame: a.boolean().required(),
+        teamScore: a.integer().required(),
+        opponentScore: a.integer().required(),
+        margin: a.integer().required(),
+        outcome: a.string().required(),
+        rawType: a.string(),
+      })
+      .identifier(["userId", "teamId", "matchId"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["teamId", "startTime"])
+          .queryField("listRivalryMatchFactsByUserIdAndTeamIdAndStartTime"),
+      ])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
     RivalsBackfill: a
       .model({
         userId: a.string().required().authorization((allow) => [
@@ -1879,7 +1995,9 @@ const schema = a
         completedAt: a.datetime(),
         error: a.string(),
         executionArn: a.string(),
+        failedSeasons: a.integer().array(),
         generatedAt: a.datetime(),
+        seasonsScanned: a.integer(),
         totalCompletedGames: a.integer(),
         totalOpponents: a.integer(),
         updatedAt: a.datetime().required(),
@@ -2247,6 +2365,15 @@ const schema = a
 
     getRivalsWorkspace: a
       .query()
+      .arguments({
+        competitionKeys: a.string().array(),
+        endSeason: a.integer(),
+        outcomes: a.string().array(),
+        selectedOpponentId: a.string(),
+        startSeason: a.integer(),
+        tvScopes: a.string().array(),
+        venues: a.string().array(),
+      })
       .returns(a.ref("RivalsWorkspace"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getRivalsWorkspace)),

@@ -34,7 +34,8 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.evaluateLineupHelper(
       requiredInput(input) as never,
     ),
-  getBillingSummary: async () => (await runtime.getServerDataClient()).queries.getBillingSummary(),
+  getBillingSummary: async () =>
+    (await runtime.getServerDataClient()).queries.getBillingSummary(),
   getHomeWorkspace: async (input) =>
     (await runtime.getServerDataClient()).queries.getHomeWorkspace(
       optionalInput(input) as never,
@@ -44,21 +45,26 @@ const queryOperations = {
       optionalInput(input) as never,
     ),
   getLeagueIntel: async (input) =>
-    ((await runtime.getServerDataClient()).queries.getLeagueIntel as (
-      queryInput?: OperationInput,
-    ) => Promise<OperationResult<unknown>>)(optionalInput(input)),
+    (
+      (await runtime.getServerDataClient()).queries.getLeagueIntel as (
+        queryInput?: OperationInput,
+      ) => Promise<OperationResult<unknown>>
+    )(optionalInput(input)),
   getLatestNextGameRecommendation: async (input) =>
-    (await runtime.getServerDataClient()).queries.getLatestNextGameRecommendation(
-      requiredInput(input) as never,
-    ),
+    (
+      await runtime.getServerDataClient()
+    ).queries.getLatestNextGameRecommendation(requiredInput(input) as never),
   getLatestOpponentForecast: async (input) =>
     (await runtime.getServerDataClient()).queries.getLatestOpponentForecast(
       requiredInput(input) as never,
     ),
   getLineupHelperWorkspace: async (input) =>
-    ((await runtime.getServerDataClient()).queries.getLineupHelperWorkspace as (
-      queryInput?: OperationInput,
-    ) => Promise<OperationResult<unknown>>)(optionalInput(input)),
+    (
+      (await runtime.getServerDataClient()).queries
+        .getLineupHelperWorkspace as (
+        queryInput?: OperationInput,
+      ) => Promise<OperationResult<unknown>>
+    )(optionalInput(input)),
   getMatchBoxscoreDetails: async (input) =>
     (await runtime.getServerDataClient()).queries.getMatchBoxscoreDetails(
       requiredInput(input) as never,
@@ -68,15 +74,21 @@ const queryOperations = {
       optionalInput(input) as never,
     ),
   getPlayerLab: async (input) =>
-    ((await runtime.getServerDataClient()).queries.getPlayerLab as (
-      queryInput?: OperationInput,
-    ) => Promise<OperationResult<unknown>>)(optionalInput(input)),
+    (
+      (await runtime.getServerDataClient()).queries.getPlayerLab as (
+        queryInput?: OperationInput,
+      ) => Promise<OperationResult<unknown>>
+    )(optionalInput(input)),
   getPlayerTrend: async (input) =>
     (await runtime.getServerDataClient()).queries.getPlayerTrend(
       requiredInput(input) as never,
     ),
-  getRivalsWorkspace: async () =>
-    (await runtime.getServerDataClient()).queries.getRivalsWorkspace(),
+  getRivalsWorkspace: async (input) =>
+    (
+      (await runtime.getServerDataClient()).queries.getRivalsWorkspace as (
+        queryInput?: OperationInput,
+      ) => Promise<OperationResult<unknown>>
+    )(optionalInput(input)),
   getSalaryProjection: async (input) =>
     (await runtime.getServerDataClient()).queries.getSalaryProjection(
       requiredInput(input) as never,
@@ -107,11 +119,13 @@ const mutationOperations = {
       requiredInput(input) as never,
     ),
   createBillingCheckoutSession: async (input) =>
-    (await runtime.getServerDataClient()).mutations.createBillingCheckoutSession(
-      optionalInput(input) as never,
-    ),
+    (
+      await runtime.getServerDataClient()
+    ).mutations.createBillingCheckoutSession(optionalInput(input) as never),
   createBillingLifetimeCheckoutSession: async (input) =>
-    (await runtime.getServerDataClient()).mutations.createBillingLifetimeCheckoutSession(
+    (
+      await runtime.getServerDataClient()
+    ).mutations.createBillingLifetimeCheckoutSession(
       optionalInput(input) as never,
     ),
   createBillingPortalSession: async (input) =>
@@ -141,11 +155,13 @@ const mutationOperations = {
       requiredInput(input) as never,
     ),
   submitMyTeamHighlightsScan: async () =>
-    (await runtime.getServerDataClient()).mutations.submitMyTeamHighlightsScan(),
+    (
+      await runtime.getServerDataClient()
+    ).mutations.submitMyTeamHighlightsScan(),
   submitNextGameRecommendationJob: async (input) =>
-    (await runtime.getServerDataClient()).mutations.submitNextGameRecommendationJob(
-      requiredInput(input) as never,
-    ),
+    (
+      await runtime.getServerDataClient()
+    ).mutations.submitNextGameRecommendationJob(requiredInput(input) as never),
   submitOpponentForecastJob: async (input) =>
     (await runtime.getServerDataClient()).mutations.submitOpponentForecastJob(
       requiredInput(input) as never,

@@ -116,7 +116,7 @@ const matchSummarySchema = z
 const trendCountEntrySchema = z
   .object({
     count: z.number(),
-    label: z.string(),
+    key: z.string(),
   })
   .passthrough();
 
@@ -160,7 +160,7 @@ const homeWorkspaceSchema = z
         status: nullableStringSchema,
         teamId: nullableStringSchema,
         teamName: nullableStringSchema,
-        userId: z.string(),
+        userId: nullableStringSchema,
         workspaceCacheJson: jsonValueSchema.optional(),
       })
       .passthrough(),
@@ -922,7 +922,7 @@ const teamHighlightsMomentSchema = z
     opponentName: nullableStringSchema,
     opponentScore: nullableNumberSchema,
     overtime: nullableNumberSchema,
-    period: nullableNumberSchema,
+    period: nullableStringSchema,
     perspective: z.string(),
     playDescription: nullableStringSchema,
     scoreDiffBefore: nullableNumberSchema,
@@ -1153,10 +1153,91 @@ const rivalryMatchSchema = z
   })
   .passthrough();
 
+const rivalsCompetitionOptionSchema = z
+  .object({
+    count: z.number(),
+    key: z.string(),
+    label: z.string(),
+  })
+  .passthrough();
+
+const rivalryRowSchema = z
+  .object({
+    averageMargin: z.number(),
+    currentStreak: z.string(),
+    games: z.number(),
+    homeLosses: z.number(),
+    homeWins: z.number(),
+    lastMatch: nullableStringSchema,
+    leagueLosses: z.number(),
+    leagueWins: z.number(),
+    losses: z.number(),
+    opponentTeamId: z.string(),
+    opponentTeamName: z.string(),
+    playoffLosses: z.number(),
+    playoffWins: z.number(),
+    roadLosses: z.number(),
+    roadWins: z.number(),
+    seasons: z.array(z.number()),
+    tvGames: z.number(),
+    winPct: z.number(),
+    wins: z.number(),
+  })
+  .passthrough();
+
+const rivalryCompetitionBreakdownRowSchema = z
+  .object({
+    averageMargin: z.number(),
+    competitionKey: z.string(),
+    competitionLabel: z.string(),
+    games: z.number(),
+    homeLosses: z.number(),
+    homeWins: z.number(),
+    losses: z.number(),
+    roadLosses: z.number(),
+    roadWins: z.number(),
+    tvGames: z.number(),
+    wins: z.number(),
+  })
+  .passthrough();
+
+const rivalrySeasonBreakdownRowSchema = z
+  .object({
+    averageMargin: z.number(),
+    games: z.number(),
+    lastMatch: nullableStringSchema,
+    leagueLosses: z.number(),
+    leagueWins: z.number(),
+    losses: z.number(),
+    season: z.number(),
+    tvGames: z.number(),
+    wins: z.number(),
+  })
+  .passthrough();
+
 const rivalsWorkspaceSchema = z
   .object({
+    competitionOptions: z.array(rivalsCompetitionOptionSchema),
     generatedAt: z.string(),
-    matches: z.array(rivalryMatchSchema),
+    rows: z.array(rivalryRowSchema),
+    seasonRange: z
+      .object({
+        availableSeasons: z.array(z.number()),
+        endSeason: nullableNumberSchema,
+        startSeason: nullableNumberSchema,
+      })
+      .passthrough(),
+    selectedOpponentId: nullableStringSchema,
+    selectedRivalry: z
+      .object({
+        competitionBreakdown: z.array(rivalryCompetitionBreakdownRowSchema),
+        matches: z.array(rivalryMatchSchema),
+        row: rivalryRowSchema,
+        seasonBreakdown: z.array(rivalrySeasonBreakdownRowSchema),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
     status: rivalsBackfillStatusSchema,
     summary: z
       .object({
@@ -1247,7 +1328,26 @@ export const workspaceQueryKeys = {
       input?.limit ?? 8,
       input?.nextToken ?? null,
     ] as const,
-  rivals: ["workspace", "rivals"] as const,
+  rivals: (args?: {
+    competitionKeys?: readonly string[] | null;
+    endSeason?: number | null;
+    outcomes?: readonly string[] | null;
+    selectedOpponentId?: string | null;
+    startSeason?: number | null;
+    tvScopes?: readonly string[] | null;
+    venues?: readonly string[] | null;
+  }) =>
+    [
+      "workspace",
+      "rivals",
+      args?.competitionKeys ?? null,
+      args?.venues ?? null,
+      args?.outcomes ?? null,
+      args?.tvScopes ?? null,
+      args?.startSeason ?? null,
+      args?.endSeason ?? null,
+      args?.selectedOpponentId ?? null,
+    ] as const,
   root: ["workspace"] as const,
   salaryProjection: (playerId: string) =>
     ["workspace", "salaryProjection", playerId] as const,
@@ -1622,8 +1722,43 @@ export async function fetchMatchBoxscoreQuery(args: {
   ) as MatchBoxscorePayload | null;
 }
 
-export async function fetchRivalsWorkspaceQuery(): Promise<RivalsWorkspacePayload | null> {
-  const response = await client.queries.getRivalsWorkspace();
+export async function fetchRivalsWorkspaceQuery(args?: {
+  competitionKeys?: readonly string[] | null;
+  endSeason?: number | null;
+  outcomes?: readonly string[] | null;
+  selectedOpponentId?: string | null;
+  startSeason?: number | null;
+  tvScopes?: readonly string[] | null;
+  venues?: readonly string[] | null;
+}): Promise<RivalsWorkspacePayload | null> {
+  const normalizeStringArray = (value?: readonly string[] | null) =>
+    Array.isArray(value) ? [...value] : undefined;
+
+  const response = await client.queries.getRivalsWorkspace(
+    args
+      ? {
+          ...(normalizeStringArray(args.competitionKeys)
+            ? { competitionKeys: normalizeStringArray(args.competitionKeys) }
+            : {}),
+          ...(args.endSeason !== undefined ? { endSeason: args.endSeason } : {}),
+          ...(normalizeStringArray(args.outcomes)
+            ? { outcomes: normalizeStringArray(args.outcomes) }
+            : {}),
+          ...(args.selectedOpponentId !== undefined
+            ? { selectedOpponentId: args.selectedOpponentId }
+            : {}),
+          ...(args.startSeason !== undefined
+            ? { startSeason: args.startSeason }
+            : {}),
+          ...(normalizeStringArray(args.tvScopes)
+            ? { tvScopes: normalizeStringArray(args.tvScopes) }
+            : {}),
+          ...(normalizeStringArray(args.venues)
+            ? { venues: normalizeStringArray(args.venues) }
+            : {}),
+        }
+      : undefined,
+  );
   return readAmplifyNullableDataOrThrow(
     response,
     rivalsWorkspaceSchema,
@@ -2052,10 +2187,18 @@ export function boxscoreQueryOptions(args: { matchId: string }) {
   });
 }
 
-export function rivalsWorkspaceQueryOptions() {
+export function rivalsWorkspaceQueryOptions(args?: {
+  competitionKeys?: readonly string[] | null;
+  endSeason?: number | null;
+  outcomes?: readonly string[] | null;
+  selectedOpponentId?: string | null;
+  startSeason?: number | null;
+  tvScopes?: readonly string[] | null;
+  venues?: readonly string[] | null;
+}) {
   return queryOptions({
-    queryFn: fetchRivalsWorkspaceQuery,
-    queryKey: workspaceQueryKeys.rivals,
+    queryFn: () => fetchRivalsWorkspaceQuery(args),
+    queryKey: workspaceQueryKeys.rivals(args),
   });
 }
 
@@ -2120,6 +2263,6 @@ export async function refreshOperationsActivity(
 
 export async function refreshRivalsWorkspace(queryClient: QueryClient) {
   const data = await fetchRivalsWorkspaceQuery();
-  queryClient.setQueryData(workspaceQueryKeys.rivals, data);
+  queryClient.setQueryData(workspaceQueryKeys.rivals(), data);
   return data;
 }

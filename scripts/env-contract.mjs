@@ -102,6 +102,20 @@ export const envContract = {
         defaultValue: "14",
         templateValue: "14",
       },
+      {
+        name: "NEXT_PUBLIC_POSTHOG_TOKEN",
+        purpose:
+          "Preferred public PostHog project token for pageviews, funnels, and feature analytics. Falls back to `NEXT_PUBLIC_ANALYTICS_ID` during migration.",
+        defaultValue: "unset",
+        templateValue: "phc_sandbox_placeholder",
+      },
+      {
+        name: "NEXT_PUBLIC_POSTHOG_HOST",
+        purpose:
+          "Public PostHog API host. Use the matching PostHog cloud region or your self-hosted proxy hostname.",
+        defaultValue: "https://us.i.posthog.com",
+        templateValue: "https://us.i.posthog.com",
+      },
     ],
   },
   generated: [

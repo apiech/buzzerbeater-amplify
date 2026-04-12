@@ -12,7 +12,7 @@ const AWS_JSON_FIELDS = {
   LeagueHistoryStandingCache: [],
   LeagueHistoryBackfill: [],
   RivalsWorkspaceCache: ["summaryJson", "matchesJson"],
-  RivalsBackfill: [],
+  RivalryMatchFact: [],
   SyncRun: ["detailsJson"],
   SharedPlayerCard: ["payloadJson"],
   OpponentForecastJob: ["requestJson", "resolvedContextJson", "resultJson"],
@@ -22,9 +22,8 @@ const AWS_JSON_FIELDS = {
   SingleGameSummary: ["requestJson", "coverageJson", "resultJson"],
 } as const;
 
-export type AwsJsonModelName = keyof typeof AWS_JSON_FIELDS;
-
 type JsonRecord = Record<string, unknown>;
+const awsJsonFieldsByModel = AWS_JSON_FIELDS as Record<string, readonly string[]>;
 
 export function encodeAwsJsonValue(value: unknown): unknown {
   if (value === null || value === undefined) {
@@ -47,28 +46,28 @@ export function decodeAwsJsonValue(value: unknown): unknown {
 }
 
 export function encodeAwsJsonFields<TRecord>(
-  modelName: AwsJsonModelName,
+  modelName: string,
   record: TRecord,
 ): TRecord {
   return transformAwsJsonFields(modelName, record, encodeAwsJsonValue);
 }
 
 export function decodeAwsJsonFields<TRecord>(
-  modelName: AwsJsonModelName,
+  modelName: string,
   record: TRecord,
 ): TRecord {
   return transformAwsJsonFields(modelName, record, decodeAwsJsonValue);
 }
 
 export function decodeAwsJsonList<TRecord>(
-  modelName: AwsJsonModelName,
+  modelName: string,
   records: readonly TRecord[],
 ): TRecord[] {
   return records.map((record) => decodeAwsJsonFields(modelName, record));
 }
 
 function transformAwsJsonFields<TRecord>(
-  modelName: AwsJsonModelName,
+  modelName: string,
   record: TRecord,
   transform: (value: unknown) => unknown,
 ): TRecord {
@@ -79,7 +78,7 @@ function transformAwsJsonFields<TRecord>(
   const source = record as JsonRecord;
   let updated: JsonRecord | null = null;
 
-  for (const field of AWS_JSON_FIELDS[modelName]) {
+  for (const field of awsJsonFieldsByModel[modelName] ?? []) {
     if (!(field in source)) {
       continue;
     }

@@ -20,7 +20,8 @@ test("renderHostedRuntimeEnvFile exports contract-defined non-secret env and der
   hostedEnv.APP_BASE_URL = "https://dev.bringmeacat.com";
   hostedEnv.BB_CONNECTION_ENCRYPTION_SECRET = "secret";
   hostedEnv.AWS_BRANCH = "dev";
-  hostedEnv.NEXT_PUBLIC_ANALYTICS_ID = "analytics-123";
+  hostedEnv.NEXT_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
+  hostedEnv.NEXT_PUBLIC_POSTHOG_TOKEN = "phc_sandbox_123";
 
   const source = renderHostedRuntimeEnvFile(hostedEnv);
 
@@ -34,7 +35,11 @@ test("renderHostedRuntimeEnvFile exports contract-defined non-secret env and der
   assert.match(source, /^APP_BASE_URL=https:\/\/dev\.bringmeacat\.com$/m);
   assert.match(source, /^AMPLIFY_APP_ORIGIN=https:\/\/dev\.bringmeacat\.com$/m);
   assert.match(source, /^MAINTENANCE_ENVIRONMENT_NAME=dev$/m);
-  assert.match(source, /^NEXT_PUBLIC_ANALYTICS_ID=analytics-123$/m);
+  assert.match(
+    source,
+    /^NEXT_PUBLIC_POSTHOG_HOST=https:\/\/us\.i\.posthog\.com$/m,
+  );
+  assert.match(source, /^NEXT_PUBLIC_POSTHOG_TOKEN=phc_sandbox_123$/m);
   assert.doesNotMatch(source, /^BB_CONNECTION_ENCRYPTION_SECRET=/m);
   assert.doesNotMatch(source, /^AWS_BRANCH=/m);
 });
@@ -49,14 +54,19 @@ test("writeHostedRuntimeEnvFile overwrites stale env contents", () => {
     writeHostedRuntimeEnvFile(envFilePath, {
       APP_BASE_URL: "https://bringmeacat.com",
       AWS_BRANCH: "main",
-      NEXT_PUBLIC_ANALYTICS_ID: "analytics-456",
+      NEXT_PUBLIC_POSTHOG_HOST: "https://eu.i.posthog.com",
+      NEXT_PUBLIC_POSTHOG_TOKEN: "phc_prod_456",
     });
 
     const written = readFileSync(envFilePath, "utf8");
     assert.match(written, /^APP_BASE_URL=https:\/\/bringmeacat\.com$/m);
     assert.match(written, /^AMPLIFY_APP_ORIGIN=https:\/\/bringmeacat\.com$/m);
     assert.match(written, /^MAINTENANCE_ENVIRONMENT_NAME=prod$/m);
-    assert.match(written, /^NEXT_PUBLIC_ANALYTICS_ID=analytics-456$/m);
+    assert.match(
+      written,
+      /^NEXT_PUBLIC_POSTHOG_HOST=https:\/\/eu\.i\.posthog\.com$/m,
+    );
+    assert.match(written, /^NEXT_PUBLIC_POSTHOG_TOKEN=phc_prod_456$/m);
     assert.doesNotMatch(written, /^STALE=true$/m);
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
@@ -67,7 +77,7 @@ test("renderHostedRuntimeEnvFile fails when APP_BASE_URL is missing", () => {
   assert.throws(
     () =>
       renderHostedRuntimeEnvFile({
-        NEXT_PUBLIC_ANALYTICS_ID: "analytics-123",
+        NEXT_PUBLIC_POSTHOG_TOKEN: "phc_dev_123",
       }),
     /APP_BASE_URL must be configured before building hosted Next\.js artifacts\./,
   );

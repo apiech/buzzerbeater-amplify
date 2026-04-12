@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -13,13 +9,7 @@ import {
   parseAsString,
   useQueryStates,
 } from "nuqs";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
 import {
@@ -106,6 +96,12 @@ import { ThemeSelect } from "@/app/ui/theme/theme-select";
 import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
 import { formatConnectionStatus } from "@/app/ui/presentation";
 import { hasFeature } from "@/lib/billing/plans";
+import {
+  captureAnalyticsEvent,
+  registerAnalyticsProperties,
+  resetAnalytics,
+  setAnalyticsPersonProperties,
+} from "@/lib/analytics/client";
 import { type WorkspaceSection } from "@/app/workspace-sections";
 
 type ConnectionFormState = ConnectBbAccountInput;
@@ -153,10 +149,7 @@ const ownerRosterSkillColumns = [
   label: string;
 }>;
 const terminalOpponentForecastStatuses = new Set(["SUCCEEDED", "FAILED"]);
-const terminalNextGameRecommendationStatuses = new Set([
-  "SUCCEEDED",
-  "FAILED",
-]);
+const terminalNextGameRecommendationStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const scoutUrlStateParsers = {
   scoutSeason: parseAsInteger.withOptions({ history: "replace" }),
   scoutTeam: parseAsString.withOptions({ history: "replace" }),
@@ -227,6 +220,49 @@ function AuthenticatedWorkspace({
   } = useAuthenticatedWorkspace({ activeSection, commercialModeEnabled });
   const viewerLabelText = viewerLabel ?? "Signed in";
   const connectedConnection = connection as BbConnectionRecord;
+  const hasWorkspace = Boolean(workspace);
+
+  useEffect(() => {
+    const analyticsProfile = {
+      active_workspace_section: activeSection,
+      bb_connection_status: connection?.status.toLowerCase() ?? null,
+      billing_access_source: billingSummary?.accessSource ?? null,
+      billing_plan_id: billingSummary?.planId ?? null,
+      commercial_mode_enabled: commercialModeEnabled,
+      has_bb_connection: connected,
+      has_billing_customer: billingSummary?.hasBillingCustomer ?? false,
+      has_lifetime_access: billingSummary?.hasLifetimeAccess ?? false,
+      has_premium_access: billingSummary?.planId === "premium",
+      has_workspace: hasWorkspace,
+    } as const;
+
+    registerAnalyticsProperties(analyticsProfile);
+    setAnalyticsPersonProperties(analyticsProfile);
+  }, [
+    activeSection,
+    billingSummary?.accessSource,
+    billingSummary?.hasBillingCustomer,
+    billingSummary?.hasLifetimeAccess,
+    billingSummary?.planId,
+    commercialModeEnabled,
+    connected,
+    connection?.status,
+    hasWorkspace,
+  ]);
+
+  async function handleTrackedRefresh(): Promise<void> {
+    captureAnalyticsEvent("workspace_refresh_requested", {
+      active_section: activeSection,
+    });
+    await handleRefresh();
+  }
+
+  async function handleTrackedDisconnect(): Promise<void> {
+    captureAnalyticsEvent("bb_connection_disconnect_requested", {
+      source: "workspace_panel",
+    });
+    await handleDisconnect();
+  }
 
   return (
     <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)] lg:items-start">
@@ -243,6 +279,12 @@ function AuthenticatedWorkspace({
             <a
               className="border-border-soft bg-surface-strong text-ink hover:border-accent/25 hover:text-accent inline-flex min-h-11 items-center justify-center rounded-full border px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px"
               href="/api/auth/sign-out"
+              onClick={() => {
+                captureAnalyticsEvent("auth_signed_out", {
+                  source: "workspace_nav",
+                });
+                resetAnalytics();
+              }}
             >
               Sign out
             </a>
@@ -294,26 +336,36 @@ function AuthenticatedWorkspace({
               <SectionHeading
                 actions={
                   <>
-                    <StatusBadge tone={statusToneFromValue(connectedConnection.status)}>
+                    <StatusBadge
+                      tone={statusToneFromValue(connectedConnection.status)}
+                    >
                       {formatConnectionStatus(connectedConnection.status)}
                     </StatusBadge>
                     <Button
                       loading={isLoadingWorkspace}
-                      onClick={() => void handleRefresh()}
+                      onClick={() => void handleTrackedRefresh()}
                     >
                       {activeSection === "home"
                         ? "Refresh club data"
                         : "Refresh this section"}
                     </Button>
                     <Button
-                      onClick={() => setShowCredentialForm(true)}
+                      onClick={() => {
+                        captureAnalyticsEvent(
+                          "bb_connection_update_requested",
+                          {
+                            source: "workspace_panel",
+                          },
+                        );
+                        setShowCredentialForm(true);
+                      }}
                       variant="secondary"
                     >
                       Update credentials
                     </Button>
                     <Button
                       loading={isDisconnecting}
-                      onClick={() => void handleDisconnect()}
+                      onClick={() => void handleTrackedDisconnect()}
                       variant="secondary"
                     >
                       Disconnect club
@@ -332,7 +384,10 @@ function AuthenticatedWorkspace({
                 />
                 <StatCard
                   detail={
-                    [connectedConnection.leagueName, connectedConnection.countryName]
+                    [
+                      connectedConnection.leagueName,
+                      connectedConnection.countryName,
+                    ]
                       .filter(Boolean)
                       .join(" • ") || "Club details update after refresh."
                   }
@@ -350,7 +405,8 @@ function AuthenticatedWorkspace({
                 />
                 <StatCard
                   detail={
-                    connectedConnection.lastSyncError ?? "Club data is up to date."
+                    connectedConnection.lastSyncError ??
+                    "Club data is up to date."
                   }
                   label="Latest refresh"
                   value={
@@ -432,6 +488,9 @@ function ConnectionOnboarding({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitError(null);
+    captureAnalyticsEvent("bb_connection_submitted", {
+      mode: connection?.status === "CONNECTED" ? "update" : "initial_connect",
+    });
 
     try {
       const result = await connectMutation.mutateAsync({
@@ -440,6 +499,10 @@ function ConnectionOnboarding({
       });
 
       if (result.status !== "CONNECTED") {
+        captureAnalyticsEvent("bb_connection_result", {
+          status: result.status,
+          success: false,
+        });
         setSubmitError(
           result.lastSyncError ?? "Unable to validate those credentials.",
         );
@@ -447,8 +510,16 @@ function ConnectionOnboarding({
         return;
       }
 
+      captureAnalyticsEvent("bb_connection_result", {
+        status: result.status,
+        success: true,
+      });
       await onConnected(result.status);
     } catch (error) {
+      captureAnalyticsEvent("bb_connection_result", {
+        status: "request_failed",
+        success: false,
+      });
       setSubmitError(formatClientError(error));
       return;
     }
@@ -543,9 +614,8 @@ function WorkspaceDashboard({
   const nextOpponentTeamId = nextScoutMatch?.opponentTeamId ?? null;
   const shouldLoadScoutContext =
     activeSection === "scout" || activeSection === "predictions";
-  const [scoutUrlState, setScoutUrlState] = useQueryStates(
-    scoutUrlStateParsers,
-  );
+  const [scoutUrlState, setScoutUrlState] =
+    useQueryStates(scoutUrlStateParsers);
   const selectedScoutTeamIdParam = scoutUrlState.scoutTeam;
   const selectedScoutSeasonParam = scoutUrlState.scoutSeason;
   const selectedScoutCompetitionKeysParam = scoutUrlState.scoutTypes;
@@ -663,13 +733,15 @@ function WorkspaceDashboard({
       ...scoutSummaryQuery.data,
       schedule:
         activeSection === "scout"
-          ? scoutScheduleQuery.data ?? scoutSummaryQuery.data.schedule ?? null
-          : scoutSummaryQuery.data.schedule ?? null,
+          ? (scoutScheduleQuery.data ?? scoutSummaryQuery.data.schedule ?? null)
+          : (scoutSummaryQuery.data.schedule ?? null),
     };
   }, [activeSection, scoutScheduleQuery.data, scoutSummaryQuery.data]);
   const scoutSummaryError = readClientError(scoutSummaryQuery.error);
   const scoutScheduleError =
-    activeSection === "scout" ? readClientError(scoutScheduleQuery.error) : null;
+    activeSection === "scout"
+      ? readClientError(scoutScheduleQuery.error)
+      : null;
   const scoutError = scoutSummaryError;
   const scoutContextMessage = scout?.message ?? scoutEventWindowMessage;
   const predictionContext = useMemo<PredictionPanelContext>(
@@ -704,7 +776,8 @@ function WorkspaceDashboard({
     },
   });
   const opponentForecastRefreshMutation = useMutation({
-    mutationFn: (teamId: string) => submitOpponentForecastJobMutation({ teamId }),
+    mutationFn: (teamId: string) =>
+      submitOpponentForecastJobMutation({ teamId }),
     onSuccess: async (_, teamId) => {
       await queryClient.invalidateQueries({
         queryKey: workspaceQueryKeys.opponentForecast(teamId),
@@ -721,8 +794,8 @@ function WorkspaceDashboard({
     opponentForecastRefreshMutation.isPending;
   const isScoutViewingNextOpponent = Boolean(
     nextOpponentTeamId &&
-      forecastTeamId &&
-      forecastTeamId === nextOpponentTeamId,
+    forecastTeamId &&
+    forecastTeamId === nextOpponentTeamId,
   );
   const nextGameRecommendationEnabled =
     isScoutViewingNextOpponent &&
@@ -755,13 +828,12 @@ function WorkspaceDashboard({
     },
   });
   const nextGameRecommendation = nextGameRecommendationEnabled
-    ? nextGameRecommendationQuery.data ?? null
+    ? (nextGameRecommendationQuery.data ?? null)
     : null;
-  const nextGameRecommendationError =
-    nextGameRecommendationEnabled
-      ? readClientError(nextGameRecommendationRefreshMutation.error) ??
-        readClientError(nextGameRecommendationQuery.error)
-      : null;
+  const nextGameRecommendationError = nextGameRecommendationEnabled
+    ? (readClientError(nextGameRecommendationRefreshMutation.error) ??
+      readClientError(nextGameRecommendationQuery.error))
+    : null;
   const isLoadingNextGameRecommendation =
     nextGameRecommendationEnabled &&
     (nextGameRecommendationQuery.isPending ||
@@ -881,12 +953,14 @@ function WorkspaceDashboard({
   });
   const playerTrend = playerTrendQuery.data ?? null;
   const playerTrendError = readClientError(playerTrendQuery.error);
-  const loadingTrendPlayerId =
-    playerTrendQuery.isFetching ? selectedTrendPlayerId : null;
+  const loadingTrendPlayerId = playerTrendQuery.isFetching
+    ? selectedTrendPlayerId
+    : null;
   const salaryProjection = salaryProjectionQuery.data ?? null;
   const salaryProjectionError = readClientError(salaryProjectionQuery.error);
-  const loadingSalaryPlayerId =
-    salaryProjectionQuery.isFetching ? selectedSalaryPlayerId : null;
+  const loadingSalaryPlayerId = salaryProjectionQuery.isFetching
+    ? selectedSalaryPlayerId
+    : null;
 
   function handleUseScenarioInPreview(
     scenario: NonNullable<
@@ -1115,7 +1189,10 @@ function WorkspaceDashboard({
 
       {activeSection === "lineups" ? (
         <PanelErrorBoundary
-          resetKeys={[activeSection, workspace.lineupHelper?.generatedAt ?? null]}
+          resetKeys={[
+            activeSection,
+            workspace.lineupHelper?.generatedAt ?? null,
+          ]}
           title="Lineup helper"
         >
           <Panel>
@@ -1233,7 +1310,10 @@ function WorkspaceDashboard({
 
               <div className={twoColumnGridClassName}>
                 <PanelErrorBoundary
-                  resetKeys={[forecastTeamId ?? null, opponentForecast?.jobId ?? null]}
+                  resetKeys={[
+                    forecastTeamId ?? null,
+                    opponentForecast?.jobId ?? null,
+                  ]}
                   title="Scout forecast"
                 >
                   <Panel as="article" padding="sm" variant="solid">
@@ -1256,293 +1336,303 @@ function WorkspaceDashboard({
                       title="Scout forecast"
                       titleAs="h4"
                     />
-                  {opponentForecastError ? (
-                    <Alert>{opponentForecastError}</Alert>
-                  ) : null}
-                  {!canUsePredictions ? (
-                    <p className={statusCopyClassName}>
-                      Premium access is required to generate new opponent
-                      forecasts.
-                    </p>
-                  ) : null}
-                  {opponentForecast ? (
-                    <>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <StatusBadge
-                          tone={statusToneFromValue(opponentForecast.status)}
-                        >
-                          {formatOpponentForecastStatus(
-                            opponentForecast.status,
-                          )}
-                        </StatusBadge>
-                        <span className={mutedMetaClassName}>
-                          Requested{" "}
-                          {formatTimestamp(opponentForecast.requestedAt)}
-                        </span>
-                        {opponentForecast.completedAt ? (
-                          <span className={mutedMetaClassName}>
-                            Completed{" "}
-                            {formatTimestamp(opponentForecast.completedAt)}
-                          </span>
-                        ) : null}
-                      </div>
-                      {opponentForecast.error ? (
-                        <p className={statusCopyClassName}>
-                          {opponentForecast.error}
-                        </p>
-                      ) : null}
-                      {opponentForecast.result ? (
-                        <>
-                          <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                            <StatCard
-                              detail={
-                                opponentForecast.result.topScenarios[0]
-                                  ? `${opponentForecast.result.topScenarios[0].offense} / ${opponentForecast.result.topScenarios[0].defense}`
-                                  : "No primary scenario yet"
-                              }
-                              label="Top scenario"
-                              value={
-                                opponentForecast.result.topScenarios[0]
-                                  ? formatPercent(
-                                      opponentForecast.result.topScenarios[0]
-                                        .probability,
-                                    )
-                                  : "N/A"
-                              }
-                            />
-                            <StatCard
-                              detail="Model confidence across the full scenario bundle"
-                              label="Confidence"
-                              value={formatPercent(
-                                opponentForecast.result.confidence,
-                              )}
-                            />
-                            <StatCard
-                              detail={`Recent ${opponentForecast.result.coverage.recentGamesConsidered} • Serious ${opponentForecast.result.coverage.seriousGamesConsidered} • Support ${opponentForecast.result.coverage.supportingGamesConsidered}`}
-                              label="Analogs"
-                              value={
-                                opponentForecast.result.coverage
-                                  .analogGamesConsidered
-                              }
-                            />
-                          </div>
-
-                          <div className="mt-4 grid gap-4">
-                            {opponentForecast.result.topScenarios.map(
-                              (scenario) => (
-                                <Panel
-                                  as="article"
-                                  key={scenario.scenarioId}
-                                  padding="sm"
-                                  variant="solid"
-                                >
-                                  <SectionHeading
-                                    actions={
-                                      canUsePredictions ? (
-                                        <Button
-                                          onClick={() =>
-                                            handleUseScenarioInPreview(scenario)
-                                          }
-                                          size="sm"
-                                          variant="secondary"
-                                        >
-                                          Use in preview
-                                        </Button>
-                                      ) : null
-                                    }
-                                    title={`${scenario.label} • ${formatPercent(scenario.probability)}`}
-                                    titleAs="h4"
-                                  />
-                                  <div className="flex flex-wrap gap-2">
-                                    {[
-                                      `Off ${scenario.offense}`,
-                                      `Def ${scenario.defense}`,
-                                      `GDP focus ${scenario.gdpFocus ?? "N/A"}`,
-                                      `GDP pace ${scenario.gdpPace ?? "N/A"}`,
-                                      `Enthusiasm ${scenario.enthusiasmBand ?? "Unknown"}`,
-                                      `Effort ${scenario.effortChoice}`,
-                                    ].map((tag) => (
-                                      <span
-                                        className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
-                                        key={`${scenario.scenarioId}-${tag}`}
-                                      >
-                                        {tag}
-                                      </span>
-                                    ))}
-                                  </div>
-                                  <div className="mt-3 grid gap-4 xl:grid-cols-2">
-                                    <div>
-                                      <SectionHeading
-                                        title="Likely starters"
-                                        titleAs="h4"
-                                      />
-                                      <ul className={listClassName}>
-                                        {scenario.starters.length ? (
-                                          scenario.starters.map((player) => (
-                                            <li
-                                              className={listItemClassName}
-                                              key={
-                                                player.playerId ??
-                                                `${scenario.scenarioId}-${player.fullName}`
-                                              }
-                                            >
-                                              <strong className="text-ink text-sm">
-                                                {player.fullName}
-                                              </strong>
-                                              <span
-                                                className={statusCopyClassName}
-                                              >
-                                                {formatForecastPlayerProjection(
-                                                  player,
-                                                )}
-                                              </span>
-                                            </li>
-                                          ))
-                                        ) : (
-                                          <li className="text-ink-muted text-sm">
-                                            No starter projection available.
-                                          </li>
-                                        )}
-                                      </ul>
-                                    </div>
-                                    <div>
-                                      <SectionHeading
-                                        title="Rotation and evidence"
-                                        titleAs="h4"
-                                      />
-                                      <ul className={listClassName}>
-                                        {scenario.rotation.length ? (
-                                          scenario.rotation.map((player) => (
-                                            <li
-                                              className={listItemClassName}
-                                              key={
-                                                player.playerId ??
-                                                `${scenario.scenarioId}-rotation-${player.fullName}`
-                                              }
-                                            >
-                                              <strong className="text-ink text-sm">
-                                                {player.fullName}
-                                              </strong>
-                                              <span
-                                                className={statusCopyClassName}
-                                              >
-                                                {formatForecastPlayerProjection(
-                                                  player,
-                                                )}
-                                              </span>
-                                            </li>
-                                          ))
-                                        ) : (
-                                          <li className="text-ink-muted text-sm">
-                                            No rotation projection available.
-                                          </li>
-                                        )}
-                                      </ul>
-                                      {scenario.evidence.length ? (
-                                        <p
-                                          className={`${statusCopyClassName} mt-3`}
-                                        >
-                                          {scenario.evidence.join(" • ")}
-                                        </p>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                </Panel>
-                              ),
+                    {opponentForecastError ? (
+                      <Alert>{opponentForecastError}</Alert>
+                    ) : null}
+                    {!canUsePredictions ? (
+                      <p className={statusCopyClassName}>
+                        Premium access is required to generate new opponent
+                        forecasts.
+                      </p>
+                    ) : null}
+                    {opponentForecast ? (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge
+                            tone={statusToneFromValue(opponentForecast.status)}
+                          >
+                            {formatOpponentForecastStatus(
+                              opponentForecast.status,
                             )}
-                          </div>
-
-                          <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                            <Panel as="article" padding="sm" variant="solid">
-                              <SectionHeading
-                                title="Model signals"
-                                titleAs="h4"
+                          </StatusBadge>
+                          <span className={mutedMetaClassName}>
+                            Requested{" "}
+                            {formatTimestamp(opponentForecast.requestedAt)}
+                          </span>
+                          {opponentForecast.completedAt ? (
+                            <span className={mutedMetaClassName}>
+                              Completed{" "}
+                              {formatTimestamp(opponentForecast.completedAt)}
+                            </span>
+                          ) : null}
+                        </div>
+                        {opponentForecast.error ? (
+                          <p className={statusCopyClassName}>
+                            {opponentForecast.error}
+                          </p>
+                        ) : null}
+                        {opponentForecast.result ? (
+                          <>
+                            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                              <StatCard
+                                detail={
+                                  opponentForecast.result.topScenarios[0]
+                                    ? `${opponentForecast.result.topScenarios[0].offense} / ${opponentForecast.result.topScenarios[0].defense}`
+                                    : "No primary scenario yet"
+                                }
+                                label="Top scenario"
+                                value={
+                                  opponentForecast.result.topScenarios[0]
+                                    ? formatPercent(
+                                        opponentForecast.result.topScenarios[0]
+                                          .probability,
+                                      )
+                                    : "N/A"
+                                }
                               />
-                              <div className="flex flex-wrap gap-2">
-                                {opponentForecast.result.featureSignals
-                                  .length ? (
-                                  opponentForecast.result.featureSignals.map(
-                                    (signal) => (
-                                      <span
-                                        className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
-                                        key={signal.key}
-                                      >
-                                        {signal.label}: {signal.value}
-                                      </span>
-                                    ),
-                                  )
-                                ) : (
-                                  <span className="text-ink-muted text-sm">
-                                    No model signals were returned.
-                                  </span>
+                              <StatCard
+                                detail="Model confidence across the full scenario bundle"
+                                label="Confidence"
+                                value={formatPercent(
+                                  opponentForecast.result.confidence,
                                 )}
-                              </div>
-                            </Panel>
-
-                            <Panel as="article" padding="sm" variant="solid">
-                              <SectionHeading
-                                title="Closest analog games"
-                                titleAs="h4"
                               />
-                              <ul className={listClassName}>
-                                {opponentForecast.result.analogGames.length ? (
-                                  opponentForecast.result.analogGames.map(
-                                    (game) => (
-                                      <li
-                                        className={listItemClassName}
-                                        key={game.matchId}
-                                      >
-                                        <strong className="text-ink text-sm">
-                                          {game.opponentTeamName ??
-                                            game.matchId}
-                                        </strong>
-                                        <span className={statusCopyClassName}>
-                                          {[
-                                            `Similarity ${formatPercent(
-                                              game.similarity,
-                                            )}`,
-                                            game.startTime
-                                              ? formatTimestamp(game.startTime)
-                                              : null,
-                                            game.offense
-                                              ? `Off ${game.offense}`
-                                              : null,
-                                            game.defense
-                                              ? `Def ${game.defense}`
-                                              : null,
-                                          ]
-                                            .filter((value): value is string =>
-                                              Boolean(value),
-                                            )
-                                            .join(" • ")}
+                              <StatCard
+                                detail={`Recent ${opponentForecast.result.coverage.recentGamesConsidered} • Serious ${opponentForecast.result.coverage.seriousGamesConsidered} • Support ${opponentForecast.result.coverage.supportingGamesConsidered}`}
+                                label="Analogs"
+                                value={
+                                  opponentForecast.result.coverage
+                                    .analogGamesConsidered
+                                }
+                              />
+                            </div>
+
+                            <div className="mt-4 grid gap-4">
+                              {opponentForecast.result.topScenarios.map(
+                                (scenario) => (
+                                  <Panel
+                                    as="article"
+                                    key={scenario.scenarioId}
+                                    padding="sm"
+                                    variant="solid"
+                                  >
+                                    <SectionHeading
+                                      actions={
+                                        canUsePredictions ? (
+                                          <Button
+                                            onClick={() =>
+                                              handleUseScenarioInPreview(
+                                                scenario,
+                                              )
+                                            }
+                                            size="sm"
+                                            variant="secondary"
+                                          >
+                                            Use in preview
+                                          </Button>
+                                        ) : null
+                                      }
+                                      title={`${scenario.label} • ${formatPercent(scenario.probability)}`}
+                                      titleAs="h4"
+                                    />
+                                    <div className="flex flex-wrap gap-2">
+                                      {[
+                                        `Off ${scenario.offense}`,
+                                        `Def ${scenario.defense}`,
+                                        `GDP focus ${scenario.gdpFocus ?? "N/A"}`,
+                                        `GDP pace ${scenario.gdpPace ?? "N/A"}`,
+                                        `Enthusiasm ${scenario.enthusiasmBand ?? "Unknown"}`,
+                                        `Effort ${scenario.effortChoice}`,
+                                      ].map((tag) => (
+                                        <span
+                                          className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
+                                          key={`${scenario.scenarioId}-${tag}`}
+                                        >
+                                          {tag}
                                         </span>
-                                      </li>
-                                    ),
-                                  )
-                                ) : (
-                                  <li className="text-ink-muted text-sm">
-                                    No analog games were returned.
-                                  </li>
-                                )}
-                              </ul>
-                            </Panel>
-                          </div>
-                        </>
-                      ) : (
-                        <p className={statusCopyClassName}>
-                          {isLoadingOpponentForecast
-                            ? "Loading the latest stored forecast."
-                            : "No stored opponent forecast is available yet."}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p className={statusCopyClassName}>
-                      {isLoadingOpponentForecast
-                        ? "Loading the latest stored forecast."
-                        : "No stored opponent forecast is available yet."}
-                    </p>
-                  )}
+                                      ))}
+                                    </div>
+                                    <div className="mt-3 grid gap-4 xl:grid-cols-2">
+                                      <div>
+                                        <SectionHeading
+                                          title="Likely starters"
+                                          titleAs="h4"
+                                        />
+                                        <ul className={listClassName}>
+                                          {scenario.starters.length ? (
+                                            scenario.starters.map((player) => (
+                                              <li
+                                                className={listItemClassName}
+                                                key={
+                                                  player.playerId ??
+                                                  `${scenario.scenarioId}-${player.fullName}`
+                                                }
+                                              >
+                                                <strong className="text-ink text-sm">
+                                                  {player.fullName}
+                                                </strong>
+                                                <span
+                                                  className={
+                                                    statusCopyClassName
+                                                  }
+                                                >
+                                                  {formatForecastPlayerProjection(
+                                                    player,
+                                                  )}
+                                                </span>
+                                              </li>
+                                            ))
+                                          ) : (
+                                            <li className="text-ink-muted text-sm">
+                                              No starter projection available.
+                                            </li>
+                                          )}
+                                        </ul>
+                                      </div>
+                                      <div>
+                                        <SectionHeading
+                                          title="Rotation and evidence"
+                                          titleAs="h4"
+                                        />
+                                        <ul className={listClassName}>
+                                          {scenario.rotation.length ? (
+                                            scenario.rotation.map((player) => (
+                                              <li
+                                                className={listItemClassName}
+                                                key={
+                                                  player.playerId ??
+                                                  `${scenario.scenarioId}-rotation-${player.fullName}`
+                                                }
+                                              >
+                                                <strong className="text-ink text-sm">
+                                                  {player.fullName}
+                                                </strong>
+                                                <span
+                                                  className={
+                                                    statusCopyClassName
+                                                  }
+                                                >
+                                                  {formatForecastPlayerProjection(
+                                                    player,
+                                                  )}
+                                                </span>
+                                              </li>
+                                            ))
+                                          ) : (
+                                            <li className="text-ink-muted text-sm">
+                                              No rotation projection available.
+                                            </li>
+                                          )}
+                                        </ul>
+                                        {scenario.evidence.length ? (
+                                          <p
+                                            className={`${statusCopyClassName} mt-3`}
+                                          >
+                                            {scenario.evidence.join(" • ")}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  </Panel>
+                                ),
+                              )}
+                            </div>
+
+                            <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                              <Panel as="article" padding="sm" variant="solid">
+                                <SectionHeading
+                                  title="Model signals"
+                                  titleAs="h4"
+                                />
+                                <div className="flex flex-wrap gap-2">
+                                  {opponentForecast.result.featureSignals
+                                    .length ? (
+                                    opponentForecast.result.featureSignals.map(
+                                      (signal) => (
+                                        <span
+                                          className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
+                                          key={signal.key}
+                                        >
+                                          {signal.label}: {signal.value}
+                                        </span>
+                                      ),
+                                    )
+                                  ) : (
+                                    <span className="text-ink-muted text-sm">
+                                      No model signals were returned.
+                                    </span>
+                                  )}
+                                </div>
+                              </Panel>
+
+                              <Panel as="article" padding="sm" variant="solid">
+                                <SectionHeading
+                                  title="Closest analog games"
+                                  titleAs="h4"
+                                />
+                                <ul className={listClassName}>
+                                  {opponentForecast.result.analogGames
+                                    .length ? (
+                                    opponentForecast.result.analogGames.map(
+                                      (game) => (
+                                        <li
+                                          className={listItemClassName}
+                                          key={game.matchId}
+                                        >
+                                          <strong className="text-ink text-sm">
+                                            {game.opponentTeamName ??
+                                              game.matchId}
+                                          </strong>
+                                          <span className={statusCopyClassName}>
+                                            {[
+                                              `Similarity ${formatPercent(
+                                                game.similarity,
+                                              )}`,
+                                              game.startTime
+                                                ? formatTimestamp(
+                                                    game.startTime,
+                                                  )
+                                                : null,
+                                              game.offense
+                                                ? `Off ${game.offense}`
+                                                : null,
+                                              game.defense
+                                                ? `Def ${game.defense}`
+                                                : null,
+                                            ]
+                                              .filter(
+                                                (value): value is string =>
+                                                  Boolean(value),
+                                              )
+                                              .join(" • ")}
+                                          </span>
+                                        </li>
+                                      ),
+                                    )
+                                  ) : (
+                                    <li className="text-ink-muted text-sm">
+                                      No analog games were returned.
+                                    </li>
+                                  )}
+                                </ul>
+                              </Panel>
+                            </div>
+                          </>
+                        ) : (
+                          <p className={statusCopyClassName}>
+                            {isLoadingOpponentForecast
+                              ? "Loading the latest stored forecast."
+                              : "No stored opponent forecast is available yet."}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className={statusCopyClassName}>
+                        {isLoadingOpponentForecast
+                          ? "Loading the latest stored forecast."
+                          : "No stored opponent forecast is available yet."}
+                      </p>
+                    )}
                   </Panel>
                 </PanelErrorBoundary>
 
@@ -1559,7 +1649,9 @@ function WorkspaceDashboard({
                       actions={
                         isScoutViewingNextOpponent && canUsePredictions ? (
                           <Button
-                            disabled={Boolean(nextGameRecommendationBlockedReason)}
+                            disabled={Boolean(
+                              nextGameRecommendationBlockedReason,
+                            )}
                             loading={
                               isRefreshingNextGameRecommendation ||
                               (isLoadingNextGameRecommendation &&
@@ -1580,251 +1672,275 @@ function WorkspaceDashboard({
                       title="Next-game recommendation"
                       titleAs="h4"
                     />
-                  {!canUsePredictions ? (
-                    <p className={statusCopyClassName}>
-                      Premium access is required to generate next-game
-                      recommendations.
-                    </p>
-                  ) : null}
-                  {nextGameRecommendation ? (
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <StatusBadge
-                        tone={statusToneFromValue(nextGameRecommendation.status)}
-                      >
-                        {formatNextGameRecommendationStatus(
-                          nextGameRecommendation.status,
-                        )}
-                      </StatusBadge>
-                      <span className={mutedMetaClassName}>
-                        Requested{" "}
-                        {formatTimestamp(nextGameRecommendation.requestedAt)}
-                      </span>
-                      {nextGameRecommendation.completedAt ? (
-                        <span className={mutedMetaClassName}>
-                          Completed{" "}
-                          {formatTimestamp(nextGameRecommendation.completedAt)}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {isScoutViewingNextOpponent && nextScoutMatch ? (
-                    <div className="mt-4 grid gap-4">
-                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                        <Field
-                          hint="Use the same 1-15 scale as lineup helper."
-                          htmlFor="next-game-enthusiasm"
-                          label="Enthusiasm"
-                        >
-                          <Input
-                            id="next-game-enthusiasm"
-                            max={15}
-                            min={1}
-                            onChange={(event) =>
-                              setRecommendationInput((current) => ({
-                                ...current,
-                                enthusiasm: Math.min(
-                                  15,
-                                  Math.max(
-                                    1,
-                                    Number(event.currentTarget.value || 8),
-                                  ),
-                                ),
-                              }))
-                            }
-                            type="number"
-                            value={recommendationInput.enthusiasm}
-                          />
-                        </Field>
-                        {(
-                          [
-                            ["pg", "PG"],
-                            ["sg", "SG"],
-                            ["sf", "SF"],
-                            ["pf", "PF"],
-                            ["c", "C"],
-                          ] as const
-                        ).map(([key, label]) => (
-                          <Field
-                            htmlFor={`next-game-switch-${key}`}
-                            key={key}
-                            label={`Switch ${label}`}
-                          >
-                            <Select
-                              id={`next-game-switch-${key}`}
-                              onChange={(event) =>
-                                updateRecommendationSwitch(
-                                  key,
-                                  event.currentTarget
-                                    .value as NextGameRecommendationInput["defensiveSwitch"][typeof key],
-                                )
-                              }
-                              value={recommendationInput.defensiveSwitch[key]}
-                            >
-                              {["PG", "SG", "SF", "PF", "C"].map((position) => (
-                                <option key={`${key}-${position}`} value={position}>
-                                  {position}
-                                </option>
-                              ))}
-                            </Select>
-                          </Field>
-                        ))}
-                      </div>
+                    {!canUsePredictions ? (
                       <p className={statusCopyClassName}>
-                        Defensive switch:{" "}
-                        {formatRecommendationSwitchSummary(
-                          recommendationInput.defensiveSwitch,
-                        )}
+                        Premium access is required to generate next-game
+                        recommendations.
                       </p>
-                    </div>
-                  ) : null}
-                  {nextGameRecommendation?.result?.stale ? (
-                    <Alert>
-                      The stored recommendation used an older opponent forecast.
-                      Refresh it to evaluate the latest forecast scenario.
-                    </Alert>
-                  ) : null}
-                  {nextGameRecommendation?.error ? (
-                    <p className={statusCopyClassName}>
-                      {nextGameRecommendation.error}
-                    </p>
-                  ) : null}
-                  {nextGameRecommendationError &&
-                  !nextGameRecommendationBlockedReason ? (
-                    <Alert>{nextGameRecommendationError}</Alert>
-                  ) : null}
-                  {nextGameRecommendationBlockedReason ? (
-                    <p className={statusCopyClassName}>
-                      {nextGameRecommendationBlockedReason}
-                    </p>
-                  ) : activeRecommendationPlan ? (
-                    <>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {RECOMMENDATION_MODES.map((mode) => (
-                          <Button
-                            key={mode}
-                            onClick={() => setSelectedRecommendationMode(mode)}
-                            size="sm"
-                            variant={
-                              selectedRecommendationMode === mode
-                                ? "secondary"
-                                : "ghost"
-                            }
-                          >
-                            {formatRecommendationMode(mode)}
-                          </Button>
-                        ))}
-                      </div>
-
-                      <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                        <StatCard
-                          detail={formatPredictedScoreline(activeRecommendationPlan)}
-                          label="Predicted margin"
-                          value={formatSignedNumber(
-                            activeRecommendationPlan.predictedPointDiff,
+                    ) : null}
+                    {nextGameRecommendation ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <StatusBadge
+                          tone={statusToneFromValue(
+                            nextGameRecommendation.status,
                           )}
-                        />
-                        <StatCard
-                          detail={`Off ${activeRecommendationPlan.offense} • Def ${activeRecommendationPlan.defense}`}
-                          label="Tactics"
-                          value={activeRecommendationPlan.effortChoice}
-                        />
-                        <StatCard
-                          detail={
-                            activeRecommendationPlan.targetMargin
-                              ? `Target ${activeRecommendationPlan.targetMargin}+`
-                              : "Best projected winning edge"
-                          }
-                          label="Goal"
-                          value={
-                            activeRecommendationPlan.meetsTargetMargin
-                              ? "On target"
-                              : "Below target"
-                          }
-                        />
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {[
-                          `Enthusiasm ${activeRecommendationPlan.enthusiasm}`,
-                          `Switch ${formatRecommendationSwitchSummary(
-                            activeRecommendationPlan.defensiveSwitch,
-                          )}`,
-                          `Forecast ${nextGameRecommendationResult?.forecastScenarioLabel ?? "Unknown"}`,
-                          `Probability ${formatPercent(
-                            nextGameRecommendationResult?.forecastScenarioProbability,
-                          )}`,
-                        ].map((tag) => (
-                          <span
-                            className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
-                            key={tag}
-                          >
-                            {tag}
+                        >
+                          {formatNextGameRecommendationStatus(
+                            nextGameRecommendation.status,
+                          )}
+                        </StatusBadge>
+                        <span className={mutedMetaClassName}>
+                          Requested{" "}
+                          {formatTimestamp(nextGameRecommendation.requestedAt)}
+                        </span>
+                        {nextGameRecommendation.completedAt ? (
+                          <span className={mutedMetaClassName}>
+                            Completed{" "}
+                            {formatTimestamp(
+                              nextGameRecommendation.completedAt,
+                            )}
                           </span>
-                        ))}
+                        ) : null}
                       </div>
+                    ) : null}
+                    {isScoutViewingNextOpponent && nextScoutMatch ? (
+                      <div className="mt-4 grid gap-4">
+                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                          <Field
+                            hint="Use the same 1-15 scale as lineup helper."
+                            htmlFor="next-game-enthusiasm"
+                            label="Enthusiasm"
+                          >
+                            <Input
+                              id="next-game-enthusiasm"
+                              max={15}
+                              min={1}
+                              onChange={(event) =>
+                                setRecommendationInput((current) => ({
+                                  ...current,
+                                  enthusiasm: Math.min(
+                                    15,
+                                    Math.max(
+                                      1,
+                                      Number(event.currentTarget.value || 8),
+                                    ),
+                                  ),
+                                }))
+                              }
+                              type="number"
+                              value={recommendationInput.enthusiasm}
+                            />
+                          </Field>
+                          {(
+                            [
+                              ["pg", "PG"],
+                              ["sg", "SG"],
+                              ["sf", "SF"],
+                              ["pf", "PF"],
+                              ["c", "C"],
+                            ] as const
+                          ).map(([key, label]) => (
+                            <Field
+                              htmlFor={`next-game-switch-${key}`}
+                              key={key}
+                              label={`Switch ${label}`}
+                            >
+                              <Select
+                                id={`next-game-switch-${key}`}
+                                onChange={(event) =>
+                                  updateRecommendationSwitch(
+                                    key,
+                                    event.currentTarget
+                                      .value as NextGameRecommendationInput["defensiveSwitch"][typeof key],
+                                  )
+                                }
+                                value={recommendationInput.defensiveSwitch[key]}
+                              >
+                                {["PG", "SG", "SF", "PF", "C"].map(
+                                  (position) => (
+                                    <option
+                                      key={`${key}-${position}`}
+                                      value={position}
+                                    >
+                                      {position}
+                                    </option>
+                                  ),
+                                )}
+                              </Select>
+                            </Field>
+                          ))}
+                        </div>
+                        <p className={statusCopyClassName}>
+                          Defensive switch:{" "}
+                          {formatRecommendationSwitchSummary(
+                            recommendationInput.defensiveSwitch,
+                          )}
+                        </p>
+                      </div>
+                    ) : null}
+                    {nextGameRecommendation?.result?.stale ? (
+                      <Alert>
+                        The stored recommendation used an older opponent
+                        forecast. Refresh it to evaluate the latest forecast
+                        scenario.
+                      </Alert>
+                    ) : null}
+                    {nextGameRecommendation?.error ? (
+                      <p className={statusCopyClassName}>
+                        {nextGameRecommendation.error}
+                      </p>
+                    ) : null}
+                    {nextGameRecommendationError &&
+                    !nextGameRecommendationBlockedReason ? (
+                      <Alert>{nextGameRecommendationError}</Alert>
+                    ) : null}
+                    {nextGameRecommendationBlockedReason ? (
+                      <p className={statusCopyClassName}>
+                        {nextGameRecommendationBlockedReason}
+                      </p>
+                    ) : activeRecommendationPlan ? (
+                      <>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {RECOMMENDATION_MODES.map((mode) => (
+                            <Button
+                              key={mode}
+                              onClick={() =>
+                                setSelectedRecommendationMode(mode)
+                              }
+                              size="sm"
+                              variant={
+                                selectedRecommendationMode === mode
+                                  ? "secondary"
+                                  : "ghost"
+                              }
+                            >
+                              {formatRecommendationMode(mode)}
+                            </Button>
+                          ))}
+                        </div>
 
-                      <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                        <Panel as="article" padding="sm" variant="solid">
-                          <SectionHeading title="Forecast source" titleAs="h4" />
-                          <p className={statusCopyClassName}>
-                            {nextGameRecommendationResult?.forecastScenarioLabel ?? "Unknown"}{" "}
-                            from forecast job{" "}
-                            {nextGameRecommendationResult?.forecastJobId ?? "N/A"}
-                          </p>
-                          <p className={statusCopyClassName}>
-                            Opponent source match{" "}
-                            {nextGameRecommendationResult?.opponentSourceMatchId ?? "N/A"}
-                          </p>
-                          {nextGameRecommendationResult?.opponentSourceMatchId ? (
-                            <div className="mt-3">
-                              <BoxscoreLink
-                                matchId={nextGameRecommendationResult.opponentSourceMatchId}
-                              />
-                            </div>
-                          ) : null}
-                        </Panel>
-
-                        <Panel as="article" padding="sm" variant="solid">
-                          <SectionHeading
-                            title="Recommended lineup"
-                            titleAs="h4"
+                        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                          <StatCard
+                            detail={formatPredictedScoreline(
+                              activeRecommendationPlan,
+                            )}
+                            label="Predicted margin"
+                            value={formatSignedNumber(
+                              activeRecommendationPlan.predictedPointDiff,
+                            )}
                           />
-                          <TableShell>
-                            <thead>
-                              <tr>
-                                <TableHeadCell>Player</TableHeadCell>
-                                <TableHeadCell>Pos</TableHeadCell>
-                                <TableHeadCell className={numericTableHeadClassName}>
-                                  Minutes
-                                </TableHeadCell>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {activeRecommendationPlan.lineup.map((row) => (
-                                <tr
-                                  key={`${row.playerId ?? row.fullName}-${row.position}`}
-                                >
-                                  <TableCell>{row.fullName}</TableCell>
-                                  <TableCell>{row.position}</TableCell>
-                                  <TableCell
-                                    className={numericTableCellClassName}
+                          <StatCard
+                            detail={`Off ${activeRecommendationPlan.offense} • Def ${activeRecommendationPlan.defense}`}
+                            label="Tactics"
+                            value={activeRecommendationPlan.effortChoice}
+                          />
+                          <StatCard
+                            detail={
+                              activeRecommendationPlan.targetMargin
+                                ? `Target ${activeRecommendationPlan.targetMargin}+`
+                                : "Best projected winning edge"
+                            }
+                            label="Goal"
+                            value={
+                              activeRecommendationPlan.meetsTargetMargin
+                                ? "On target"
+                                : "Below target"
+                            }
+                          />
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {[
+                            `Enthusiasm ${activeRecommendationPlan.enthusiasm}`,
+                            `Switch ${formatRecommendationSwitchSummary(
+                              activeRecommendationPlan.defensiveSwitch,
+                            )}`,
+                            `Forecast ${nextGameRecommendationResult?.forecastScenarioLabel ?? "Unknown"}`,
+                            `Probability ${formatPercent(
+                              nextGameRecommendationResult?.forecastScenarioProbability,
+                            )}`,
+                          ].map((tag) => (
+                            <span
+                              className="bg-note-bg text-note inline-flex rounded-full px-3 py-1.5 text-sm font-semibold"
+                              key={tag}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                          <Panel as="article" padding="sm" variant="solid">
+                            <SectionHeading
+                              title="Forecast source"
+                              titleAs="h4"
+                            />
+                            <p className={statusCopyClassName}>
+                              {nextGameRecommendationResult?.forecastScenarioLabel ??
+                                "Unknown"}{" "}
+                              from forecast job{" "}
+                              {nextGameRecommendationResult?.forecastJobId ??
+                                "N/A"}
+                            </p>
+                            <p className={statusCopyClassName}>
+                              Opponent source match{" "}
+                              {nextGameRecommendationResult?.opponentSourceMatchId ??
+                                "N/A"}
+                            </p>
+                            {nextGameRecommendationResult?.opponentSourceMatchId ? (
+                              <div className="mt-3">
+                                <BoxscoreLink
+                                  matchId={
+                                    nextGameRecommendationResult.opponentSourceMatchId
+                                  }
+                                />
+                              </div>
+                            ) : null}
+                          </Panel>
+
+                          <Panel as="article" padding="sm" variant="solid">
+                            <SectionHeading
+                              title="Recommended lineup"
+                              titleAs="h4"
+                            />
+                            <TableShell>
+                              <thead>
+                                <tr>
+                                  <TableHeadCell>Player</TableHeadCell>
+                                  <TableHeadCell>Pos</TableHeadCell>
+                                  <TableHeadCell
+                                    className={numericTableHeadClassName}
                                   >
-                                    {row.minutes}
-                                  </TableCell>
+                                    Minutes
+                                  </TableHeadCell>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </TableShell>
-                        </Panel>
-                      </div>
-                    </>
-                  ) : (
-                    <p className={statusCopyClassName}>
-                      {isLoadingNextGameRecommendation
-                        ? "Loading the latest stored recommendation."
-                        : "No stored recommendation is available for these settings yet."}
-                    </p>
-                  )}
+                              </thead>
+                              <tbody>
+                                {activeRecommendationPlan.lineup.map((row) => (
+                                  <tr
+                                    key={`${row.playerId ?? row.fullName}-${row.position}`}
+                                  >
+                                    <TableCell>{row.fullName}</TableCell>
+                                    <TableCell>{row.position}</TableCell>
+                                    <TableCell
+                                      className={numericTableCellClassName}
+                                    >
+                                      {row.minutes}
+                                    </TableCell>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </TableShell>
+                          </Panel>
+                        </div>
+                      </>
+                    ) : (
+                      <p className={statusCopyClassName}>
+                        {isLoadingNextGameRecommendation
+                          ? "Loading the latest stored recommendation."
+                          : "No stored recommendation is available for these settings yet."}
+                      </p>
+                    )}
                   </Panel>
                 </PanelErrorBoundary>
 
@@ -2002,7 +2118,9 @@ function WorkspaceDashboard({
               resetKeys={[scout.teamId ?? scout.requestedTeamId ?? null]}
               title="Matchup preview"
             >
-              {scoutContextMessage ? <Alert>{scoutContextMessage}</Alert> : null}
+              {scoutContextMessage ? (
+                <Alert>{scoutContextMessage}</Alert>
+              ) : null}
               <PredictionPanel
                 context={predictionContext}
                 draft={predictionDraft}
@@ -2152,137 +2270,145 @@ function WorkspaceDashboard({
                 eyebrow="Players"
                 title="Trend lines, salary movement, and roster calls"
               />
-            {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
-            {salaryProjectionError ? (
-              <Alert>{salaryProjectionError}</Alert>
-            ) : null}
-            <TableShell>
-              <thead>
-                <tr>
-                  <TableHeadCell>Player</TableHeadCell>
-                  <TableHeadCell>Role</TableHeadCell>
-                  <TableHeadCell>Salary</TableHeadCell>
-                  <TableHeadCell>Shape</TableHeadCell>
-                  <TableHeadCell>DMI</TableHeadCell>
-                  <TableHeadCell>Starts</TableHeadCell>
-                  <TableHeadCell>Analysis</TableHeadCell>
-                </tr>
-              </thead>
-              <tbody>
-                {workspace.playerLab.players.length ? (
-                  workspace.playerLab.players.map((player) => (
-                    <tr key={player.playerId ?? player.fullName}>
-                      <TableCell>{player.fullName}</TableCell>
-                      <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
-                      <TableCell>{formatCurrency(player.salary)}</TableCell>
-                      <TableCell>
-                        <BuzzerBeaterRatingText
-                          label={player.gameShape}
-                          scale="game_shape"
-                        >
-                          {player.gameShape ?? "N/A"}
-                        </BuzzerBeaterRatingText>
-                      </TableCell>
-                      <TableCell>{player.dmi ?? "N/A"}</TableCell>
-                      <TableCell>{player.projectedStarterCount ?? 0}</TableCell>
-                      <TableCell className="flex flex-wrap gap-2">
-                        <Button
-                          disabled={!player.playerId}
-                          loading={loadingTrendPlayerId === player.playerId}
-                          onClick={() => void handleLoadPlayerTrend(player)}
-                          size="sm"
-                          variant="secondary"
-                        >
-                          Trend
-                        </Button>
-                        <Button
-                          disabled={!player.playerId}
-                          loading={loadingSalaryPlayerId === player.playerId}
-                          onClick={() => void handleLoadSalaryProjection(player)}
-                          size="sm"
-                          variant="secondary"
-                        >
-                          Salary
-                        </Button>
+              {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
+              {salaryProjectionError ? (
+                <Alert>{salaryProjectionError}</Alert>
+              ) : null}
+              <TableShell>
+                <thead>
+                  <tr>
+                    <TableHeadCell>Player</TableHeadCell>
+                    <TableHeadCell>Role</TableHeadCell>
+                    <TableHeadCell>Salary</TableHeadCell>
+                    <TableHeadCell>Shape</TableHeadCell>
+                    <TableHeadCell>DMI</TableHeadCell>
+                    <TableHeadCell>Starts</TableHeadCell>
+                    <TableHeadCell>Analysis</TableHeadCell>
+                  </tr>
+                </thead>
+                <tbody>
+                  {workspace.playerLab.players.length ? (
+                    workspace.playerLab.players.map((player) => (
+                      <tr key={player.playerId ?? player.fullName}>
+                        <TableCell>{player.fullName}</TableCell>
+                        <TableCell>{player.bestPosition ?? "N/A"}</TableCell>
+                        <TableCell>{formatCurrency(player.salary)}</TableCell>
+                        <TableCell>
+                          <BuzzerBeaterRatingText
+                            label={player.gameShape}
+                            scale="game_shape"
+                          >
+                            {player.gameShape ?? "N/A"}
+                          </BuzzerBeaterRatingText>
+                        </TableCell>
+                        <TableCell>{player.dmi ?? "N/A"}</TableCell>
+                        <TableCell>
+                          {player.projectedStarterCount ?? 0}
+                        </TableCell>
+                        <TableCell className="flex flex-wrap gap-2">
+                          <Button
+                            disabled={!player.playerId}
+                            loading={loadingTrendPlayerId === player.playerId}
+                            onClick={() => void handleLoadPlayerTrend(player)}
+                            size="sm"
+                            variant="secondary"
+                          >
+                            Trend
+                          </Button>
+                          <Button
+                            disabled={!player.playerId}
+                            loading={loadingSalaryPlayerId === player.playerId}
+                            onClick={() =>
+                              void handleLoadSalaryProjection(player)
+                            }
+                            size="sm"
+                            variant="secondary"
+                          >
+                            Salary
+                          </Button>
+                        </TableCell>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <TableCell className="text-ink-muted" colSpan={7}>
+                        Player data is not available yet.
                       </TableCell>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <TableCell className="text-ink-muted" colSpan={7}>
-                      Player data is not available yet.
-                    </TableCell>
-                  </tr>
-                )}
-              </tbody>
-            </TableShell>
+                  )}
+                </tbody>
+              </TableShell>
 
-            <div className={twoColumnGridClassName}>
-              <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading
-                  description="Weekly updates from your saved club history."
-                  title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
-                  titleAs="h4"
-                />
-                {playerTrend ? (
-                  playerTrend.history.length > 1 ? (
-                    <PlayerTrendChart
-                      formatCurrency={formatCurrency}
-                      formatInjury={formatInjury}
-                      formatTimestamp={formatTimestamp}
-                      history={playerTrend.history}
-                    />
+              <div className={twoColumnGridClassName}>
+                <Panel as="article" padding="sm" variant="solid">
+                  <SectionHeading
+                    description="Weekly updates from your saved club history."
+                    title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
+                    titleAs="h4"
+                  />
+                  {playerTrend ? (
+                    playerTrend.history.length > 1 ? (
+                      <PlayerTrendChart
+                        formatCurrency={formatCurrency}
+                        formatInjury={formatInjury}
+                        formatTimestamp={formatTimestamp}
+                        history={playerTrend.history}
+                      />
+                    ) : (
+                      <p className={statusCopyClassName}>
+                        Need at least two weekly updates to draw a trend chart.
+                      </p>
+                    )
                   ) : (
                     <p className={statusCopyClassName}>
-                      Need at least two weekly updates to draw a trend chart.
+                      Load a player trend to inspect weekly salary, DMI, and
+                      availability changes.
                     </p>
-                  )
-                ) : (
-                  <p className={statusCopyClassName}>
-                    Load a player trend to inspect weekly salary, DMI, and
-                    availability changes.
-                  </p>
-                )}
-              </Panel>
+                  )}
+                </Panel>
 
-              <Panel as="article" padding="sm" variant="solid">
-                <SectionHeading title="Salary projection" titleAs="h4" />
-                {salaryProjection ? (
-                  <div className={summaryGridClassName}>
-                    <StatCard
-                      detail={salaryProjection.bestPosition ?? "No listed role"}
-                      label="Player"
-                      value={salaryProjection.fullName}
-                    />
-                    <StatCard
-                      detail={`Trend ${salaryProjection.trend}`}
-                      label="Current salary"
-                      value={formatCurrency(salaryProjection.currentSalary)}
-                    />
-                    <StatCard
-                      detail={`Δ ${formatSigned((salaryProjection.weeklyDelta ?? 0) / 1)}`}
-                      label="Projected next week"
-                      value={formatCurrency(salaryProjection.projectedSalary)}
-                    />
-                    <StatCard
-                      detail={
-                        salaryProjection.flagReason ??
-                        "No flag guidance available."
-                      }
-                      label="Flag fit"
-                      value={
-                        salaryProjection.isFlagTarget ? "Aligned" : "Not aligned"
-                      }
-                    />
-                  </div>
-                ) : (
-                  <p className={statusCopyClassName}>
-                    Load a salary projection to estimate next-week movement and
-                    flag fit.
-                  </p>
-                )}
-              </Panel>
-            </div>
+                <Panel as="article" padding="sm" variant="solid">
+                  <SectionHeading title="Salary projection" titleAs="h4" />
+                  {salaryProjection ? (
+                    <div className={summaryGridClassName}>
+                      <StatCard
+                        detail={
+                          salaryProjection.bestPosition ?? "No listed role"
+                        }
+                        label="Player"
+                        value={salaryProjection.fullName}
+                      />
+                      <StatCard
+                        detail={`Trend ${salaryProjection.trend}`}
+                        label="Current salary"
+                        value={formatCurrency(salaryProjection.currentSalary)}
+                      />
+                      <StatCard
+                        detail={`Δ ${formatSigned((salaryProjection.weeklyDelta ?? 0) / 1)}`}
+                        label="Projected next week"
+                        value={formatCurrency(salaryProjection.projectedSalary)}
+                      />
+                      <StatCard
+                        detail={
+                          salaryProjection.flagReason ??
+                          "No flag guidance available."
+                        }
+                        label="Flag fit"
+                        value={
+                          salaryProjection.isFlagTarget
+                            ? "Aligned"
+                            : "Not aligned"
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <p className={statusCopyClassName}>
+                      Load a salary projection to estimate next-week movement
+                      and flag fit.
+                    </p>
+                  )}
+                </Panel>
+              </div>
             </Panel>
           </PanelErrorBoundary>
         ) : (
@@ -2473,7 +2599,10 @@ function normalizeScoutCompetitionKeys(
   value: readonly string[] | null | undefined,
 ): string[] | null {
   const normalized = (value ?? [])
-    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .filter(
+      (entry): entry is string =>
+        typeof entry === "string" && entry.trim().length > 0,
+    )
     .slice()
     .sort();
   return normalized.length ? normalized : null;
@@ -2526,8 +2655,9 @@ function resolveScoutFilterApplyAction(args: {
 }):
   | { kind: "refetch" }
   | { kind: "update-url"; nextState: Partial<ScoutUrlState> } {
-  const currentCompetitionKeys =
-    normalizeScoutCompetitionKeys(args.currentCompetitionKeys);
+  const currentCompetitionKeys = normalizeScoutCompetitionKeys(
+    args.currentCompetitionKeys,
+  );
   const nextCompetitionKeys = normalizeScoutCompetitionKeys(
     args.nextCompetitionKeys,
   );

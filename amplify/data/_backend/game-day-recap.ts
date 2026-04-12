@@ -24,6 +24,7 @@ import {
   resolveCalendarDateKey,
 } from "../../../lib/league-timezones";
 import { formatBuzzerBeaterLabel } from "../../../lib/buzzerbeater/rating-scale";
+import { TEAM_RATING_KEYS } from "../../../lib/buzzerbeater/team-ratings";
 import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../../_shared/game-day-recap-errors";
 import { resolveBbAccessKey } from "./credentials";
 import {
@@ -113,9 +114,12 @@ export type GameDayRecapResultPayload = {
     evidenceTags: GameDayRecapEvidenceTag[];
     headline: string;
     matchId: string;
+    surpriseFactor: number | null;
     writeup: string;
   }>;
   summary: {
+    gameOfTheDayMatchId: string | null;
+    gameOfTheDaySurpriseFactor: number | null;
     headline: string;
     lede: string;
   };
@@ -145,6 +149,9 @@ type GameDayRecapPromptQuarterFacts = {
 
 type GameDayRecapPromptGame = {
   effortDelta: number | null;
+  effortSummary: string | null;
+  gameDayPrepSummaries: string[];
+  rotationSummaries: string[];
   evidenceSignals: string[];
   finalMargin: number;
   matchId: string;
@@ -178,17 +185,26 @@ type GameDayRecapPromptPayload = {
   games: GameDayRecapPromptGame[];
 };
 
+type RotationContextForRecap = {
+  foulTroubleLimitationCount: number;
+  keyAbsenceCount: number;
+  summaries: string[];
+};
+
 type GameDayRecapPromptTeam = {
   conferenceIndex: number | null;
   conferencePosition: number | null;
   defStrategy: string | null;
   efficiency: Record<string, number | string>;
+  foulTroubleLimitationCount: number;
   gdp: Record<string, number | string>;
+  keyAbsenceCount: number;
   lastFive: TeamSeasonContextPromptField;
   lastFiveEnteringGame: TeamSeasonContextPromptField;
   name: string;
   offStrategy: string | null;
   ratingLabels: Record<string, string>;
+  ratingTotal: number | null;
   recentAverageMargin: number | null;
   recentSignalFlags: string[];
   record: TeamSeasonContextPromptField;
@@ -388,7 +404,7 @@ type ProcessDependencies = {
 type SubmitDependencyOverrides = Partial<SubmitDependencies>;
 type ProcessDependencyOverrides = Partial<ProcessDependencies>;
 
-const GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v2";
+const GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v7";
 const GAME_DAY_RECAP_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID";
 const GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID_PREMIUM";
 const GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN = 8;
@@ -1837,6 +1853,10 @@ export function buildGameDayRecapBedrockRequest(args: {
                   goals: [
                     "Write a concise headline and lede for the requested recap scope.",
                     "Write one reporter-style recap for each completed game in medium length.",
+                    "If a game includes effortSummary, fold that effort edge into the writeup in natural language instead of quoting the raw effortDelta number.",
+                    "If a game includes gameDayPrepSummaries, fold the defensive preparation angle into the writeup in natural language instead of quoting raw GDP focus codes.",
+                    "If a game includes rotationSummaries, fold that short-handed or foul-trouble context into the writeup in natural language without guessing why a player sat.",
+                    "Keep each writeup flowing like sports-reporter prose rather than a checklist, bullet list, or stack of disconnected facts.",
                     "Use only the provided evidence and keep any strategic de-emphasis language cautious.",
                   ],
                   validationFeedback:
@@ -1872,7 +1892,11 @@ export function buildGameDayRecapBedrockRequest(args: {
         text: [
           "You are writing basketball recaps for the requested game or slate.",
           "Use only supplied facts. Do not invent transfers, injuries, off-court news, or play-by-play.",
+          "Write in a natural sports-reporter voice with connected prose, not a checklist of facts.",
           "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
+          "When effortSummary is present for a game, mention it naturally in that game's writeup and never cite the raw effortDelta value.",
+          "When gameDayPrepSummaries are present for a game, mention that preparation naturally in the writeup and never cite raw GDP focus codes.",
+          "When rotationSummaries are present for a game, mention that short-handed or foul-trouble context naturally and do not invent reasons such as injuries, load management, or discipline beyond the provided note.",
           "Unqualified team record, streak, and recent-form fields describe the postgame state after the final result.",
           "Team context fields ending in EnteringGame describe the state before tipoff and should only appear when you are explicitly contrasting the pregame setup.",
           "Use quarterFacts as the source of truth for period-by-period scoring. If a quarter is tied, do not say either team outscored, won, or took that quarter.",
@@ -2184,6 +2208,8 @@ function buildPromptGame(args: {
   requestedGame: SlateGame;
 }): GameDayRecapPromptGame {
   const quarterFacts = buildQuarterFacts(args.boxScore);
+  const awayRotationContext = analyzeRotationContextForRecap(args.boxScore.awayTeam);
+  const homeRotationContext = analyzeRotationContextForRecap(args.boxScore.homeTeam);
   const evidenceSignals = buildEvidenceSignals({
     awayContext: args.awayPostgameContext,
     boxScore: args.boxScore,
@@ -2196,9 +2222,30 @@ function buildPromptGame(args: {
         homeContext: args.homeEnteringGameContext,
       })
     : [];
+  const gameDayPrepSummaries = [
+    describeGameDayPrepFocusForRecap({
+      focus: args.boxScore.homeTeam.gdp.focus,
+      teamName: args.boxScore.homeTeam.teamName,
+    }),
+    describeGameDayPrepFocusForRecap({
+      focus: args.boxScore.awayTeam.gdp.focus,
+      teamName: args.boxScore.awayTeam.teamName,
+    }),
+  ].filter((summary): summary is string => Boolean(summary));
+  const rotationSummaries = [
+    ...homeRotationContext.summaries,
+    ...awayRotationContext.summaries,
+  ];
 
   return {
     effortDelta: args.boxScore.effortDelta,
+    effortSummary: describeEffortDeltaForRecap({
+      awayTeamName: args.boxScore.awayTeam.teamName,
+      effortDelta: args.boxScore.effortDelta,
+      homeTeamName: args.boxScore.homeTeam.teamName,
+    }),
+    gameDayPrepSummaries,
+    rotationSummaries,
     evidenceSignals,
     finalMargin: Math.abs(
       (args.boxScore.homeTeam.score ?? 0) - (args.boxScore.awayTeam.score ?? 0),
@@ -2216,17 +2263,143 @@ function buildPromptGame(args: {
         enteringGameContext: args.awayEnteringGameContext,
         hasHistoricalContext: args.hasHistoricalContext,
         postgameContext: args.awayPostgameContext,
+        rotationContext: awayRotationContext,
         team: args.boxScore.awayTeam,
       }),
       home: buildPromptTeam({
         enteringGameContext: args.homeEnteringGameContext,
         hasHistoricalContext: args.hasHistoricalContext,
         postgameContext: args.homePostgameContext,
+        rotationContext: homeRotationContext,
         team: args.boxScore.homeTeam,
       }),
     },
     type: args.boxScore.type ?? args.requestedGame.type,
   };
+}
+
+function describeEffortDeltaForRecap(args: {
+  awayTeamName: string | null | undefined;
+  effortDelta: number | null | undefined;
+  homeTeamName: string | null | undefined;
+}): string | null {
+  const effortDelta = asOptionalNumber(args.effortDelta);
+  if (effortDelta === null || effortDelta === 0) {
+    return null;
+  }
+
+  const homeTeamName = args.homeTeamName?.trim() || "The home team";
+  const awayTeamName = args.awayTeamName?.trim() || "the away team";
+  const strongerTeamName = effortDelta > 0 ? homeTeamName : awayTeamName;
+  const weakerTeamName = effortDelta > 0 ? awayTeamName : homeTeamName;
+  const effortDegree = Math.abs(effortDelta) >= 2 ? "a lot" : "a bit";
+
+  return `${strongerTeamName} appeared to be trying ${effortDegree} harder than ${weakerTeamName}.`;
+}
+
+function describeGameDayPrepFocusForRecap(args: {
+  focus: number | string | null | undefined;
+  teamName: string | null | undefined;
+}): string | null {
+  const focus = asOptionalString(args.focus)?.trim().toLowerCase();
+  if (!focus || focus === "n/a") {
+    return null;
+  }
+
+  const teamName = args.teamName?.trim() || "That team";
+  switch (focus) {
+    case "outside.hit":
+      return `${teamName} came out well prepared to guard the perimeter.`;
+    case "outside.miss":
+      return `${teamName} looked surprised and disorganized on the defensive perimeter.`;
+    case "inside.hit":
+      return `${teamName} came out well prepared to protect the paint.`;
+    case "inside.miss":
+      return `${teamName} looked surprised and disorganized around the rim.`;
+    case "balanced.hit":
+      return `${teamName} looked well prepared for a balanced attack.`;
+    case "balanced.miss":
+      return `${teamName} looked a step behind against a more balanced attack.`;
+    default:
+      return null;
+  }
+}
+
+function analyzeRotationContextForRecap(
+  team: BBApiBoxScoreTeam,
+): RotationContextForRecap {
+  const summaries: string[] = [];
+  const importantPlayerIds = new Set(
+    [...team.players]
+      .filter((player) => player.ratingValue !== null)
+      .sort(
+        (left, right) =>
+          (right.ratingValue ?? -Infinity) - (left.ratingValue ?? -Infinity),
+      )
+      .slice(0, 2)
+      .map((player) => player.id)
+      .filter((playerId): playerId is string => Boolean(playerId)),
+  );
+  const keyAbsences = team.players
+    .filter(
+      (player) =>
+        player.didNotPlay &&
+        player.id !== null &&
+        importantPlayerIds.has(player.id),
+    )
+    .sort(
+      (left, right) =>
+        (right.ratingValue ?? -Infinity) - (left.ratingValue ?? -Infinity),
+    )
+    .slice(0, 2);
+  if (keyAbsences.length === 1) {
+    summaries.push(
+      `${team.teamName ?? "That team"} came in without ${keyAbsences[0]!.fullName}, leaving them short-handed.`,
+    );
+  } else if (keyAbsences.length > 1) {
+    summaries.push(
+      `${team.teamName ?? "That team"} came in without ${joinRecapNames(
+        keyAbsences.map((player) => player.fullName),
+      )}, leaving them especially short-handed.`,
+    );
+  }
+
+  const foulTroubleCandidate =
+    [...team.players]
+      .filter(
+        (player) =>
+          !player.didNotPlay &&
+          player.id !== null &&
+          importantPlayerIds.has(player.id) &&
+          playerTotalMinutes(player) > 0 &&
+          wasPlayerLimitedByFoulTrouble(player),
+      )
+      .sort((left, right) => {
+        const foulGap =
+          asNumberFromUnknown(right.performanceStats?.pf) -
+          asNumberFromUnknown(left.performanceStats?.pf);
+        if (foulGap !== 0) {
+          return foulGap;
+        }
+        return playerTotalMinutes(left) - playerTotalMinutes(right);
+      })[0] ?? null;
+  if (foulTroubleCandidate) {
+    summaries.push(
+      `${foulTroubleCandidate.fullName} spent much of the night in foul trouble and played only ${formatMinutesForRecap(
+        playerTotalMinutes(foulTroubleCandidate),
+      )} minutes.`,
+    );
+  }
+
+  return {
+    foulTroubleLimitationCount: foulTroubleCandidate ? 1 : 0,
+    keyAbsenceCount: keyAbsences.length,
+    summaries,
+  };
+}
+
+function buildRotationSummariesForRecap(team: BBApiBoxScoreTeam): string[] {
+  return analyzeRotationContextForRecap(team).summaries;
 }
 
 function buildNeutralTeamSeasonContext(
@@ -2268,6 +2441,7 @@ function buildPromptTeam(args: {
   enteringGameContext: TeamSeasonContext;
   hasHistoricalContext: boolean;
   postgameContext: TeamSeasonContext;
+  rotationContext: RotationContextForRecap;
   team: BBApiBoxScoreTeam;
 }): GameDayRecapPromptTeam {
   const teamContextFields = args.hasHistoricalContext
@@ -2297,11 +2471,14 @@ function buildPromptTeam(args: {
       : null,
     defStrategy: args.team.defStrategy,
     efficiency: compactScalarRecord(args.team.efficiency),
+    foulTroubleLimitationCount: args.rotationContext.foulTroubleLimitationCount,
     gdp: compactScalarRecord(args.team.gdp),
+    keyAbsenceCount: args.rotationContext.keyAbsenceCount,
     ...teamContextFields,
     name: args.postgameContext.teamName,
     offStrategy: args.team.offStrategy,
     ratingLabels: formatTeamRatingsForRecap(args.team.ratings),
+    ratingTotal: sumTeamRatingsForRecap(args.team.ratings),
     recentAverageMargin: args.hasHistoricalContext
       ? args.postgameContext.recentAverageMargin
       : null,
@@ -2551,6 +2728,24 @@ function formatTeamRatingsForRecap(
   );
 }
 
+function sumTeamRatingsForRecap(
+  ratings: BBApiBoxScoreTeam["ratings"],
+): number | null {
+  let total = 0;
+  let hasRating = false;
+
+  for (const key of TEAM_RATING_KEYS) {
+    const value = ratings?.[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      continue;
+    }
+    total += value;
+    hasRating = true;
+  }
+
+  return hasRating ? roundToOneDecimal(total) : null;
+}
+
 function summarizeCompletedRecord(
   matches: BBApiScheduleMatch[],
   teamId: string,
@@ -2791,12 +2986,7 @@ function extractTopPlayers(
       return {
         assists: asNumberFromUnknown(performanceStats.ast),
         blocks: asNumberFromUnknown(performanceStats.blk),
-        minutes: Object.values(
-          toOptionalRecord(player.minutesByPosition) ?? {},
-        ).reduce<number>(
-          (sum, value) => sum + asNumberFromUnknown(value),
-          0,
-        ),
+        minutes: playerTotalMinutes(player),
         name: player.fullName,
         points: asNumberFromUnknown(performanceStats.pts),
         rebounds: asNumberFromUnknown(performanceStats.reb),
@@ -2824,6 +3014,34 @@ function scorePlayerPerformance(player: BBApiBoxScorePlayer): number {
   return (
     points + rebounds * 0.7 + assists * 0.7 + steals + blocks - turnovers * 0.5
   );
+}
+
+function playerTotalMinutes(player: BBApiBoxScorePlayer): number {
+  return Object.values(toOptionalRecord(player.minutesByPosition) ?? {}).reduce<number>(
+    (sum, value) => sum + asNumberFromUnknown(value),
+    0,
+  );
+}
+
+function wasPlayerLimitedByFoulTrouble(player: BBApiBoxScorePlayer): boolean {
+  const fouls = asNumberFromUnknown(player.performanceStats?.pf);
+  const minutes = playerTotalMinutes(player);
+  return (fouls >= 6 && minutes <= 34) || (fouls >= 5 && minutes <= 28);
+}
+
+function formatMinutesForRecap(minutes: number): number {
+  return Math.max(1, Math.round(minutes));
+}
+
+function joinRecapNames(names: string[]): string {
+  if (names.length <= 1) {
+    return names[0] ?? "";
+  }
+  if (names.length === 2) {
+    return `${names[0]} and ${names[1]}`;
+  }
+
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
 function resolveBoxScoreTeam(
@@ -3792,6 +4010,7 @@ function normalizeGameDayRecapResult(input: unknown): GameDayRecapResultPayload 
       evidenceTags: validatedTags,
       headline,
       matchId,
+      surpriseFactor: null,
       writeup,
     };
   });
@@ -3805,6 +4024,8 @@ function normalizeGameDayRecapResult(input: unknown): GameDayRecapResultPayload 
   return {
     games: validatedGames,
     summary: {
+      gameOfTheDayMatchId: null,
+      gameOfTheDaySurpriseFactor: null,
       headline,
       lede,
     },
@@ -3834,10 +4055,285 @@ function validateGameDayRecapPayload(
     throw new GameDayRecapSemanticValidationError(semanticIssues);
   }
 
+  return decorateGameDayRecapResultWithSurpriseMetadata(
+    {
+      games: orderedGames,
+      summary: result.summary,
+    },
+    expectedGames,
+  );
+}
+
+function decorateGameDayRecapResultWithSurpriseMetadata(
+  result: GameDayRecapResultPayload,
+  expectedGames: GameDayRecapPromptGame[],
+): GameDayRecapResultPayload {
+  const expectedGamesByMatchId = new Map(
+    expectedGames.map((game) => [game.matchId, game]),
+  );
+  const games = result.games.map((game) => ({
+    ...game,
+    surpriseFactor:
+      expectedGamesByMatchId.get(game.matchId) ?
+        computeSurpriseFactorForGame(
+          expectedGamesByMatchId.get(game.matchId)!,
+        )
+      : null,
+  }));
+  const gameOfTheDay = selectGameOfTheDay(games, expectedGamesByMatchId);
+
   return {
-    games: orderedGames,
-    summary: result.summary,
+    games,
+    summary: {
+      ...result.summary,
+      gameOfTheDayMatchId: gameOfTheDay?.matchId ?? null,
+      gameOfTheDaySurpriseFactor: gameOfTheDay?.surpriseFactor ?? null,
+    },
   };
+}
+
+function computeSurpriseFactorForGame(game: GameDayRecapPromptGame): number {
+  const winnerSide = resolveGameWinnerSide(game);
+  if (!winnerSide) {
+    return 0;
+  }
+
+  const loserSide = winnerSide === "home" ? "away" : "home";
+  const winner = game.teams[winnerSide];
+  const loser = game.teams[loserSide];
+  let score = 5;
+
+  score += surpriseFactorMarginAdjustment(game.finalMargin);
+  score += surpriseFactorOvertimeBonus(game.quarterFacts.periods.length);
+
+  if (!game.neutral && winnerSide === "away") {
+    score += 0.7;
+  }
+
+  score += surpriseFactorRatingAdjustment(winner.ratingTotal, loser.ratingTotal);
+  score += surpriseFactorRecordAdjustment(
+    winner.recordEnteringGame,
+    loser.recordEnteringGame,
+  );
+  score += surpriseFactorStandingsAdjustment(
+    winner.conferencePosition,
+    loser.conferencePosition,
+  );
+  score += surpriseFactorGdpAdjustment(winner.gdp, loser.gdp);
+  score -=
+    winner.keyAbsenceCount * 0.8 +
+    loser.keyAbsenceCount * 0.8 +
+    winner.foulTroubleLimitationCount * 0.25 +
+    loser.foulTroubleLimitationCount * 0.25 +
+    countStrategicDeemphasisFlags(winner.recentSignalFlags) * 0.35 +
+    countStrategicDeemphasisFlags(loser.recentSignalFlags) * 0.35;
+
+  return roundToOneDecimal(Math.max(0, Math.min(10, score)));
+}
+
+function selectGameOfTheDay(
+  games: GameDayRecapResultPayload["games"],
+  expectedGamesByMatchId: Map<string, GameDayRecapPromptGame>,
+): GameDayRecapResultGame | null {
+  let bestGame: GameDayRecapResultGame | null = null;
+
+  for (const game of games) {
+    if (game.surpriseFactor === null) {
+      continue;
+    }
+    if (!bestGame) {
+      bestGame = game;
+      continue;
+    }
+
+    if ((game.surpriseFactor ?? -Infinity) > (bestGame.surpriseFactor ?? -Infinity)) {
+      bestGame = game;
+      continue;
+    }
+
+    if (game.surpriseFactor !== bestGame.surpriseFactor) {
+      continue;
+    }
+
+    const currentExpected = expectedGamesByMatchId.get(game.matchId);
+    const bestExpected = expectedGamesByMatchId.get(bestGame.matchId);
+    const currentOvertimeCount = countOvertimePeriods(currentExpected);
+    const bestOvertimeCount = countOvertimePeriods(bestExpected);
+    if (currentOvertimeCount > bestOvertimeCount) {
+      bestGame = game;
+      continue;
+    }
+    if (currentOvertimeCount < bestOvertimeCount) {
+      continue;
+    }
+
+    const currentMargin = currentExpected?.finalMargin ?? Number.POSITIVE_INFINITY;
+    const bestMargin = bestExpected?.finalMargin ?? Number.POSITIVE_INFINITY;
+    if (currentMargin < bestMargin) {
+      bestGame = game;
+    }
+  }
+
+  return bestGame;
+}
+
+function resolveGameWinnerSide(
+  game: GameDayRecapPromptGame,
+): "away" | "home" | null {
+  if (game.teams.home.score === game.teams.away.score) {
+    return null;
+  }
+
+  return game.teams.home.score > game.teams.away.score ? "home" : "away";
+}
+
+function surpriseFactorMarginAdjustment(finalMargin: number): number {
+  if (finalMargin <= 2) {
+    return 1.8;
+  }
+  if (finalMargin <= 5) {
+    return 1.2;
+  }
+  if (finalMargin <= 8) {
+    return 0.6;
+  }
+  if (finalMargin <= 12) {
+    return 0.1;
+  }
+  if (finalMargin <= 17) {
+    return -0.3;
+  }
+  if (finalMargin <= 24) {
+    return -1.1;
+  }
+  return -1.8;
+}
+
+function surpriseFactorOvertimeBonus(periodCount: number): number {
+  const overtimeCount = Math.max(0, periodCount - 4);
+  if (overtimeCount === 0) {
+    return 0;
+  }
+
+  return 1.4 + Math.max(0, overtimeCount - 1) * 0.4;
+}
+
+function surpriseFactorRatingAdjustment(
+  winnerRatingTotal: number | null,
+  loserRatingTotal: number | null,
+): number {
+  if (winnerRatingTotal === null || loserRatingTotal === null) {
+    return 0;
+  }
+
+  const gap = Math.abs(winnerRatingTotal - loserRatingTotal);
+  if (gap === 0) {
+    return 0;
+  }
+
+  if (winnerRatingTotal < loserRatingTotal) {
+    return Math.min(1.4, gap / 4);
+  }
+
+  return -Math.min(0.8, gap / 8);
+}
+
+function surpriseFactorRecordAdjustment(
+  winnerRecord: TeamSeasonContextPromptField,
+  loserRecord: TeamSeasonContextPromptField,
+): number {
+  const winnerRecordValue = parsePromptRecord(winnerRecord);
+  const loserRecordValue = parsePromptRecord(loserRecord);
+  if (!winnerRecordValue || !loserRecordValue) {
+    return 0;
+  }
+
+  const winnerPct = winnerRecordValue.wins / (winnerRecordValue.wins + winnerRecordValue.losses);
+  const loserPct = loserRecordValue.wins / (loserRecordValue.wins + loserRecordValue.losses);
+  if (!Number.isFinite(winnerPct) || !Number.isFinite(loserPct)) {
+    return 0;
+  }
+
+  const gap = Math.abs(winnerPct - loserPct);
+  if (gap < 0.001) {
+    return 0;
+  }
+
+  if (winnerPct < loserPct) {
+    return Math.min(1.5, gap * 7);
+  }
+
+  return -Math.min(1, gap * 4.5);
+}
+
+function surpriseFactorStandingsAdjustment(
+  winnerConferencePosition: number | null,
+  loserConferencePosition: number | null,
+): number {
+  if (
+    winnerConferencePosition === null ||
+    loserConferencePosition === null ||
+    winnerConferencePosition < 1 ||
+    loserConferencePosition < 1
+  ) {
+    return 0;
+  }
+
+  const gap = Math.abs(winnerConferencePosition - loserConferencePosition);
+  if (gap < 2) {
+    return 0;
+  }
+
+  if (winnerConferencePosition > loserConferencePosition) {
+    return Math.min(1, gap * 0.15);
+  }
+
+  return -Math.min(0.7, gap * 0.1);
+}
+
+function surpriseFactorGdpAdjustment(
+  winnerGdp: Record<string, number | string>,
+  loserGdp: Record<string, number | string>,
+): number {
+  const winnerHits = countGdpOutcomes(winnerGdp, "hit");
+  const loserMisses = countGdpOutcomes(loserGdp, "miss");
+
+  return Math.min(1.1, (winnerHits + loserMisses) * 0.35);
+}
+
+function countGdpOutcomes(
+  gdp: Record<string, number | string>,
+  suffix: "hit" | "miss",
+): number {
+  return Object.values(gdp).filter((value) => {
+    const normalizedValue = asOptionalString(value)?.trim().toLowerCase();
+    return normalizedValue?.endsWith(`.${suffix}`) ?? false;
+  }).length;
+}
+
+function countStrategicDeemphasisFlags(recentSignalFlags: string[]): number {
+  return recentSignalFlags.includes("possible_strategic_deemphasis") ? 1 : 0;
+}
+
+function countOvertimePeriods(game: GameDayRecapPromptGame | undefined): number {
+  return game ? Math.max(0, game.quarterFacts.periods.length - 4) : 0;
+}
+
+function parsePromptRecord(
+  value: TeamSeasonContextPromptField,
+): { losses: number; wins: number } | null {
+  const match = value?.match(/^\s*(\d+)-(\d+)\s*$/);
+  if (!match) {
+    return null;
+  }
+
+  const wins = Number(match[1]);
+  const losses = Number(match[2]);
+  if (!Number.isInteger(wins) || !Number.isInteger(losses) || wins + losses === 0) {
+    return null;
+  }
+
+  return { losses, wins };
 }
 
 function orderGameDayRecapGames(
@@ -4456,6 +4952,8 @@ function buildSafePartialRecapSummary(args: {
 
   return {
     headline: `${label} partial roundup`,
+    gameOfTheDayMatchId: null,
+    gameOfTheDaySurpriseFactor: null,
     lede: `This partial recap covers ${args.retainedGameCount} validated ${retainedGamesLabel} from the requested slate after ${args.droppedGameCount} ${droppedGamesLabel} removed during factual validation.`,
   };
 }
@@ -4603,13 +5101,17 @@ export const __testing = {
   GAME_DAY_RECAP_PROMPT_VERSION,
   GAME_DAY_RECAP_RESULT_SCHEMA,
   SUPPORTED_STRUCTURED_OUTPUT_MODEL_PATTERNS,
+  computeSurpriseFactorForGame,
   buildQuarterFacts,
   buildEvidenceSignals,
   buildGameDayRecapBedrockRequest,
   buildGameDayRecapPromptPayload,
+  buildRotationSummariesForRecap,
   buildSafePartialRecapSummary,
   buildGameDayRecapTargetKey,
   buildTeamSeasonContext,
+  describeGameDayPrepFocusForRecap,
+  describeEffortDeltaForRecap,
   derivePostgameTeamSeasonContext,
   extractStandingTeams,
   extractTopPlayers,

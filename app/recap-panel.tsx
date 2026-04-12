@@ -29,6 +29,7 @@ import type {
   RecapHistoryKind,
   RecapHistoryRecord,
 } from "@/app/types";
+import { captureAnalyticsEvent } from "@/lib/analytics/client";
 import {
   inferLeagueTimeZone,
   normalizeLeagueTimeZone,
@@ -56,7 +57,8 @@ const recapModes: Array<{
   value: RecapMode;
 }> = [
   {
-    description: "Pick a league number and calendar date in the league's local time zone.",
+    description:
+      "Pick a league number and calendar date in the league's local time zone.",
     label: "League date",
     value: "LEAGUE_DATE",
   },
@@ -66,7 +68,8 @@ const recapModes: Array<{
     value: "LEAGUE_GAME_DAY",
   },
   {
-    description: "Summarize one finished game by entering its BuzzerBeater game number.",
+    description:
+      "Summarize one finished game by entering its BuzzerBeater game number.",
     label: "Single game",
     value: "SINGLE_GAME",
   },
@@ -77,7 +80,9 @@ export function RecapPanel({ context }: RecapPanelProps) {
   const defaultLeagueTimeZone = resolveWorkspaceLeagueTimeZone(context);
   const [mode, setMode] = useState<RecapMode>("LEAGUE_DATE");
   const [leagueId, setLeagueId] = useState(defaultLeagueId);
-  const [leagueTimeZone, setLeagueTimeZone] = useState(defaultLeagueTimeZone ?? "");
+  const [leagueTimeZone, setLeagueTimeZone] = useState(
+    defaultLeagueTimeZone ?? "",
+  );
   const [gameDate, setGameDate] = useState(resolveDefaultRecapDate(context));
   const [gameDayNumber, setGameDayNumber] = useState("1");
   const [season, setSeason] = useState("");
@@ -147,7 +152,10 @@ export function RecapPanel({ context }: RecapPanelProps) {
   useEffect(() => {
     setSelectedRecapKey((current) => {
       const targetKey = current;
-      if (targetKey && recaps.some((recap) => recap.selectionKey === targetKey)) {
+      if (
+        targetKey &&
+        recaps.some((recap) => recap.selectionKey === targetKey)
+      ) {
         return targetKey;
       }
 
@@ -170,10 +178,19 @@ export function RecapPanel({ context }: RecapPanelProps) {
         matchId,
       });
 
+      captureAnalyticsEvent("recap_requested", {
+        has_custom_league_id: leagueId.trim() !== defaultLeagueId,
+        has_match_id: Boolean(matchId.trim()),
+        has_season_override: Boolean(season.trim()),
+        mode: mode.toLowerCase(),
+      });
       const selectionKey = toRecapSelectionKey(mode, result.targetKey);
       setSelectedRecapKey(selectionKey);
       await recapHistoryQuery.refetch();
     } catch (error) {
+      captureAnalyticsEvent("recap_request_failed", {
+        mode: mode.toLowerCase(),
+      });
       setRecapError(readQueryError(error));
     }
   }
@@ -184,7 +201,13 @@ export function RecapPanel({ context }: RecapPanelProps) {
     }
 
     try {
-      await copyTextToClipboard(formatRecapForumPost(selectedRecap, selectedResult));
+      await copyTextToClipboard(
+        formatRecapForumPost(selectedRecap, selectedResult),
+      );
+      captureAnalyticsEvent("recap_forum_post_copied", {
+        mode: selectedRecap.kind.toLowerCase(),
+        status: selectedRecap.status,
+      });
       setCopyFeedback({
         message: "Forum-ready recap copied.",
         tone: "success",
@@ -202,6 +225,9 @@ export function RecapPanel({ context }: RecapPanelProps) {
     recaps.at(0) ??
     null;
   const selectedResult = toGameDayRecapResult(selectedRecap?.resultJson);
+  const selectedGameOfTheDay = selectedResult
+    ? findGameOfTheDay(selectedResult)
+    : null;
   const selectedCoverage = toGameDayRecapCoverage(selectedRecap?.coverageJson);
   const recapDetail = selectedRecap
     ? describeRecapRecord(selectedRecap)
@@ -209,7 +235,8 @@ export function RecapPanel({ context }: RecapPanelProps) {
   const currentLeagueName = context.connection.leagueName ?? "Your league";
   const normalizedLeagueTimeZone = normalizeLeagueTimeZone(leagueTimeZone);
   const maxGameDate = resolveRecapInputMaxDate(leagueTimeZone);
-  const activeMode = recapModes.find((entry) => entry.value === mode) ?? recapModes[0];
+  const activeMode =
+    recapModes.find((entry) => entry.value === mode) ?? recapModes[0];
   if (!activeMode) {
     throw new Error("At least one recap mode must be configured.");
   }
@@ -219,14 +246,16 @@ export function RecapPanel({ context }: RecapPanelProps) {
       <SectionHeading
         actions={
           <Button
-            disabled={Boolean(getSubmissionBlockReason({
-              gameDate,
-              gameDayNumber,
-              leagueId,
-              leagueTimeZone,
-              matchId,
-              mode,
-            }))}
+            disabled={Boolean(
+              getSubmissionBlockReason({
+                gameDate,
+                gameDayNumber,
+                leagueId,
+                leagueTimeZone,
+                matchId,
+                mode,
+              }),
+            )}
             loading={isSubmitting}
             onClick={() => void handleSubmit()}
           >
@@ -239,8 +268,9 @@ export function RecapPanel({ context }: RecapPanelProps) {
       />
 
       <p className={statusCopyClassName}>
-        v1 uses standings, schedules, recent form, box scores, and effort context only.
-        Transfers and play-by-play are intentionally excluded for now.
+        v1 uses standings, schedules, recent form, box scores, and effort
+        context only. Transfers and play-by-play are intentionally excluded for
+        now.
       </p>
 
       {recapError ? <Alert>{recapError}</Alert> : null}
@@ -410,7 +440,8 @@ export function RecapPanel({ context }: RecapPanelProps) {
           {recaps.length ? (
             <ul className={listClassName}>
               {recaps.map((recap) => {
-                const selected = recap.selectionKey === selectedRecap?.selectionKey;
+                const selected =
+                  recap.selectionKey === selectedRecap?.selectionKey;
                 return (
                   <li className={listItemClassName} key={recap.selectionKey}>
                     <button
@@ -418,13 +449,13 @@ export function RecapPanel({ context }: RecapPanelProps) {
                         "grid gap-1 rounded-2xl border px-4 py-3 text-left transition",
                         selected
                           ? "border-accent bg-accent/10"
-                          : "border-black/8 bg-white hover:border-accent/35",
+                          : "hover:border-accent/35 border-black/8 bg-white",
                       ].join(" ")}
                       onClick={() => setSelectedRecapKey(recap.selectionKey)}
                       type="button"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <strong className="text-sm text-ink">
+                        <strong className="text-ink text-sm">
                           {recapTitle(recap)}
                         </strong>
                         <StatusBadge tone={statusToneFromValue(recap.status)}>
@@ -432,10 +463,13 @@ export function RecapPanel({ context }: RecapPanelProps) {
                         </StatusBadge>
                       </div>
                       <span className={statusCopyClassName}>
-                        {describeRecapRecord(recap)} • {formatTimestamp(recap.updatedAt)}
+                        {describeRecapRecord(recap)} •{" "}
+                        {formatTimestamp(recap.updatedAt)}
                       </span>
                       {recap.error ? (
-                        <span className="text-sm text-danger">{recap.error}</span>
+                        <span className="text-danger text-sm">
+                          {recap.error}
+                        </span>
                       ) : null}
                     </button>
                   </li>
@@ -463,7 +497,9 @@ export function RecapPanel({ context }: RecapPanelProps) {
               <StatusBadge tone={statusToneFromValue(selectedRecap.status)}>
                 {formatWriteupStatus(selectedRecap.status)}
               </StatusBadge>
-              <StatusBadge tone="neutral">{modeLabelForRecord(selectedRecap)}</StatusBadge>
+              <StatusBadge tone="neutral">
+                {modeLabelForRecord(selectedRecap)}
+              </StatusBadge>
               {selectedRecap.completedAt ? (
                 <span className={statusCopyClassName}>
                   Completed {formatTimestamp(selectedRecap.completedAt)}
@@ -474,7 +510,8 @@ export function RecapPanel({ context }: RecapPanelProps) {
             {selectedCoverage?.partial ? (
               <Alert>
                 Partial coverage: {selectedCoverage.availableGames} of{" "}
-                {selectedCoverage.requestedGames} games were available. Missing games:{" "}
+                {selectedCoverage.requestedGames} games were available. Missing
+                games:{" "}
                 {selectedCoverage.missingGames
                   .map(
                     (game) =>
@@ -494,24 +531,70 @@ export function RecapPanel({ context }: RecapPanelProps) {
                     size="sm"
                     variant="secondary"
                   >
-                    {copyFeedback?.tone === "success" ? "Copied" : "Copy for forum"}
+                    {copyFeedback?.tone === "success"
+                      ? "Copied"
+                      : "Copy for forum"}
                   </Button>
                   <span
                     className={
                       copyFeedback?.tone === "error"
-                        ? "text-sm leading-7 text-danger"
+                        ? "text-danger text-sm leading-7"
                         : statusCopyClassName
                     }
                   >
-                    {copyFeedback?.message ?? "Copies BBCode with match links for forum posting."}
+                    {copyFeedback?.message ??
+                      "Copies BBCode with match links for forum posting."}
                   </span>
                 </div>
-                <p className={statusCopyClassName}>{selectedResult.summary.lede}</p>
+                {selectedGameOfTheDay ? (
+                  <Panel as="article" padding="sm" variant="glass">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge tone="note">Game of the day</StatusBadge>
+                      {selectedGameOfTheDay.surpriseFactor !== null ? (
+                        <StatusBadge tone="neutral">
+                          Surprise factor:{" "}
+                          {formatSurpriseFactor(
+                            selectedGameOfTheDay.surpriseFactor,
+                          )}
+                        </StatusBadge>
+                      ) : null}
+                    </div>
+                    <p className="text-ink mt-3 text-sm font-semibold">
+                      {selectedGameOfTheDay.headline}
+                    </p>
+                  </Panel>
+                ) : null}
+                <p className={statusCopyClassName}>
+                  {selectedResult.summary.lede}
+                </p>
                 <div className="grid gap-4">
                   {selectedResult.games.map((game) => (
-                    <Panel as="article" key={game.matchId} padding="sm" variant="glass">
+                    <Panel
+                      as="article"
+                      key={game.matchId}
+                      padding="sm"
+                      variant="glass"
+                    >
                       <SectionHeading title={game.headline} titleAs="h5" />
-                      <p className="text-sm leading-7 text-ink">{game.writeup}</p>
+                      {game.surpriseFactor !== null ||
+                      game.matchId === selectedGameOfTheDay?.matchId ? (
+                        <div className="mb-3 flex flex-wrap gap-2">
+                          {game.surpriseFactor !== null ? (
+                            <StatusBadge tone="neutral">
+                              Surprise factor:{" "}
+                              {formatSurpriseFactor(game.surpriseFactor)}
+                            </StatusBadge>
+                          ) : null}
+                          {game.matchId === selectedGameOfTheDay?.matchId ? (
+                            <StatusBadge tone="note">
+                              Game of the day
+                            </StatusBadge>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <p className="text-ink text-sm leading-7">
+                        {game.writeup}
+                      </p>
                       {game.evidenceTags.length ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {game.evidenceTags.map((tag) => (
@@ -559,10 +642,14 @@ async function submitRecapRequest(args: {
   switch (args.mode) {
     case "LEAGUE_DATE": {
       if (!normalizedLeagueId || !args.gameDate) {
-        throw new Error("Pick a league number, date, and time zone before requesting a recap.");
+        throw new Error(
+          "Pick a league number, date, and time zone before requesting a recap.",
+        );
       }
       if (!normalizedTimeZone) {
-        throw new Error("Enter a valid league time zone before requesting a date-based recap.");
+        throw new Error(
+          "Enter a valid league time zone before requesting a date-based recap.",
+        );
       }
 
       const currentTimeZone = resolveWorkspaceLeagueTimeZone(args.context);
@@ -582,7 +669,9 @@ async function submitRecapRequest(args: {
       const numericGameDay = Number(args.gameDayNumber);
       const seasonValue = args.season.trim() ? Number(args.season) : undefined;
       if (!normalizedLeagueId || !Number.isInteger(numericGameDay)) {
-        throw new Error("Enter a league number and regular-season game day from 1 to 22.");
+        throw new Error(
+          "Enter a league number and regular-season game day from 1 to 22.",
+        );
       }
       if (numericGameDay < 1 || numericGameDay > 22) {
         throw new Error("League game day must be between 1 and 22.");
@@ -617,8 +706,12 @@ function toRecapSelectionKey(kind: RecapMode, targetKey: string): string {
   return `${kind}:${targetKey}`;
 }
 
-function sortRecapHistory(recaps: readonly RecapHistoryRecord[]): RecapHistoryRecord[] {
-  return [...recaps].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+function sortRecapHistory(
+  recaps: readonly RecapHistoryRecord[],
+): RecapHistoryRecord[] {
+  return [...recaps].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
 }
 
 function recapTitle(record: RecapHistoryRecord): string {
@@ -647,7 +740,10 @@ function describeRecapRecord(record: RecapHistoryRecord): string {
 }
 
 function modeLabelForRecord(record: RecapHistoryRecord): string {
-  return recapModes.find((entry) => entry.value === record.kind)?.label ?? record.kind;
+  return (
+    recapModes.find((entry) => entry.value === record.kind)?.label ??
+    record.kind
+  );
 }
 
 function submitLabelForMode(mode: RecapMode): string {
@@ -684,7 +780,11 @@ function getSubmissionBlockReason(args: {
       if (!args.leagueId.trim()) {
         return "League game-day recaps require a league number.";
       }
-      if (!Number.isInteger(numericGameDay) || numericGameDay < 1 || numericGameDay > 22) {
+      if (
+        !Number.isInteger(numericGameDay) ||
+        numericGameDay < 1 ||
+        numericGameDay > 22
+      ) {
         return "League game day must be a whole number from 1 to 22.";
       }
       return null;
@@ -708,7 +808,9 @@ export function resolveWorkspaceLeagueTimeZone(
   );
 }
 
-export function resolveRecapInputMaxDate(timeZone: string | null | undefined): string {
+export function resolveRecapInputMaxDate(
+  timeZone: string | null | undefined,
+): string {
   return (
     resolveCalendarDateKey(new Date().toISOString(), timeZone) ??
     new Date().toISOString().slice(0, 10)
@@ -727,7 +829,9 @@ export function resolveDefaultRecapDate(context: RecapPanelContext): string {
 export function sortGameDayRecaps(
   recaps: readonly GameDayRecapRecord[],
 ): GameDayRecapRecord[] {
-  return [...recaps].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return [...recaps].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
 }
 
 export function hasActiveGameDayRecap(
@@ -751,7 +855,9 @@ function toGameDayRecapCoverage(
   value: unknown,
 ): GameDayRecapCoveragePayload | null {
   const record = parseJsonRecord(value);
-  const missingGames = Array.isArray(record?.missingGames) ? record.missingGames : null;
+  const missingGames = Array.isArray(record?.missingGames)
+    ? record.missingGames
+    : null;
   const availableGames = asNumber(record?.availableGames);
   const requestedGames = asNumber(record?.requestedGames);
 
@@ -798,13 +904,20 @@ function toGameDayRecapResult(
       .filter((game): game is Record<string, unknown> => Boolean(game))
       .map((game) => ({
         evidenceTags: Array.isArray(game.evidenceTags)
-          ? game.evidenceTags.filter((tag): tag is string => typeof tag === "string")
+          ? game.evidenceTags.filter(
+              (tag): tag is string => typeof tag === "string",
+            )
           : [],
         headline: asString(game.headline) ?? "Untitled game recap",
         matchId: asString(game.matchId) ?? "unknown",
+        surpriseFactor: asNullableNumber(game.surpriseFactor),
         writeup: asString(game.writeup) ?? "",
       })),
     summary: {
+      gameOfTheDayMatchId: asString(summary.gameOfTheDayMatchId),
+      gameOfTheDaySurpriseFactor: asNullableNumber(
+        summary.gameOfTheDaySurpriseFactor,
+      ),
       headline,
       lede,
     },
@@ -835,6 +948,10 @@ function asString(value: unknown): string | null {
 
 function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function readQueryError(error: unknown): string {
@@ -871,6 +988,7 @@ function formatRecapForumPost(
   record: RecapHistoryRecord,
   result: GameDayRecapResultPayload,
 ): string {
+  const gameOfTheDay = findGameOfTheDay(result);
   const lines = [
     `[b]${escapeForumText(result.summary.headline)}[/b]`,
     `[i]${escapeForumText(describeRecapRecord(record))}[/i]`,
@@ -878,9 +996,32 @@ function formatRecapForumPost(
     `[quote]${escapeForumText(result.summary.lede)}[/quote]`,
   ];
 
+  if (gameOfTheDay && gameOfTheDay.surpriseFactor !== null) {
+    lines.push(
+      `[i]Game of the day: ${escapeForumText(gameOfTheDay.headline)} • Surprise factor: ${formatSurpriseFactor(
+        gameOfTheDay.surpriseFactor,
+      )}[/i]`,
+    );
+  }
+
   for (const game of result.games) {
     lines.push("");
     lines.push(`[b]${escapeForumText(game.headline)}[/b]`);
+    if (
+      game.surpriseFactor !== null ||
+      game.matchId === gameOfTheDay?.matchId
+    ) {
+      const metadata: string[] = [];
+      if (game.surpriseFactor !== null) {
+        metadata.push(
+          `Surprise factor: ${formatSurpriseFactor(game.surpriseFactor)}`,
+        );
+      }
+      if (game.matchId === gameOfTheDay?.matchId) {
+        metadata.push("Game of the day");
+      }
+      lines.push(`[i]${escapeForumText(metadata.join(" • "))}[/i]`);
+    }
     lines.push(escapeForumText(game.writeup));
 
     const matchLink = formatForumMatchLink(game.matchId);
@@ -892,11 +1033,53 @@ function formatRecapForumPost(
   return lines.join("\n").trim();
 }
 
+function findGameOfTheDay(
+  result: GameDayRecapResultPayload,
+): GameDayRecapResultPayload["games"][number] | null {
+  if (result.games.length < 2) {
+    return null;
+  }
+
+  const explicitMatchId = result.summary.gameOfTheDayMatchId;
+  if (explicitMatchId) {
+    const explicitGame = result.games.find(
+      (game) => game.matchId === explicitMatchId,
+    );
+    if (explicitGame) {
+      return explicitGame;
+    }
+  }
+
+  let bestGame: GameDayRecapResultPayload["games"][number] | null = null;
+  for (const game of result.games) {
+    if (game.surpriseFactor === null) {
+      continue;
+    }
+    if (
+      !bestGame ||
+      game.surpriseFactor > (bestGame.surpriseFactor ?? -Infinity)
+    ) {
+      bestGame = game;
+    }
+  }
+
+  return bestGame;
+}
+
+function formatSurpriseFactor(value: number): string {
+  return `${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+  }).format(value)}/10`;
+}
+
 function escapeForumText(value: string): string {
   return value.trim().replace(/\[/g, "(").replace(/\]/g, ")");
 }
 
-function formatForumMatchLink(matchId: string | null | undefined): string | null {
+function formatForumMatchLink(
+  matchId: string | null | undefined,
+): string | null {
   const normalizedMatchId = matchId?.trim();
   if (!normalizedMatchId) {
     return null;

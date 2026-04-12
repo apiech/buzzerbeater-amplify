@@ -5,7 +5,7 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   clearMyTeamHighlightsDataMutation,
@@ -29,6 +29,7 @@ import {
   statusToneFromValue,
 } from "@/app/ui/primitives/status-badge";
 import { formatHighlightsStatus } from "@/app/ui/presentation";
+import { captureAnalyticsEvent } from "@/lib/analytics/client";
 
 const listClassName = "grid list-none gap-3 p-0";
 const listItemClassName =
@@ -55,6 +56,11 @@ const ACTIVE_SCAN_STATUSES = new Set([
   "RESOLVING_HISTORY",
   "WAITING_FOR_MATCH_JOBS",
 ]);
+const TERMINAL_SCAN_STATUSES = new Set([
+  "COMPLETED_WITH_GAPS",
+  "FAILED",
+  "SUCCEEDED",
+]);
 const STALE_SCAN_MILLISECONDS = 15 * 60 * 1000;
 const BB_CREDENTIAL_RECONNECT_REQUIRED_PREFIX = "Reconnect BuzzerBeater:";
 const BB_CREDENTIAL_SECRET_MISMATCH_PREFIX =
@@ -69,6 +75,9 @@ type HighlightsCredentialErrorKind =
 
 export function HighlightsPanel({ context }: HighlightsPanelProps) {
   const queryClient = useQueryClient();
+  const hasInitializedFilterTrackingRef = useRef(false);
+  const hasInitializedTerminalTrackingRef = useRef(false);
+  const lastTrackedTerminalScanKeyRef = useRef<string | null>(null);
   const [perspective, setPerspective] =
     useState<HighlightsFilterPerspective>("both");
   const [onlyOutcomeChange, setOnlyOutcomeChange] = useState(true);
@@ -127,39 +136,6 @@ export function HighlightsPanel({ context }: HighlightsPanelProps) {
   const isSubmitting = submitScanMutation.isPending;
   const isClearing = clearDataMutation.isPending;
 
-  async function handleSubmit(): Promise<void> {
-    try {
-      await submitScanMutation.mutateAsync();
-    } catch {
-      // Mutation state carries the user-facing error.
-    }
-  }
-
-  async function handleLoadMore(): Promise<void> {
-    if (!payload?.nextCursor) {
-      return;
-    }
-
-    await highlightsQuery.fetchNextPage();
-  }
-
-  async function handleClear(): Promise<void> {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Clear the current team's saved highlights data in this environment? This deletes only this team's moments and recorded coverage so the next scan starts fresh.",
-      )
-    ) {
-      return;
-    }
-
-    try {
-      await clearDataMutation.mutateAsync();
-    } catch {
-      // Mutation state carries the user-facing error.
-    }
-  }
-
   const focusTeamName =
     payload?.team.teamName ?? context.team.teamName ?? "Your club";
   const scanStatus = payload?.scanStatus ?? null;
@@ -190,6 +166,114 @@ export function HighlightsPanel({ context }: HighlightsPanelProps) {
     null,
     submitError,
   );
+
+  useEffect(() => {
+    if (!hasInitializedFilterTrackingRef.current) {
+      hasInitializedFilterTrackingRef.current = true;
+      return;
+    }
+
+    captureAnalyticsEvent("highlights_filter_changed", {
+      only_outcome_change: onlyOutcomeChange,
+      perspective,
+      source: "highlights_panel",
+    });
+  }, [onlyOutcomeChange, perspective]);
+
+  useEffect(() => {
+    const completedScan = scanStatus;
+    const trackedStatus = scanStatus?.status;
+    const terminalKey =
+      trackedStatus && TERMINAL_SCAN_STATUSES.has(trackedStatus)
+        ? `${trackedStatus}:${completedScan?.completedAt ?? completedScan?.updatedAt ?? completedScan?.requestedAt}`
+        : null;
+
+    if (!hasInitializedTerminalTrackingRef.current) {
+      hasInitializedTerminalTrackingRef.current = true;
+      lastTrackedTerminalScanKeyRef.current = terminalKey;
+      return;
+    }
+
+    if (!terminalKey || lastTrackedTerminalScanKeyRef.current === terminalKey) {
+      return;
+    }
+    if (!completedScan || !trackedStatus) {
+      return;
+    }
+
+    lastTrackedTerminalScanKeyRef.current = terminalKey;
+    captureAnalyticsEvent("highlights_scan_completed", {
+      failed_matches: completedScan.matchesFailed ?? 0,
+      matches_discovered: completedScan.matchesDiscovered ?? 0,
+      matches_with_moments: completedScan.matchesWithMoments ?? 0,
+      moments_written: completedScan.momentsWritten ?? 0,
+      source: "highlights_panel",
+      status: trackedStatus.toLowerCase(),
+    });
+  }, [
+    scanStatus,
+    scanStatus?.completedAt,
+    scanStatus?.matchesDiscovered,
+    scanStatus?.matchesFailed,
+    scanStatus?.matchesWithMoments,
+    scanStatus?.momentsWritten,
+    scanStatus?.requestedAt,
+    scanStatus?.status,
+    scanStatus?.updatedAt,
+  ]);
+
+  async function handleSubmit(): Promise<void> {
+    captureAnalyticsEvent("highlights_scan_requested", {
+      action_label: scanActionLabel,
+      has_recorded_history: hasRecordedHistory,
+      source: "highlights_panel",
+    });
+
+    try {
+      await submitScanMutation.mutateAsync();
+    } catch {
+      captureAnalyticsEvent("highlights_scan_request_failed", {
+        source: "highlights_panel",
+      });
+      // Mutation state carries the user-facing error.
+    }
+  }
+
+  async function handleLoadMore(): Promise<void> {
+    if (!payload?.nextCursor) {
+      return;
+    }
+
+    captureAnalyticsEvent("highlights_load_more_requested", {
+      only_outcome_change: onlyOutcomeChange,
+      perspective,
+      source: "highlights_panel",
+    });
+    await highlightsQuery.fetchNextPage();
+  }
+
+  async function handleClear(): Promise<void> {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Clear the current team's saved highlights data in this environment? This deletes only this team's moments and recorded coverage so the next scan starts fresh.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await clearDataMutation.mutateAsync();
+      captureAnalyticsEvent("highlights_data_cleared", {
+        source: "highlights_panel",
+      });
+    } catch {
+      captureAnalyticsEvent("highlights_clear_failed", {
+        source: "highlights_panel",
+      });
+      // Mutation state carries the user-facing error.
+    }
+  }
 
   return (
     <Panel>

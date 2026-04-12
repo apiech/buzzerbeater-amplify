@@ -42,6 +42,7 @@ import {
   createSyncRun,
   deleteBbCredential,
   getBbConnection,
+  getRivalsBackfill,
   getMatchBoxscore,
   getTrackedPlayer as getTrackedPlayerRecord,
   getSharedPlayerCardRecord,
@@ -90,6 +91,7 @@ import {
   logWorkspaceWarn,
   toLoggableError,
 } from "./workspace-request-logging";
+import { syncRivalryMatchFactsFromSchedule } from "./rivals";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -1390,6 +1392,38 @@ async function syncWorkspace(args: {
       stepMs: elapsedMs(persistWorkspaceStartedAt),
       userId: args.userId,
     });
+    if (currentWorkspace.teamInfo.teamId) {
+      const rivalsSyncStartedAt = Date.now();
+      try {
+        const rivalsStatus = await getRivalsBackfill(
+          args.env,
+          args.userId,
+          currentWorkspace.teamInfo.teamId,
+        );
+        if (rivalsStatus?.status === "SUCCEEDED") {
+          const factCount = await syncRivalryMatchFactsFromSchedule({
+            env: args.env,
+            matches: currentWorkspace.schedule.matches,
+            season: currentWorkspace.schedule.season ?? null,
+            teamId: currentWorkspace.teamInfo.teamId,
+            userId: args.userId,
+          });
+          logWorkspaceInfo("syncWorkspace.rivalry_facts.ready", {
+            elapsedMs: elapsedMs(syncStartedAt),
+            factCount,
+            stepMs: elapsedMs(rivalsSyncStartedAt),
+            userId: args.userId,
+          });
+        }
+      } catch (error) {
+        logWorkspaceWarn("syncWorkspace.rivalry_facts.failed", {
+          elapsedMs: elapsedMs(syncStartedAt),
+          stepMs: elapsedMs(rivalsSyncStartedAt),
+          userId: args.userId,
+          ...toLoggableError(error),
+        });
+      }
+    }
     if (args.syncActiveTrackedTeams) {
       const credentialContext = await loadActiveTrackedTeamCredentialContext(
         args.env,

@@ -331,9 +331,12 @@ export type GameDayRecapResultPayload = {
     evidenceTags: string[];
     headline: string;
     matchId: string;
+    surpriseFactor: number | null;
     writeup: string;
   }>;
   summary: {
+    gameOfTheDayMatchId: string | null;
+    gameOfTheDaySurpriseFactor: number | null;
     headline: string;
     lede: string;
   };

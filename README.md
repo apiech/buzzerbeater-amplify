@@ -142,6 +142,12 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `SYNC_RUN_RETENTION_DAYS`
   - Retention window for operational sync-run records.
   - Default or recommended value: `14`.
+- `NEXT_PUBLIC_POSTHOG_TOKEN`
+  - Preferred public PostHog project token for pageviews, funnels, and feature analytics. Falls back to `NEXT_PUBLIC_ANALYTICS_ID` during migration.
+  - Default or recommended value: `unset`.
+- `NEXT_PUBLIC_POSTHOG_HOST`
+  - Public PostHog API host. Use the matching PostHog cloud region or your self-hosted proxy hostname.
+  - Default or recommended value: `https://us.i.posthog.com`.
 
 ### Shared ML Infra Bindings
 
@@ -239,6 +245,67 @@ Prediction infrastructure requirements:
 - The prediction worker Lambda needs SQS consume access and `sagemaker:InvokeEndpoint`.
 
 These resources are already wired in [`amplify/backend.ts`](/Users/karey/projects/bb/bb-amplify/amplify/backend.ts).
+
+## PostHog Analytics Setup
+
+The app now initializes PostHog from public env vars and captures pageviews,
+auth, billing, connection, navigation, highlights, prediction, recap, and
+theme events through the shared analytics wrapper in
+[`lib/analytics`](/Users/karey/projects/bb/bb-amplify/lib/analytics).
+
+Recommended environment split:
+
+- Local sandbox and `sandbox-*` deploys -> PostHog `sandbox` project
+- Hosted `dev` branch -> PostHog `dev` project
+- Hosted `main` branch -> PostHog `prod` project
+
+Step-by-step:
+
+1. Create a PostHog account and pick the cloud region that matches where you
+   want your data stored.
+2. If you want separate `sandbox`, `dev`, and `prod` projects inside one
+   PostHog org, upgrade the org to usage-based billing by adding a credit card.
+   The free tier is still applied monthly; the card is mainly what unlocks
+   enough projects for the three-environment split.
+3. Create three PostHog projects named `sandbox`, `dev`, and `prod`.
+4. Copy the public project token for each project plus the matching PostHog host
+   such as `https://us.i.posthog.com` or `https://eu.i.posthog.com`.
+5. For local sandbox work, copy
+   [`env-template`](/Users/karey/projects/bb/bb-amplify/env-template) to `.env`
+   and set:
+
+   ```bash
+   NEXT_PUBLIC_POSTHOG_TOKEN=<sandbox-project-token>
+   NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+   ```
+
+6. In Amplify Hosting, open the `dev` branch environment variables and set:
+
+   ```bash
+   NEXT_PUBLIC_POSTHOG_TOKEN=<dev-project-token>
+   NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+   ```
+
+7. In Amplify Hosting, open the `main` branch environment variables and set:
+
+   ```bash
+   NEXT_PUBLIC_POSTHOG_TOKEN=<prod-project-token>
+   NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+   ```
+
+8. Redeploy each environment. The frontend build picks up the public env vars,
+   and the client-side analytics provider initializes PostHog automatically.
+9. Verify with PostHog live events:
+   - open `/login` and confirm a `$pageview`
+   - sign in and confirm `auth_flow_completed`
+   - open `/workspace/predictions` and confirm `workspace_section_viewed`
+   - run a prediction and confirm `prediction_requested`
+   - change themes and confirm `theme_changed`
+10. Current implementation does not require a PostHog secret key, personal API
+    key, or backend Lambda env var. Only the public project token and host are
+    needed because analytics are captured from the Next.js client. If you later
+    add server-side capture or PostHog API automation, introduce separate
+    secret env vars at that time.
 
 ## Stripe Billing Setup
 

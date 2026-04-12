@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import {
   billingSummaryQueryOptions,
@@ -15,6 +15,11 @@ import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
+import {
+  captureAnalyticsEvent,
+  markPendingAuthFlow,
+  trackBillingAccessTransition,
+} from "@/lib/analytics/client";
 
 type StorefrontProps = {
   billingNotice: string | null;
@@ -39,7 +44,9 @@ export function Storefront({
     placeholderData: (previousData) => previousData,
   });
   const summary = summaryQuery.data ?? null;
-  const summaryError = summaryQuery.error ? formatClientError(summaryQuery.error) : null;
+  const summaryError = summaryQuery.error
+    ? formatClientError(summaryQuery.error)
+    : null;
   const isLoadingSummary = isSignedIn && summaryQuery.isPending;
   const subscriptionCheckoutMutation = useMutation({
     mutationFn: (returnPath?: string) =>
@@ -56,28 +63,47 @@ export function Storefront({
 
   async function handleSubscriptionCheckout(): Promise<void> {
     setActionError(null);
+    captureAnalyticsEvent("billing_checkout_started", {
+      offer_type: "subscription",
+      source: "store",
+    });
 
     try {
       const url = await subscriptionCheckoutMutation.mutateAsync("/store");
       window.location.assign(url);
     } catch (error) {
+      captureAnalyticsEvent("billing_checkout_failed", {
+        offer_type: "subscription",
+        source: "store",
+      });
       setActionError(formatClientError(error));
     }
   }
 
   async function handleLifetimeCheckout(): Promise<void> {
     setActionError(null);
+    captureAnalyticsEvent("billing_checkout_started", {
+      offer_type: "lifetime",
+      source: "store",
+    });
 
     try {
       const url = await lifetimeCheckoutMutation.mutateAsync("/store");
       window.location.assign(url);
     } catch (error) {
+      captureAnalyticsEvent("billing_checkout_failed", {
+        offer_type: "lifetime",
+        source: "store",
+      });
       setActionError(formatClientError(error));
     }
   }
 
   async function handlePortal(): Promise<void> {
     setActionError(null);
+    captureAnalyticsEvent("billing_portal_opened", {
+      source: "store",
+    });
 
     try {
       const url = await portalMutation.mutateAsync("/store");
@@ -86,6 +112,29 @@ export function Storefront({
       setActionError(formatClientError(error));
     }
   }
+
+  useEffect(() => {
+    if (!billingNotice) {
+      return;
+    }
+
+    captureAnalyticsEvent("billing_checkout_returned", {
+      result: billingNotice,
+      source: "store",
+    });
+  }, [billingNotice]);
+
+  useEffect(() => {
+    if (!summary) {
+      return;
+    }
+
+    trackBillingAccessTransition({
+      accessSource: summary.accessSource,
+      planId: summary.planId,
+      source: "store",
+    });
+  }, [summary?.accessSource, summary?.planId, summary]);
 
   const subscriptionEnabled = summary?.premiumSubscriptionOfferEnabled ?? true;
   const lifetimeEnabled = summary?.lifetimePurchaseOfferEnabled ?? false;
@@ -166,7 +215,17 @@ export function Storefront({
                 Sign in to buy
               </Link>
               {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
-              <a className={storeLinkClassName} href="/api/auth/sign-up">
+              <a
+                className={storeLinkClassName}
+                href="/api/auth/sign-up"
+                onClick={() => {
+                  markPendingAuthFlow("sign_up");
+                  captureAnalyticsEvent("auth_flow_started", {
+                    flow: "sign_up",
+                    source: "store",
+                  });
+                }}
+              >
                 Create account
               </a>
             </>
@@ -246,7 +305,17 @@ export function Storefront({
                   </p>
                 )
               ) : (
-                <Link className={storeLinkClassName} href="/login">
+                <Link
+                  className={storeLinkClassName}
+                  href="/login"
+                  onClick={() => {
+                    markPendingAuthFlow("sign_in");
+                    captureAnalyticsEvent("auth_flow_started", {
+                      flow: "sign_in",
+                      source: "store_subscription_offer",
+                    });
+                  }}
+                >
                   Sign in for monthly Premium
                 </Link>
               )
@@ -288,7 +357,17 @@ export function Storefront({
                   </p>
                 )
               ) : (
-                <Link className={storeLinkClassName} href="/login">
+                <Link
+                  className={storeLinkClassName}
+                  href="/login"
+                  onClick={() => {
+                    markPendingAuthFlow("sign_in");
+                    captureAnalyticsEvent("auth_flow_started", {
+                      flow: "sign_in",
+                      source: "store_lifetime_offer",
+                    });
+                  }}
+                >
                   Sign in for lifetime access
                 </Link>
               )

@@ -10,6 +10,10 @@ import type {
   MatchBoxscorePlayerLine,
   MatchBoxscoreTeam,
 } from "@/app/types";
+import {
+  ComparisonPanel,
+  type ComparisonPanelRow,
+} from "@/app/workspace/boxscores/[matchId]/comparison-panel";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
@@ -175,46 +179,7 @@ function RatingsComparisonPanel({
   title: string;
 }) {
   const rows = buildRatingComparisonRows(left, right);
-
-  return (
-    <Panel as="article" padding="sm" variant="solid">
-      <SectionHeading title={title} titleAs="h4" />
-      <TableShell compact tableClassName="min-w-[24rem]">
-        <thead>
-          <tr>
-            <TableHeadCell>Metric</TableHeadCell>
-            <TableHeadCell className={numericCellClassName}>
-              {leftLabel}
-            </TableHeadCell>
-            <TableHeadCell className={numericCellClassName}>
-              {rightLabel}
-            </TableHeadCell>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row) => (
-              <tr key={row.key}>
-                <TableCell>{row.label}</TableCell>
-                <TableCell className={numericCellClassName}>
-                  {row.leftValue}
-                </TableCell>
-                <TableCell className={numericCellClassName}>
-                  {row.rightValue}
-                </TableCell>
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <TableCell className="text-ink-muted" colSpan={3}>
-                No saved metrics are available for this match.
-              </TableCell>
-            </tr>
-          )}
-        </tbody>
-      </TableShell>
-    </Panel>
-  );
+  return renderComparisonPanel({ leftLabel, rightLabel, rows, title });
 }
 
 function MetricComparisonPanel({
@@ -231,46 +196,7 @@ function MetricComparisonPanel({
   title: string;
 }) {
   const rows = buildMetricComparisonRows(left, right);
-
-  return (
-    <Panel as="article" padding="sm" variant="solid">
-      <SectionHeading title={title} titleAs="h4" />
-      <TableShell compact tableClassName="min-w-[24rem]">
-        <thead>
-          <tr>
-            <TableHeadCell>Metric</TableHeadCell>
-            <TableHeadCell className={numericCellClassName}>
-              {leftLabel}
-            </TableHeadCell>
-            <TableHeadCell className={numericCellClassName}>
-              {rightLabel}
-            </TableHeadCell>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row) => (
-              <tr key={row.key}>
-                <TableCell>{row.label}</TableCell>
-                <TableCell className={numericCellClassName}>
-                  {row.leftValue}
-                </TableCell>
-                <TableCell className={numericCellClassName}>
-                  {row.rightValue}
-                </TableCell>
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <TableCell className="text-ink-muted" colSpan={3}>
-                No saved metrics are available for this match.
-              </TableCell>
-            </tr>
-          )}
-        </tbody>
-      </TableShell>
-    </Panel>
-  );
+  return renderComparisonPanel({ leftLabel, rightLabel, rows, title });
 }
 
 function TeamBoxscorePanel({
@@ -405,6 +331,28 @@ function buildMetricComparisonRows(
     leftValue: formatMetricEntry(leftMap.get(key)),
     rightValue: formatMetricEntry(rightMap.get(key)),
   }));
+}
+
+function renderComparisonPanel({
+  leftLabel,
+  rightLabel,
+  rows,
+  title,
+}: {
+  leftLabel: string;
+  rightLabel: string;
+  rows: readonly ComparisonPanelRow[];
+  title: string;
+}) {
+  return (
+    <ComparisonPanel
+      leftLabel={leftLabel}
+      numericCellClassName={numericCellClassName}
+      rightLabel={rightLabel}
+      rows={rows}
+      title={title}
+    />
+  );
 }
 
 function buildSelectedTotals(metrics: MatchBoxscoreTeam["teamTotals"]) {

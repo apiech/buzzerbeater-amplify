@@ -607,6 +607,23 @@ function runSandboxVerifyDeploy(
   }
 }
 
+function runSandboxAmplifyTypecheck(
+  runtime: WorkflowRuntime = createDefaultRuntime(),
+): void {
+  const result = runtime.spawnSync(
+    resolveNpmCommand(),
+    ["run", "typecheck:amplify:sandbox"],
+    {
+      cwd: projectRoot,
+      env: runtime.env,
+      stdio: "inherit",
+    },
+  );
+  if ((result.status ?? 1) !== 0) {
+    throw new Error("Sandbox Amplify backend typecheck failed.");
+  }
+}
+
 function runSandboxUp(
   sandboxArgs: string[],
   runtime: WorkflowRuntime = createDefaultRuntime(),
@@ -634,8 +651,10 @@ function runSandboxUp(
     runtime.write("Skipping deploy verification because BB_SKIP_DEPLOY_VERIFY is set.");
   } else if (fastMode) {
     runSandboxVerifyDeploy(runtime);
+    runSandboxAmplifyTypecheck(runtime);
   } else {
     runVerifyDeploy(runtime);
+    runSandboxAmplifyTypecheck(runtime);
   }
   runSandboxSecretSync(explicitSandboxArgs, runtime);
   if (fastMode) {
