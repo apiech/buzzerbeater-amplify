@@ -14,6 +14,7 @@ function readRepoFile(...segments: string[]) {
 test("analytics wiring covers providers, auth, store, and key outcome flows", () => {
   const providersSource = readRepoFile("app", "providers.tsx");
   const layoutSource = readRepoFile("app", "layout.tsx");
+  const analyticsProviderSource = readRepoFile("app", "analytics-provider.tsx");
   const analyticsClientSource = readRepoFile("lib", "analytics", "client.ts");
   const analyticsEventsSource = readRepoFile("lib", "analytics", "events.ts");
   const loginActionsSource = readRepoFile("app", "login", "login-actions.tsx");
@@ -34,6 +35,8 @@ test("analytics wiring covers providers, auth, store, and key outcome flows", ()
   assert.match(providersSource, /<AnalyticsProvider\s+\{\.\.\.analytics\}>/);
   assert.match(layoutSource, /maintenanceEnvironmentName/);
   assert.match(layoutSource, /analytics=\{\{/);
+  assert.match(analyticsProviderSource, /<Suspense fallback=\{null\}>/);
+  assert.match(analyticsProviderSource, /AnalyticsNavigationTracker/);
   assert.match(analyticsClientSource, /setAnalyticsPersonProperties/);
   assert.match(analyticsClientSource, /registerAnalyticsProperties/);
   assert.match(analyticsEventsSource, /workspace_nav_clicked/);

@@ -1,7 +1,7 @@
 "use client";
 
+import { Suspense, useEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useRef } from "react";
 
 import {
   captureAnalyticsEvent,
@@ -21,51 +21,17 @@ export type AnalyticsProviderProps = {
   userId: string | null;
 };
 
-export function AnalyticsProvider({
-  children,
+type AnalyticsNavigationTrackerProps = Omit<AnalyticsProviderProps, "children">;
+
+function AnalyticsNavigationTracker({
   environmentName,
   isAuthenticated,
-  userId,
-}: AnalyticsProviderProps) {
+}: AnalyticsNavigationTrackerProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const lastTrackedPageKeyRef = useRef<string | null>(null);
   const search = searchParams.toString();
   const pageKey = search ? `${pathname}?${search}` : pathname;
-
-  useEffect(() => {
-    initializeAnalytics({ environmentName });
-  }, [environmentName]);
-
-  useEffect(() => {
-    registerAnalyticsProperties({
-      is_authenticated: isAuthenticated,
-    });
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !userId) {
-      return;
-    }
-
-    identifyAnalyticsUser({
-      environmentName,
-      properties: {
-        analytics_environment: environmentName,
-      },
-      userId,
-    });
-
-    const pendingAuthFlow = consumePendingAuthFlow();
-    if (!pendingAuthFlow) {
-      return;
-    }
-
-    captureAnalyticsEvent("auth_flow_completed", {
-      environment_name: environmentName,
-      flow: pendingAuthFlow,
-    });
-  }, [environmentName, isAuthenticated, userId]);
 
   useEffect(() => {
     syncPublicSessionRecording({
@@ -101,5 +67,59 @@ export function AnalyticsProvider({
     }
   }, [environmentName, isAuthenticated, pageKey, pathname, search]);
 
-  return children;
+  return null;
+}
+
+export function AnalyticsProvider({
+  children,
+  environmentName,
+  isAuthenticated,
+  userId,
+}: AnalyticsProviderProps) {
+  useEffect(() => {
+    initializeAnalytics({ environmentName });
+  }, [environmentName]);
+
+  useEffect(() => {
+    registerAnalyticsProperties({
+      is_authenticated: isAuthenticated,
+    });
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !userId) {
+      return;
+    }
+
+    identifyAnalyticsUser({
+      environmentName,
+      properties: {
+        analytics_environment: environmentName,
+      },
+      userId,
+    });
+
+    const pendingAuthFlow = consumePendingAuthFlow();
+    if (!pendingAuthFlow) {
+      return;
+    }
+
+    captureAnalyticsEvent("auth_flow_completed", {
+      environment_name: environmentName,
+      flow: pendingAuthFlow,
+    });
+  }, [environmentName, isAuthenticated, userId]);
+
+  return (
+    <>
+      {children}
+      <Suspense fallback={null}>
+        <AnalyticsNavigationTracker
+          environmentName={environmentName}
+          isAuthenticated={isAuthenticated}
+          userId={userId}
+        />
+      </Suspense>
+    </>
+  );
 }
