@@ -54,6 +54,56 @@ type ImportSide = "teamA" | "teamB";
 
 const ratingGridClassName = "grid gap-4 md:grid-cols-2 xl:grid-cols-3";
 const MATRIX_CELL_HEATMAP_MAX_ABS_MARGIN = 20;
+const MATRIX_MATCHUP_COLUMN_WIDTH_CLASS = "w-[4.9rem] min-w-[4.9rem] max-w-[4.9rem]";
+const MATRIX_ROW_HEADER_WIDTH_CLASS = "w-[9.25rem] min-w-[9.25rem] max-w-[9.25rem]";
+const MATRIX_OFFENSE_SORT_ORDER = [
+  "Base Offense",
+  "Push the Ball",
+  "Patient",
+  "Look Inside",
+  "Low Post",
+  "Run and Gun",
+  "Motion",
+  "Princeton",
+  "Outside Isolation",
+  "Inside Isolation",
+] as const;
+const MATRIX_DEFENSE_SORT_ORDER = [
+  "Man to Man",
+  "3-2 Zone",
+  "1-3-1 Zone",
+  "2-3 Zone",
+  "Outside Box + 1",
+  "Inside Box + 1",
+  "Full Court Press",
+] as const;
+
+const MATRIX_OFFENSE_ABBREVIATIONS: Record<string, string> = {
+  "Base Offense": "Base",
+  "Inside Isolation": "II",
+  "Look Inside": "LI",
+  "Low Post": "LP",
+  "Motion": "Mot",
+  "Outside Isolation": "OI",
+  "Patient": "Pat",
+  "Princeton": "Prc",
+  "Push the Ball": "PtB",
+  "Run and Gun": "RnG",
+};
+
+const MATRIX_DEFENSE_ABBREVIATIONS: Record<string, string> = {
+  "1-3-1 Zone": "1-3-1",
+  "2-3 Zone": "2-3",
+  "3-2 Zone": "3-2",
+  "Full Court Press": "FCP",
+  "Inside Box + 1": "IBox",
+  "Man to Man": "M2M",
+  "Man to man": "M2M",
+  "Outside Box + 1": "OBox",
+};
+const MATRIX_DEFENSE_CANONICAL_LABELS: Record<string, string> = {
+  "Man to man": "Man to Man",
+};
 
 export function GamePredictionPanel({
   currentTeamId,
@@ -249,7 +299,7 @@ export function GamePredictionPanel({
       reconcileSelectedOptions(current, teamAOffenseOptions),
     );
     setEnabledTeamADefenses((current) =>
-      reconcileSelectedOptions(current, teamADefenseOptions),
+      reconcileSelectedDefenseOptions(current, teamADefenseOptions),
     );
   }, [teamADefenseOptions, teamAOffenseOptions]);
 
@@ -258,7 +308,7 @@ export function GamePredictionPanel({
       reconcileSelectedOptions(current, teamBOffenseOptions),
     );
     setEnabledTeamBDefenses((current) =>
-      reconcileSelectedOptions(current, teamBDefenseOptions),
+      reconcileSelectedDefenseOptions(current, teamBDefenseOptions),
     );
   }, [teamBDefenseOptions, teamBOffenseOptions]);
 
@@ -659,13 +709,21 @@ export function GamePredictionPanel({
                         <table className="w-max min-w-full border-collapse text-left">
                           <thead className="bg-white">
                             <tr>
-                              <th className="sticky left-0 top-0 z-50 min-w-[14rem] border-b border-black/10 bg-white px-4 py-3 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]">
+                              <th
+                                className={cn(
+                                  "sticky left-0 top-0 z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                  MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                )}
+                              >
                                 <div className="grid gap-1">
                                   <span className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
                                     Rows
                                   </span>
-                                  <span className="text-sm font-semibold text-ink">
-                                    {selectedTeamALabel} tactics
+                                  <span
+                                    className="truncate text-sm font-semibold text-ink"
+                                    title={`${selectedTeamALabel} tactics`}
+                                  >
+                                    {selectedTeamALabel}
                                   </span>
                                 </div>
                               </th>
@@ -684,9 +742,17 @@ export function GamePredictionPanel({
                               </th>
                             </tr>
                             <tr>
-                              <th className="sticky left-0 top-[4.35rem] z-50 min-w-[14rem] border-b border-black/10 bg-white px-4 py-3 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]">
-                                <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                                  {selectedTeamALabel} offense groups
+                              <th
+                                className={cn(
+                                  "sticky left-0 top-[4.35rem] z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                  MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                )}
+                              >
+                                <span
+                                  className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
+                                  title={`${selectedTeamALabel} offense groups`}
+                                >
+                                  Off
                                 </span>
                               </th>
                               {teamBColumnGroups.map((group) => {
@@ -718,8 +784,11 @@ export function GamePredictionPanel({
                                       type="button"
                                     >
                                       <span className="flex items-center justify-between gap-3">
-                                        <span className="text-[0.75rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                                          {group.offense}
+                                        <span
+                                          className="whitespace-nowrap text-[0.75rem] font-bold tracking-[0.08em] text-ink-muted"
+                                          title={group.offense}
+                                        >
+                                          {abbreviateMatrixOffenseLabel(group.offense)}
                                         </span>
                                         <span
                                           aria-hidden="true"
@@ -739,16 +808,27 @@ export function GamePredictionPanel({
                               })}
                             </tr>
                             <tr>
-                              <th className="sticky left-0 top-[8.7rem] z-50 min-w-[14rem] border-b border-black/10 bg-white px-4 py-3 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]">
-                                <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                                  {selectedTeamBLabel} defense
+                              <th
+                                className={cn(
+                                  "sticky left-0 top-[8.7rem] z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                  MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                )}
+                              >
+                                <span
+                                  className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
+                                  title={`${selectedTeamBLabel} defense`}
+                                >
+                                  Def
                                 </span>
                               </th>
                               {teamBColumnGroups.map((group) =>
                                 group.expanded ? (
                                   group.pairs.map((pair) => (
                                     <th
-                                      className="sticky top-[8.7rem] z-30 min-w-[4.75rem] border-b border-black/10 bg-white px-2 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]"
+                                      className={cn(
+                                        "sticky top-[8.7rem] z-30 border-b border-black/10 bg-white px-1.5 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                        MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                      )}
                                       key={pair.pairId}
                                       style={{
                                         backgroundColor:
@@ -758,20 +838,22 @@ export function GamePredictionPanel({
                                       }}
                                     >
                                       <div className="grid gap-1">
-                                        <span className="text-[0.78rem] font-semibold leading-5 text-ink">
-                                          {pair.defense}
+                                        <span
+                                          className="inline-flex items-center justify-center gap-1 whitespace-nowrap text-[0.78rem] font-semibold leading-5 text-ink"
+                                          title={pair.defense}
+                                        >
+                                          <span>{abbreviateMatrixDefenseLabel(pair.defense)}</span>
+                                          {pair.estimated ? <EstimatedMatrixMarker /> : null}
                                         </span>
-                                        {pair.estimated ? (
-                                          <span className="text-[0.65rem] font-semibold text-note">
-                                            Estimated
-                                          </span>
-                                        ) : null}
                                       </div>
                                     </th>
                                   ))
                                 ) : (
                                   <th
-                                    className="sticky top-[8.7rem] z-30 min-w-[4.75rem] border-b border-black/10 bg-white px-2 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]"
+                                    className={cn(
+                                      "sticky top-[8.7rem] z-30 border-b border-black/10 bg-white px-1.5 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                      MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                    )}
                                     key={`${group.offense}-collapsed`}
                                   >
                                     <span className="text-[0.68rem] font-semibold text-ink-muted">
@@ -787,7 +869,10 @@ export function GamePredictionPanel({
                               <Fragment key={group.offense}>
                                 <tr>
                                   <th
-                                    className="sticky left-0 z-20 border-y border-black/10 bg-white px-4 py-3 text-left shadow-[1px_0_0_rgba(15,23,42,0.06)]"
+                                    className={cn(
+                                      "sticky left-0 z-20 border-y border-black/10 bg-white px-3 py-2.5 text-left shadow-[1px_0_0_rgba(15,23,42,0.06)]",
+                                      MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                    )}
                                     style={{
                                       backgroundColor:
                                         selectedTeamAPair?.offense === group.offense
@@ -809,8 +894,11 @@ export function GamePredictionPanel({
                                       type="button"
                                     >
                                       <span className="flex items-center justify-between gap-3">
-                                        <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                                          {selectedTeamALabel} offense
+                                        <span
+                                          className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
+                                          title={`${selectedTeamALabel} offense group`}
+                                        >
+                                          Off
                                         </span>
                                         <span
                                           aria-hidden="true"
@@ -820,12 +908,21 @@ export function GamePredictionPanel({
                                         </span>
                                       </span>
                                       <span className="text-sm font-semibold text-ink">
-                                        {group.offense}
+                                        <span title={group.offense}>
+                                          {abbreviateMatrixOffenseLabel(group.offense)}
+                                        </span>
                                       </span>
-                                      <span className="text-[0.7rem] leading-5 text-ink-muted">
+                                      <span
+                                        className="text-[0.68rem] leading-5 text-ink-muted"
+                                        title={
+                                          group.expanded
+                                            ? `${group.pairs.length} ${selectedTeamALabel} defenses`
+                                            : "Rows hidden"
+                                        }
+                                      >
                                         {group.expanded
-                                          ? `${group.pairs.length} ${selectedTeamALabel} defenses`
-                                          : "Rows hidden"}
+                                          ? `${group.pairs.length} def`
+                                          : "Hidden"}
                                       </span>
                                     </button>
                                   </th>
@@ -842,7 +939,10 @@ export function GamePredictionPanel({
                                       return (
                                         <tr key={teamAPair.pairId}>
                                           <th
-                                            className="sticky left-0 z-20 border-b border-black/10 bg-white px-4 py-2 text-left align-top shadow-[1px_0_0_rgba(15,23,42,0.06)]"
+                                            className={cn(
+                                              "sticky left-0 z-20 border-b border-black/10 bg-white px-3 py-2 text-left align-top shadow-[1px_0_0_rgba(15,23,42,0.06)]",
+                                              MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                            )}
                                             style={{
                                               backgroundColor: isSelectedRow
                                                 ? "#fff4ea"
@@ -850,17 +950,23 @@ export function GamePredictionPanel({
                                             }}
                                           >
                                             <div className="grid gap-1">
-                                              <span className="text-[0.68rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                                                {teamAPair.offense}
+                                              <span
+                                                className="text-[0.68rem] font-bold tracking-[0.08em] text-ink-muted"
+                                                title={teamAPair.offense}
+                                              >
+                                                {abbreviateMatrixOffenseLabel(teamAPair.offense)}
                                               </span>
-                                              <strong className="text-[0.82rem] leading-5 text-ink">
-                                                {teamAPair.defense}
-                                              </strong>
-                                              {teamAPair.estimated ? (
-                                                <span className="text-xs font-semibold text-note">
-                                                  Estimated
-                                                </span>
-                                              ) : null}
+                                              <span className="inline-flex items-center gap-1">
+                                                <strong
+                                                  className="text-[0.82rem] leading-5 text-ink"
+                                                  title={teamAPair.defense}
+                                                >
+                                                  {abbreviateMatrixDefenseLabel(teamAPair.defense)}
+                                                </strong>
+                                                {teamAPair.estimated ? (
+                                                  <EstimatedMatrixMarker className="mt-px" />
+                                                ) : null}
+                                              </span>
                                             </div>
                                           </th>
                                           {teamBColumnGroups.map((teamBGroup) =>
@@ -898,7 +1004,10 @@ export function GamePredictionPanel({
 
                                                 return (
                                                   <td
-                                                    className="border-b border-black/10 p-1 align-top"
+                                                    className={cn(
+                                                      "border-b border-black/10 p-1 align-top",
+                                                      MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                                    )}
                                                     key={`${teamBPair.pairId}-${teamAPair.pairId}`}
                                                   >
                                                     <button
@@ -954,7 +1063,10 @@ export function GamePredictionPanel({
                                               })
                                             ) : (
                                               <td
-                                                className="border-b border-black/10 bg-white p-1 align-top"
+                                                className={cn(
+                                                  "border-b border-black/10 bg-white p-1 align-top",
+                                                  MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                                )}
                                                 key={`${teamAPair.pairId}-${teamBGroup.offense}-collapsed`}
                                               >
                                                 <button
@@ -1558,18 +1670,20 @@ function formatAccessibleMatchLabel(match: AccessibleMatchSummary): string {
 
 function sortPairs(pairs: PredictionMatrixTacticPair[]) {
   const offenseOrder = new Map<string, number>(
-    GAME_PREDICTION_OFFENSE_OPTIONS.map((value, index) => [value, index]),
+    MATRIX_OFFENSE_SORT_ORDER.map((value, index) => [value, index]),
   );
   const defenseOrder = new Map<string, number>(
-    GAME_PREDICTION_DEFENSE_OPTIONS.map((value, index) => [value, index]),
+    MATRIX_DEFENSE_SORT_ORDER.map((value, index) => [value, index]),
   );
 
   return [...pairs].sort((left, right) => {
     return (
       (offenseOrder.get(left.offense) ?? Number.MAX_SAFE_INTEGER) -
         (offenseOrder.get(right.offense) ?? Number.MAX_SAFE_INTEGER) ||
-      (defenseOrder.get(left.defense) ?? Number.MAX_SAFE_INTEGER) -
-        (defenseOrder.get(right.defense) ?? Number.MAX_SAFE_INTEGER) ||
+      (defenseOrder.get(normalizeMatrixDefenseLabel(left.defense)) ??
+        Number.MAX_SAFE_INTEGER) -
+        (defenseOrder.get(normalizeMatrixDefenseLabel(right.defense)) ??
+          Number.MAX_SAFE_INTEGER) ||
       left.pairId.localeCompare(right.pairId)
     );
   });
@@ -1595,11 +1709,12 @@ function listUniquePairDefenses(pairs: readonly PredictionMatrixTacticPair[]) {
   const defenses: string[] = [];
 
   for (const pair of sortPairs([...pairs])) {
-    if (seen.has(pair.defense)) {
+    const normalizedDefense = normalizeMatrixDefenseLabel(pair.defense);
+    if (seen.has(normalizedDefense)) {
       continue;
     }
-    seen.add(pair.defense);
-    defenses.push(pair.defense);
+    seen.add(normalizedDefense);
+    defenses.push(normalizedDefense);
   }
 
   return defenses;
@@ -1613,8 +1728,10 @@ function filterPairsByDefenses(args: {
     return [];
   }
 
-  const visible = new Set(args.enabledDefenses);
-  return sortPairs([...args.pairs]).filter((pair) => visible.has(pair.defense));
+  const visible = new Set(args.enabledDefenses.map(normalizeMatrixDefenseLabel));
+  return sortPairs([...args.pairs]).filter((pair) =>
+    visible.has(normalizeMatrixDefenseLabel(pair.defense)),
+  );
 }
 
 function reconcileSelectedOptions(
@@ -1627,6 +1744,26 @@ function reconcileSelectedOptions(
 
   const filtered = current.filter((option) => allOptions.includes(option));
   return filtered.length ? filtered : [...allOptions];
+}
+
+function reconcileSelectedDefenseOptions(
+  current: readonly string[],
+  allOptions: readonly string[],
+): string[] {
+  if (!allOptions.length) {
+    return [];
+  }
+
+  const normalizedCurrent = Array.from(
+    new Set(current.map(normalizeMatrixDefenseLabel)),
+  );
+  const filtered = normalizedCurrent.filter((option) => allOptions.includes(option));
+
+  if (!filtered.length) {
+    return [...allOptions];
+  }
+
+  return allOptions.filter((option) => filtered.includes(option));
 }
 
 function toggleRequiredOption(
@@ -1924,6 +2061,19 @@ function formatCompactCellMargin(cell: PredictionMatrixCell | null) {
   return formatCellMargin(cell);
 }
 
+function normalizeMatrixDefenseLabel(defense: string) {
+  return MATRIX_DEFENSE_CANONICAL_LABELS[defense] ?? defense;
+}
+
+function abbreviateMatrixOffenseLabel(offense: string) {
+  return MATRIX_OFFENSE_ABBREVIATIONS[offense] ?? offense;
+}
+
+function abbreviateMatrixDefenseLabel(defense: string) {
+  const normalizedDefense = normalizeMatrixDefenseLabel(defense);
+  return MATRIX_DEFENSE_ABBREVIATIONS[normalizedDefense] ?? normalizedDefense;
+}
+
 function getPredictionCellHeatmapLevel(cell: PredictionMatrixCell | null) {
   if (!cell?.available || typeof cell.predictedPointDiff !== "number") {
     return null;
@@ -2009,6 +2159,19 @@ function renderMatrixResultDetail(args: {
   );
 }
 
+function EstimatedMatrixMarker({ className }: { className?: string }) {
+  return (
+    <span
+      aria-label="Estimated tactic pair"
+      className={cn(
+        "inline-block h-1.5 w-1.5 rounded-full bg-note shadow-[0_0_0_1px_rgba(194,65,12,0.18)]",
+        className,
+      )}
+      title="Estimated tactic pair"
+    />
+  );
+}
+
 function formatDate(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -2030,6 +2193,8 @@ function normalizeNumber(value: string, fallback: number) {
 }
 
 export const __testing = {
+  abbreviateMatrixDefenseLabel,
+  abbreviateMatrixOffenseLabel,
   buildOffenseGroups,
   filterPairsByDefenses,
   findExtremeVisibleCell,
@@ -2040,6 +2205,7 @@ export const __testing = {
   listUniquePairOffenses,
   listUniquePairDefenses,
   reconcileSelectedOptions,
+  reconcileSelectedDefenseOptions,
   resolveVisibleSelection,
   sortPairs,
   toggleExpandedOffense,

@@ -31,6 +31,37 @@ const pairFixtures: PredictionMatrixTacticPair[] = [
   },
 ] as PredictionMatrixTacticPair[];
 
+const customOrderFixtures: PredictionMatrixTacticPair[] = [
+  {
+    defense: "2-3 Zone",
+    estimated: false,
+    offense: "Inside Isolation",
+    pairId: "ii-23",
+    supportTier: "DIRECT",
+  },
+  {
+    defense: "Man to Man",
+    estimated: false,
+    offense: "Base Offense",
+    pairId: "base-m2m",
+    supportTier: "DIRECT",
+  },
+  {
+    defense: "Outside Box + 1",
+    estimated: false,
+    offense: "Push the Ball",
+    pairId: "ptb-obox",
+    supportTier: "DIRECT",
+  },
+  {
+    defense: "Full Court Press",
+    estimated: false,
+    offense: "Motion",
+    pairId: "mot-fcp",
+    supportTier: "DIRECT",
+  },
+] as PredictionMatrixTacticPair[];
+
 const teamAPairs: PredictionMatrixTacticPair[] = [
   {
     defense: "Man to Man",
@@ -207,6 +238,43 @@ test("prediction matrix pair sorting prioritizes offense before defense", () => 
   );
 });
 
+test("prediction matrix pair sorting follows the requested custom tactic order", () => {
+  assert.deepStrictEqual(
+    gamePredictionTesting
+      .sortPairs(customOrderFixtures)
+      .map((pair) => pair.pairId),
+    ["base-m2m", "ptb-obox", "mot-fcp", "ii-23"],
+  );
+});
+
+test("prediction matrix treats legacy 'Man to man' labels as M2M for ordering and abbreviations", () => {
+  const result = gamePredictionTesting.sortPairs([
+    {
+      defense: "3-2 Zone",
+      estimated: false,
+      offense: "Patient",
+      pairId: "patient-32",
+      supportTier: "DIRECT",
+    },
+    {
+      defense: "Man to man",
+      estimated: false,
+      offense: "Patient",
+      pairId: "patient-m2m-legacy",
+      supportTier: "DIRECT",
+    },
+  ] as PredictionMatrixTacticPair[]);
+
+  assert.deepStrictEqual(
+    result.map((pair) => pair.pairId),
+    ["patient-m2m-legacy", "patient-32"],
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixDefenseLabel("Man to man"),
+    "M2M",
+  );
+});
+
 test("prediction matrix builds offense groups with expansion state", () => {
   assert.deepStrictEqual(
     gamePredictionTesting.buildOffenseGroups({
@@ -251,6 +319,24 @@ test("prediction matrix selection reconciliation falls back to all options when 
       "Run and Gun",
     ]),
     ["Patient", "Run and Gun"],
+  );
+});
+
+test("prediction matrix defense reconciliation upgrades legacy labels to canonical M2M", () => {
+  assert.deepStrictEqual(
+    gamePredictionTesting.reconcileSelectedDefenseOptions(
+      ["3-2 Zone", "Man to man", "2-3 Zone"],
+      [
+        "Man to Man",
+        "3-2 Zone",
+        "1-3-1 Zone",
+        "2-3 Zone",
+        "Outside Box + 1",
+        "Inside Box + 1",
+        "Full Court Press",
+      ],
+    ),
+    ["Man to Man", "3-2 Zone", "2-3 Zone"],
   );
 });
 
@@ -408,6 +494,41 @@ test("prediction matrix compact cell labels use a dash for unavailable cells", (
       teamAPairId: "a-patient-m2m",
     }),
     "+6.0",
+  );
+});
+
+test("prediction matrix uses compact tactic abbreviations in dense column headers", () => {
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixOffenseLabel("Run and Gun"),
+    "RnG",
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixOffenseLabel("Push the Ball"),
+    "PtB",
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixOffenseLabel("Outside Isolation"),
+    "OI",
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixOffenseLabel("Inside Isolation"),
+    "II",
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixOffenseLabel("Princeton"),
+    "Prc",
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixDefenseLabel("Inside Box + 1"),
+    "IBox",
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixDefenseLabel("Man to Man"),
+    "M2M",
+  );
+  assert.equal(
+    gamePredictionTesting.abbreviateMatrixDefenseLabel("Outside Box + 1"),
+    "OBox",
   );
 });
 
