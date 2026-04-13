@@ -903,7 +903,7 @@ export function GamePredictionPanel({
                                                   >
                                                     <button
                                                       className={cn(
-                                                        "grid min-h-[3.35rem] w-full gap-1 rounded-[0.8rem] border px-2 py-2 text-left transition",
+                                                        "relative flex min-h-[3.35rem] w-full items-center justify-center rounded-[0.8rem] border px-2 py-2 text-center transition",
                                                         isSelected &&
                                                           "ring-2 ring-accent/35",
                                                       )}
@@ -927,7 +927,7 @@ export function GamePredictionPanel({
                                                       {isRecommended ||
                                                       isBest ||
                                                       isWorst ? (
-                                                        <span className="flex flex-wrap gap-1">
+                                                        <span className="pointer-events-none absolute inset-x-1 top-1 flex flex-wrap justify-center gap-1">
                                                           {isRecommended ? (
                                                             <span className="inline-flex rounded-full border border-note-border bg-note-bg px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-note">
                                                               Rec
