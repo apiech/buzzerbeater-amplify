@@ -1,10 +1,16 @@
 import type {
   GameDayRecapRecord,
+  GameDayRecapCoveragePayload,
+  GameDayRecapResultPayload,
+  LeagueDateRecapHistoryRecord,
+  LeagueGameDayRecapHistoryRecord,
   LeagueGameDayRecapRecord,
   RecapHistoryKind,
   RecapHistoryRecord,
+  SingleGameRecapHistoryRecord,
   SingleGameSummaryRecord,
 } from "@/app/types";
+import { safeJsonParse } from "@/lib/json-parsing";
 
 export type RecapStreamState = {
   buffer: RecapHistoryRecord[];
@@ -141,73 +147,127 @@ export function compareRecapHistoryRecord(
 
 export function adaptLeagueDateRecap(
   record: GameDayRecapRecord,
-): RecapHistoryRecord {
+): LeagueDateRecapHistoryRecord {
+  const normalized = normalizeGameDayRecapRecord(record);
   return {
-    completedAt: record.completedAt ?? null,
-    coverageJson: record.coverageJson,
-    error: record.error ?? null,
-    gameDate: record.gameDate,
+    completedAt: normalized.completedAt ?? null,
+    coverageJson: normalized.coverageJson ?? null,
+    error: normalized.error ?? null,
+    gameDate: normalized.gameDate,
     gameDayNumber: null,
     kind: "LEAGUE_DATE",
-    leagueId: record.leagueId,
-    leagueName: record.leagueName ?? null,
+    leagueId: normalized.leagueId,
+    leagueName: normalized.leagueName ?? null,
     matchId: null,
-    requestJson: record.requestJson,
-    requestedAt: record.requestedAt,
-    resultJson: record.resultJson,
-    season: record.season ?? null,
-    selectionKey: toRecapSelectionKey("LEAGUE_DATE", record.targetKey),
-    status: record.status,
-    targetKey: record.targetKey,
-    updatedAt: record.updatedAt,
+    requestJson: normalized.requestJson,
+    requestedAt: normalized.requestedAt,
+    resultJson: normalized.resultJson ?? null,
+    season: normalized.season ?? null,
+    selectionKey: toRecapSelectionKey("LEAGUE_DATE", normalized.targetKey),
+    status: normalized.status,
+    targetKey: normalized.targetKey,
+    updatedAt: normalized.updatedAt,
   };
 }
 
 export function adaptLeagueGameDayRecap(
   record: LeagueGameDayRecapRecord,
-): RecapHistoryRecord {
+): LeagueGameDayRecapHistoryRecord {
+  const normalized = normalizeLeagueGameDayRecapRecord(record);
   return {
-    completedAt: record.completedAt ?? null,
-    coverageJson: record.coverageJson,
-    error: record.error ?? null,
+    completedAt: normalized.completedAt ?? null,
+    coverageJson: normalized.coverageJson ?? null,
+    error: normalized.error ?? null,
     gameDate: null,
-    gameDayNumber: record.gameDayNumber,
+    gameDayNumber: normalized.gameDayNumber,
     kind: "LEAGUE_GAME_DAY",
-    leagueId: record.leagueId,
-    leagueName: record.leagueName ?? null,
+    leagueId: normalized.leagueId,
+    leagueName: normalized.leagueName ?? null,
     matchId: null,
-    requestJson: record.requestJson,
-    requestedAt: record.requestedAt,
-    resultJson: record.resultJson,
-    season: record.season ?? null,
-    selectionKey: toRecapSelectionKey("LEAGUE_GAME_DAY", record.targetKey),
-    status: record.status,
-    targetKey: record.targetKey,
-    updatedAt: record.updatedAt,
+    requestJson: normalized.requestJson,
+    requestedAt: normalized.requestedAt,
+    resultJson: normalized.resultJson ?? null,
+    season: normalized.season ?? null,
+    selectionKey: toRecapSelectionKey("LEAGUE_GAME_DAY", normalized.targetKey),
+    status: normalized.status,
+    targetKey: normalized.targetKey,
+    updatedAt: normalized.updatedAt,
   };
 }
 
 export function adaptSingleGameSummary(
   record: SingleGameSummaryRecord,
-): RecapHistoryRecord {
+): SingleGameRecapHistoryRecord {
+  const normalized = normalizeSingleGameSummaryRecord(record);
   return {
-    completedAt: record.completedAt ?? null,
-    coverageJson: record.coverageJson,
-    error: record.error ?? null,
-    gameDate: record.gameDate ?? null,
+    completedAt: normalized.completedAt ?? null,
+    coverageJson: normalized.coverageJson ?? null,
+    error: normalized.error ?? null,
+    gameDate: normalized.gameDate ?? null,
     gameDayNumber: null,
     kind: "SINGLE_GAME",
-    leagueId: record.leagueId ?? null,
-    leagueName: record.leagueName ?? null,
-    matchId: record.matchId,
-    requestJson: record.requestJson,
-    requestedAt: record.requestedAt,
-    resultJson: record.resultJson,
-    season: record.season ?? null,
-    selectionKey: toRecapSelectionKey("SINGLE_GAME", record.targetKey),
-    status: record.status,
-    targetKey: record.targetKey,
-    updatedAt: record.updatedAt,
+    leagueId: normalized.leagueId ?? null,
+    leagueName: normalized.leagueName ?? null,
+    matchId: normalized.matchId,
+    requestJson: normalized.requestJson,
+    requestedAt: normalized.requestedAt,
+    resultJson: normalized.resultJson ?? null,
+    season: normalized.season ?? null,
+    selectionKey: toRecapSelectionKey("SINGLE_GAME", normalized.targetKey),
+    status: normalized.status,
+    targetKey: normalized.targetKey,
+    updatedAt: normalized.updatedAt,
+  };
+}
+
+export function normalizeGameDayRecapRecord(
+  record: GameDayRecapRecord,
+): GameDayRecapRecord {
+  return {
+    ...record,
+    coverageJson: normalizeRecapCoverage(record.coverageJson),
+    requestJson: {
+      gameDate: normalizeDateString(readLegacyField(record.requestJson)?.gameDate) ?? record.gameDate,
+      leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
+      mode: "FULL_SLATE",
+    },
+    resultJson: normalizeRecapResult(record.resultJson),
+  };
+}
+
+export function normalizeLeagueGameDayRecapRecord(
+  record: LeagueGameDayRecapRecord,
+): LeagueGameDayRecapRecord {
+  return {
+    ...record,
+    coverageJson: normalizeRecapCoverage(record.coverageJson),
+    requestJson: {
+      gameDayNumber:
+        asFiniteNumber(readLegacyField(record.requestJson)?.gameDayNumber) ??
+        record.gameDayNumber,
+      leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
+      mode: "LEAGUE_GAME_DAY",
+      season:
+        asFiniteNumber(readLegacyField(record.requestJson)?.season) ??
+        record.season ??
+        null,
+    },
+    resultJson: normalizeRecapResult(record.resultJson),
+  };
+}
+
+export function normalizeSingleGameSummaryRecord(
+  record: SingleGameSummaryRecord,
+): SingleGameSummaryRecord {
+  return {
+    ...record,
+    coverageJson: normalizeRecapCoverage(record.coverageJson),
+    requestJson: {
+      matchId:
+        asNonEmptyString(readLegacyField(record.requestJson)?.matchId) ?? record.matchId,
+      mode: "SINGLE_GAME",
+    },
+    resultJson: normalizeRecapResult(record.resultJson),
   };
 }
 
@@ -216,4 +276,138 @@ export function toRecapSelectionKey(
   targetKey: string,
 ): string {
   return `${kind}:${targetKey}`;
+}
+
+function normalizeRecapCoverage(
+  value: unknown,
+): GameDayRecapCoveragePayload | null {
+  const record = readLegacyField(value);
+  if (!record) {
+    return null;
+  }
+
+  const availableGames = asFiniteNumber(record.availableGames);
+  const partial = asBoolean(record.partial);
+  const requestedGames = asFiniteNumber(record.requestedGames);
+  const missingGames = Array.isArray(record.missingGames)
+    ? record.missingGames
+        .map((entry) => {
+          const source = toRecord(entry);
+          const awayTeamName = asNonEmptyString(source?.awayTeamName);
+          const homeTeamName = asNonEmptyString(source?.homeTeamName);
+          const matchId = asNonEmptyString(source?.matchId);
+          const reason = asNonEmptyString(source?.reason);
+          if (!awayTeamName || !homeTeamName || !matchId || !reason) {
+            return null;
+          }
+
+          return {
+            awayTeamName,
+            homeTeamName,
+            matchId,
+            reason,
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is GameDayRecapCoveragePayload["missingGames"][number] =>
+            Boolean(entry),
+        )
+    : [];
+
+  if (
+    availableGames === null ||
+    partial === null ||
+    requestedGames === null
+  ) {
+    return null;
+  }
+
+  return {
+    availableGames,
+    missingGames,
+    partial,
+    requestedGames,
+  };
+}
+
+function normalizeRecapResult(
+  value: unknown,
+): GameDayRecapResultPayload | null {
+  const record = readLegacyField(value);
+  const summary = toRecord(record?.summary);
+  const games = Array.isArray(record?.games)
+    ? record.games
+        .flatMap((entry) => {
+          const source = toRecord(entry);
+          const headline = asNonEmptyString(source?.headline);
+          const matchId = asNonEmptyString(source?.matchId);
+          const writeup = asNonEmptyString(source?.writeup);
+          if (!headline || !matchId || !writeup) {
+            return [];
+          }
+
+          return [{
+            evidenceTags: toStringArray(source?.evidenceTags),
+            headline,
+            matchId,
+            surpriseFactor: asFiniteNumber(source?.surpriseFactor),
+            writeup,
+          }];
+        })
+    : [];
+
+  const headline = asNonEmptyString(summary?.headline);
+  const lede = asNonEmptyString(summary?.lede);
+  if (!summary || !headline || !lede || games.length === 0) {
+    return null;
+  }
+
+  return {
+    games,
+    summary: {
+      gameOfTheDayMatchId: asNonEmptyString(summary.gameOfTheDayMatchId),
+      gameOfTheDaySurpriseFactor: asFiniteNumber(summary.gameOfTheDaySurpriseFactor),
+      headline,
+      lede,
+    },
+  };
+}
+
+function readLegacyField(value: unknown): Record<string, unknown> | null {
+  const raw =
+    typeof value === "string"
+      ? safeJsonParse(value)
+      : value;
+  return toRecord(raw);
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function normalizeDateString(value: unknown): string | null {
+  const raw = asNonEmptyString(value);
+  return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { z } from "zod";
+
 import type {
   OpponentForecastScenario,
   OpponentForecastSnapshot,
@@ -17,8 +19,10 @@ import {
   asOptionalString,
   toRecord,
 } from "@/app/prediction-parsing";
+import { parseLegacyJsonField } from "@/lib/json-parsing";
 
 export const PREDICTION_DRAFT_STORAGE_KEY = "bb.predictionDraft.v2";
+const predictionDraftStorageSchema = z.object({}).passthrough();
 
 export function createDefaultPredictionInput(): PredictionInput {
   return {
@@ -204,12 +208,11 @@ export function readPredictionDraftFromStorage(
     return null;
   }
 
-  try {
-    const parsed = JSON.parse(raw) as Partial<PredictionDraftState>;
-    return reconcilePredictionDraft(context, parsed);
-  } catch {
-    return null;
-  }
+  const parsed = parseLegacyJsonField(predictionDraftStorageSchema, raw);
+  return reconcilePredictionDraft(
+    context,
+    (parsed as Partial<PredictionDraftState> | null) ?? null,
+  );
 }
 
 export function writePredictionDraftToStorage(

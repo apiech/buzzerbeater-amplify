@@ -21,6 +21,7 @@ type BillingBackend = {
   createBillingCheckoutSession: FunctionResource;
   createBillingPortalSession: FunctionResource;
   createStack(name: string): Stack;
+  evaluatePredictionMatrix: FunctionResource;
   gameDayRecapSubmit: FunctionResource;
   getBillingSummary: FunctionResource;
   opponentForecastSubmit: FunctionResource;
@@ -39,6 +40,10 @@ export function configureBillingIntegration(
     String(config.commercialModeEnabled),
   );
   backend.predictionSubmit.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.evaluatePredictionMatrix.addEnvironment(
     "COMMERCIAL_MODE_ENABLED",
     String(config.commercialModeEnabled),
   );
@@ -73,6 +78,10 @@ export function configureBillingIntegration(
       config.defaultPlanId,
     );
     backend.predictionSubmit.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      config.defaultPlanId,
+    );
+    backend.evaluatePredictionMatrix.addEnvironment(
       "BILLING_DEFAULT_PLAN",
       config.defaultPlanId,
     );

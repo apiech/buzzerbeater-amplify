@@ -32,6 +32,7 @@ import type {
   PredictionDraftState,
   PredictionGridCell,
   PredictionPanelContext,
+  PredictionSubmissionRequest,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
@@ -160,7 +161,8 @@ export function PredictionPanel({
     },
   });
   const submitPredictionMutation = useMutation({
-    mutationFn: (request: unknown) => submitPredictionJobMutation({ request }),
+    mutationFn: (request: PredictionSubmissionRequest) =>
+      submitPredictionJobMutation({ request }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
         queryKey: workspaceQueryKeys.currentPrediction,

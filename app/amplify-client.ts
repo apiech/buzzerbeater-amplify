@@ -31,19 +31,20 @@ type AmplifyLikeResult<TData> = {
   nextToken?: string | null;
 };
 
-type JsonObject = Record<string, unknown>;
 type ReadOperationName =
   | "getCurrentBbConnection"
   | "getCurrentPrediction"
   | "getOperationsActivity"
   | "getRecapHistory";
 type QueryOperationName =
+  | "evaluatePredictionMatrix"
   | "evaluateLineupHelper"
   | "getBillingSummary"
   | "getHomeWorkspace"
   | "getLeagueHistory"
   | "getLeagueIntel"
   | "getLatestNextGameRecommendation"
+  | "getNextGamePlannerDetail"
   | "getLatestOpponentForecast"
   | "getLineupHelperWorkspace"
   | "getMatchBoxscoreDetails"
@@ -54,6 +55,7 @@ type QueryOperationName =
   | "getSalaryProjection"
   | "getScoutSchedule"
   | "getScoutTeamSummary"
+  | "listAccessibleMatches"
   | "listMyBillingPayments"
   | "optimizeLineupHelper";
 type MutationOperationName =
@@ -76,6 +78,8 @@ type MutationOperationName =
   | "submitSingleGameSummary";
 type OperationResult<TName extends QueryOperationName | MutationOperationName> =
   NonNullable<Schema[TName]["returnType"]>;
+type OperationInput<TName extends QueryOperationName | MutationOperationName> =
+  Schema[TName] extends { args: infer TArgs } ? TArgs : never;
 type ReadResult<TName extends ReadOperationName> =
   TName extends "getCurrentBbConnection"
     ? BbConnectionRecord | null
@@ -85,6 +89,16 @@ type ReadResult<TName extends ReadOperationName> =
         ? OperationsActivity
         : TName extends "getRecapHistory"
           ? PaginatedResult<RecapHistoryRecord>
+          : never;
+type ReadInput<TName extends ReadOperationName> =
+  TName extends "getCurrentBbConnection"
+    ? undefined
+    : TName extends "getCurrentPrediction"
+      ? undefined
+      : TName extends "getOperationsActivity"
+        ? { limit?: number }
+        : TName extends "getRecapHistory"
+          ? { limit?: number; nextToken?: string | null }
           : never;
 
 async function requestOperation<TData>(
@@ -175,7 +189,7 @@ function readErrorMessage(payload: unknown): string | null {
 
 function requestRead<TName extends ReadOperationName>(
   name: TName,
-  input?: JsonObject,
+  input?: ReadInput<TName>,
 ) {
   return requestOperation<ReadResult<TName>>(
     `/api/app/reads/${encodeURIComponent(name)}`,
@@ -188,7 +202,7 @@ function requestRead<TName extends ReadOperationName>(
 
 function requestQuery<TName extends QueryOperationName>(
   name: TName,
-  input?: JsonObject,
+  input?: OperationInput<TName>,
 ) {
   return requestOperation<OperationResult<TName>>(
     `/api/app/queries/${encodeURIComponent(name)}`,
@@ -201,7 +215,7 @@ function requestQuery<TName extends QueryOperationName>(
 
 function requestMutation<TName extends MutationOperationName>(
   name: TName,
-  input?: JsonObject,
+  input?: OperationInput<TName>,
 ) {
   return requestOperation<OperationResult<TName>>(
     `/api/app/mutations/${encodeURIComponent(name)}`,
@@ -224,70 +238,103 @@ export const client = {
   mutations: {
     clearMyTeamHighlightsData: () =>
       requestMutation("clearMyTeamHighlightsData"),
-    connectBbAccount: (input: JsonObject) =>
+    connectBbAccount: (input: OperationInput<"connectBbAccount">) =>
       requestMutation("connectBbAccount", input),
-    createBillingCheckoutSession: (input?: JsonObject) =>
+    createBillingCheckoutSession: (
+      input?: OperationInput<"createBillingCheckoutSession">,
+    ) =>
       requestMutation("createBillingCheckoutSession", input),
-    createBillingLifetimeCheckoutSession: (input?: JsonObject) =>
+    createBillingLifetimeCheckoutSession: (
+      input?: OperationInput<"createBillingLifetimeCheckoutSession">,
+    ) =>
       requestMutation("createBillingLifetimeCheckoutSession", input),
-    createBillingPortalSession: (input?: JsonObject) =>
+    createBillingPortalSession: (
+      input?: OperationInput<"createBillingPortalSession">,
+    ) =>
       requestMutation("createBillingPortalSession", input),
     disconnectBbAccount: () => requestMutation("disconnectBbAccount"),
     refreshWorkspace: () => requestMutation("refreshWorkspace"),
-    setBbLeagueTimeZone: (input: JsonObject) =>
+    setBbLeagueTimeZone: (input: OperationInput<"setBbLeagueTimeZone">) =>
       requestMutation("setBbLeagueTimeZone", input),
-    submitGameDayRecap: (input: JsonObject) =>
+    submitGameDayRecap: (input: OperationInput<"submitGameDayRecap">) =>
       requestMutation("submitGameDayRecap", input),
     submitRivalsBackfill: () => requestMutation("submitRivalsBackfill"),
-    submitLeagueHistoryBackfill: (input?: JsonObject) =>
+    submitLeagueHistoryBackfill: (
+      input?: OperationInput<"submitLeagueHistoryBackfill">,
+    ) =>
       requestMutation("submitLeagueHistoryBackfill", input),
-    submitLeagueGameDayRecap: (input: JsonObject) =>
+    submitLeagueGameDayRecap: (
+      input: OperationInput<"submitLeagueGameDayRecap">,
+    ) =>
       requestMutation("submitLeagueGameDayRecap", input),
     submitMyTeamHighlightsScan: () =>
       requestMutation("submitMyTeamHighlightsScan"),
-    submitNextGameRecommendationJob: (input: JsonObject) =>
+    submitNextGameRecommendationJob: (
+      input: OperationInput<"submitNextGameRecommendationJob">,
+    ) =>
       requestMutation("submitNextGameRecommendationJob", input),
-    submitOpponentForecastJob: (input: JsonObject) =>
+    submitOpponentForecastJob: (
+      input: OperationInput<"submitOpponentForecastJob">,
+    ) =>
       requestMutation("submitOpponentForecastJob", input),
-    submitPredictionJob: (input: JsonObject) =>
+    submitPredictionJob: (input: OperationInput<"submitPredictionJob">) =>
       requestMutation("submitPredictionJob", input),
-    submitSingleGameSummary: (input: JsonObject) =>
+    submitSingleGameSummary: (input: OperationInput<"submitSingleGameSummary">) =>
       requestMutation("submitSingleGameSummary", input),
   },
   queries: {
-    evaluateLineupHelper: (input: JsonObject) =>
+    evaluatePredictionMatrix: (
+      input: OperationInput<"evaluatePredictionMatrix">,
+    ) =>
+      requestQuery("evaluatePredictionMatrix", input),
+    evaluateLineupHelper: (input: OperationInput<"evaluateLineupHelper">) =>
       requestQuery("evaluateLineupHelper", input),
     getBillingSummary: () => requestQuery("getBillingSummary"),
-    getHomeWorkspace: (input?: JsonObject) =>
+    getHomeWorkspace: (input?: OperationInput<"getHomeWorkspace">) =>
       requestQuery("getHomeWorkspace", input),
-    getLeagueHistory: (input?: JsonObject) =>
+    getLeagueHistory: (input?: OperationInput<"getLeagueHistory">) =>
       requestQuery("getLeagueHistory", input),
-    getLeagueIntel: (input?: JsonObject) =>
+    getLeagueIntel: (input?: OperationInput<"getLeagueIntel">) =>
       requestQuery("getLeagueIntel", input),
-    getLatestNextGameRecommendation: (input: JsonObject) =>
+    getLatestNextGameRecommendation: (
+      input: OperationInput<"getLatestNextGameRecommendation">,
+    ) =>
       requestQuery("getLatestNextGameRecommendation", input),
-    getLatestOpponentForecast: (input: JsonObject) =>
+    getNextGamePlannerDetail: (
+      input: OperationInput<"getNextGamePlannerDetail">,
+    ) =>
+      requestQuery("getNextGamePlannerDetail", input),
+    getLatestOpponentForecast: (
+      input: OperationInput<"getLatestOpponentForecast">,
+    ) =>
       requestQuery("getLatestOpponentForecast", input),
-    getLineupHelperWorkspace: (input?: JsonObject) =>
+    getLineupHelperWorkspace: (
+      input?: OperationInput<"getLineupHelperWorkspace">,
+    ) =>
       requestQuery("getLineupHelperWorkspace", input),
-    getMatchBoxscoreDetails: (input: JsonObject) =>
+    getMatchBoxscoreDetails: (
+      input: OperationInput<"getMatchBoxscoreDetails">,
+    ) =>
       requestQuery("getMatchBoxscoreDetails", input),
-    getMyTeamHighlights: (input: JsonObject) =>
+    getMyTeamHighlights: (input: OperationInput<"getMyTeamHighlights">) =>
       requestQuery("getMyTeamHighlights", input),
-    getPlayerLab: (input?: JsonObject) => requestQuery("getPlayerLab", input),
-    getPlayerTrend: (input: JsonObject) =>
+    getPlayerLab: (input?: OperationInput<"getPlayerLab">) =>
+      requestQuery("getPlayerLab", input),
+    getPlayerTrend: (input: OperationInput<"getPlayerTrend">) =>
       requestQuery("getPlayerTrend", input),
-    getRivalsWorkspace: (input?: JsonObject) =>
+    getRivalsWorkspace: (input?: OperationInput<"getRivalsWorkspace">) =>
       requestQuery("getRivalsWorkspace", input),
-    getSalaryProjection: (input: JsonObject) =>
+    getSalaryProjection: (input: OperationInput<"getSalaryProjection">) =>
       requestQuery("getSalaryProjection", input),
-    getScoutSchedule: (input?: JsonObject) =>
+    getScoutSchedule: (input?: OperationInput<"getScoutSchedule">) =>
       requestQuery("getScoutSchedule", input),
-    getScoutTeamSummary: (input?: JsonObject) =>
+    getScoutTeamSummary: (input?: OperationInput<"getScoutTeamSummary">) =>
       requestQuery("getScoutTeamSummary", input),
-    listMyBillingPayments: (input?: JsonObject) =>
+    listAccessibleMatches: (input?: OperationInput<"listAccessibleMatches">) =>
+      requestQuery("listAccessibleMatches", input),
+    listMyBillingPayments: (input?: OperationInput<"listMyBillingPayments">) =>
       requestQuery("listMyBillingPayments", input),
-    optimizeLineupHelper: (input: JsonObject) =>
+    optimizeLineupHelper: (input: OperationInput<"optimizeLineupHelper">) =>
       requestQuery("optimizeLineupHelper", input),
   },
 };

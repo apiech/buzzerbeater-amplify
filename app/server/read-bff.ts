@@ -1,3 +1,5 @@
+import { decodeAwsJsonFields } from "@/amplify/data/_backend/awsjson";
+import { readWorkspaceCachePayload } from "@/amplify/data/_backend/workspace-cache";
 import { getServerDataClient } from "@/app/server/amplify-server";
 import {
   adaptLeagueDateRecap,
@@ -7,6 +9,9 @@ import {
   encodeRecapHistoryToken,
   hasMoreRecapHistory,
   mergeRecapHistoryStreams,
+  normalizeGameDayRecapRecord,
+  normalizeLeagueGameDayRecapRecord,
+  normalizeSingleGameSummaryRecord,
   type RecapHistoryCursor,
   type RecapStreamState,
   toRecapSelectionKey,
@@ -145,7 +150,9 @@ async function getCurrentBbConnection(
   const serverDataClient = await runtime.getServerDataClient();
   const result = await serverDataClient.models.BbConnection.get({ userId });
   return {
-    data: result.data ?? null,
+    data: result.data
+      ? normalizeCurrentBbConnectionRecord(result.data as Record<string, unknown>)
+      : null,
     errors: result.errors,
   };
 }
@@ -198,10 +205,14 @@ async function getOperationsActivity(
 
   return {
     data: {
-      gameDayRecaps: toArray(gameDayRecaps.data),
+      gameDayRecaps: toArray(gameDayRecaps.data).map(normalizeGameDayRecapRecord),
       currentPrediction: currentPrediction.data ?? null,
-      leagueGameDayRecaps: toArray(leagueGameDayRecaps.data),
-      singleGameSummaries: toArray(singleGameSummaries.data),
+      leagueGameDayRecaps: toArray(leagueGameDayRecaps.data).map(
+        normalizeLeagueGameDayRecapRecord,
+      ),
+      singleGameSummaries: toArray(singleGameSummaries.data).map(
+        normalizeSingleGameSummaryRecord,
+      ),
       syncRuns: toArray(syncRuns.data),
     },
   };
@@ -241,7 +252,9 @@ async function getRecapHistory(
           );
         return {
           nextToken: result.nextToken ?? null,
-          items: toArray(result.data).map(adaptLeagueDateRecap),
+          items: toArray(result.data)
+            .map(normalizeGameDayRecapRecord)
+            .map(adaptLeagueDateRecap),
           errors: result.errors,
         };
       }),
@@ -257,7 +270,9 @@ async function getRecapHistory(
           );
         return {
           nextToken: result.nextToken ?? null,
-          items: toArray(result.data).map(adaptLeagueGameDayRecap),
+          items: toArray(result.data)
+            .map(normalizeLeagueGameDayRecapRecord)
+            .map(adaptLeagueGameDayRecap),
           errors: result.errors,
         };
       }),
@@ -273,7 +288,9 @@ async function getRecapHistory(
           );
         return {
           nextToken: result.nextToken ?? null,
-          items: toArray(result.data).map(adaptSingleGameSummary),
+          items: toArray(result.data)
+            .map(normalizeSingleGameSummaryRecord)
+            .map(adaptSingleGameSummary),
           errors: result.errors,
         };
       }),
@@ -383,6 +400,24 @@ function readToken(input: Record<string, unknown> | undefined): string | null {
 
 function toArray<TItem>(value: ReadonlyArray<TItem> | null | undefined): TItem[] {
   return value ? [...value] : [];
+}
+
+function normalizeCurrentBbConnectionRecord(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const decoded = decodeAwsJsonFields("BbConnection", record);
+
+  return {
+    ...decoded,
+    profileJson: toRecord(decoded.profileJson) ?? null,
+    workspaceCacheJson: readWorkspaceCachePayload(decoded.workspaceCacheJson),
+  };
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function assembleCurrentPredictionPreview(

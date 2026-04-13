@@ -550,7 +550,7 @@ export function RecapPanel({ context }: RecapPanelProps) {
                   <Panel as="article" padding="sm" variant="glass">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusBadge tone="note">Game of the day</StatusBadge>
-                      {selectedGameOfTheDay.surpriseFactor !== null ? (
+                      {selectedGameOfTheDay.surpriseFactor != null ? (
                         <StatusBadge tone="neutral">
                           Surprise factor:{" "}
                           {formatSurpriseFactor(
@@ -576,10 +576,10 @@ export function RecapPanel({ context }: RecapPanelProps) {
                       variant="glass"
                     >
                       <SectionHeading title={game.headline} titleAs="h5" />
-                      {game.surpriseFactor !== null ||
+                      {game.surpriseFactor != null ||
                       game.matchId === selectedGameOfTheDay?.matchId ? (
                         <div className="mb-3 flex flex-wrap gap-2">
-                          {game.surpriseFactor !== null ? (
+                          {game.surpriseFactor != null ? (
                             <StatusBadge tone="neutral">
                               Surprise factor:{" "}
                               {formatSurpriseFactor(game.surpriseFactor)}
@@ -735,7 +735,7 @@ function describeRecapRecord(record: RecapHistoryRecord): string {
       return `${record.leagueName ?? "Single game"}${record.gameDate ? ` • ${record.gameDate}` : ""}`;
     case "LEAGUE_DATE":
     default:
-      return `${record.leagueName ?? "League"} • ${record.gameDate ?? "date unavailable"}`;
+      return `${record.leagueName ?? "League"} • ${record.gameDate}`;
   }
 }
 
@@ -854,104 +854,21 @@ export function hasActiveRecapHistory(
 function toGameDayRecapCoverage(
   value: unknown,
 ): GameDayRecapCoveragePayload | null {
-  const record = parseJsonRecord(value);
-  const missingGames = Array.isArray(record?.missingGames)
-    ? record.missingGames
-    : null;
-  const availableGames = asNumber(record?.availableGames);
-  const requestedGames = asNumber(record?.requestedGames);
-
-  if (!record || !missingGames) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
-  return {
-    availableGames,
-    missingGames: missingGames
-      .map((entry) => parseJsonRecord(entry))
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
-      .map((entry) => ({
-        awayTeamName: asString(entry.awayTeamName) ?? "Away team",
-        homeTeamName: asString(entry.homeTeamName) ?? "Home team",
-        matchId: asString(entry.matchId) ?? "unknown",
-        reason: asString(entry.reason) ?? "coverage unavailable",
-      })),
-    partial: Boolean(record.partial),
-    requestedGames,
-  };
+  return value as GameDayRecapCoveragePayload;
 }
 
 function toGameDayRecapResult(
   value: unknown,
 ): GameDayRecapResultPayload | null {
-  const record = parseJsonRecord(value);
-  const summary = parseJsonRecord(record?.summary);
-  const games = Array.isArray(record?.games) ? record.games : null;
-
-  if (!summary || !games) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
 
-  const headline = asString(summary.headline);
-  const lede = asString(summary.lede);
-  if (!headline || !lede) {
-    return null;
-  }
-
-  return {
-    games: games
-      .map((game) => parseJsonRecord(game))
-      .filter((game): game is Record<string, unknown> => Boolean(game))
-      .map((game) => ({
-        evidenceTags: Array.isArray(game.evidenceTags)
-          ? game.evidenceTags.filter(
-              (tag): tag is string => typeof tag === "string",
-            )
-          : [],
-        headline: asString(game.headline) ?? "Untitled game recap",
-        matchId: asString(game.matchId) ?? "unknown",
-        surpriseFactor: asNullableNumber(game.surpriseFactor),
-        writeup: asString(game.writeup) ?? "",
-      })),
-    summary: {
-      gameOfTheDayMatchId: asString(summary.gameOfTheDayMatchId),
-      gameOfTheDaySurpriseFactor: asNullableNumber(
-        summary.gameOfTheDaySurpriseFactor,
-      ),
-      headline,
-      lede,
-    },
-  };
-}
-
-function parseJsonRecord(value: unknown): Record<string, unknown> | null {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    try {
-      return parseJsonRecord(JSON.parse(value));
-    } catch {
-      return null;
-    }
-  }
-
-  return typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function asNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function asNullableNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  return value as GameDayRecapResultPayload;
 }
 
 function readQueryError(error: unknown): string {
@@ -996,7 +913,7 @@ function formatRecapForumPost(
     `[quote]${escapeForumText(result.summary.lede)}[/quote]`,
   ];
 
-  if (gameOfTheDay && gameOfTheDay.surpriseFactor !== null) {
+  if (gameOfTheDay && gameOfTheDay.surpriseFactor != null) {
     lines.push(
       `[i]Game of the day: ${escapeForumText(gameOfTheDay.headline)} • Surprise factor: ${formatSurpriseFactor(
         gameOfTheDay.surpriseFactor,
@@ -1008,11 +925,11 @@ function formatRecapForumPost(
     lines.push("");
     lines.push(`[b]${escapeForumText(game.headline)}[/b]`);
     if (
-      game.surpriseFactor !== null ||
+      game.surpriseFactor != null ||
       game.matchId === gameOfTheDay?.matchId
     ) {
       const metadata: string[] = [];
-      if (game.surpriseFactor !== null) {
+      if (game.surpriseFactor != null) {
         metadata.push(
           `Surprise factor: ${formatSurpriseFactor(game.surpriseFactor)}`,
         );
@@ -1052,7 +969,7 @@ function findGameOfTheDay(
 
   let bestGame: GameDayRecapResultPayload["games"][number] | null = null;
   for (const game of result.games) {
-    if (game.surpriseFactor === null) {
+    if (game.surpriseFactor == null) {
       continue;
     }
     if (

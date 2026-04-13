@@ -1,11 +1,14 @@
 "use client";
 
+import { z } from "zod";
+
 import type {
   NextGameRecommendationInput,
   PositionCode,
   RecommendationMode,
 } from "@/app/types";
 import { normalizeDefensiveSwitch, validateDefensiveSwitch } from "@/lib/coach-parrot/lineup-rules";
+import { parseLegacyJsonField } from "@/lib/json-parsing";
 
 export const NEXT_GAME_RECOMMENDATION_STORAGE_KEY =
   "bb.nextGameRecommendation.v1";
@@ -20,12 +23,34 @@ export const NEXT_GAME_RECOMMENDATION_DEFAULTS: NextGameRecommendationInput = {
   },
 };
 export const RECOMMENDATION_MODES: RecommendationMode[] = [
-  "BIGGEST_WIN",
+  "BEST_EXPECTED",
+  "SAFEST",
   "EFFICIENT_WIN",
 ];
+const nextGameRecommendationInputStorageSchema = z
+  .object({
+    defensiveSwitch: z
+      .object({
+        c: z.enum(["PG", "SG", "SF", "PF", "C"]).optional(),
+        pf: z.enum(["PG", "SG", "SF", "PF", "C"]).optional(),
+        pg: z.enum(["PG", "SG", "SF", "PF", "C"]).optional(),
+        sf: z.enum(["PG", "SG", "SF", "PF", "C"]).optional(),
+        sg: z.enum(["PG", "SG", "SF", "PF", "C"]).optional(),
+      })
+      .partial()
+      .optional(),
+    enthusiasm: z.coerce.number().optional(),
+  })
+  .partial();
 
 export function normalizeNextGameRecommendationInput(
-  value: Partial<NextGameRecommendationInput> | null | undefined,
+  value:
+    | {
+        enthusiasm?: number;
+        defensiveSwitch?: Partial<NextGameRecommendationInput["defensiveSwitch"]>;
+      }
+    | null
+    | undefined,
 ): NextGameRecommendationInput {
   const defensiveSwitch = normalizeDefensiveSwitch(
     value?.defensiveSwitch
@@ -67,13 +92,9 @@ export function readNextGameRecommendationInput(
     return NEXT_GAME_RECOMMENDATION_DEFAULTS;
   }
 
-  try {
-    return normalizeNextGameRecommendationInput(
-      JSON.parse(raw) as Partial<NextGameRecommendationInput>,
-    );
-  } catch {
-    return NEXT_GAME_RECOMMENDATION_DEFAULTS;
-  }
+  return normalizeNextGameRecommendationInput(
+    parseLegacyJsonField(nextGameRecommendationInputStorageSchema, raw),
+  );
 }
 
 export function writeNextGameRecommendationInput(

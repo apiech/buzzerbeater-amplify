@@ -25,6 +25,7 @@ import {
 import { auth } from "./auth/resource.js";
 import { billingAdminOverride } from "./billing-admin-override/resource.js";
 import { billingWebhook } from "./billing-webhook/resource.js";
+import { evaluatePredictionMatrix } from "./evaluate-prediction-matrix/resource.js";
 import {
   createBillingCheckoutSession,
   createBillingLifetimeCheckoutSession,
@@ -41,6 +42,7 @@ import {
   getLeagueHistory,
   getLatestOpponentForecast,
   getLatestNextGameRecommendation,
+  getNextGamePlannerDetail,
   getLineupHelperWorkspace,
   getMyTeamHighlights,
   getPlayerLab,
@@ -87,6 +89,7 @@ const backend = defineBackend({
   clearMyTeamHighlightsData,
   connectBbAccount,
   disconnectBbAccount,
+  evaluatePredictionMatrix,
   refreshWorkspace,
   getHomeWorkspace,
   getScoutTeamSummary,
@@ -95,6 +98,7 @@ const backend = defineBackend({
   getLeagueHistory,
   getLatestOpponentForecast,
   getLatestNextGameRecommendation,
+  getNextGamePlannerDetail,
   getPlayerLab,
   getRivalsWorkspace,
   submitRivalsBackfill,
@@ -147,6 +151,7 @@ configureBbConnectionSecretAccess([
   backend.getScoutSchedule,
   backend.getLatestOpponentForecast,
   backend.getLatestNextGameRecommendation,
+  backend.getNextGamePlannerDetail,
   backend.getLeagueIntel,
   backend.getLeagueHistory,
   backend.getPlayerLab,
@@ -179,6 +184,7 @@ configureMaintenanceControlPlane(backend, [
   backend.getScoutSchedule,
   backend.getLatestOpponentForecast,
   backend.getLatestNextGameRecommendation,
+  backend.getNextGamePlannerDetail,
   backend.getLeagueIntel,
   backend.getLeagueHistory,
   backend.getPlayerLab,
@@ -204,6 +210,7 @@ configureMaintenanceControlPlane(backend, [
   backend.getAccessibleMatch,
   backend.getAccessiblePlayByPlay,
   backend.getMatchBoxscoreDetails,
+  backend.evaluatePredictionMatrix,
   backend.generateSharedPlayerCard,
   backend.revokeSharedPlayerCard,
   backend.lookupSharedPlayerCard,
@@ -216,6 +223,7 @@ configureMaintenanceControlPlane(backend, [
   backend.opponentForecastSubmit,
   backend.opponentForecastWorker,
   backend.predictionSubmit,
+  backend.evaluatePredictionMatrix,
   backend.predictionWorker,
 ]);
 configureHostedComputeRole(backend);

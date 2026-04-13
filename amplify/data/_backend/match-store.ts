@@ -20,6 +20,7 @@ import {
   listTrackedTeamsForUser,
 } from "./repository";
 import { assertMaintenanceInactive } from "./maintenance";
+import { readStoredMatchBoxscoreDetails } from "./stored-boxscore";
 import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -36,6 +37,11 @@ type Identity = {
 
 type MatchBoxscoreDetailsResult = NonNullable<
   Schema["getMatchBoxscoreDetails"] extends { returnType: infer TReturn }
+    ? TReturn
+    : never
+>;
+type AccessibleMatchPageResult = NonNullable<
+  Schema["listAccessibleMatches"] extends { returnType: infer TReturn }
     ? TReturn
     : never
 >;
@@ -216,7 +222,7 @@ export async function listAccessibleMatches(
     cursor?: string | null;
   },
   dependencies: MatchStoreDependencies = defaultDependencies,
-): Promise<Record<string, unknown>> {
+): Promise<AccessibleMatchPageResult> {
   await assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
@@ -375,19 +381,16 @@ export async function getMatchBoxscoreDetails(
 
   const boxscore = await dependencies.getLegacyMatchBoxscore(args.env, userId, matchId);
   if (boxscore) {
-    const boxscorePayload = asRecord(boxscore.boxscoreJson);
-    const payload = buildNormalizedBoxscorePayload({
-      matchId,
-      matchType: asOptionalString(boxscorePayload?.type),
-      startTime: asOptionalString(boxscorePayload?.startTime),
-      endTime: asOptionalString(boxscorePayload?.endTime),
-      boxscore: boxscorePayload,
-      source: "MATCH_BOXSCORE_CACHE",
-    });
-    if (hasCompletePredictionRatings(payload)) {
-      return payload;
+    const payload = readStoredMatchBoxscoreDetails(
+      boxscore.boxscoreJson,
+      "MATCH_BOXSCORE_CACHE",
+    );
+    if (payload) {
+      if (hasCompletePredictionRatings(payload)) {
+        return payload;
+      }
+      fallbackPayload = fallbackPayload ?? payload;
     }
-    fallbackPayload = fallbackPayload ?? payload;
   }
 
   try {

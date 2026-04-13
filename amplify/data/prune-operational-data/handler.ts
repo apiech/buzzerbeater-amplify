@@ -1,15 +1,21 @@
 import { env } from "$amplify/env/prune-operational-data";
 
 import {
+  deleteNextGamePlannerArtifact,
+  deleteNextGamePlannerArtifactRow,
   deleteNextGameRecommendationJob,
   deleteOpponentForecastJob,
+  listExpiredNextGamePlannerArtifacts,
   listExpiredNextGameRecommendationJobs,
   listExpiredOpponentForecastJobs,
+  listNextGamePlannerArtifactRowsByArtifactKey,
   listExpiredSyncRuns,
   deleteSyncRun,
 } from "../_backend/repository";
 
 export const handler = async (): Promise<{
+  deletedNextGamePlannerArtifacts: number;
+  deletedNextGamePlannerArtifactRows: number;
   deletedNextGameRecommendationJobs: number;
   deletedOpponentForecastJobs: number;
   deletedSyncRuns: number;
@@ -63,7 +69,49 @@ export const handler = async (): Promise<{
     nextGameRecommendationNextToken = page.nextToken;
   } while (nextGameRecommendationNextToken);
 
+  let deletedNextGamePlannerArtifacts = 0;
+  let deletedNextGamePlannerArtifactRows = 0;
+  let nextGamePlannerArtifactNextToken: string | null = null;
+  do {
+    const page = await listExpiredNextGamePlannerArtifacts(env, now, {
+      limit: 100,
+      nextToken: nextGamePlannerArtifactNextToken,
+    });
+
+    for (const artifact of page.records) {
+      let rowNextToken: string | null = null;
+      do {
+        const rowPage = await listNextGamePlannerArtifactRowsByArtifactKey(
+          env,
+          artifact.artifactKey,
+          {
+            limit: 100,
+            nextToken: rowNextToken,
+          },
+        );
+
+        for (const row of rowPage.records) {
+          await deleteNextGamePlannerArtifactRow(env, {
+            artifactKey: row.artifactKey,
+            viewId: row.viewId,
+            opponentPairId: row.opponentPairId,
+          });
+          deletedNextGamePlannerArtifactRows += 1;
+        }
+
+        rowNextToken = rowPage.nextToken;
+      } while (rowNextToken);
+
+      await deleteNextGamePlannerArtifact(env, artifact.artifactKey);
+      deletedNextGamePlannerArtifacts += 1;
+    }
+
+    nextGamePlannerArtifactNextToken = page.nextToken;
+  } while (nextGamePlannerArtifactNextToken);
+
   return {
+    deletedNextGamePlannerArtifacts,
+    deletedNextGamePlannerArtifactRows,
     deletedNextGameRecommendationJobs,
     deletedOpponentForecastJobs,
     deletedSyncRuns,

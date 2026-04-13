@@ -32,7 +32,7 @@ test("decodeAwsJsonValue parses valid JSON and leaves malformed strings untouche
   assert.equal(decodeAwsJsonValue("{broken"), "{broken");
 });
 
-test("field codecs transform only the mapped AWSJSON fields", () => {
+test("field codecs only serialize intentional holdouts and still decode legacy typed fields", () => {
   const encoded = encodeAwsJsonFields("BbConnection", {
     userId: "u1",
     bbLoginName: "apiech",
@@ -43,12 +43,17 @@ test("field codecs transform only the mapped AWSJSON fields", () => {
   assert.deepStrictEqual(encoded, {
     userId: "u1",
     bbLoginName: "apiech",
-    profileJson: '{"teamId":"123"}',
-    workspaceCacheJson: '{"home":{"teamId":"123"}}',
+    profileJson: { teamId: "123" },
+    workspaceCacheJson: { home: { teamId: "123" } },
   });
 
   assert.deepStrictEqual(
-    decodeAwsJsonFields("BbConnection", encoded),
+    decodeAwsJsonFields("BbConnection", {
+      userId: "u1",
+      bbLoginName: "apiech",
+      profileJson: '{"teamId":"123"}',
+      workspaceCacheJson: '{"home":{"teamId":"123"}}',
+    }),
     {
       userId: "u1",
       bbLoginName: "apiech",

@@ -1,20 +1,17 @@
+import type { Schema } from "../resource";
+
 export const WORKSPACE_CACHE_VERSION = 4;
 
-export type WorkspaceCachePayload = {
-  version: number;
-  home: Record<string, unknown>;
-  teamHub: Record<string, unknown>;
-  scout: Record<string, unknown>;
-  leagueIntel: Record<string, unknown>;
-  playerLab: Record<string, unknown>;
-};
+export type WorkspaceCachePayload = NonNullable<
+  Schema["BbConnection"]["type"]["workspaceCacheJson"]
+>;
 
 export function buildWorkspaceCachePayload(input: {
-  home: Record<string, unknown>;
-  teamHub: Record<string, unknown>;
-  scout: Record<string, unknown>;
-  leagueIntel: Record<string, unknown>;
-  playerLab: Record<string, unknown>;
+  home: WorkspaceCachePayload["home"];
+  teamHub: WorkspaceCachePayload["teamHub"];
+  scout: WorkspaceCachePayload["scout"];
+  leagueIntel: WorkspaceCachePayload["leagueIntel"];
+  playerLab: WorkspaceCachePayload["playerLab"];
 }): WorkspaceCachePayload {
   return {
     version: WORKSPACE_CACHE_VERSION,
@@ -25,7 +22,7 @@ export function buildWorkspaceCachePayload(input: {
 export function readWorkspaceCachePayload(
   value: unknown,
 ): WorkspaceCachePayload | null {
-  const cache = toRecord(value);
+  const cache = toRecord(parseLegacyJsonValue(value));
   if (!cache || asNumber(cache.version) !== WORKSPACE_CACHE_VERSION) {
     return null;
   }
@@ -42,12 +39,24 @@ export function readWorkspaceCachePayload(
 
   return {
     version: WORKSPACE_CACHE_VERSION,
-    home,
-    teamHub,
-    scout,
-    leagueIntel,
-    playerLab,
+    home: home as WorkspaceCachePayload["home"],
+    teamHub: teamHub as WorkspaceCachePayload["teamHub"],
+    scout: scout as WorkspaceCachePayload["scout"],
+    leagueIntel: leagueIntel as WorkspaceCachePayload["leagueIntel"],
+    playerLab: playerLab as WorkspaceCachePayload["playerLab"],
   };
+}
+
+function parseLegacyJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {

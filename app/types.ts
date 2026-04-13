@@ -53,25 +53,77 @@ export type RecapHistoryKind =
   | "LEAGUE_GAME_DAY"
   | "SINGLE_GAME";
 
-export type RecapHistoryRecord = {
+type RecapHistoryBase = {
   completedAt: string | null;
-  coverageJson: unknown;
   error: string | null;
   gameDate: string | null;
   gameDayNumber: number | null;
-  kind: RecapHistoryKind;
   leagueId: string | null;
   leagueName: string | null;
   matchId: string | null;
-  requestJson: unknown;
   requestedAt: string;
-  resultJson: unknown;
   selectionKey: string;
   season: number | null;
   status: string | null;
   targetKey: string;
   updatedAt: string;
 };
+
+export type GameDayRecapCoveragePayload = {
+  availableGames: number;
+  missingGames: Array<{
+    awayTeamName: string;
+    homeTeamName: string;
+    matchId: string;
+    reason: string;
+  }>;
+  partial: boolean;
+  requestedGames: number;
+};
+export type GameDayRecapResultPayload = {
+  games: Array<{
+    evidenceTags: string[];
+    headline: string;
+    matchId: string;
+    surpriseFactor?: number | null;
+    writeup: string;
+  }>;
+  summary: {
+    gameOfTheDayMatchId?: string | null;
+    gameOfTheDaySurpriseFactor?: number | null;
+    headline: string;
+    lede: string;
+  };
+};
+export type LeagueDateRecapHistoryRecord = RecapHistoryBase & {
+  kind: "LEAGUE_DATE";
+  coverageJson: GameDayRecapCoveragePayload | null;
+  gameDate: string;
+  gameDayNumber: null;
+  matchId: null;
+  requestJson: NonNullable<GameDayRecapRecord["requestJson"]>;
+  resultJson: GameDayRecapResultPayload | null;
+};
+export type LeagueGameDayRecapHistoryRecord = RecapHistoryBase & {
+  kind: "LEAGUE_GAME_DAY";
+  coverageJson: GameDayRecapCoveragePayload | null;
+  gameDate: null;
+  gameDayNumber: number;
+  matchId: null;
+  requestJson: NonNullable<LeagueGameDayRecapRecord["requestJson"]>;
+  resultJson: GameDayRecapResultPayload | null;
+};
+export type SingleGameRecapHistoryRecord = RecapHistoryBase & {
+  kind: "SINGLE_GAME";
+  coverageJson: GameDayRecapCoveragePayload | null;
+  matchId: string;
+  requestJson: NonNullable<SingleGameSummaryRecord["requestJson"]>;
+  resultJson: GameDayRecapResultPayload | null;
+};
+export type RecapHistoryRecord =
+  | LeagueDateRecapHistoryRecord
+  | LeagueGameDayRecapHistoryRecord
+  | SingleGameRecapHistoryRecord;
 
 export type ConnectBbAccountInput = {
   bbLoginName: string;
@@ -150,6 +202,9 @@ export type OpponentForecastSnapshot = NonNullable<
 >;
 export type NextGameRecommendationSnapshot = NonNullable<
   Schema["getLatestNextGameRecommendation"]["returnType"]
+>;
+export type NextGamePlannerDetailPayload = NonNullable<
+  Schema["getNextGamePlannerDetail"]["returnType"]
 >;
 export type PlayerLabPayload = NonNullable<
   Schema["getPlayerLab"]["returnType"]
@@ -280,7 +335,11 @@ export type OpponentForecastResult = NonNullable<
 export type NextGameRecommendationResult = NonNullable<
   NextGameRecommendationSnapshot["result"]
 >;
-export type RecommendationMode = "BIGGEST_WIN" | "EFFICIENT_WIN";
+export type RecommendationMode =
+  | "BIGGEST_WIN"
+  | "BEST_EXPECTED"
+  | "SAFEST"
+  | "EFFICIENT_WIN";
 export type NextGameRecommendationStatus =
   | "QUEUED"
   | "PREPARING_INPUTS"
@@ -298,8 +357,12 @@ export type NextGameRecommendationInput = {
   };
 };
 export type RecommendedGamePlan =
-  NextGameRecommendationResult["biggestWinPlan"];
+  NextGameRecommendationResult["bestExpectedPlan"];
 export type RecommendedGamePlanLineupRow = RecommendedGamePlan["lineup"][number];
+export type NextGamePlannerTacticPair = NextGamePlannerDetailPayload["ourPairs"][number];
+export type NextGamePlannerView = NextGamePlannerDetailPayload["views"][number];
+export type NextGamePlannerMatrixRow = NextGamePlannerView["rows"][number];
+export type NextGamePlannerMatrixCell = NextGamePlannerMatrixRow["cells"][number];
 export type OpponentForecastScenario =
   OpponentForecastResult["topScenarios"][number];
 export type OpponentForecastPlayerProjection =
@@ -313,34 +376,7 @@ export type MatchBoxscoreTeam = NonNullable<MatchBoxscorePayload["homeTeam"]>;
 export type MatchMetricEntry = MatchBoxscoreTeam["teamTotals"][number];
 export type MatchBoxscoreTeamRatings = NonNullable<MatchBoxscoreTeam["ratings"]>;
 export type MatchBoxscorePlayerLine = MatchBoxscoreTeam["players"][number];
-
-export type GameDayRecapCoveragePayload = {
-  availableGames: number;
-  missingGames: Array<{
-    awayTeamName: string;
-    homeTeamName: string;
-    matchId: string;
-    reason: string;
-  }>;
-  partial: boolean;
-  requestedGames: number;
-};
-
-export type GameDayRecapResultPayload = {
-  games: Array<{
-    evidenceTags: string[];
-    headline: string;
-    matchId: string;
-    surpriseFactor: number | null;
-    writeup: string;
-  }>;
-  summary: {
-    gameOfTheDayMatchId: string | null;
-    gameOfTheDaySurpriseFactor: number | null;
-    headline: string;
-    lede: string;
-  };
-};
+export type EditableTeamRatings = MatchBoxscoreTeamRatings;
 export type TeamHighlightsScanStatus = NonNullable<
   TeamHighlightsPayload["scanStatus"]
 >;
@@ -369,6 +405,50 @@ export type PredictionPanelContext = {
   };
   scoutSummary: ScoutTeamSummaryPayload["summary"] | null;
 };
+
+export type PredictionVenue = "TEAM_A_HOME" | "NEUTRAL" | "TEAM_B_HOME";
+
+export type PredictionSideInput = {
+  defense: string;
+  effortChoice: string;
+  gdpFocus: string;
+  gdpPace: string;
+  offense: string;
+  ratings: EditableTeamRatings;
+  sourceLabel: string | null;
+  sourceMatchId: string | null;
+  teamId: string | null;
+  teamName: string;
+};
+
+export type PredictionDraft = {
+  teamA: PredictionSideInput;
+  teamB: PredictionSideInput;
+  venue: PredictionVenue;
+};
+
+export type ScoutedOpponentSheet = PredictionSideInput & {
+  confidence: number | null;
+  evidence: string[];
+  generatedAt: string | null;
+  lineupText: string;
+  rotationText: string;
+  scenarioLabel: string | null;
+  scenarioProbability: number | null;
+};
+
+export type AccessibleMatchPage = NonNullable<
+  Schema["listAccessibleMatches"]["returnType"]
+>;
+export type AccessibleMatchSummary = AccessibleMatchPage["items"][number];
+
+export type PredictionMatrixResult = NonNullable<
+  Schema["evaluatePredictionMatrix"]["returnType"]
+>;
+export type PredictionMatrixView = PredictionMatrixResult["views"][number];
+export type PredictionMatrixRow = PredictionMatrixView["rows"][number];
+export type PredictionMatrixCell = PredictionMatrixRow["cells"][number];
+export type PredictionMatrixTacticPair = PredictionMatrixResult["teamAPairs"][number];
 
 export type RecapPanelContext = {
   connection: Pick<

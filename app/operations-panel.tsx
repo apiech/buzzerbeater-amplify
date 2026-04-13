@@ -18,6 +18,7 @@ import { captureAnalyticsEvent } from "@/lib/analytics/client";
 import type {
   CurrentPredictionPreview,
   GameDayRecapRecord,
+  GameDayRecapResultPayload,
   LeagueGameDayRecapRecord,
   SingleGameSummaryRecord,
   SyncRunRecord,
@@ -314,30 +315,12 @@ function describePredictionJob(job: CurrentPredictionPreview): string {
   return "Preview in progress";
 }
 
-function readRecapHeadline(value: unknown): string | null {
-  const record = parseJsonRecord(value);
-  const summary = parseJsonRecord(record?.summary);
-  const headline = summary?.headline;
+function readRecapHeadline(
+  value: GameDayRecapResultPayload | null | undefined,
+): string | null {
+  const headline = value?.summary.headline;
   return typeof headline === "string" && headline.trim()
     ? headline.trim()
-    : null;
-}
-
-function parseJsonRecord(value: unknown): Record<string, unknown> | null {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    try {
-      return parseJsonRecord(JSON.parse(value));
-    } catch {
-      return null;
-    }
-  }
-
-  return typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
     : null;
 }
 

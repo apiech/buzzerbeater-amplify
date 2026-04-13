@@ -13,6 +13,7 @@ type FunctionResource = {
 };
 
 type PredictionBackend = {
+  evaluatePredictionMatrix: FunctionResource;
   predictionSubmit: FunctionResource;
   predictionWorker: FunctionResource;
 };
@@ -37,21 +38,30 @@ export function configurePredictionJobs(
     "PREDICTION_ENDPOINT_NAME",
     bindings.predictionEndpointName,
   );
+  backend.evaluatePredictionMatrix.addEnvironment(
+    "PREDICTION_ENDPOINT_NAME",
+    bindings.predictionEndpointName,
+  );
 
   workflow.grantStartExecution(backend.predictionSubmit.resources.lambda);
 
   const workerLambda = backend.predictionWorker.resources.lambda;
   const workerStack = Stack.of(workerLambda);
+  const endpointArn = workerStack.formatArn({
+    resource: "endpoint",
+    resourceName: bindings.predictionEndpointName,
+    service: "sagemaker",
+  });
   workerLambda.addToRolePolicy(
     new PolicyStatement({
       actions: ["sagemaker:InvokeEndpoint"],
-      resources: [
-        workerStack.formatArn({
-          resource: "endpoint",
-          resourceName: bindings.predictionEndpointName,
-          service: "sagemaker",
-        }),
-      ],
+      resources: [endpointArn],
+    }),
+  );
+  backend.evaluatePredictionMatrix.resources.lambda.addToRolePolicy(
+    new PolicyStatement({
+      actions: ["sagemaker:InvokeEndpoint"],
+      resources: [endpointArn],
     }),
   );
 }

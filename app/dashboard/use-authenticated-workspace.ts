@@ -34,6 +34,7 @@ const sectionDependencies: Record<WorkspaceSection, WorkspaceExtraSectionKey[]> 
   league: ["leagueIntel"],
   "league-history": [],
   lineups: ["lineupHelper"],
+  "opponent-schedule": [],
   ops: [],
   players: ["playerLab"],
   predictions: [],

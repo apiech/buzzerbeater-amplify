@@ -25,6 +25,7 @@ import {
   buildExecutionName,
   startStateMachineExecution,
 } from "./step-functions";
+import { inflateStoredMatchBoxscore } from "./stored-boxscore";
 import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
@@ -49,6 +50,13 @@ type OpponentForecastScenario = OpponentForecastResult["topScenarios"][number];
 type OpponentForecastPlayerProjection = OpponentForecastScenario["starters"][number];
 type OpponentForecastAnalogGame = OpponentForecastResult["analogGames"][number];
 type OpponentForecastSignal = OpponentForecastResult["featureSignals"][number];
+type OpponentForecastResolvedContext = NonNullable<
+  Schema["OpponentForecastJob"]["type"]["resolvedContextJson"]
+>;
+type StoredForecastBoxscore =
+  OpponentForecastResolvedContext["headToHead"]["boxscores"][number];
+type StoredForecastTeamSnapshot = StoredForecastBoxscore["team"];
+type StoredForecastPlayerSummary = StoredForecastTeamSnapshot["players"][number];
 type ScoutWorkspaceShape = Awaited<
   ReturnType<typeof getScoutTeamSummaryForTeamWithMeta>
 >["scout"];
@@ -298,7 +306,7 @@ async function buildOpponentForecastContext(args: {
   scout: ScoutWorkspaceShape;
   userId: string;
   workspace: WorkspaceBundle;
-}): Promise<JsonRecord> {
+}): Promise<OpponentForecastResolvedContext> {
   const summary = args.scout.summary;
   if (!summary) {
     throw new Error("Scout workspace is missing the selected team summary.");
@@ -356,7 +364,7 @@ async function buildOpponentForecastContext(args: {
       publicRoster: summary.roster,
       recentGames: summary.recentGames,
       recentGameBoxscores: recentGameBoxscores.filter(
-        (entry): entry is JsonRecord => Boolean(entry),
+        (entry): entry is StoredForecastBoxscore => Boolean(entry),
       ),
       record: summary.record,
       sampleSummary: {
@@ -386,7 +394,7 @@ async function loadStoredBoxscores(
   userId: string,
   matchIds: string[],
   teamId: string | null,
-): Promise<JsonRecord[]> {
+): Promise<StoredForecastBoxscore[]> {
   const results = await Promise.all(
     Array.from(new Set(matchIds)).map(async (matchId) => {
       const record = await getMatchBoxscore(env, userId, matchId);
@@ -398,7 +406,7 @@ async function loadStoredBoxscores(
     }),
   );
 
-  return results.filter((entry): entry is JsonRecord => Boolean(entry));
+  return results.filter((entry): entry is StoredForecastBoxscore => Boolean(entry));
 }
 
 async function invokeOpponentForecastEndpoint(
@@ -566,8 +574,11 @@ function adaptStoredBoxscoreForForecast(
     season?: number | null;
     teamId: string | null;
   },
-): JsonRecord | null {
-  const boxscore = requireRecord(matchBoxscore.boxscoreJson, "stored boxscore payload");
+): StoredForecastBoxscore | null {
+  const boxscore = inflateStoredMatchBoxscore(matchBoxscore.boxscoreJson);
+  if (!boxscore) {
+    return null;
+  }
   const perspective = selectBoxscorePerspective(boxscore, args.teamId);
   const teamSide = perspective.team;
   const opponentSide = perspective.opponent;
@@ -587,11 +598,12 @@ function adaptStoredBoxscoreForForecast(
     seriousnessScore: asFiniteNumber(args.seriousnessScore),
     opponent: {
       defStrategy: asOptionalString(opponentSide.defStrategy),
-      efficiency: asOptionalRecord(opponentSide.efficiency) ?? {},
-      gdp: asOptionalRecord(opponentSide.gdp) ?? {},
+      efficiency: toMetricEntries(asOptionalRecord(opponentSide.efficiency)),
+      gdpFocus: readGdpValue(opponentSide.gdp, "focus", "gdpFocus"),
+      gdpPace: readGdpValue(opponentSide.gdp, "pace", "gdpPace"),
       offStrategy: asOptionalString(opponentSide.offStrategy),
       players: toPlayerSummaries(opponentSide.players),
-      ratings: asOptionalRecord(opponentSide.ratings) ?? {},
+      ratings: toRatingsRecord(asOptionalRecord(opponentSide.ratings)),
       score: asFiniteInteger(opponentSide.score),
       teamId: asOptionalString(opponentSide.id),
       teamName: asOptionalString(opponentSide.teamName),
@@ -599,11 +611,12 @@ function adaptStoredBoxscoreForForecast(
     startTime: asOptionalString(boxscore.startTime),
     team: {
       defStrategy: asOptionalString(teamSide.defStrategy),
-      efficiency: asOptionalRecord(teamSide.efficiency) ?? {},
-      gdp: asOptionalRecord(teamSide.gdp) ?? {},
+      efficiency: toMetricEntries(asOptionalRecord(teamSide.efficiency)),
+      gdpFocus: readGdpValue(teamSide.gdp, "focus", "gdpFocus"),
+      gdpPace: readGdpValue(teamSide.gdp, "pace", "gdpPace"),
       offStrategy: asOptionalString(teamSide.offStrategy),
       players: toPlayerSummaries(teamSide.players),
-      ratings: asOptionalRecord(teamSide.ratings) ?? {},
+      ratings: toRatingsRecord(asOptionalRecord(teamSide.ratings)),
       score: asFiniteInteger(teamSide.score),
       teamId: asOptionalString(teamSide.id),
       teamName: asOptionalString(teamSide.teamName),
@@ -612,17 +625,57 @@ function adaptStoredBoxscoreForForecast(
   };
 }
 
-function toPlayerSummaries(value: unknown): JsonRecord[] {
+function toPlayerSummaries(value: unknown): StoredForecastPlayerSummary[] {
   return toRecordArray(value).map((player) => ({
     fullName: asOptionalString(player.fullName) ?? "Unknown player",
-    minutesByPosition: asOptionalRecord(player.minutesByPosition) ?? {},
-    performance:
-      asOptionalRecord(player.performanceStats) ??
-      asOptionalRecord(player.performance) ??
-      {},
+    minutesByPosition: toMetricEntries(asOptionalRecord(player.minutesByPosition)),
+    performance: toMetricEntries(
+      asOptionalRecord(player.performanceStats) ?? asOptionalRecord(player.performance),
+    ),
     playerId: asOptionalString(player.id),
     totalMinutes: totalMinutesFromPositions(player.minutesByPosition),
   }));
+}
+
+function toMetricEntries(
+  value: Record<string, unknown> | null,
+): Array<{ key: string; numberValue: number }> {
+  if (!value) {
+    return [];
+  }
+
+  return Object.entries(value)
+    .map(([key, entry]) => ({
+      key,
+      numberValue: asFiniteNumber(entry) ?? 0,
+    }))
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function toRatingsRecord(
+  value: Record<string, unknown> | null,
+): StoredForecastTeamSnapshot["ratings"] | null {
+  if (!value) {
+    return null;
+  }
+
+  return {
+    outsideScoring: asFiniteNumber(value.outsideScoring) ?? 0,
+    insideScoring: asFiniteNumber(value.insideScoring) ?? 0,
+    outsideDefense: asFiniteNumber(value.outsideDefense) ?? 0,
+    insideDefense: asFiniteNumber(value.insideDefense) ?? 0,
+    rebounding: asFiniteNumber(value.rebounding) ?? 0,
+    offensiveFlow: asFiniteNumber(value.offensiveFlow) ?? 0,
+  };
+}
+
+function readGdpValue(
+  value: unknown,
+  primaryKey: string,
+  secondaryKey: string,
+): string | null {
+  const record = asOptionalRecord(value);
+  return asOptionalString(record?.[primaryKey]) ?? asOptionalString(record?.[secondaryKey]);
 }
 
 function totalMinutesFromPositions(value: unknown): number {

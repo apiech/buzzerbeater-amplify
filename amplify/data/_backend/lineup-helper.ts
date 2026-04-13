@@ -30,6 +30,7 @@ import {
 import { assertMaintenanceInactive } from "./maintenance";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
 import { getBbConnection, getMatchBoxscore } from "./repository";
+import { inflateStoredMatchBoxscore } from "./stored-boxscore";
 import { readWorkspaceCachePayload } from "./workspace-cache";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -386,7 +387,10 @@ async function resolveDefaultContext(
       continue;
     }
 
-    const boxscorePayload = toRecord(boxscore.boxscoreJson);
+    const boxscorePayload = inflateStoredMatchBoxscore(boxscore.boxscoreJson);
+    if (!boxscorePayload) {
+      continue;
+    }
     const perspective = selectBoxscorePerspective(boxscorePayload, teamId);
     if (!perspective.team) {
       continue;

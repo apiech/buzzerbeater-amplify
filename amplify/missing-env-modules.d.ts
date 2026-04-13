@@ -6,6 +6,10 @@ declare module "$amplify/env/get-latest-next-game-recommendation" {
   export const env: Record<string, string | undefined>;
 }
 
+declare module "$amplify/env/get-next-game-planner-detail" {
+  export const env: Record<string, string | undefined>;
+}
+
 declare module "$amplify/env/list-my-billing-payments" {
   export const env: Record<string, string | undefined>;
 }

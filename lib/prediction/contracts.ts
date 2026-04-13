@@ -31,6 +31,54 @@ export const predictionEndpointResponseSchema = z.object({
   tacticsGrid: predictionEndpointTacticsGridSchema,
 });
 
+export const predictionPlannerScenarioResultSchema = z.object({
+  available: z.boolean(),
+  predictedOpponentScore: finiteNumberSchema.nullable(),
+  predictedPointDiff: finiteNumberSchema.nullable(),
+  predictedTeamScore: finiteNumberSchema.nullable(),
+  scenarioId: z.string().trim().min(1),
+});
+
+export const predictionPlannerPlanEvaluationSchema = z.object({
+  defense: z.string().trim().min(1),
+  effortChoice: z.string().trim().min(1),
+  effortCost: finiteNumberSchema,
+  effortValue: finiteNumberSchema,
+  offense: z.string().trim().min(1),
+  pairId: z.string().trim().min(1),
+  scenarioResults: z.array(predictionPlannerScenarioResultSchema).min(1),
+});
+
+export const predictionPlannerMatrixCellSchema = z.object({
+  available: z.boolean(),
+  bestEffortChoice: z.string().trim().min(1).nullable(),
+  ourPairId: z.string().trim().min(1),
+  opponentPairId: z.string().trim().min(1),
+  predictedOpponentScore: finiteNumberSchema.nullable(),
+  predictedPointDiff: finiteNumberSchema.nullable(),
+  predictedTeamScore: finiteNumberSchema.nullable(),
+});
+
+export const predictionPlannerMatrixRowSchema = z.object({
+  cells: z.array(predictionPlannerMatrixCellSchema).min(1),
+  opponentPairId: z.string().trim().min(1),
+});
+
+export const predictionPlannerMatrixViewSchema = z.object({
+  label: z.string().trim().min(1),
+  probability: finiteNumberSchema.nullable().optional(),
+  rows: z.array(predictionPlannerMatrixRowSchema).min(1),
+  scenarioId: z.string().trim().min(1).nullable().optional(),
+  viewId: z.string().trim().min(1),
+});
+
+export const predictionPlannerResponseSchema = z.object({
+  expectedMatrix: predictionPlannerMatrixViewSchema,
+  modelVersion: z.string().trim().min(1),
+  planEvaluations: z.array(predictionPlannerPlanEvaluationSchema).min(1),
+  scenarioMatrices: z.array(predictionPlannerMatrixViewSchema).min(1),
+});
+
 export const currentPredictionForecastContextSchema = z.object({
   forecastGeneratedAt: z.string().trim().min(1),
   forecastJobId: z.string().trim().min(1),
@@ -71,6 +119,9 @@ export type PredictionEndpointResponse = z.infer<
 export type PredictionEndpointTacticsGrid = z.infer<
   typeof predictionEndpointTacticsGridSchema
 >;
+export type PredictionPlannerResponse = z.infer<
+  typeof predictionPlannerResponseSchema
+>;
 export type CurrentPredictionForecastContextShape = z.infer<
   typeof currentPredictionForecastContextSchema
 >;
@@ -106,4 +157,3 @@ export function isRenderablePredictionGridCell(
     Number.isFinite(cell.pointDiff)
   );
 }
-

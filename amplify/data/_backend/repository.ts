@@ -7,6 +7,65 @@ import {
 } from "./awsjson";
 import { getDataClient, type AmplifyDataFunctionEnv } from "./data-client";
 import type { PredictionInputShape } from "../../../lib/prediction/normalization";
+import type { Schema } from "../resource";
+
+type StoredTeamInfo = NonNullable<Schema["BbConnection"]["type"]["profileJson"]>;
+type RepositoryModel<TRecord extends { createdAt: string; updatedAt: string }> = Omit<
+  TRecord,
+  "createdAt" | "updatedAt"
+> & {
+  createdAt?: string;
+  updatedAt?: string;
+};
+type WorkspaceCachePayload = NonNullable<
+  Schema["BbConnection"]["type"]["workspaceCacheJson"]
+>;
+type SharedPlayerCardPayload = NonNullable<
+  Schema["SharedPlayerCard"]["type"]["payloadJson"]
+>;
+type OpponentForecastJobRequest = NonNullable<
+  Schema["OpponentForecastJob"]["type"]["requestJson"]
+>;
+type OpponentForecastResolvedContext = NonNullable<
+  Schema["OpponentForecastJob"]["type"]["resolvedContextJson"]
+>;
+type OpponentForecastStoredResult = NonNullable<
+  Schema["OpponentForecastJob"]["type"]["resultJson"]
+>;
+type NextGameRecommendationStoredRequest = NonNullable<
+  Schema["NextGameRecommendationJob"]["type"]["requestJson"]
+>;
+type NextGameRecommendationStoredResult = NonNullable<
+  Schema["NextGameRecommendationJob"]["type"]["resultJson"]
+>;
+type StoredPlannerEvaluatedScenario = NonNullable<
+  Schema["NextGamePlannerArtifact"]["type"]["evaluatedScenariosJson"]
+>[number];
+type StoredPlannerTacticPair = NonNullable<
+  Schema["NextGamePlannerArtifact"]["type"]["ourPairsJson"]
+>[number];
+type PlannerArtifactRowPayload = NonNullable<
+  Schema["NextGamePlannerArtifactRow"]["type"]["rowJson"]
+>;
+type GameDayRecapStoredRequest = NonNullable<
+  Schema["GameDayRecap"]["type"]["requestJson"]
+>;
+type LeagueGameDayRecapStoredRequest = NonNullable<
+  Schema["LeagueGameDayRecap"]["type"]["requestJson"]
+>;
+type SingleGameSummaryStoredRequest = NonNullable<
+  Schema["SingleGameSummary"]["type"]["requestJson"]
+>;
+type GameDayRecapCoverage = NonNullable<
+  Schema["GameDayRecap"]["type"]["coverageJson"]
+>;
+type GameDayRecapResult = NonNullable<Schema["GameDayRecap"]["type"]["resultJson"]>;
+type RivalsWorkspaceSummary = NonNullable<
+  Schema["RivalsWorkspaceCache"]["type"]["summaryJson"]
+>;
+type RivalsMatchesCacheEnvelope = NonNullable<
+  Schema["RivalsWorkspaceCache"]["type"]["matchesJson"]
+>;
 
 export type ConnectionStatus =
   | "UNSET"
@@ -78,8 +137,8 @@ export type BbConnectionRecord = {
   lastValidatedAt?: string | null;
   lastSyncAt?: string | null;
   lastSyncError?: string | null;
-  profileJson?: unknown;
-  workspaceCacheJson?: unknown;
+  profileJson?: StoredTeamInfo | null;
+  workspaceCacheJson?: WorkspaceCachePayload | null;
 };
 
 export type BillingAccountRecord = {
@@ -150,9 +209,17 @@ export type TrackedTeamRecord = {
   arenaName?: string | null;
   rivalId?: string | null;
   isPrimary?: boolean | null;
-  summaryJson?: unknown;
+  summaryJson?: StoredTeamInfo | null;
   fetchedAt?: string | null;
 };
+
+export type TrackedPlayerRecord = RepositoryModel<Schema["TrackedPlayer"]["type"]>;
+
+export type TrackedMatchRecord = RepositoryModel<Schema["TrackedMatch"]["type"]>;
+
+export type MatchBoxscoreRecord = RepositoryModel<Schema["MatchBoxscore"]["type"]>;
+
+export type LeagueStandingRecord = RepositoryModel<Schema["LeagueStanding"]["type"]>;
 
 export type SyncRunRecord = {
   id: string;
@@ -212,9 +279,9 @@ export type OpponentForecastJobRecord = {
   executionArn?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
-  requestJson: unknown;
-  resolvedContextJson?: unknown;
-  resultJson?: unknown;
+  requestJson: OpponentForecastJobRequest;
+  resolvedContextJson?: OpponentForecastResolvedContext | null;
+  resultJson?: OpponentForecastStoredResult | null;
   error?: string | null;
   modelVersion?: string | null;
   createdAt?: string;
@@ -240,9 +307,39 @@ export type NextGameRecommendationJobRecord = {
   executionArn?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
-  requestJson: unknown;
-  resultJson?: unknown;
+  requestJson: NextGameRecommendationStoredRequest;
+  resultJson?: NextGameRecommendationStoredResult | null;
   error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  expiryKey: string;
+  expiresAt: string;
+};
+
+export type NextGamePlannerArtifactRecord = {
+  artifactKey: string;
+  userId: string;
+  jobId: string;
+  matchId: string;
+  opponentTeamId: string;
+  generatedAt: string;
+  evaluatedScenariosJson: StoredPlannerEvaluatedScenario[];
+  ourPairsJson: StoredPlannerTacticPair[];
+  opponentPairsJson: StoredPlannerTacticPair[];
+  createdAt?: string;
+  updatedAt?: string;
+  expiryKey: string;
+  expiresAt: string;
+};
+
+export type NextGamePlannerArtifactRowRecord = {
+  artifactKey: string;
+  viewId: string;
+  opponentPairId: string;
+  userId: string;
+  jobId: string;
+  rowOrder: number;
+  rowJson: PlannerArtifactRowPayload;
   createdAt?: string;
   updatedAt?: string;
   expiryKey: string;
@@ -260,9 +357,9 @@ export type GameDayRecapRecord = {
   requestedAt: string;
   executionArn?: string | null;
   completedAt?: string | null;
-  requestJson: unknown;
-  coverageJson?: unknown;
-  resultJson?: unknown;
+  requestJson: GameDayRecapStoredRequest;
+  coverageJson?: GameDayRecapCoverage | null;
+  resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
   modelId?: string | null;
@@ -282,9 +379,9 @@ export type LeagueGameDayRecapRecord = {
   requestedAt: string;
   executionArn?: string | null;
   completedAt?: string | null;
-  requestJson: unknown;
-  coverageJson?: unknown;
-  resultJson?: unknown;
+  requestJson: LeagueGameDayRecapStoredRequest;
+  coverageJson?: GameDayRecapCoverage | null;
+  resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
   modelId?: string | null;
@@ -305,9 +402,9 @@ export type SingleGameSummaryRecord = {
   requestedAt: string;
   executionArn?: string | null;
   completedAt?: string | null;
-  requestJson: unknown;
-  coverageJson?: unknown;
-  resultJson?: unknown;
+  requestJson: SingleGameSummaryStoredRequest;
+  coverageJson?: GameDayRecapCoverage | null;
+  resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
   modelId?: string | null;
@@ -324,7 +421,7 @@ export type SharedPlayerCardRecord = {
   note?: string | null;
   expiresAt?: string | null;
   revokedAt?: string | null;
-  payloadJson?: unknown;
+  payloadJson?: SharedPlayerCardPayload | null;
 };
 
 export type LeagueHistoryStandingCacheRecord = {
@@ -365,8 +462,8 @@ export type RivalsWorkspaceCacheRecord = {
   generatedAt: string;
   syncedAt?: string | null;
   warning?: string | null;
-  summaryJson: unknown;
-  matchesJson: unknown;
+  summaryJson: RivalsWorkspaceSummary;
+  matchesJson: RivalsMatchesCacheEnvelope;
 };
 
 export type RivalryMatchFactRecord = {
@@ -1102,6 +1199,134 @@ export async function deleteNextGameRecommendationJob(
   );
 }
 
+export async function upsertNextGamePlannerArtifact(
+  env: RepositoryEnv,
+  input: NextGamePlannerArtifactRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "NextGamePlannerArtifact",
+    ["artifactKey"],
+    input,
+  );
+}
+
+export async function getNextGamePlannerArtifact(
+  env: RepositoryEnv,
+  artifactKey: string,
+): Promise<NextGamePlannerArtifactRecord | null> {
+  const record = await getModelRecord<NextGamePlannerArtifactRecord>(
+    env,
+    "NextGamePlannerArtifact",
+    { artifactKey },
+    "load next game planner artifact",
+  );
+
+  return decodeAwsJsonFields("NextGamePlannerArtifact", record);
+}
+
+export async function upsertNextGamePlannerArtifactRows(
+  env: RepositoryEnv,
+  records: readonly NextGamePlannerArtifactRowRecord[],
+): Promise<void> {
+  for (const record of records) {
+    await upsertModelRecord(
+      env,
+      "NextGamePlannerArtifactRow",
+      ["artifactKey", "viewId", "opponentPairId"],
+      record,
+    );
+  }
+}
+
+export async function listNextGamePlannerArtifactRowsByArtifactKey(
+  env: RepositoryEnv,
+  artifactKey: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<NextGamePlannerArtifactRowRecord>> {
+  const page = await queryModelIndexPage<NextGamePlannerArtifactRowRecord>(
+    env,
+    "NextGamePlannerArtifactRow",
+    "listNextGamePlannerArtifactRowsByArtifactKeyAndRowOrder",
+    { artifactKey },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list next game planner artifact rows",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("NextGamePlannerArtifactRow", page.records),
+  };
+}
+
+export async function listExpiredNextGamePlannerArtifacts(
+  env: RepositoryEnv,
+  expiresBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<NextGamePlannerArtifactRecord>> {
+  const page = await queryModelIndexPage<NextGamePlannerArtifactRecord>(
+    env,
+    "NextGamePlannerArtifact",
+    "listNextGamePlannerArtifactsByExpiryKeyAndExpiresAt",
+    {
+      expiryKey: "EXPIRABLE",
+      expiresAt: { lt: expiresBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list expired next game planner artifacts",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("NextGamePlannerArtifact", page.records),
+  };
+}
+
+export async function deleteNextGamePlannerArtifact(
+  env: RepositoryEnv,
+  artifactKey: string,
+): Promise<void> {
+  const model = await getModel<NextGamePlannerArtifactRecord>(
+    env,
+    "NextGamePlannerArtifact",
+  );
+  await assertSuccessful(
+    model.delete({ artifactKey }),
+    "delete next game planner artifact",
+  );
+}
+
+export async function deleteNextGamePlannerArtifactRow(
+  env: RepositoryEnv,
+  input: Pick<
+    NextGamePlannerArtifactRowRecord,
+    "artifactKey" | "viewId" | "opponentPairId"
+  >,
+): Promise<void> {
+  const model = await getModel<NextGamePlannerArtifactRowRecord>(
+    env,
+    "NextGamePlannerArtifactRow",
+  );
+  await assertSuccessful(
+    model.delete(input),
+    "delete next game planner artifact row",
+  );
+}
+
 export async function getGameDayRecap(
   env: RepositoryEnv,
   userId: string,
@@ -1224,8 +1449,8 @@ export async function getMatchBoxscore(
   env: RepositoryEnv,
   userId: string,
   matchId: string,
-): Promise<Record<string, unknown> | null> {
-  const record = await getModelRecord<Record<string, unknown>>(
+): Promise<MatchBoxscoreRecord | null> {
+  const record = await getModelRecord<MatchBoxscoreRecord>(
     env,
     "MatchBoxscore",
     { userId, matchId },
@@ -1269,14 +1494,14 @@ export async function listTrackedTeamsForUser(
 
 export async function upsertTrackedTeam(
   env: RepositoryEnv,
-  input: Record<string, unknown>,
+  input: TrackedTeamRecord,
 ): Promise<void> {
   await upsertModelRecord(env, "TrackedTeam", ["userId", "teamId"], input);
 }
 
 export async function upsertTrackedPlayer(
   env: RepositoryEnv,
-  input: Record<string, unknown>,
+  input: TrackedPlayerRecord,
 ): Promise<void> {
   await upsertModelRecord(env, "TrackedPlayer", ["userId", "playerId"], input);
 }
@@ -1292,8 +1517,8 @@ export async function getTrackedPlayer(
   env: RepositoryEnv,
   userId: string,
   playerId: string,
-): Promise<Record<string, unknown> | null> {
-  const record = await getModelRecord<Record<string, unknown>>(
+): Promise<TrackedPlayerRecord | null> {
+  const record = await getModelRecord<TrackedPlayerRecord>(
     env,
     "TrackedPlayer",
     { userId, playerId },
@@ -1352,21 +1577,21 @@ export async function listPlayerSkillObservations(
 
 export async function upsertTrackedMatch(
   env: RepositoryEnv,
-  input: Record<string, unknown>,
+  input: TrackedMatchRecord,
 ): Promise<void> {
   await upsertModelRecord(env, "TrackedMatch", ["userId", "matchId"], input);
 }
 
 export async function upsertMatchBoxscore(
   env: RepositoryEnv,
-  input: Record<string, unknown>,
+  input: MatchBoxscoreRecord,
 ): Promise<void> {
   await upsertModelRecord(env, "MatchBoxscore", ["userId", "matchId"], input);
 }
 
 export async function upsertLeagueStanding(
   env: RepositoryEnv,
-  input: Record<string, unknown>,
+  input: LeagueStandingRecord,
 ): Promise<void> {
   await upsertModelRecord(
     env,
@@ -1548,12 +1773,9 @@ export async function upsertRivalsBackfill(
 
 export async function createSharedPlayerCard(
   env: RepositoryEnv,
-  input: Record<string, unknown>,
+  input: SharedPlayerCardRecord,
 ): Promise<void> {
-  const model = await getModel<Record<string, unknown>>(
-    env,
-    "SharedPlayerCard",
-  );
+  const model = await getModel<SharedPlayerCardRecord>(env, "SharedPlayerCard");
   await assertSuccessful(
     model.create(prepareModelInput("SharedPlayerCard", input)),
     "create shared player card",

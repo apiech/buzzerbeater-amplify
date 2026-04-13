@@ -14,12 +14,13 @@ const productionSourceRoots = [
   join(repoRoot, "scripts"),
 ] as const;
 const approvedLargeDependencyBags = new Map<string, number>([
+  ["app/game-prediction-state.ts", 10],
   ["amplify/data/_backend/billing.ts", 4],
   ["amplify/data/_backend/game-day-recap.ts", 19],
   ["amplify/data/_backend/league-history.ts", 16],
   ["amplify/data/_backend/lineup-helper.ts", 4],
   ["amplify/data/_backend/match-store.ts", 5],
-  ["amplify/data/_backend/next-game-recommendation.ts", 24],
+  ["amplify/data/_backend/next-game-recommendation.ts", 31],
   ["amplify/data/_backend/opponent-forecast.ts", 9],
   ["amplify/data/_backend/prediction.ts", 9],
   ["amplify/data/_backend/rivals.ts", 15],

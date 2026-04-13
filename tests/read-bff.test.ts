@@ -27,7 +27,10 @@ test("getCurrentBbConnection reads the current owner record via get", async (t) 
             data: {
               userId: "user-1",
               bbLoginName: "coach",
+              profileJson: '{"teamId":"123","teamName":"Buzzer Squad"}',
               status: "CONNECTED",
+              workspaceCacheJson:
+                '{"version":1,"home":{},"teamHub":{},"scout":{},"leagueIntel":{},"playerLab":{}}',
             },
           };
         },
@@ -44,7 +47,12 @@ test("getCurrentBbConnection reads the current owner record via get", async (t) 
   assert.deepStrictEqual(result.data, {
     userId: "user-1",
     bbLoginName: "coach",
+    profileJson: {
+      teamId: "123",
+      teamName: "Buzzer Squad",
+    },
     status: "CONNECTED",
+    workspaceCacheJson: null,
   });
 });
 
@@ -63,7 +71,18 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
           options?: Record<string, unknown>,
         ) => {
           calls.push({ model: "GameDayRecap", input, options });
-          return { data: [{ userId: "user-1", targetKey: "gd-1", requestedAt: "2026-03-15T12:00:00.000Z" }] };
+          return {
+            data: [
+              {
+                userId: "user-1",
+                targetKey: "gd-1",
+                leagueId: "L1",
+                gameDate: "2026-03-15",
+                requestedAt: "2026-03-15T12:00:00.000Z",
+                requestJson: '{"leagueId":"L1","gameDate":"2026-03-15"}',
+              },
+            ],
+          };
         },
       },
       LeagueGameDayRecap: {
@@ -72,7 +91,18 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
           options?: Record<string, unknown>,
         ) => {
           calls.push({ model: "LeagueGameDayRecap", input, options });
-          return { data: [{ userId: "user-1", targetKey: "lgd-1", requestedAt: "2026-03-15T11:00:00.000Z" }] };
+          return {
+            data: [
+              {
+                userId: "user-1",
+                targetKey: "lgd-1",
+                leagueId: "L1",
+                gameDayNumber: 10,
+                requestedAt: "2026-03-15T11:00:00.000Z",
+                requestJson: '{"leagueId":"L1","gameDayNumber":10}',
+              },
+            ],
+          };
         },
       },
       PredictionJob: {
@@ -142,7 +172,17 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
           options?: Record<string, unknown>,
         ) => {
           calls.push({ model: "SingleGameSummary", input, options });
-          return { data: [{ userId: "user-1", targetKey: "sg-1", matchId: "m1", requestedAt: "2026-03-15T10:00:00.000Z" }] };
+          return {
+            data: [
+              {
+                userId: "user-1",
+                targetKey: "sg-1",
+                matchId: "m1",
+                requestedAt: "2026-03-15T10:00:00.000Z",
+                requestJson: '{"matchId":"m1"}',
+              },
+            ],
+          };
         },
       },
       SyncRun: {
@@ -217,6 +257,16 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
       }
     ).currentPrediction?.tacticsGrid?.cells.length,
     6,
+  );
+  assert.equal(
+    (
+      result.data as {
+        gameDayRecaps: Array<{
+          requestJson: { mode: string };
+        }>;
+      }
+    ).gameDayRecaps[0]?.requestJson.mode,
+    "FULL_SLATE",
   );
 });
 
@@ -310,8 +360,9 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
               gameDate: "2026-03-15",
               status: "SUCCEEDED",
               requestedAt: "2026-03-15T11:00:00.000Z",
-              requestJson: {},
-              resultJson: {},
+              requestJson: '{"leagueId":"L1","gameDate":"2026-03-15"}',
+              resultJson:
+                '{"games":[{"evidenceTags":["PACE"],"headline":"Top game","matchId":"g1","writeup":"Big win"}],"summary":{"headline":"Daily recap","lede":"League action"}}',
               updatedAt: "2026-03-15T11:01:00.000Z",
             },
           ],
@@ -329,8 +380,9 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
               gameDayNumber: 42,
               status: "SUCCEEDED",
               requestedAt: "2026-03-15T09:00:00.000Z",
-              requestJson: {},
-              resultJson: {},
+              requestJson: '{"leagueId":"L1","gameDayNumber":42}',
+              resultJson:
+                '{"games":[{"evidenceTags":["PACE"],"headline":"Game day","matchId":"g2","writeup":"Tactical edge"}],"summary":{"headline":"Roundup","lede":"Game day summary"}}',
               updatedAt: "2026-03-15T09:01:00.000Z",
             },
           ],
@@ -348,8 +400,9 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
               leagueName: "League",
               status: "SUCCEEDED",
               requestedAt: "2026-03-15T12:00:00.000Z",
-              requestJson: {},
-              resultJson: {},
+              requestJson: '{"matchId":"m1"}',
+              resultJson:
+                '{"games":[{"evidenceTags":["PACE"],"headline":"Single game","matchId":"m1","writeup":"Close finish"}],"summary":{"headline":"Single summary","lede":"One match"}}',
               updatedAt: "2026-03-15T12:01:00.000Z",
             },
           ],
@@ -371,6 +424,8 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
       ["LEAGUE_DATE", "gd-1"],
     ],
   );
+  assert.equal(data.items[0]?.requestJson.mode, "SINGLE_GAME");
+  assert.equal(data.items[1]?.requestJson.mode, "FULL_SLATE");
   assert.equal(typeof data.nextToken, "string");
 });
 

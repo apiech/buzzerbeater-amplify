@@ -6,16 +6,17 @@ import {
 } from "@aws-sdk/client-sagemaker-runtime";
 
 import {
-  DEFENSE_OPTIONS,
-  OFFENSE_OPTIONS,
   POSITION_SEQUENCE,
   normalizeDefensiveSwitch,
   validateDefensiveSwitch,
 } from "../../../lib/coach-parrot";
 import {
   predictionEndpointResponseSchema,
+  predictionPlannerResponseSchema,
   type PredictionEndpointResponse,
+  type PredictionPlannerResponse,
 } from "../../../lib/prediction/contracts";
+import { normalizePlannerEndpointInvocationError } from "../../../lib/prediction/planner-endpoint-errors";
 import {
   applyPredictionRatingsContext,
   normalizePredictionRatingsFromBoxscore,
@@ -34,16 +35,25 @@ import { assertMaintenanceInactive, toMaintenanceAwareErrorMessage } from "./mai
 import { selectBoxscorePerspective } from "./neutral-boxscore";
 import { normalizeOpponentForecastResult } from "./opponent-forecast";
 import {
+  deleteNextGamePlannerArtifact,
+  deleteNextGamePlannerArtifactRow,
   createNextGameRecommendationJob,
   getMatchBoxscore,
   getNextGameRecommendationJob,
+  getNextGamePlannerArtifact,
   listNextGameRecommendationJobsByUser,
+  listNextGamePlannerArtifactRowsByArtifactKey,
   listOpponentForecastJobsByUser,
+  upsertNextGamePlannerArtifact,
+  upsertNextGamePlannerArtifactRows,
   updateNextGameRecommendationJob,
+  type NextGamePlannerArtifactRecord,
+  type NextGamePlannerArtifactRowRecord,
   type NextGameRecommendationJobRecord,
   type OpponentForecastJobRecord,
 } from "./repository";
 import { buildExecutionName, startStateMachineExecution } from "./step-functions";
+import { inflateStoredMatchBoxscore } from "./stored-boxscore";
 import { getOrRefreshWorkspace, getScoutTeamSummaryForTeam } from "./workspace";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -72,8 +82,14 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 
 type RecommendationSnapshot = ResolverResult<"getLatestNextGameRecommendation">;
 type RecommendationResult = NonNullable<RecommendationSnapshot["result"]>;
-type RecommendedGamePlan = RecommendationResult["biggestWinPlan"];
+type PlannerDetail = ResolverResult<"getNextGamePlannerDetail">;
+type RecommendedGamePlan = RecommendationResult["bestExpectedPlan"];
 type RecommendedLineupRow = RecommendedGamePlan["lineup"][number];
+type PlannerEvaluatedScenario = RecommendationResult["evaluatedScenarios"][number];
+type PlannerTacticPair = NonNullable<PlannerDetail["ourPairs"]>[number];
+type PlannerMatrixView = NonNullable<PlannerDetail["views"]>[number];
+type PlannerMatrixRow = PlannerMatrixView["rows"][number];
+type PlannerMatrixCell = PlannerMatrixRow["cells"][number];
 type LineupHelperWorkspace = ResolverResult<"getLineupHelperWorkspace">;
 type LineupHelperRosterPlayer = LineupHelperWorkspace["roster"][number];
 type LineupHelperEvaluation = ResolverResult<"optimizeLineupHelper">;
@@ -109,8 +125,17 @@ type GetLatestDependencies = {
   listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
 };
 
+type GetDetailDependencies = {
+  assertMaintenanceInactive: () => Promise<void>;
+  getNextGamePlannerArtifact: typeof getNextGamePlannerArtifact;
+  listNextGamePlannerArtifactRowsByArtifactKey:
+    typeof listNextGamePlannerArtifactRowsByArtifactKey;
+};
+
 type ProcessDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
+  deleteNextGamePlannerArtifact: typeof deleteNextGamePlannerArtifact;
+  deleteNextGamePlannerArtifactRow: typeof deleteNextGamePlannerArtifactRow;
   getLineupHelperWorkspace: typeof getLineupHelperWorkspace;
   getMatchBoxscore: typeof getMatchBoxscore;
   getNextGameRecommendationJob: typeof getNextGameRecommendationJob;
@@ -119,9 +144,13 @@ type ProcessDependencies = {
   invokePredictionEndpoint: (
     endpointName: string,
     payload: JsonRecord,
-  ) => Promise<PredictionEndpointResponse>;
+  ) => Promise<PredictionEndpointResponse | PredictionPlannerResponse>;
+  listNextGamePlannerArtifactRowsByArtifactKey:
+    typeof listNextGamePlannerArtifactRowsByArtifactKey;
   listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
   optimizeLineupHelper: typeof optimizeLineupHelper;
+  upsertNextGamePlannerArtifact: typeof upsertNextGamePlannerArtifact;
+  upsertNextGamePlannerArtifactRows: typeof upsertNextGamePlannerArtifactRows;
   updateNextGameRecommendationJob: typeof updateNextGameRecommendationJob;
 };
 
@@ -135,7 +164,7 @@ type RecommendationContext = {
 type ForecastContext = {
   job: OpponentForecastJobRecord;
   result: NonNullable<ResolverResult<"getLatestOpponentForecast">["result"]>;
-  primaryScenario: OpponentForecastScenario;
+  scenarios: OpponentForecastScenario[];
 };
 
 type OpponentSourceContext = {
@@ -149,16 +178,61 @@ type PredictorPerspective = {
   teamIsHome: boolean;
 };
 
+type PlannerSupportTier = "DIRECT" | "ESTIMATED";
+type PlannerPairDefinition = {
+  displayDefense: string;
+  displayOffense: string;
+  pairId: string;
+  predictorDefense: string;
+  predictorOffense: string;
+  supportTier: PlannerSupportTier;
+};
+
+type PlannerScenarioContext = {
+  effortChoice: string;
+  evidence: string[];
+  forecastPairId: string;
+  label: string;
+  normalizedProbability: number;
+  opponentEffort: number;
+  opponentPairs: Array<
+    PlannerPairDefinition & {
+      ratings: TeamRatings;
+    }
+  >;
+  probability: number;
+  scenarioId: string;
+};
+
+type PlannerOurPairContext = PlannerPairDefinition & {
+  lineup: RecommendedLineupRow[];
+  ratings: TeamRatings;
+};
+
+type CandidateScenarioResult = {
+  available: boolean;
+  predictedOpponentScore: number | null;
+  predictedPointDiff: number | null;
+  predictedTeamScore: number | null;
+  scenarioId: string;
+};
+
 type Candidate = {
   defense: string;
   effortChoice: string;
   effortCost: number;
   effortValue: number;
+  floorPointDiff: number;
+  ceilingPointDiff: number;
   lineup: RecommendedLineupRow[];
   offense: string;
+  pairId: string;
   predictedOpponentScore: number;
   predictedPointDiff: number;
   predictedTeamScore: number;
+  scenarioResults: CandidateScenarioResult[];
+  weightedExpectedPointDiff: number;
+  winProbability: number;
 };
 
 const DEFAULT_ENTHUSIASM = 8;
@@ -167,10 +241,35 @@ const MAX_JOB_PAGES = 4;
 const RECOMMENDATION_PAGE_SIZE = 50;
 const PREDICTION_CONCURRENCY = 8;
 const DEFAULT_PREDICTION_GDP = "N/A";
+const MATRIX_DEFAULT_EFFORT = 0;
+const MAX_EVALUATED_SCENARIOS = 3;
 const EFFORT_CHOICES = [
   { label: "Take It Easy", value: -1, cost: 0 },
   { label: "Normal", value: 0, cost: 1 },
   { label: "Crunch Time", value: 1, cost: 2 },
+] as const;
+
+const PLANNER_OFFENSE_OPTIONS = [
+  "Base",
+  "Push",
+  "Patient",
+  "Motion",
+  "RunAndGun",
+  "Princeton",
+  "LookInside",
+  "LowPost",
+  "InsideIsolation",
+  "OutsideIsolation",
+] as const;
+
+const PLANNER_DEFENSE_OPTIONS = [
+  "ManToMan",
+  "23Zone",
+  "32Zone",
+  "131Zone",
+  "InsideBoxAndOne",
+  "OutsideBoxAndOne",
+  "Press",
 ] as const;
 
 const OFFENSE_TO_PREDICTOR: Record<string, string> = {
@@ -232,26 +331,40 @@ const defaultGetLatestDependencies: GetLatestDependencies = {
   listOpponentForecastJobsByUser,
 };
 
+const defaultGetDetailDependencies: GetDetailDependencies = {
+  assertMaintenanceInactive,
+  getNextGamePlannerArtifact,
+  listNextGamePlannerArtifactRowsByArtifactKey,
+};
+
 const defaultProcessDependencies: ProcessDependencies = {
   assertMaintenanceInactive,
+  deleteNextGamePlannerArtifact,
+  deleteNextGamePlannerArtifactRow,
   getLineupHelperWorkspace,
   getMatchBoxscore,
   getNextGameRecommendationJob,
   getOrRefreshWorkspace,
   getScoutTeamSummaryForTeam,
   invokePredictionEndpoint,
+  listNextGamePlannerArtifactRowsByArtifactKey,
   listOpponentForecastJobsByUser,
   optimizeLineupHelper,
+  upsertNextGamePlannerArtifact,
+  upsertNextGamePlannerArtifactRows,
   updateNextGameRecommendationJob,
 };
 
 export const __testing = {
   adaptPredictionResultToUserPerspective,
   buildPredictorPerspective,
+  buildPlannerPairDefinitions,
   computeRecommendationStale,
   effortChoiceToOrdinal,
   jobMatchesRecommendationSettings,
   normalizeRecommendationInput,
+  selectBestExpectedCandidate,
+  selectSafestCandidate,
   selectBiggestWinCandidate,
   selectEfficientWinCandidate,
 };
@@ -321,7 +434,7 @@ export async function submitNextGameRecommendationJob(
     completedAt: null,
     requestJson: {
       input: normalizedInput,
-      matchId: context.nextMatch.matchId,
+      matchId: context.nextMatch.matchId ?? "",
       opponentTeamId: context.opponentTeamId,
       opponentTeamName: context.opponentTeamName,
     },
@@ -423,6 +536,48 @@ export async function getLatestNextGameRecommendation(
   return null;
 }
 
+export async function getNextGamePlannerDetail(
+  args: {
+    artifactKey: string;
+    env: GraphqlEnv;
+    identity: unknown;
+  },
+  dependencies: Partial<GetDetailDependencies> = {},
+): Promise<PlannerDetail | null> {
+  const deps = {
+    ...defaultGetDetailDependencies,
+    ...dependencies,
+  };
+  await deps.assertMaintenanceInactive();
+
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+
+  const artifact = await deps.getNextGamePlannerArtifact(args.env, args.artifactKey);
+  if (!artifact || artifact.userId !== userId) {
+    return null;
+  }
+
+  const rows: NextGamePlannerArtifactRowRecord[] = [];
+  let nextToken: string | null = null;
+  do {
+    const page = await deps.listNextGamePlannerArtifactRowsByArtifactKey(
+      args.env,
+      artifact.artifactKey,
+      {
+        limit: 300,
+        nextToken,
+      },
+    );
+    rows.push(...page.records);
+    nextToken = page.nextToken;
+  } while (nextToken);
+
+  return buildPlannerDetailFromArtifact(artifact, rows);
+}
+
 export async function processNextGameRecommendationJob(
   args: {
     env: GraphqlEnv;
@@ -504,31 +659,21 @@ export async function processNextGameRecommendationJob(
 
     const ourIsHome = context.nextMatch.isHome === true;
     const ourHomeCourt = ourIsHome ? "Home Court" : "Away or Neutral";
-    const opponentRatings = applyPredictionRatingsContext({
-      normalizedRatings: opponentSource.normalizedRatings,
-      offenseStrategy: toPredictorOffense(forecast.primaryScenario.offense),
-      defenseStrategy: toPredictorDefense(forecast.primaryScenario.defense),
-      teamLocation: ourIsHome ? "AWAY" : "HOME",
-    });
-    const opponentEffort = effortChoiceToOrdinal(
-      forecast.primaryScenario.effortChoice,
-    );
     const rosterById = new Map(
       lineupWorkspace.roster.map((player) => [player.playerId, player]),
     );
 
-    const pairEvaluations = await mapWithConcurrency(
-      OFFENSE_OPTIONS.flatMap((offense) =>
-        DEFENSE_OPTIONS.map((defense) => ({ defense, offense })),
-      ),
+    const plannerPairDefinitions = buildPlannerPairDefinitions();
+    const ourPairContexts = await mapWithConcurrency(
+      plannerPairDefinitions,
       PREDICTION_CONCURRENCY,
-      async ({ defense, offense }) => {
+      async (pair) => {
         const evaluation = await deps.optimizeLineupHelper({
           algorithm: "EXACT",
           roster: availableRoster,
           context: {
-            offense,
-            defense,
+            offense: toLineupHelperOffense(pair.predictorOffense),
+            defense: toLineupHelperDefense(pair.predictorDefense),
             enthusiasm: normalizedInput.enthusiasm,
             homeCourt: ourHomeCourt,
             defensiveSwitch: normalizedInput.defensiveSwitch,
@@ -536,58 +681,79 @@ export async function processNextGameRecommendationJob(
         });
 
         return {
-          defense,
-          evaluation,
+          ...pair,
           lineup: buildRecommendedLineup(evaluation, rosterById),
-          offense,
+          ratings: normalizeTeamRatingsRecord(evaluation.rawRatings),
         };
       },
     );
 
-    const candidates = await mapWithConcurrency(
-      pairEvaluations.flatMap((pair) =>
-        EFFORT_CHOICES.map((effort) => ({ ...pair, effort })),
-      ),
-      PREDICTION_CONCURRENCY,
-      async ({ defense, effort, evaluation, lineup, offense }) => {
-        const perspective = buildPredictorPerspective({
-          opponentDefense: toPredictorDefense(forecast.primaryScenario.defense),
-          opponentEffort,
-          opponentOffense: toPredictorOffense(forecast.primaryScenario.offense),
-          opponentRatings,
-          ourDefense: toPredictorDefense(defense),
-          ourEffort: effort.value,
-          ourIsHome,
-          ourOffense: toPredictorOffense(offense),
-          ourRatings: normalizeTeamRatingsRecord(evaluation.rawRatings),
-        });
-        const prediction = await deps.invokePredictionEndpoint(
-          args.endpointName,
-          perspective.payload,
-        );
-        const result = adaptPredictionResultToUserPerspective(
-          prediction,
-          perspective.teamIsHome,
-        );
+    const evaluatedScenarios = buildEvaluatedScenarios(forecast.scenarios);
+    const plannerScenarios = buildPlannerScenarioContexts({
+      normalizedRatings: opponentSource.normalizedRatings,
+      scenarios: forecast.scenarios,
+      teamLocation: ourIsHome ? "AWAY" : "HOME",
+    });
 
-        return {
-          defense,
-          effortChoice: effort.label,
-          effortCost: effort.cost,
-          effortValue: effort.value,
-          lineup,
-          offense,
-          predictedOpponentScore: result.predictedOpponentScore,
-          predictedPointDiff: result.predictedPointDiff,
-          predictedTeamScore: result.predictedTeamScore,
-        } satisfies Candidate;
-      },
+    const plannerRequest = buildPlannerRequest({
+      opponentScenarios: plannerScenarios,
+      ourIsHome,
+      ourPairs: ourPairContexts,
+    });
+    let rawPlannerResponse: PredictionEndpointResponse | PredictionPlannerResponse;
+    try {
+      rawPlannerResponse = await deps.invokePredictionEndpoint(
+        args.endpointName,
+        plannerRequest,
+      );
+    } catch (error) {
+      throw normalizePlannerEndpointInvocationError(error, args.endpointName);
+    }
+    const plannerResponse = expectPlannerResponse(rawPlannerResponse);
+
+    const artifactKey = job.id;
+    await replacePlannerArtifactRows(args.env, deps, artifactKey);
+    await deps.upsertNextGamePlannerArtifact(
+      args.env,
+      buildPlannerArtifactRecord({
+        artifactKey,
+        evaluatedScenarios,
+        expiresAt: job.expiresAt,
+        generatedAt: new Date().toISOString(),
+        job,
+        matchId: context.nextMatch.matchId ?? "",
+        opponentPairs: plannerScenarios[0]?.opponentPairs ?? [],
+        ourPairs: ourPairContexts,
+      }),
+    );
+    await deps.upsertNextGamePlannerArtifactRows(
+      args.env,
+      buildPlannerArtifactRowRecords({
+        artifactKey,
+        expiresAt: job.expiresAt,
+        jobId: job.id,
+        response: plannerResponse,
+        userId: job.userId,
+      }),
     );
 
-    const biggestWinCandidate = selectBiggestWinCandidate(candidates);
-    const efficientWinCandidate = selectEfficientWinCandidate(candidates);
-    if (!biggestWinCandidate || !efficientWinCandidate) {
+    const candidates = buildCandidatesFromPlanEvaluations({
+      evaluatedScenarios,
+      ourPairs: ourPairContexts,
+      planEvaluations: plannerResponse.planEvaluations,
+      recommendationInput: normalizedInput,
+    });
+
+    const bestExpectedCandidate = selectBestExpectedCandidate(candidates);
+    const safestCandidate = selectSafestCandidate(candidates);
+    const efficientCandidate = selectEfficientWinCandidate(candidates);
+    if (!bestExpectedCandidate || !safestCandidate || !efficientCandidate) {
       throw new Error("No recommendation candidates were generated.");
+    }
+
+    const primaryScenario = forecast.scenarios[0];
+    if (!primaryScenario) {
+      throw new Error("The latest opponent forecast did not include a primary scenario.");
     }
 
     const result: RecommendationResult = {
@@ -596,22 +762,39 @@ export async function processNextGameRecommendationJob(
       opponentTeamId: context.opponentTeamId,
       opponentTeamName: context.opponentTeamName,
       forecastJobId: forecast.job.id,
-      forecastScenarioId: forecast.primaryScenario.scenarioId,
-      forecastScenarioLabel: forecast.primaryScenario.label,
-      forecastScenarioProbability: forecast.primaryScenario.probability ?? 0,
+      forecastScenarioId: primaryScenario.scenarioId,
+      forecastScenarioLabel: primaryScenario.label,
+      forecastScenarioProbability: primaryScenario.probability ?? 0,
       forecastModelVersion:
         forecast.job.modelVersion ?? forecast.result.modelVersion ?? "unknown",
       opponentSourceMatchId: opponentSource.matchId,
       enthusiasm: normalizedInput.enthusiasm,
       defensiveSwitch: normalizedInput.defensiveSwitch,
       stale: false,
+      artifactKey,
+      evaluatedScenarios,
+      bestExpectedPlan: toRecommendedPlan(
+        bestExpectedCandidate,
+        normalizedInput,
+        "BEST_EXPECTED",
+      ),
+      safestPlan: toRecommendedPlan(
+        safestCandidate,
+        normalizedInput,
+        "SAFEST",
+      ),
+      efficientPlan: toRecommendedPlan(
+        efficientCandidate,
+        normalizedInput,
+        "EFFICIENT_WIN",
+      ),
       biggestWinPlan: toRecommendedPlan(
-        biggestWinCandidate,
+        bestExpectedCandidate,
         normalizedInput,
         "BIGGEST_WIN",
       ),
       efficientWinPlan: toRecommendedPlan(
-        efficientWinCandidate,
+        efficientCandidate,
         normalizedInput,
         "EFFICIENT_WIN",
       ),
@@ -731,30 +914,44 @@ export function adaptPredictionResultToUserPerspective(
       };
 }
 
+export function selectBestExpectedCandidate(
+  candidates: readonly Candidate[],
+): Candidate | null {
+  return [...candidates].sort(compareBestExpectedCandidates)[0] ?? null;
+}
+
+export function selectSafestCandidate(
+  candidates: readonly Candidate[],
+): Candidate | null {
+  return [...candidates].sort(compareSafestCandidates)[0] ?? null;
+}
+
 export function selectBiggestWinCandidate(
   candidates: readonly Candidate[],
 ): Candidate | null {
-  return [...candidates].sort(compareBiggestWinCandidates)[0] ?? null;
+  return selectBestExpectedCandidate(candidates);
 }
 
 export function selectEfficientWinCandidate(
   candidates: readonly Candidate[],
 ): Candidate | null {
   const targetWinners = candidates.filter(
-    (candidate) => candidate.predictedPointDiff >= TARGET_EFFICIENT_MARGIN,
+    (candidate) =>
+      candidate.weightedExpectedPointDiff >= TARGET_EFFICIENT_MARGIN &&
+      candidate.floorPointDiff > 0,
   );
   if (targetWinners.length) {
     return [...targetWinners].sort(compareEfficientCandidates)[0] ?? null;
   }
 
   const positiveWins = candidates.filter(
-    (candidate) => candidate.predictedPointDiff > 0,
+    (candidate) => candidate.weightedExpectedPointDiff > 0,
   );
   if (positiveWins.length) {
     return [...positiveWins].sort(compareEfficientCandidates)[0] ?? null;
   }
 
-  return selectBiggestWinCandidate(candidates);
+  return selectBestExpectedCandidate(candidates);
 }
 
 export function computeRecommendationStale(
@@ -852,15 +1049,17 @@ async function resolveLatestForecastContext(args: {
   const result = normalizeOpponentForecastResult(
     requireRecord(match.resultJson, "stored opponent forecast result"),
   );
-  const primaryScenario = result.topScenarios[0];
-  if (!primaryScenario) {
-    throw new Error("The latest opponent forecast did not include a primary scenario.");
+  const scenarios = result.topScenarios.slice(0, MAX_EVALUATED_SCENARIOS);
+  if (!scenarios.length) {
+    throw new Error(
+      "The latest opponent forecast did not include any top scenarios.",
+    );
   }
 
   return {
     job: match,
     result,
-    primaryScenario,
+    scenarios,
   };
 }
 
@@ -880,7 +1079,7 @@ async function resolveOpponentSourceContext(args: {
     }
 
     const record = await args.getMatchBoxscore(args.env, args.userId, game.matchId);
-    const boxscore = asOptionalRecord(record?.boxscoreJson);
+    const boxscore = inflateStoredMatchBoxscore(record?.boxscoreJson);
     if (!boxscore) {
       continue;
     }
@@ -903,6 +1102,422 @@ async function resolveOpponentSourceContext(args: {
   throw new Error("No usable opponent source boxscore with ratings is available yet.");
 }
 
+export function buildPlannerPairDefinitions(): PlannerPairDefinition[] {
+  return PLANNER_OFFENSE_OPTIONS.flatMap((predictorOffense) =>
+    PLANNER_DEFENSE_OPTIONS.map((predictorDefense) => ({
+      displayDefense: toPlannerDisplayDefense(predictorDefense),
+      displayOffense: toPlannerDisplayOffense(predictorOffense),
+      pairId: buildPlannerPairId(predictorOffense, predictorDefense),
+      predictorDefense,
+      predictorOffense,
+      supportTier: isPlannerPairEstimated(
+        predictorOffense,
+        predictorDefense,
+      )
+        ? "ESTIMATED"
+        : "DIRECT",
+    })),
+  );
+}
+
+function buildPlannerPairId(offense: string, defense: string): string {
+  return `${offense}__${defense}`;
+}
+
+function buildEvaluatedScenarios(
+  scenarios: readonly OpponentForecastScenario[],
+): PlannerEvaluatedScenario[] {
+  const normalizedProbabilities = normalizeScenarioProbabilities(scenarios);
+  return scenarios.map((scenario, index) => ({
+    scenarioId: scenario.scenarioId,
+    label: scenario.label,
+    probability: normalizedProbabilities[index] ?? 0,
+    offense: toPlannerDisplayOffense(toPredictorOffense(scenario.offense)),
+    defense: toPlannerDisplayDefense(toPredictorDefense(scenario.defense)),
+    effortChoice: asOptionalString(scenario.effortChoice) ?? "Normal",
+    evidence: [...scenario.evidence],
+  }));
+}
+
+function buildPlannerScenarioContexts(args: {
+  normalizedRatings: TeamRatings;
+  scenarios: readonly OpponentForecastScenario[];
+  teamLocation: PredictionTeamLocation;
+}): PlannerScenarioContext[] {
+  const pairDefinitions = buildPlannerPairDefinitions();
+  const normalizedProbabilities = normalizeScenarioProbabilities(args.scenarios);
+
+  return args.scenarios.map((scenario, scenarioIndex) => ({
+    effortChoice: asOptionalString(scenario.effortChoice) ?? "Normal",
+    evidence: [...scenario.evidence],
+    forecastPairId: buildPlannerPairId(
+      toPredictorOffense(scenario.offense),
+      toPredictorDefense(scenario.defense),
+    ),
+    label: scenario.label,
+    normalizedProbability: normalizedProbabilities[scenarioIndex] ?? 0,
+    opponentEffort: effortChoiceToOrdinal(scenario.effortChoice),
+    opponentPairs: pairDefinitions.map((pair) => ({
+      ...pair,
+      ratings: applyPredictionRatingsContext({
+        normalizedRatings: args.normalizedRatings,
+        offenseStrategy: pair.predictorOffense,
+        defenseStrategy: pair.predictorDefense,
+        teamLocation: args.teamLocation,
+      }),
+    })),
+    probability: scenario.probability ?? 0,
+    scenarioId: scenario.scenarioId,
+  }));
+}
+
+function buildPlannerRequest(args: {
+  opponentScenarios: readonly PlannerScenarioContext[];
+  ourIsHome: boolean;
+  ourPairs: readonly PlannerOurPairContext[];
+}): JsonRecord {
+  return {
+    plannerRequest: {
+      effortChoices: EFFORT_CHOICES.map((choice) => ({
+        cost: choice.cost,
+        label: choice.label,
+        value: choice.value,
+      })),
+      matrixOurEffort: MATRIX_DEFAULT_EFFORT,
+      opponentScenarios: args.opponentScenarios.map((scenario) => ({
+        effortChoice: scenario.effortChoice,
+        forecastPairId: scenario.forecastPairId,
+        label: scenario.label,
+        opponentEffort: scenario.opponentEffort,
+        opponentPairs: scenario.opponentPairs.map((pair) => ({
+          defense: pair.predictorDefense,
+          offense: pair.predictorOffense,
+          pairId: pair.pairId,
+          ratings: pair.ratings,
+        })),
+        probability: scenario.normalizedProbability,
+        scenarioId: scenario.scenarioId,
+      })),
+      ourIsHome: args.ourIsHome,
+      ourPairs: args.ourPairs.map((pair) => ({
+        defense: pair.predictorDefense,
+        offense: pair.predictorOffense,
+        pairId: pair.pairId,
+        ratings: pair.ratings,
+      })),
+    },
+  };
+}
+
+function expectPlannerResponse(
+  value: PredictionEndpointResponse | PredictionPlannerResponse,
+): PredictionPlannerResponse {
+  const parsed = predictionPlannerResponseSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(
+      issue
+        ? `Planner prediction response was invalid at ${issue.path.join(".") || "root"}: ${issue.message}`
+        : "Planner prediction response was invalid.",
+    );
+  }
+  return parsed.data;
+}
+
+async function replacePlannerArtifactRows(
+  env: GraphqlEnv,
+  deps: Pick<
+    ProcessDependencies,
+    "deleteNextGamePlannerArtifactRow" | "listNextGamePlannerArtifactRowsByArtifactKey"
+  >,
+  artifactKey: string,
+): Promise<void> {
+  let nextToken: string | null = null;
+  do {
+    const page = await deps.listNextGamePlannerArtifactRowsByArtifactKey(
+      env,
+      artifactKey,
+      {
+        limit: 300,
+        nextToken,
+      },
+    );
+
+    for (const row of page.records) {
+      await deps.deleteNextGamePlannerArtifactRow(env, {
+        artifactKey: row.artifactKey,
+        opponentPairId: row.opponentPairId,
+        viewId: row.viewId,
+      });
+    }
+
+    nextToken = page.nextToken;
+  } while (nextToken);
+}
+
+function buildPlannerArtifactRecord(args: {
+  artifactKey: string;
+  evaluatedScenarios: readonly PlannerEvaluatedScenario[];
+  expiresAt: string;
+  generatedAt: string;
+  job: Pick<
+    NextGameRecommendationJobRecord,
+    "id" | "opponentTeamId" | "userId"
+  >;
+  matchId: string;
+  opponentPairs: readonly PlannerPairDefinition[];
+  ourPairs: readonly PlannerOurPairContext[];
+}): NextGamePlannerArtifactRecord {
+  return {
+    artifactKey: args.artifactKey,
+    userId: args.job.userId,
+    jobId: args.job.id,
+    matchId: args.matchId,
+    opponentTeamId: args.job.opponentTeamId,
+    generatedAt: args.generatedAt,
+    evaluatedScenariosJson: [...args.evaluatedScenarios],
+    ourPairsJson: args.ourPairs.map(toPlannerTacticPairRecord),
+    opponentPairsJson: args.opponentPairs.map(toPlannerTacticPairRecord),
+    expiryKey: "EXPIRABLE",
+    expiresAt: args.expiresAt,
+  };
+}
+
+function buildPlannerArtifactRowRecords(args: {
+  artifactKey: string;
+  expiresAt: string;
+  jobId: string;
+  response: PredictionPlannerResponse;
+  userId: string;
+}): NextGamePlannerArtifactRowRecord[] {
+  const views = [args.response.expectedMatrix, ...args.response.scenarioMatrices];
+  const records: NextGamePlannerArtifactRowRecord[] = [];
+
+  views.forEach((view, viewIndex) => {
+    view.rows.forEach((row, rowIndex) => {
+      records.push({
+        artifactKey: args.artifactKey,
+        viewId: view.viewId,
+        opponentPairId: row.opponentPairId,
+        userId: args.userId,
+        jobId: args.jobId,
+        rowOrder: viewIndex * 1000 + rowIndex,
+        rowJson: {
+          cells: row.cells,
+          label: view.label,
+          opponentPairId: row.opponentPairId,
+          probability: view.probability ?? null,
+          scenarioId: view.scenarioId ?? null,
+          viewId: view.viewId,
+        },
+        expiryKey: "EXPIRABLE",
+        expiresAt: args.expiresAt,
+      });
+    });
+  });
+
+  return records;
+}
+
+function buildCandidatesFromPlanEvaluations(args: {
+  evaluatedScenarios: readonly PlannerEvaluatedScenario[];
+  ourPairs: readonly PlannerOurPairContext[];
+  planEvaluations: PredictionPlannerResponse["planEvaluations"];
+  recommendationInput: RecommendationInput;
+}): Candidate[] {
+  const pairById = new Map(args.ourPairs.map((pair) => [pair.pairId, pair]));
+  const probabilityByScenarioId = new Map(
+    args.evaluatedScenarios.map((scenario) => [scenario.scenarioId, scenario.probability]),
+  );
+
+  return args.planEvaluations.flatMap((evaluation) => {
+    const pair = pairById.get(evaluation.pairId);
+    if (!pair) {
+      return [];
+    }
+
+    const scenarioResults = args.evaluatedScenarios.map((scenario) => {
+      const match = evaluation.scenarioResults.find(
+        (entry) => entry.scenarioId === scenario.scenarioId,
+      );
+      return {
+        available: match?.available === true,
+        predictedOpponentScore:
+          match?.predictedOpponentScore !== null &&
+          match?.predictedOpponentScore !== undefined
+            ? roundScore(match.predictedOpponentScore)
+            : null,
+        predictedPointDiff:
+          match?.predictedPointDiff !== null &&
+          match?.predictedPointDiff !== undefined
+            ? roundScore(match.predictedPointDiff)
+            : null,
+        predictedTeamScore:
+          match?.predictedTeamScore !== null &&
+          match?.predictedTeamScore !== undefined
+            ? roundScore(match.predictedTeamScore)
+            : null,
+        scenarioId: scenario.scenarioId,
+      } satisfies CandidateScenarioResult;
+    });
+
+    const availableResults = scenarioResults.filter(
+      (result) =>
+        result.available &&
+        result.predictedPointDiff !== null &&
+        result.predictedTeamScore !== null &&
+        result.predictedOpponentScore !== null,
+    );
+    if (!availableResults.length) {
+      return [];
+    }
+
+    const availableWeight = availableResults.reduce(
+      (sum, result) => sum + (probabilityByScenarioId.get(result.scenarioId) ?? 0),
+      0,
+    );
+    const safeWeight = availableWeight > 0 ? availableWeight : 1;
+    const weightedExpectedPointDiff =
+      availableResults.reduce(
+        (sum, result) =>
+          sum +
+          (probabilityByScenarioId.get(result.scenarioId) ?? 0) *
+            (result.predictedPointDiff ?? 0),
+        0,
+      ) / safeWeight;
+    const predictedTeamScore =
+      availableResults.reduce(
+        (sum, result) =>
+          sum +
+          (probabilityByScenarioId.get(result.scenarioId) ?? 0) *
+            (result.predictedTeamScore ?? 0),
+        0,
+      ) / safeWeight;
+    const predictedOpponentScore =
+      availableResults.reduce(
+        (sum, result) =>
+          sum +
+          (probabilityByScenarioId.get(result.scenarioId) ?? 0) *
+            (result.predictedOpponentScore ?? 0),
+        0,
+      ) / safeWeight;
+
+    return [
+      {
+        defense: pair.displayDefense,
+        effortChoice: evaluation.effortChoice,
+        effortCost: evaluation.effortCost,
+        effortValue: evaluation.effortValue,
+        floorPointDiff: roundScore(
+          Math.min(
+            ...availableResults.map((result) => result.predictedPointDiff ?? 0),
+          ),
+        ),
+        ceilingPointDiff: roundScore(
+          Math.max(
+            ...availableResults.map((result) => result.predictedPointDiff ?? 0),
+          ),
+        ),
+        lineup: pair.lineup,
+        offense: pair.displayOffense,
+        pairId: pair.pairId,
+        predictedOpponentScore: roundScore(predictedOpponentScore),
+        predictedPointDiff: roundScore(weightedExpectedPointDiff),
+        predictedTeamScore: roundScore(predictedTeamScore),
+        scenarioResults,
+        weightedExpectedPointDiff: roundScore(weightedExpectedPointDiff),
+        winProbability: roundScore(
+          scenarioResults.reduce(
+            (sum, result) =>
+              sum +
+              ((probabilityByScenarioId.get(result.scenarioId) ?? 0) *
+                ((result.predictedPointDiff ?? Number.NEGATIVE_INFINITY) > 0 ? 1 : 0)),
+            0,
+          ),
+        ),
+      } satisfies Candidate,
+    ];
+  });
+}
+
+function buildPlannerDetailFromArtifact(
+  artifact: NextGamePlannerArtifactRecord,
+  rows: readonly NextGamePlannerArtifactRowRecord[],
+): PlannerDetail {
+  const ourPairs = normalizePlannerPairArray(artifact.ourPairsJson);
+  const opponentPairs = normalizePlannerPairArray(artifact.opponentPairsJson);
+  const evaluatedScenarios = normalizePlannerEvaluatedScenarioArray(
+    artifact.evaluatedScenariosJson,
+  );
+  const views = buildPlannerViewsFromRows(rows);
+
+  return {
+    artifactKey: artifact.artifactKey,
+    generatedAt: artifact.generatedAt,
+    evaluatedScenarios,
+    ourPairs,
+    opponentPairs,
+    views,
+  };
+}
+
+function buildPlannerViewsFromRows(
+  rows: readonly NextGamePlannerArtifactRowRecord[],
+): PlannerMatrixView[] {
+  const grouped = new Map<
+    string,
+    {
+      label: string;
+      probability: number | null;
+      rows: PlannerMatrixRow[];
+      scenarioId: string | null;
+      viewId: string;
+    }
+  >();
+
+  for (const record of rows) {
+    const rowRecord = requireRecord(record.rowJson, "planner artifact row");
+    const viewId = asOptionalString(rowRecord.viewId) ?? record.viewId;
+    const current = grouped.get(viewId) ?? {
+      label: asOptionalString(rowRecord.label) ?? viewId,
+      probability: asFiniteNumber(rowRecord.probability),
+      rows: [],
+      scenarioId: asOptionalString(rowRecord.scenarioId),
+      viewId,
+    };
+
+    current.rows.push({
+      opponentPairId:
+        asOptionalString(rowRecord.opponentPairId) ?? record.opponentPairId,
+      cells: normalizePlannerMatrixCellArray(rowRecord.cells),
+    });
+    grouped.set(viewId, current);
+  }
+
+  return [...grouped.values()].map((view) => ({
+    label: view.label,
+    probability: view.probability,
+    rows: view.rows,
+    scenarioId: view.scenarioId,
+    viewId: view.viewId,
+  }));
+}
+
+function toPlannerTacticPairRecord(
+  pair: Pick<
+    PlannerPairDefinition,
+    "displayDefense" | "displayOffense" | "pairId" | "supportTier"
+  >,
+): PlannerTacticPair {
+  return {
+    pairId: pair.pairId,
+    offense: pair.displayOffense,
+    defense: pair.displayDefense,
+    estimated: pair.supportTier === "ESTIMATED",
+    supportTier: pair.supportTier,
+  };
+}
+
 function toRecommendedPlan(
   candidate: Candidate,
   input: RecommendationInput,
@@ -911,9 +1526,14 @@ function toRecommendedPlan(
   const targetMargin = mode === "EFFICIENT_WIN" ? TARGET_EFFICIENT_MARGIN : null;
   return {
     mode,
+    pairId: candidate.pairId,
     predictedPointDiff: roundScore(candidate.predictedPointDiff),
     predictedTeamScore: roundScore(candidate.predictedTeamScore),
     predictedOpponentScore: roundScore(candidate.predictedOpponentScore),
+    weightedExpectedPointDiff: roundScore(candidate.weightedExpectedPointDiff),
+    floorPointDiff: roundScore(candidate.floorPointDiff),
+    ceilingPointDiff: roundScore(candidate.ceilingPointDiff),
+    winProbability: roundScore(candidate.winProbability),
     offense: candidate.offense,
     defense: candidate.defense,
     effortChoice: candidate.effortChoice,
@@ -925,6 +1545,7 @@ function toRecommendedPlan(
         : candidate.predictedPointDiff > 0,
     targetMargin,
     lineup: candidate.lineup,
+    scenarioResults: candidate.scenarioResults,
   };
 }
 
@@ -1034,6 +1655,30 @@ function normalizeRecommendationResult(
     enthusiasm: normalizeEnthusiasm(input.enthusiasm),
     defensiveSwitch,
     stale,
+    artifactKey: asOptionalString(input.artifactKey) ?? "",
+    evaluatedScenarios: normalizePlannerEvaluatedScenarioArray(
+      input.evaluatedScenarios,
+    ),
+    bestExpectedPlan: normalizeRecommendedPlan(
+      asOptionalRecord(input.bestExpectedPlan) ??
+        asOptionalRecord(input.biggestWinPlan),
+      defensiveSwitch,
+      normalizeEnthusiasm(input.enthusiasm),
+      "BEST_EXPECTED",
+    ),
+    safestPlan: normalizeRecommendedPlan(
+      asOptionalRecord(input.safestPlan),
+      defensiveSwitch,
+      normalizeEnthusiasm(input.enthusiasm),
+      "SAFEST",
+    ),
+    efficientPlan: normalizeRecommendedPlan(
+      asOptionalRecord(input.efficientPlan) ??
+        asOptionalRecord(input.efficientWinPlan),
+      defensiveSwitch,
+      normalizeEnthusiasm(input.enthusiasm),
+      "EFFICIENT_WIN",
+    ),
     biggestWinPlan: normalizeRecommendedPlan(
       asOptionalRecord(input.biggestWinPlan),
       defensiveSwitch,
@@ -1058,9 +1703,23 @@ function normalizeRecommendedPlan(
   const record = input ?? {};
   return {
     mode: normalizeRecommendationMode(record.mode, fallbackMode),
+    pairId: asOptionalString(record.pairId) ?? buildPlannerPairId("Base", "ManToMan"),
     predictedPointDiff: asFiniteNumber(record.predictedPointDiff) ?? 0,
     predictedTeamScore: asFiniteNumber(record.predictedTeamScore) ?? 0,
     predictedOpponentScore: asFiniteNumber(record.predictedOpponentScore) ?? 0,
+    weightedExpectedPointDiff:
+      asFiniteNumber(record.weightedExpectedPointDiff) ??
+      asFiniteNumber(record.predictedPointDiff) ??
+      0,
+    floorPointDiff:
+      asFiniteNumber(record.floorPointDiff) ??
+      asFiniteNumber(record.predictedPointDiff) ??
+      0,
+    ceilingPointDiff:
+      asFiniteNumber(record.ceilingPointDiff) ??
+      asFiniteNumber(record.predictedPointDiff) ??
+      0,
+    winProbability: asFiniteNumber(record.winProbability) ?? 0,
     offense: asOptionalString(record.offense) ?? "Base Offense",
     defense: asOptionalString(record.defense) ?? "Man to man",
     effortChoice: asOptionalString(record.effortChoice) ?? "Normal",
@@ -1076,6 +1735,11 @@ function normalizeRecommendedPlan(
           normalizeRecommendedLineupRow(asOptionalRecord(entry)),
         )
       : [],
+    scenarioResults: Array.isArray(record.scenarioResults)
+      ? record.scenarioResults.map((entry) =>
+          normalizePlannerPlanScenarioResult(asOptionalRecord(entry)),
+        )
+      : [],
   };
 }
 
@@ -1088,6 +1752,83 @@ function normalizeRecommendedLineupRow(
     position: normalizePositionCode(input?.position),
     minutes: asFiniteInteger(input?.minutes) ?? 0,
   };
+}
+
+function normalizePlannerPlanScenarioResult(
+  input: JsonRecord | null,
+): RecommendedGamePlan["scenarioResults"][number] {
+  return {
+    scenarioId: asOptionalString(input?.scenarioId) ?? "",
+    available: asOptionalBoolean(input?.available) ?? false,
+    predictedPointDiff: asFiniteNumber(input?.predictedPointDiff),
+    predictedTeamScore: asFiniteNumber(input?.predictedTeamScore),
+    predictedOpponentScore: asFiniteNumber(input?.predictedOpponentScore),
+  };
+}
+
+function normalizePlannerEvaluatedScenarioArray(
+  value: unknown,
+): PlannerEvaluatedScenario[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((entry) => {
+    const record = asOptionalRecord(entry);
+    return {
+      scenarioId: asOptionalString(record?.scenarioId) ?? "",
+      label: asOptionalString(record?.label) ?? "Scenario",
+      probability: asFiniteNumber(record?.probability) ?? 0,
+      offense: asOptionalString(record?.offense) ?? "Base Offense",
+      defense: asOptionalString(record?.defense) ?? "Man to man",
+      effortChoice: asOptionalString(record?.effortChoice) ?? "Normal",
+      evidence: Array.isArray(record?.evidence)
+        ? record.evidence
+            .map((item) => asOptionalString(item))
+            .filter((item): item is string => Boolean(item))
+        : [],
+    };
+  });
+}
+
+function normalizePlannerPairArray(value: unknown): PlannerTacticPair[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((entry) => {
+    const record = asOptionalRecord(entry);
+    return {
+      pairId: asOptionalString(record?.pairId) ?? buildPlannerPairId("Base", "ManToMan"),
+      offense: asOptionalString(record?.offense) ?? "Base Offense",
+      defense: asOptionalString(record?.defense) ?? "Man to man",
+      estimated: asOptionalBoolean(record?.estimated) ?? false,
+      supportTier:
+        record?.supportTier === "DIRECT" || record?.supportTier === "ESTIMATED"
+          ? record.supportTier
+          : "DIRECT",
+    };
+  });
+}
+
+function normalizePlannerMatrixCellArray(value: unknown): PlannerMatrixCell[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((entry) => {
+    const record = asOptionalRecord(entry);
+    return {
+      ourPairId: asOptionalString(record?.ourPairId) ?? buildPlannerPairId("Base", "ManToMan"),
+      opponentPairId:
+        asOptionalString(record?.opponentPairId) ??
+        buildPlannerPairId("Base", "ManToMan"),
+      available: asOptionalBoolean(record?.available) ?? false,
+      predictedPointDiff: asFiniteNumber(record?.predictedPointDiff),
+      predictedTeamScore: asFiniteNumber(record?.predictedTeamScore),
+      predictedOpponentScore: asFiniteNumber(record?.predictedOpponentScore),
+    };
+  });
 }
 
 function readStoredForecastJobId(resultJson: unknown): string | null {
@@ -1113,7 +1854,12 @@ function normalizeRecommendationMode(
   value: unknown,
   fallback: RecommendedGamePlan["mode"],
 ): RecommendedGamePlan["mode"] {
-  return value === "BIGGEST_WIN" || value === "EFFICIENT_WIN" ? value : fallback;
+  return value === "BIGGEST_WIN" ||
+    value === "BEST_EXPECTED" ||
+    value === "SAFEST" ||
+    value === "EFFICIENT_WIN"
+    ? value
+    : fallback;
 }
 
 function normalizeRecommendationDefensiveSwitch(
@@ -1140,9 +1886,18 @@ function normalizeRecommendationDefensiveSwitch(
   };
 }
 
-function compareBiggestWinCandidates(left: Candidate, right: Candidate): number {
+function compareBestExpectedCandidates(left: Candidate, right: Candidate): number {
   return (
-    right.predictedPointDiff - left.predictedPointDiff ||
+    right.weightedExpectedPointDiff - left.weightedExpectedPointDiff ||
+    left.effortCost - right.effortCost ||
+    stableCandidateKey(left).localeCompare(stableCandidateKey(right))
+  );
+}
+
+function compareSafestCandidates(left: Candidate, right: Candidate): number {
+  return (
+    right.floorPointDiff - left.floorPointDiff ||
+    right.weightedExpectedPointDiff - left.weightedExpectedPointDiff ||
     left.effortCost - right.effortCost ||
     stableCandidateKey(left).localeCompare(stableCandidateKey(right))
   );
@@ -1150,8 +1905,9 @@ function compareBiggestWinCandidates(left: Candidate, right: Candidate): number 
 
 function compareEfficientCandidates(left: Candidate, right: Candidate): number {
   return (
-    left.predictedPointDiff - right.predictedPointDiff ||
     left.effortCost - right.effortCost ||
+    left.weightedExpectedPointDiff - right.weightedExpectedPointDiff ||
+    right.floorPointDiff - left.floorPointDiff ||
     stableCandidateKey(left).localeCompare(stableCandidateKey(right))
   );
 }
@@ -1193,21 +1949,28 @@ function normalizeTeamRatingsRecord(value: unknown): TeamRatings {
 async function invokePredictionEndpoint(
   endpointName: string,
   payload: JsonRecord,
-): Promise<PredictionEndpointResponse> {
+): Promise<PredictionEndpointResponse | PredictionPlannerResponse> {
   const runtime = new SageMakerRuntimeClient({});
-  const response = await runtime.send(
-    new InvokeEndpointCommand({
-      EndpointName: endpointName,
-      ContentType: "application/json",
-      Body: Buffer.from(JSON.stringify(payload)),
-    }),
-  );
+  let response;
+  try {
+    response = await runtime.send(
+      new InvokeEndpointCommand({
+        EndpointName: endpointName,
+        ContentType: "application/json",
+        Body: Buffer.from(JSON.stringify(payload)),
+      }),
+    );
+  } catch (error) {
+    throw normalizePlannerEndpointInvocationError(error, endpointName);
+  }
   const rawBody = response.Body?.transformToString
     ? await Promise.resolve(response.Body.transformToString())
     : Buffer.from(response.Body ?? []).toString("utf-8");
-  const parsed = predictionEndpointResponseSchema.safeParse(
-    rawBody ? JSON.parse(rawBody) : null,
-  );
+  const body = rawBody ? JSON.parse(rawBody) : null;
+  const parsed =
+    payload.plannerRequest !== undefined
+      ? predictionPlannerResponseSchema.safeParse(body)
+      : predictionEndpointResponseSchema.safeParse(body);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     throw new Error(
@@ -1272,6 +2035,96 @@ function parseRecommendationQueueMessage(
     );
   }
   return { jobId, userId };
+}
+
+function toPlannerDisplayOffense(value: string): string {
+  switch (value) {
+    case "Base":
+      return "Base Offense";
+    case "Push":
+      return "Push the Ball";
+    case "LookInside":
+      return "Look Inside";
+    case "LowPost":
+      return "Low Post";
+    case "RunAndGun":
+      return "Run and Gun";
+    case "InsideIsolation":
+      return "Inside Isolation";
+    case "OutsideIsolation":
+      return "Outside Isolation";
+    default:
+      return value;
+  }
+}
+
+function toPlannerDisplayDefense(value: string): string {
+  switch (value) {
+    case "ManToMan":
+      return "Man to man";
+    case "23Zone":
+      return "2-3 Zone";
+    case "32Zone":
+      return "3-2 Zone";
+    case "131Zone":
+      return "1-3-1 Zone";
+    case "InsideBoxAndOne":
+      return "Inside Box + 1";
+    case "OutsideBoxAndOne":
+      return "Outside Box + 1";
+    case "Press":
+      return "Full Court Press";
+    default:
+      return value;
+  }
+}
+
+function toLineupHelperOffense(value: string): string {
+  switch (value) {
+    case "Base":
+      return "Base Offense";
+    case "Push":
+      return "Push the Ball";
+    case "LookInside":
+    case "InsideIsolation":
+      return "Look Inside";
+    case "LowPost":
+      return "Low Post";
+    case "RunAndGun":
+    case "OutsideIsolation":
+      return value === "RunAndGun" ? "Run and Gun" : "Motion";
+    default:
+      return toPlannerDisplayOffense(value);
+  }
+}
+
+function toLineupHelperDefense(value: string): string {
+  switch (value) {
+    case "ManToMan":
+      return "Man to man";
+    case "23Zone":
+    case "InsideBoxAndOne":
+      return "2-3 Zone";
+    case "32Zone":
+    case "OutsideBoxAndOne":
+      return "3-2 Zone";
+    case "131Zone":
+      return "1-3-1 Zone";
+    case "Press":
+      return "Full Court Press";
+    default:
+      return toPlannerDisplayDefense(value);
+  }
+}
+
+function isPlannerPairEstimated(offense: string, defense: string): boolean {
+  return (
+    offense === "InsideIsolation" ||
+    offense === "OutsideIsolation" ||
+    defense === "InsideBoxAndOne" ||
+    defense === "OutsideBoxAndOne" ||
+    defense === "Press"
+  );
 }
 
 function toPredictorOffense(value: unknown): string {
@@ -1360,6 +2213,25 @@ function asOptionalBoolean(value: unknown): boolean | null {
     return false;
   }
   return null;
+}
+
+function normalizeScenarioProbabilities(
+  scenarios: ReadonlyArray<{ probability?: number | null }>,
+): number[] {
+  if (!scenarios.length) {
+    return [];
+  }
+
+  const raw = scenarios.map((scenario) =>
+    Math.max(0, asFiniteNumber(scenario.probability) ?? 0),
+  );
+  const total = raw.reduce((sum, value) => sum + value, 0);
+  if (total > 0) {
+    return raw.map((value) => value / total);
+  }
+
+  const equalWeight = 1 / scenarios.length;
+  return scenarios.map(() => equalWeight);
 }
 
 function resolveUserId(identity: unknown): string | null {

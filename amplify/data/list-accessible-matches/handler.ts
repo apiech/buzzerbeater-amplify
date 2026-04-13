@@ -6,17 +6,11 @@ import { listAccessibleMatches } from "../_backend/match-store";
 type Handler = Schema["listAccessibleMatches"]["functionHandler"];
 
 export const handler: Handler = async (event) => {
-  const payload = await listAccessibleMatches({
+  return listAccessibleMatches({
     env,
     identity: event.identity,
     teamId: event.arguments.teamId,
     season: event.arguments.season ?? null,
     cursor: event.arguments.cursor,
   });
-
-  return {
-    status: "READY",
-    payload,
-    error: null,
-  };
 };

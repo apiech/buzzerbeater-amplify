@@ -7,6 +7,8 @@ import {
   createOpponentForecastJob,
   createSyncRun,
   getBbConnection,
+  upsertNextGamePlannerArtifact,
+  upsertNextGamePlannerArtifactRows,
   getRivalsBackfill,
   getPredictionJob,
   getUserPreference,
@@ -121,8 +123,8 @@ test("createOpponentForecastJob serializes AWSJSON payloads before model.create"
     status: "QUEUED",
     startedAt: null,
     completedAt: null,
-    requestJson: '{"teamId":"200"}',
-    resolvedContextJson: '{"recentGames":8}',
+    requestJson: { teamId: "200" },
+    resolvedContextJson: { recentGames: 8 },
     resultJson: null,
     error: null,
     modelVersion: null,
@@ -215,8 +217,16 @@ test("createNextGameRecommendationJob serializes AWSJSON payloads before model.c
     status: "QUEUED",
     startedAt: null,
     completedAt: null,
-    requestJson: '{"input":{"enthusiasm":8}}',
-    resultJson: '{"biggestWinPlan":{"offense":"Base Offense"}}',
+    requestJson: {
+      input: {
+        enthusiasm: 8,
+      },
+    },
+    resultJson: {
+      biggestWinPlan: {
+        offense: "Base Offense",
+      },
+    },
     error: null,
     executionArn: null,
     requestedAt: createInput?.["requestedAt"],
@@ -227,6 +237,103 @@ test("createNextGameRecommendationJob serializes AWSJSON payloads before model.c
     input: {
       enthusiasm: 8,
     },
+  });
+});
+
+test("planner artifact upserts serialize planner AWSJSON payloads", async (t) => {
+  const createdArtifacts: Record<string, unknown>[] = [];
+  const createdRows: Record<string, unknown>[] = [];
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          NextGamePlannerArtifact: {
+            get: async () => ({ data: null }),
+            create: async (input: Record<string, unknown>) => {
+              createdArtifacts.push(input);
+              return { data: { artifactKey: input.artifactKey } };
+            },
+          },
+          NextGamePlannerArtifactRow: {
+            get: async () => ({ data: null }),
+            create: async (input: Record<string, unknown>) => {
+              createdRows.push(input);
+              return {
+                data: {
+                  artifactKey: input.artifactKey,
+                  opponentPairId: input.opponentPairId,
+                  viewId: input.viewId,
+                },
+              };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertNextGamePlannerArtifact({} as any, {
+    artifactKey: "artifact-1",
+    userId: "u1",
+    jobId: "job-1",
+    matchId: "m-1",
+    opponentTeamId: "opp-1",
+    generatedAt: "2026-04-12T00:00:00.000Z",
+    evaluatedScenariosJson: [{ scenarioId: "s1", label: "Base" }],
+    ourPairsJson: [{ pairId: "p1", offense: "Base Offense", defense: "Man to man" }],
+    opponentPairsJson: [{ pairId: "p2", offense: "Motion", defense: "2-3 Zone" }],
+    expiryKey: "EXPIRABLE",
+    expiresAt: "2026-04-26T00:00:00.000Z",
+  });
+  await upsertNextGamePlannerArtifactRows({} as any, [
+    {
+      artifactKey: "artifact-1",
+      viewId: "expected",
+      opponentPairId: "p2",
+      userId: "u1",
+      jobId: "job-1",
+      rowOrder: 0,
+      rowJson: {
+        viewId: "expected",
+        label: "Expected",
+        opponentPairId: "p2",
+        cells: [{ ourPairId: "p1", opponentPairId: "p2", available: true }],
+      },
+      expiryKey: "EXPIRABLE",
+      expiresAt: "2026-04-26T00:00:00.000Z",
+    },
+  ]);
+
+  assert.deepStrictEqual(createdArtifacts[0], {
+    artifactKey: "artifact-1",
+    userId: "u1",
+    jobId: "job-1",
+    matchId: "m-1",
+    opponentTeamId: "opp-1",
+    generatedAt: "2026-04-12T00:00:00.000Z",
+    evaluatedScenariosJson: [{ scenarioId: "s1", label: "Base" }],
+    ourPairsJson: [{ pairId: "p1", offense: "Base Offense", defense: "Man to man" }],
+    opponentPairsJson: [{ pairId: "p2", offense: "Motion", defense: "2-3 Zone" }],
+    expiryKey: "EXPIRABLE",
+    expiresAt: "2026-04-26T00:00:00.000Z",
+  });
+  assert.deepStrictEqual(createdRows[0], {
+    artifactKey: "artifact-1",
+    viewId: "expected",
+    opponentPairId: "p2",
+    userId: "u1",
+    jobId: "job-1",
+    rowOrder: 0,
+    rowJson: {
+      viewId: "expected",
+      label: "Expected",
+      opponentPairId: "p2",
+      cells: [{ ourPairId: "p1", opponentPairId: "p2", available: true }],
+    },
+    expiryKey: "EXPIRABLE",
+    expiresAt: "2026-04-26T00:00:00.000Z",
   });
 });
 
@@ -306,7 +413,10 @@ test("generic upserts serialize AWSJSON payloads before model.create", async (t)
     playerId: "p1",
     teamId: "t1",
     fullName: "Prospect",
-    profileJson: '{"playerId":"p1","skills":{"outsideScoring":12}}',
+    profileJson: {
+      playerId: "p1",
+      skills: { outsideScoring: 12 },
+    },
   });
 });
 

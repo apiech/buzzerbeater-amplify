@@ -1,6 +1,8 @@
 import { env } from "$amplify/env/billing-admin-override";
+import { z } from "zod";
 
 import { setBillingOverride } from "../data/_backend/billing";
+import { parseJsonBody } from "../../lib/json-parsing";
 
 type FunctionUrlEvent = {
   body?: string | null;
@@ -19,12 +21,12 @@ type FunctionUrlResponse = {
   statusCode: number;
 };
 
-type OverrideRequest = {
-  overrideExpiresAt?: string | null;
-  overrideReason?: string | null;
-  planId?: "free" | "premium" | null;
-  userId?: string;
-};
+const overrideRequestSchema = z.object({
+  overrideExpiresAt: z.string().nullable().optional(),
+  overrideReason: z.string().nullable().optional(),
+  planId: z.enum(["free", "premium"]).nullable().optional(),
+  userId: z.string().optional(),
+});
 
 export const handler = async (
   event: FunctionUrlEvent,
@@ -50,7 +52,7 @@ export const handler = async (
     const body = event.isBase64Encoded
       ? Buffer.from(event.body ?? "", "base64").toString("utf8")
       : (event.body ?? "");
-    const request = JSON.parse(body || "{}") as OverrideRequest;
+    const request = parseJsonBody(overrideRequestSchema, body);
     const userId = request.userId?.trim();
     if (!userId) {
       throw new Error("userId is required.");

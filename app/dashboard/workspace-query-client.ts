@@ -3,10 +3,12 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
+import type { Schema } from "@/amplify/data/resource";
 import { client } from "@/app/amplify-client";
 import { formatAmplifyErrors } from "@/app/dashboard/remote-errors";
 import { isThemeId, type ThemeId } from "@/app/theme";
 import type {
+  AccessibleMatchSummary,
   BillingPaymentsPage,
   BillingSummary,
   BbConnectionRecord,
@@ -20,10 +22,15 @@ import type {
   LineupHelperEvaluationRecord,
   LineupHelperWorkspaceRecord,
   MatchBoxscorePayload,
+  NextGamePlannerDetailPayload,
   NextGameRecommendationInput,
   NextGameRecommendationSnapshot,
   OperationsActivity,
   OpponentForecastSnapshot,
+  PredictionDraft,
+  PredictionSubmissionRequest,
+  PredictionMatrixResult,
+  PredictionSideInput,
   PlayerLabPayload,
   PlayerTrendPayload,
   RecapHistoryRecord,
@@ -48,7 +55,6 @@ import { currentPredictionPreviewSchema } from "@/lib/prediction/contracts";
 const nullableStringSchema = z.string().nullable().optional();
 const nullableNumberSchema = z.number().nullable().optional();
 const nullableBooleanSchema = z.boolean().nullable().optional();
-const jsonValueSchema = z.unknown();
 const themeIdSchema = z
   .string()
   .refine((value): value is ThemeId => isThemeId(value));
@@ -60,6 +66,19 @@ const namedReferenceSchema = z
   })
   .nullable()
   .optional();
+
+const storedTeamInfoSchema = z
+  .object({
+    country: namedReferenceSchema,
+    isBot: z.boolean(),
+    league: namedReferenceSchema,
+    ownerName: nullableStringSchema,
+    rival: namedReferenceSchema,
+    shortName: nullableStringSchema,
+    teamId: nullableStringSchema,
+    teamName: nullableStringSchema,
+  })
+  .passthrough();
 
 const teamRecordSummarySchema = z
   .object({
@@ -88,6 +107,14 @@ const playerSummarySchema = z
     recentAvgMinutes: nullableNumberSchema,
     recentStartCount: nullableNumberSchema,
     salary: nullableNumberSchema,
+  })
+  .passthrough();
+
+const teamHubWorkspaceSchema = z
+  .object({
+    roster: z.array(playerSummarySchema),
+    syncedAt: nullableStringSchema,
+    team: storedTeamInfoSchema,
   })
   .passthrough();
 
@@ -142,28 +169,7 @@ const homeNextMatchSchema = z
 
 const homeWorkspaceSchema = z
   .object({
-    connection: z
-      .object({
-        accessKeyLast4: nullableStringSchema,
-        bbLoginName: nullableStringSchema,
-        connectedAt: nullableStringSchema,
-        countryId: nullableStringSchema,
-        countryName: nullableStringSchema,
-        lastSyncAt: nullableStringSchema,
-        lastSyncError: nullableStringSchema,
-        lastValidatedAt: nullableStringSchema,
-        leagueId: nullableStringSchema,
-        leagueName: nullableStringSchema,
-        leagueTimeZone: nullableStringSchema,
-        profileJson: jsonValueSchema.optional(),
-        shortName: nullableStringSchema,
-        status: nullableStringSchema,
-        teamId: nullableStringSchema,
-        teamName: nullableStringSchema,
-        userId: nullableStringSchema,
-        workspaceCacheJson: jsonValueSchema.optional(),
-      })
-      .passthrough(),
+    connection: z.lazy(() => connectionResultSchema),
     league: z
       .object({
         league: namedReferenceSchema,
@@ -228,9 +234,11 @@ const connectionResultSchema = z
     leagueId: nullableStringSchema,
     leagueName: nullableStringSchema,
     leagueTimeZone: nullableStringSchema,
+    profileJson: storedTeamInfoSchema.nullable().optional(),
     status: z.string(),
     teamId: nullableStringSchema,
     teamName: nullableStringSchema,
+    workspaceCacheJson: z.lazy(() => workspaceCachePayloadSchema).nullable().optional(),
   })
   .passthrough();
 
@@ -542,6 +550,91 @@ const scoutWorkspaceSchema = z
   .nullable()
   .optional();
 
+const workspaceCacheConnectionSchema = z
+  .object({
+    accessKeyLast4: nullableStringSchema,
+    bbLoginName: z.string(),
+    connectedAt: nullableStringSchema,
+    countryId: nullableStringSchema,
+    countryName: nullableStringSchema,
+    lastSyncAt: nullableStringSchema,
+    lastSyncError: nullableStringSchema,
+    lastValidatedAt: nullableStringSchema,
+    leagueId: nullableStringSchema,
+    leagueName: nullableStringSchema,
+    leagueTimeZone: nullableStringSchema,
+    profileJson: storedTeamInfoSchema.nullable().optional(),
+    status: z.string(),
+    teamId: nullableStringSchema,
+    teamName: nullableStringSchema,
+  })
+  .passthrough();
+
+const cachedHomeWorkspaceSchema = z
+  .object({
+    connection: workspaceCacheConnectionSchema,
+    league: z
+      .object({
+        league: namedReferenceSchema,
+        standings: z.array(
+          z
+            .object({
+              index: z.number(),
+              teams: z.array(
+                z
+                  .object({
+                    losses: nullableNumberSchema,
+                    pointMargin: nullableNumberSchema,
+                    teamId: nullableStringSchema,
+                    teamName: nullableStringSchema,
+                    wins: nullableNumberSchema,
+                  })
+                  .passthrough(),
+              ),
+            })
+            .passthrough(),
+        ),
+      })
+      .passthrough(),
+    nextMatch: homeNextMatchSchema,
+    nextOpponent: z
+      .object({
+        injuries: z.array(injurySummarySchema),
+        record: teamRecordSummarySchema,
+        teamId: nullableStringSchema,
+        teamName: nullableStringSchema,
+        tendencies: tendenciesSummarySchema,
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    nextScoutMatch: homeNextMatchSchema,
+    recentMatches: z.array(matchSummarySchema),
+    syncedAt: nullableStringSchema,
+    team: z
+      .object({
+        injuries: z.array(injurySummarySchema),
+        record: teamRecordSummarySchema,
+        shortName: nullableStringSchema,
+        teamId: nullableStringSchema,
+        teamName: nullableStringSchema,
+        topPlayers: z.array(playerSummarySchema),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+const workspaceCachePayloadSchema = z
+  .object({
+    version: z.number(),
+    home: cachedHomeWorkspaceSchema,
+    teamHub: teamHubWorkspaceSchema,
+    scout: scoutWorkspaceSchema,
+    leagueIntel: leagueIntelSchema,
+    playerLab: playerLabSchema,
+  })
+  .passthrough();
+
 const opponentForecastPlayerProjectionSchema = z
   .object({
     bestPosition: nullableStringSchema,
@@ -639,6 +732,113 @@ const opponentForecastSchema = z
   .nullable()
   .optional();
 
+const nextGameRecommendationPlanScenarioResultSchema = z
+  .object({
+    available: z.boolean(),
+    predictedOpponentScore: nullableNumberSchema,
+    predictedPointDiff: nullableNumberSchema,
+    predictedTeamScore: nullableNumberSchema,
+    scenarioId: z.string(),
+  })
+  .passthrough();
+
+const nextGameRecommendationPlanSchema = z
+  .object({
+    ceilingPointDiff: nullableNumberSchema,
+    defense: z.string(),
+    defensiveSwitch: lineupHelperDefensiveSwitchSchema,
+    effortChoice: z.string(),
+    enthusiasm: z.number(),
+    floorPointDiff: nullableNumberSchema,
+    lineup: z.array(
+      z
+        .object({
+          fullName: z.string(),
+          minutes: z.number(),
+          playerId: nullableStringSchema,
+          position: z.string(),
+        })
+        .passthrough(),
+    ),
+    meetsTargetMargin: z.boolean(),
+    mode: z.string(),
+    offense: z.string(),
+    pairId: z.string().optional(),
+    predictedOpponentScore: z.number(),
+    predictedPointDiff: z.number(),
+    predictedTeamScore: z.number(),
+    scenarioResults: z
+      .array(nextGameRecommendationPlanScenarioResultSchema)
+      .optional(),
+    targetMargin: nullableNumberSchema,
+    weightedExpectedPointDiff: nullableNumberSchema,
+    winProbability: nullableNumberSchema,
+  })
+  .passthrough();
+
+const nextGameRecommendationScenarioSchema = z
+  .object({
+    defense: z.string(),
+    effortChoice: z.string(),
+    evidence: z.array(z.string()),
+    label: z.string(),
+    offense: z.string(),
+    probability: z.number(),
+    scenarioId: z.string(),
+  })
+  .passthrough();
+
+const nextGamePlannerTacticPairSchema = z
+  .object({
+    defense: z.string(),
+    estimated: z.boolean(),
+    offense: z.string(),
+    pairId: z.string(),
+    supportTier: z.enum(["DIRECT", "ESTIMATED"]),
+  })
+  .passthrough();
+
+const nextGamePlannerCellSchema = z
+  .object({
+    available: z.boolean(),
+    opponentPairId: z.string(),
+    ourPairId: z.string(),
+    predictedOpponentScore: nullableNumberSchema,
+    predictedPointDiff: nullableNumberSchema,
+    predictedTeamScore: nullableNumberSchema,
+  })
+  .passthrough();
+
+const nextGamePlannerRowSchema = z
+  .object({
+    cells: z.array(nextGamePlannerCellSchema),
+    opponentPairId: z.string(),
+  })
+  .passthrough();
+
+const nextGamePlannerViewSchema = z
+  .object({
+    label: z.string(),
+    probability: nullableNumberSchema,
+    rows: z.array(nextGamePlannerRowSchema),
+    scenarioId: nullableStringSchema,
+    viewId: z.string(),
+  })
+  .passthrough();
+
+const nextGamePlannerDetailSchema = z
+  .object({
+    artifactKey: z.string(),
+    evaluatedScenarios: z.array(nextGameRecommendationScenarioSchema),
+    generatedAt: z.string(),
+    opponentPairs: z.array(nextGamePlannerTacticPairSchema),
+    ourPairs: z.array(nextGamePlannerTacticPairSchema),
+    views: z.array(nextGamePlannerViewSchema),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
 const nextGameRecommendationSchema = z
   .object({
     completedAt: nullableStringSchema,
@@ -653,56 +853,14 @@ const nextGameRecommendationSchema = z
     requestedAt: z.string(),
     result: z
       .object({
-        biggestWinPlan: z
-          .object({
-            defense: z.string(),
-            defensiveSwitch: lineupHelperDefensiveSwitchSchema,
-            effortChoice: z.string(),
-            enthusiasm: z.number(),
-            lineup: z.array(
-              z
-                .object({
-                  fullName: z.string(),
-                  minutes: z.number(),
-                  playerId: nullableStringSchema,
-                  position: z.string(),
-                })
-                .passthrough(),
-            ),
-            meetsTargetMargin: z.boolean(),
-            mode: z.string(),
-            offense: z.string(),
-            predictedOpponentScore: z.number(),
-            predictedPointDiff: z.number(),
-            predictedTeamScore: z.number(),
-            targetMargin: nullableNumberSchema,
-          })
-          .passthrough(),
-        efficientWinPlan: z
-          .object({
-            defense: z.string(),
-            defensiveSwitch: lineupHelperDefensiveSwitchSchema,
-            effortChoice: z.string(),
-            enthusiasm: z.number(),
-            lineup: z.array(
-              z
-                .object({
-                  fullName: z.string(),
-                  minutes: z.number(),
-                  playerId: nullableStringSchema,
-                  position: z.string(),
-                })
-                .passthrough(),
-            ),
-            meetsTargetMargin: z.boolean(),
-            mode: z.string(),
-            offense: z.string(),
-            predictedOpponentScore: z.number(),
-            predictedPointDiff: z.number(),
-            predictedTeamScore: z.number(),
-            targetMargin: nullableNumberSchema,
-          })
-          .passthrough(),
+        artifactKey: nullableStringSchema,
+        biggestWinPlan: nextGameRecommendationPlanSchema.optional(),
+        bestExpectedPlan: nextGameRecommendationPlanSchema.optional(),
+        efficientPlan: nextGameRecommendationPlanSchema.optional(),
+        efficientWinPlan: nextGameRecommendationPlanSchema.optional(),
+        evaluatedScenarios: z
+          .array(nextGameRecommendationScenarioSchema)
+          .optional(),
         forecastJobId: z.string(),
         forecastModelVersion: z.string(),
         forecastScenarioId: z.string(),
@@ -713,6 +871,7 @@ const nextGameRecommendationSchema = z
         opponentSourceMatchId: z.string(),
         opponentTeamId: z.string(),
         opponentTeamName: z.string(),
+        safestPlan: nextGameRecommendationPlanSchema.optional(),
         stale: z.boolean(),
       })
       .passthrough()
@@ -736,16 +895,91 @@ const syncRunSchema = z
   })
   .passthrough();
 
+const gameDayRecapCoverageMissingGameSchema = z
+  .object({
+    awayTeamName: z.string(),
+    homeTeamName: z.string(),
+    matchId: z.string(),
+    reason: z.string(),
+  })
+  .passthrough();
+
+const gameDayRecapCoverageSchema = z
+  .object({
+    availableGames: z.number(),
+    missingGames: z.array(gameDayRecapCoverageMissingGameSchema),
+    partial: z.boolean(),
+    requestedGames: z.number(),
+  })
+  .passthrough();
+
+const gameDayRecapResultSchema = z
+  .object({
+    games: z.array(
+      z
+        .object({
+          evidenceTags: z.array(z.string()),
+          headline: z.string(),
+          matchId: z.string(),
+          surpriseFactor: nullableNumberSchema,
+          writeup: z.string(),
+        })
+        .passthrough(),
+    ),
+    summary: z
+      .object({
+        gameOfTheDayMatchId: nullableStringSchema,
+        gameOfTheDaySurpriseFactor: nullableNumberSchema,
+        headline: z.string(),
+        lede: z.string(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+const gameDayRecapStoredRequestSchema = z
+  .object({
+    gameDate: z.string(),
+    leagueId: z.string(),
+    mode: z.literal("FULL_SLATE"),
+  })
+  .passthrough();
+
+const leagueGameDayRecapStoredRequestSchema = z
+  .object({
+    gameDayNumber: z.number(),
+    leagueId: z.string(),
+    mode: z.literal("LEAGUE_GAME_DAY"),
+    season: nullableNumberSchema,
+  })
+  .passthrough();
+
+const singleGameSummaryStoredRequestSchema = z
+  .object({
+    matchId: z.string(),
+    mode: z.literal("SINGLE_GAME"),
+  })
+  .passthrough();
+
 const gameDayRecapRecordSchema = z
   .object({
     completedAt: nullableStringSchema,
+    coverageJson: gameDayRecapCoverageSchema.nullable().optional(),
     error: nullableStringSchema,
     gameDate: nullableStringSchema,
     gameDayNumber: nullableNumberSchema,
     leagueId: nullableStringSchema,
     leagueName: nullableStringSchema,
     matchId: nullableStringSchema,
+    requestJson: z
+      .union([
+        gameDayRecapStoredRequestSchema,
+        leagueGameDayRecapStoredRequestSchema,
+        singleGameSummaryStoredRequestSchema,
+      ])
+      .optional(),
     requestedAt: z.string(),
+    resultJson: gameDayRecapResultSchema.nullable().optional(),
     status: nullableStringSchema,
     targetKey: z.string(),
     updatedAt: z.string(),
@@ -755,12 +989,15 @@ const gameDayRecapRecordSchema = z
 const singleGameSummarySchema = z
   .object({
     completedAt: nullableStringSchema,
+    coverageJson: gameDayRecapCoverageSchema.nullable().optional(),
     error: nullableStringSchema,
     gameDate: nullableStringSchema,
     leagueId: nullableStringSchema,
     leagueName: nullableStringSchema,
     matchId: z.string(),
+    requestJson: singleGameSummaryStoredRequestSchema.optional(),
     requestedAt: z.string(),
+    resultJson: gameDayRecapResultSchema.nullable().optional(),
     status: nullableStringSchema,
     targetKey: z.string(),
     updatedAt: z.string(),
@@ -778,26 +1015,71 @@ const operationsActivitySchema = z
   .passthrough();
 
 const recapHistoryRecordSchema = z
-  .object({
-    completedAt: nullableStringSchema,
-    coverageJson: jsonValueSchema,
-    error: nullableStringSchema,
-    gameDate: nullableStringSchema,
-    gameDayNumber: nullableNumberSchema,
-    kind: z.string(),
-    leagueId: nullableStringSchema,
-    leagueName: nullableStringSchema,
-    matchId: nullableStringSchema,
-    requestJson: jsonValueSchema,
-    requestedAt: z.string(),
-    resultJson: jsonValueSchema,
-    season: nullableNumberSchema,
-    selectionKey: z.string(),
-    status: nullableStringSchema,
-    targetKey: z.string(),
-    updatedAt: z.string(),
-  })
-  .passthrough();
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        completedAt: nullableStringSchema,
+        coverageJson: gameDayRecapCoverageSchema.nullable(),
+        error: nullableStringSchema,
+        gameDate: z.string(),
+        gameDayNumber: z.null(),
+        kind: z.literal("LEAGUE_DATE"),
+        leagueId: nullableStringSchema,
+        leagueName: nullableStringSchema,
+        matchId: z.null(),
+        requestJson: gameDayRecapStoredRequestSchema,
+        requestedAt: z.string(),
+        resultJson: gameDayRecapResultSchema.nullable(),
+        season: nullableNumberSchema,
+        selectionKey: z.string(),
+        status: nullableStringSchema,
+        targetKey: z.string(),
+        updatedAt: z.string(),
+      })
+      .passthrough(),
+    z
+      .object({
+        completedAt: nullableStringSchema,
+        coverageJson: gameDayRecapCoverageSchema.nullable(),
+        error: nullableStringSchema,
+        gameDate: z.null(),
+        gameDayNumber: z.number(),
+        kind: z.literal("LEAGUE_GAME_DAY"),
+        leagueId: nullableStringSchema,
+        leagueName: nullableStringSchema,
+        matchId: z.null(),
+        requestJson: leagueGameDayRecapStoredRequestSchema,
+        requestedAt: z.string(),
+        resultJson: gameDayRecapResultSchema.nullable(),
+        season: nullableNumberSchema,
+        selectionKey: z.string(),
+        status: nullableStringSchema,
+        targetKey: z.string(),
+        updatedAt: z.string(),
+      })
+      .passthrough(),
+    z
+      .object({
+        completedAt: nullableStringSchema,
+        coverageJson: gameDayRecapCoverageSchema.nullable(),
+        error: nullableStringSchema,
+        gameDate: nullableStringSchema,
+        gameDayNumber: z.null(),
+        kind: z.literal("SINGLE_GAME"),
+        leagueId: nullableStringSchema,
+        leagueName: nullableStringSchema,
+        matchId: z.string(),
+        requestJson: singleGameSummaryStoredRequestSchema,
+        requestedAt: z.string(),
+        resultJson: gameDayRecapResultSchema.nullable(),
+        season: nullableNumberSchema,
+        selectionKey: z.string(),
+        status: nullableStringSchema,
+        targetKey: z.string(),
+        updatedAt: z.string(),
+      })
+      .passthrough(),
+  ]);
 
 const paginatedRecapHistorySchema = z
   .object({
@@ -1074,6 +1356,91 @@ const matchBoxscoreSchema = z
   .nullable()
   .optional();
 
+const accessibleMatchSummarySchema = z
+  .object({
+    ingestStatus: z.string(),
+    matchId: z.string(),
+    opponentScore: nullableNumberSchema,
+    opponentTeamId: nullableStringSchema,
+    opponentTeamName: nullableStringSchema,
+    outcome: nullableStringSchema,
+    season: nullableNumberSchema,
+    startTime: nullableStringSchema,
+    teamId: z.string(),
+    teamScore: nullableNumberSchema,
+    type: nullableStringSchema,
+  })
+  .passthrough();
+
+const accessibleMatchListSchema = z.object({
+  items: z.array(accessibleMatchSummarySchema),
+  nextCursor: nullableStringSchema,
+});
+
+const predictionMatrixTacticPairSchema = z
+  .object({
+    defense: z.string(),
+    estimated: z.boolean(),
+    offense: z.string(),
+    pairId: z.string(),
+    supportTier: z.enum(["DIRECT", "ESTIMATED"]),
+  })
+  .passthrough();
+
+const predictionMatrixCellSchema = z
+  .object({
+    available: z.boolean(),
+    bestEffortChoice: nullableStringSchema,
+    predictedPointDiff: nullableNumberSchema,
+    predictedTeamAScore: nullableNumberSchema,
+    predictedTeamBScore: nullableNumberSchema,
+    teamAPairId: z.string(),
+    teamBPairId: z.string(),
+  })
+  .passthrough();
+
+const predictionMatrixRowSchema = z
+  .object({
+    cells: z.array(predictionMatrixCellSchema),
+    teamBPairId: z.string(),
+  })
+  .passthrough();
+
+const predictionMatrixViewSchema = z
+  .object({
+    label: z.string(),
+    probability: nullableNumberSchema,
+    rows: z.array(predictionMatrixRowSchema),
+    scenarioId: nullableStringSchema,
+    viewId: z.string(),
+  })
+  .passthrough();
+
+const predictionMatrixSideSummarySchema = z
+  .object({
+    defense: z.string(),
+    effortChoice: z.string(),
+    offense: z.string(),
+    teamId: nullableStringSchema,
+    teamName: nullableStringSchema,
+  })
+  .passthrough();
+
+const predictionMatrixResultSchema = z
+  .object({
+    generatedAt: z.string(),
+    modelVersion: z.string(),
+    selectedTeamAPairId: nullableStringSchema,
+    selectedTeamBPairId: nullableStringSchema,
+    teamAPairs: z.array(predictionMatrixTacticPairSchema),
+    teamASide: predictionMatrixSideSummarySchema,
+    teamBPairs: z.array(predictionMatrixTacticPairSchema),
+    teamBSide: predictionMatrixSideSummarySchema,
+    venue: z.enum(["TEAM_A_HOME", "NEUTRAL", "TEAM_B_HOME"]),
+    views: z.array(predictionMatrixViewSchema),
+  })
+  .passthrough();
+
 const playerTrendSchema = z
   .object({
     history: z.array(
@@ -1271,6 +1638,16 @@ const rivalsWorkspaceSchema = z
 type SharedWorkspaceSectionKey = "lineupHelper" | "leagueIntel" | "playerLab";
 
 export const workspaceQueryKeys = {
+  accessibleMatches: (input?: {
+    season?: number | null;
+    teamId?: string | null;
+  }) =>
+    [
+      "workspace",
+      "accessibleMatches",
+      input?.teamId ?? null,
+      input?.season ?? null,
+    ] as const,
   billing: ["billing", "summary"] as const,
   billingPayments: (input?: { limit?: number; nextToken?: string | null }) =>
     [
@@ -1314,11 +1691,15 @@ export const workspaceQueryKeys = {
       input.defensiveSwitch.pf,
       input.defensiveSwitch.c,
     ] as const,
+  nextGamePlannerDetail: (artifactKey: string | null | undefined) =>
+    ["workspace", "recommendation", "planner", artifactKey ?? "none"] as const,
   opponentForecast: (teamId: string | null | undefined) =>
     ["workspace", "forecast", teamId ?? "none"] as const,
   operationsActivity: (limit = 8) =>
     ["workspace", "operations", limit] as const,
   playerLab: ["workspace", "playerLab"] as const,
+  predictionMatrix: (request: PredictionDraft) =>
+    ["workspace", "prediction", "matrix", request] as const,
   playerTrend: (playerId: string) =>
     ["workspace", "playerTrend", playerId] as const,
   recapHistory: (input?: { limit?: number; nextToken?: string | null }) =>
@@ -1436,11 +1817,36 @@ async function readInternalRouteDataOrThrow<T>(
   return schema.parse(payload.data);
 }
 
+function toRecommendationInputArg(
+  input: NextGameRecommendationInput,
+): NonNullable<Schema["submitNextGameRecommendationJob"]["args"]>["input"] {
+  return {
+    enthusiasm: input.enthusiasm,
+    defensiveSwitch: {
+      pg: input.defensiveSwitch.pg as NonNullable<
+        Schema["submitNextGameRecommendationJob"]["args"]
+      >["input"]["defensiveSwitch"]["pg"],
+      sg: input.defensiveSwitch.sg as NonNullable<
+        Schema["submitNextGameRecommendationJob"]["args"]
+      >["input"]["defensiveSwitch"]["sg"],
+      sf: input.defensiveSwitch.sf as NonNullable<
+        Schema["submitNextGameRecommendationJob"]["args"]
+      >["input"]["defensiveSwitch"]["sf"],
+      pf: input.defensiveSwitch.pf as NonNullable<
+        Schema["submitNextGameRecommendationJob"]["args"]
+      >["input"]["defensiveSwitch"]["pf"],
+      c: input.defensiveSwitch.c as NonNullable<
+        Schema["submitNextGameRecommendationJob"]["args"]
+      >["input"]["defensiveSwitch"]["c"],
+    },
+  };
+}
+
 export async function fetchConnectionRecord(): Promise<BbConnectionRecord | null> {
   const response = await client.reads.getCurrentBbConnection();
   return readAmplifyNullableDataOrThrow(
     response,
-    homeWorkspaceSchema.shape.connection,
+    connectionResultSchema,
   ) as BbConnectionRecord | null;
 }
 
@@ -1505,9 +1911,9 @@ export async function fetchLineupHelperEvaluationQuery(input: {
   roster: unknown[];
 }): Promise<LineupHelperEvaluationRecord> {
   const response = await client.queries.evaluateLineupHelper({
-    assignments: input.assignments as Record<string, unknown>[],
-    context: input.context as Record<string, unknown>,
-    roster: input.roster as Record<string, unknown>[],
+    assignments: input.assignments as LineupHelperWorkspaceRecord["defaultAssignments"],
+    context: input.context as LineupHelperWorkspaceRecord["defaultContext"],
+    roster: input.roster as LineupHelperWorkspaceRecord["roster"],
   });
 
   return readAmplifyDataOrThrow(
@@ -1523,9 +1929,9 @@ export async function optimizeLineupHelperQuery(input: {
   roster: unknown[];
 }): Promise<LineupHelperEvaluationRecord> {
   const response = await client.queries.optimizeLineupHelper({
-    ...(input.algorithm ? { algorithm: input.algorithm } : {}),
-    context: input.context as Record<string, unknown>,
-    roster: input.roster as Record<string, unknown>[],
+    ...(input.algorithm ? { algorithm: input.algorithm as never } : {}),
+    context: input.context as LineupHelperWorkspaceRecord["defaultContext"],
+    roster: input.roster as LineupHelperWorkspaceRecord["roster"],
   });
 
   return readAmplifyDataOrThrow(
@@ -1639,13 +2045,104 @@ export async function fetchLatestNextGameRecommendationQuery(args: {
   input: NextGameRecommendationInput;
 }): Promise<NextGameRecommendationSnapshot | null> {
   const response = await client.queries.getLatestNextGameRecommendation({
-    input: args.input,
+    input: toRecommendationInputArg(args.input),
   });
 
   return readAmplifyNullableDataOrThrow(
     response,
     nextGameRecommendationSchema,
   ) as NextGameRecommendationSnapshot | null;
+}
+
+export async function fetchNextGamePlannerDetailQuery(args: {
+  artifactKey: string;
+}): Promise<NextGamePlannerDetailPayload | null> {
+  const response = await client.queries.getNextGamePlannerDetail({
+    artifactKey: args.artifactKey,
+  });
+
+  return readAmplifyNullableDataOrThrow(
+    response,
+    nextGamePlannerDetailSchema,
+  ) as NextGamePlannerDetailPayload | null;
+}
+
+export async function fetchAccessibleMatchesQuery(args?: {
+  season?: number | null;
+  teamId?: string | null;
+}): Promise<AccessibleMatchSummary[]> {
+  const items: AccessibleMatchSummary[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const response = await client.queries.listAccessibleMatches({
+      ...(typeof args?.season === "number" ? { season: args.season } : {}),
+      ...(args?.teamId ? { teamId: args.teamId } : {}),
+      ...(cursor ? { cursor } : {}),
+    });
+    const page = readAmplifyDataOrThrow(
+      response,
+      accessibleMatchListSchema,
+      "Unable to load accessible matches.",
+    );
+    items.push(
+      ...page.items.map((item) => ({
+        ingestStatus: item.ingestStatus,
+        matchId: item.matchId,
+        opponentScore: item.opponentScore ?? null,
+        opponentTeamId: item.opponentTeamId ?? null,
+        opponentTeamName: item.opponentTeamName ?? null,
+        outcome: item.outcome ?? null,
+        season: item.season ?? null,
+        startTime: item.startTime ?? null,
+        teamId: item.teamId,
+        teamScore: item.teamScore ?? null,
+        type: item.type ?? null,
+      })),
+    );
+    cursor = page.nextCursor ?? null;
+  } while (cursor);
+
+  return items;
+}
+
+export async function fetchPredictionMatrixQuery(args: {
+  request: PredictionDraft;
+}): Promise<PredictionMatrixResult> {
+  const response = await client.queries.evaluatePredictionMatrix({
+    request: toPredictionMatrixRequestInput(args.request),
+  });
+  return readAmplifyDataOrThrow(
+    response,
+    predictionMatrixResultSchema,
+    "Unable to evaluate the matchup matrix.",
+  ) as PredictionMatrixResult;
+}
+
+function toPredictionMatrixRequestInput(draft: PredictionDraft) {
+  return {
+    teamA: toPredictionMatrixSideInput(draft.teamA),
+    teamB: toPredictionMatrixSideInput(draft.teamB),
+    venue: draft.venue,
+  };
+}
+
+function toPredictionMatrixSideInput(side: PredictionSideInput) {
+  return {
+    defense: side.defense,
+    effortChoice: side.effortChoice,
+    offense: side.offense,
+    ratings: {
+      insideDefense: side.ratings.insideDefense,
+      insideScoring: side.ratings.insideScoring,
+      offensiveFlow: side.ratings.offensiveFlow,
+      outsideDefense: side.ratings.outsideDefense,
+      outsideScoring: side.ratings.outsideScoring,
+      rebounding: side.ratings.rebounding,
+    },
+    teamId: side.teamId,
+    teamName: side.teamName,
+  };
 }
 
 export async function fetchCurrentPredictionQuery(): Promise<CurrentPredictionPreview | null> {
@@ -1700,7 +2197,7 @@ export async function fetchTeamHighlightsQuery(args: {
   const response = await client.queries.getMyTeamHighlights({
     ...(args.cursor ? { cursor: args.cursor } : {}),
     onlyOutcomeChange: args.onlyOutcomeChange,
-    perspective: args.perspective,
+    perspective: args.perspective as never,
   });
 
   return readAmplifyNullableDataOrThrow(
@@ -1766,10 +2263,10 @@ export async function fetchRivalsWorkspaceQuery(args?: {
 }
 
 export async function submitPredictionJobMutation(input: {
-  request: unknown;
+  request: PredictionSubmissionRequest;
 }): Promise<SubmitPredictionJobResult> {
   const response = await client.mutations.submitPredictionJob({
-    request: input.request as Record<string, unknown>,
+    request: input.request,
   });
   return readAmplifyDataOrThrow(
     response,
@@ -1836,7 +2333,7 @@ export async function submitNextGameRecommendationJobMutation(input: {
   input: NextGameRecommendationInput;
 }): Promise<SubmitNextGameRecommendationJobResult> {
   const response = await client.mutations.submitNextGameRecommendationJob({
-    input: input.input,
+    input: toRecommendationInputArg(input.input),
   });
   return readAmplifyDataOrThrow(
     response,
@@ -2130,6 +2627,32 @@ export function nextGameRecommendationQueryOptions(args: {
   return queryOptions({
     queryFn: () => fetchLatestNextGameRecommendationQuery(args),
     queryKey: workspaceQueryKeys.nextGameRecommendation(args.input),
+  });
+}
+
+export function nextGamePlannerDetailQueryOptions(args: {
+  artifactKey: string;
+}) {
+  return queryOptions({
+    queryFn: () => fetchNextGamePlannerDetailQuery(args),
+    queryKey: workspaceQueryKeys.nextGamePlannerDetail(args.artifactKey),
+  });
+}
+
+export function accessibleMatchesQueryOptions(args?: {
+  season?: number | null;
+  teamId?: string | null;
+}) {
+  return queryOptions({
+    queryFn: () => fetchAccessibleMatchesQuery(args),
+    queryKey: workspaceQueryKeys.accessibleMatches(args),
+  });
+}
+
+export function predictionMatrixQueryOptions(args: { request: PredictionDraft }) {
+  return queryOptions({
+    queryFn: () => fetchPredictionMatrixQuery(args),
+    queryKey: workspaceQueryKeys.predictionMatrix(args.request),
   });
 }
 

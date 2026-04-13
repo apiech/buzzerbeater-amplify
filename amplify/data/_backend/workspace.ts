@@ -47,6 +47,7 @@ import {
   getTrackedPlayer as getTrackedPlayerRecord,
   getSharedPlayerCardRecord,
   type PlayerSkillObservationRecord,
+  type TrackedPlayerRecord,
   upsertBbConnection,
   upsertBbCredential,
   updateSharedPlayerCard,
@@ -77,6 +78,10 @@ import {
   buildWorkspaceCachePayload,
   readWorkspaceCachePayload,
 } from "./workspace-cache";
+import {
+  inflateStoredMatchBoxscore,
+  toStoredMatchBoxscore,
+} from "./stored-boxscore";
 import {
   buildConnectionRecord,
   loadActiveTrackedTeamCredentialContext,
@@ -1328,7 +1333,7 @@ async function syncWorkspace(args: {
       lastValidatedAt: now,
       lastSyncAt: now,
       lastSyncError: null,
-      profileJson: currentWorkspace.teamInfo,
+      profileJson: projectTeamInfo(currentWorkspace.teamInfo),
     });
     const home = buildHomeWorkspace(
       currentWorkspace,
@@ -1601,7 +1606,7 @@ async function persistWorkspace(
       countryName: workspace.teamInfo.country?.name ?? null,
       rivalId: workspace.teamInfo.rival?.id ?? null,
       isPrimary: true,
-      summaryJson: workspace.teamInfo,
+      summaryJson: projectTeamInfo(workspace.teamInfo),
       fetchedAt,
     },
     ...(opponentWorkspace?.teamInfo.teamId
@@ -1617,7 +1622,7 @@ async function persistWorkspace(
             countryName: opponentWorkspace.teamInfo.country?.name ?? null,
             rivalId: opponentWorkspace.teamInfo.rival?.id ?? null,
             isPrimary: false,
-            summaryJson: opponentWorkspace.teamInfo,
+            summaryJson: projectTeamInfo(opponentWorkspace.teamInfo),
             fetchedAt,
           },
         ]
@@ -1671,10 +1676,18 @@ async function persistWorkspace(
     boxScoresToPersist,
     WORKSPACE_BOXSCORE_PERSIST_CONCURRENCY,
     async (boxScore) => {
+      const storedBoxscore = toStoredMatchBoxscore({
+        boxscore: boxScore,
+        source: "WORKSPACE_CACHE",
+      });
+      if (!storedBoxscore) {
+        return;
+      }
+
       await upsertMatchBoxscore(env, {
         userId,
-        matchId: boxScore.matchId,
-        boxscoreJson: boxScore,
+        matchId: storedBoxscore.matchId,
+        boxscoreJson: storedBoxscore,
         fetchedAt,
       });
     },
@@ -2241,7 +2254,7 @@ async function hydrateCompletedBoxScoresForMatches(args: {
 
   completedMatchIds.forEach((matchId, index) => {
     const record = storedRecords[index];
-    const boxScore = record?.boxscoreJson as BBApiBoxScore | undefined;
+    const boxScore = inflateStoredMatchBoxscore(record?.boxscoreJson);
     if (boxScore) {
       boxScoresByMatchId.set(matchId, boxScore);
       return;
@@ -2258,11 +2271,18 @@ async function hydrateCompletedBoxScoresForMatches(args: {
     if (!boxScore.matchId) {
       continue;
     }
+    const storedBoxscore = toStoredMatchBoxscore({
+      boxscore: boxScore,
+      source: "WORKSPACE_CACHE",
+    });
     boxScoresByMatchId.set(boxScore.matchId, boxScore);
+    if (!storedBoxscore) {
+      continue;
+    }
     await upsertMatchBoxscore(args.env, {
-      boxscoreJson: boxScore,
+      boxscoreJson: storedBoxscore,
       fetchedAt: boxScore.retrievedAt ?? new Date().toISOString(),
-      matchId: boxScore.matchId,
+      matchId: storedBoxscore.matchId,
       userId: args.userId,
     });
   }
@@ -2818,7 +2838,7 @@ function playerToTrackedPlayerRecord(
   teamName: string | null,
   player: BBApiOwnedRosterPlayer,
   fetchedAt: string,
-): Record<string, unknown> {
+): TrackedPlayerRecord {
   if (!player.id || !teamId) {
     throw new Error("Tracked player records require both a player id and team id.");
   }
@@ -2839,7 +2859,23 @@ function playerToTrackedPlayerRecord(
     gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
-    profileJson: player,
+    profileJson: {
+      id: player.id,
+      firstName: player.firstName,
+      lastName: player.lastName,
+      fullName: player.fullName,
+      salary: player.salary,
+      bestPosition: player.bestPosition,
+      age: player.age,
+      height: player.height,
+      dmi: player.dmi,
+      injuryWeeks: player.injuryWeeks,
+      nationality: {
+        id: player.nationality?.id ?? "unknown",
+        name: player.nationality?.name ?? "Unknown",
+      },
+      skills: { ...player.skills },
+    },
     fetchedAt,
   };
 }

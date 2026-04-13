@@ -122,8 +122,14 @@ type LegacyRivalsWorkspaceCache =
     }
   | null;
 
+type RivalsMatchesCacheEncoding = "BROTLI_BASE64_V1";
+
+const RIVALS_MATCHES_CACHE_ENCODING: RivalsMatchesCacheEncoding =
+  "BROTLI_BASE64_V1";
+const LEGACY_RIVALS_MATCHES_CACHE_ENCODING = "brotli-base64-v1";
+
 type RivalsMatchesCacheEnvelope = {
-  encoding: "brotli-base64-v1";
+  encoding: RivalsMatchesCacheEncoding;
   payload: string;
 };
 
@@ -1419,15 +1425,11 @@ function isRivalsWorkspaceSummary(
 
 function encodeCachedRivalryMatches(
   matches: readonly RivalryMatch[],
-): RivalsMatchesCacheEnvelope | RivalryMatch[] {
-  if (!matches.length) {
-    return [];
-  }
-
+): RivalsMatchesCacheEnvelope {
   const json = JSON.stringify(matches);
   const compressed = brotliCompressSync(Buffer.from(json, "utf8"));
   return {
-    encoding: "brotli-base64-v1",
+    encoding: RIVALS_MATCHES_CACHE_ENCODING,
     payload: compressed.toString("base64"),
   };
 }
@@ -1455,11 +1457,17 @@ function decodeCachedRivalryMatches(value: unknown): RivalryMatch[] {
 function isRivalsMatchesCacheEnvelope(
   value: unknown,
 ): value is RivalsMatchesCacheEnvelope {
+  const encoding =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as { encoding?: unknown }).encoding
+      : undefined;
+
   return (
     Boolean(value) &&
     typeof value === "object" &&
     !Array.isArray(value) &&
-    (value as { encoding?: unknown }).encoding === "brotli-base64-v1" &&
+    (encoding === RIVALS_MATCHES_CACHE_ENCODING ||
+      encoding === LEGACY_RIVALS_MATCHES_CACHE_ENCODING) &&
     typeof (value as { payload?: unknown }).payload === "string"
   );
 }

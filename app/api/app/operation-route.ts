@@ -8,6 +8,7 @@ import {
   createMaintenanceApiResponse,
   getServerMaintenanceState,
 } from "@/app/server/maintenance";
+import { jsonRecordSchema, parseJsonBody } from "@/lib/json-parsing";
 
 type OperationBody = Record<string, unknown> | undefined;
 
@@ -79,6 +80,6 @@ async function readOptionalBody(request: Request): Promise<OperationBody> {
     return undefined;
   }
 
-  const parsed = JSON.parse(text) as Record<string, unknown>;
+  const parsed = parseJsonBody(jsonRecordSchema, text);
   return Object.keys(parsed).length ? parsed : undefined;
 }

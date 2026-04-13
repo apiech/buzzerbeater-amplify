@@ -12,7 +12,7 @@ test("normalizeWorkspaceSection accepts known product routes", () => {
   }
 });
 
-test("workspace sections expose the dedicated highlights, lineups, league history, and rivals routes", () => {
+test("workspace sections expose the dedicated highlights, lineups, opponent schedule, league history, and rivals routes", () => {
   assert.equal(
     workspaceSections.some((section) => section.id === "lineups"),
     true,
@@ -23,6 +23,10 @@ test("workspace sections expose the dedicated highlights, lineups, league histor
   );
   assert.equal(
     workspaceSections.some((section) => section.id === "league-history"),
+    true,
+  );
+  assert.equal(
+    workspaceSections.some((section) => section.id === "opponent-schedule"),
     true,
   );
   assert.equal(

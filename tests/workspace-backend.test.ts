@@ -781,7 +781,7 @@ test("live-match scout fallback references the next future opponent when the def
 test("authenticated workspace hook only loads the active section's shared payloads", () => {
   assert.match(
     authenticatedWorkspaceHookSource,
-    /const sectionDependencies:[\s\S]*highlights:\s*\[\][\s\S]*home:\s*\["lineupHelper"\][\s\S]*players:\s*\["playerLab"\][\s\S]*predictions:\s*\[\][\s\S]*scout:\s*\[\]/,
+    /const sectionDependencies:[\s\S]*highlights:\s*\[\][\s\S]*home:\s*\["lineupHelper"\][\s\S]*"opponent-schedule":\s*\[\][\s\S]*players:\s*\["playerLab"\][\s\S]*predictions:\s*\[\][\s\S]*scout:\s*\[\]/,
   );
   assert.doesNotMatch(
     authenticatedWorkspaceHookSource,

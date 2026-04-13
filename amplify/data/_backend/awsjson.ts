@@ -1,4 +1,30 @@
-const AWS_JSON_FIELDS = {
+const ENCODED_AWS_JSON_FIELDS = {
+  BillingAccount: [],
+  BillingPayment: [],
+  UserPreference: [],
+  BbConnection: [],
+  TrackedTeam: [],
+  TrackedPlayer: [],
+  PlayerSkillObservation: [],
+  TrackedMatch: [],
+  MatchBoxscore: [],
+  LeagueStanding: [],
+  LeagueHistoryStandingCache: [],
+  LeagueHistoryBackfill: [],
+  RivalsWorkspaceCache: [],
+  RivalryMatchFact: [],
+  SyncRun: ["detailsJson"],
+  SharedPlayerCard: [],
+  OpponentForecastJob: [],
+  NextGameRecommendationJob: [],
+  NextGamePlannerArtifact: [],
+  NextGamePlannerArtifactRow: [],
+  GameDayRecap: [],
+  LeagueGameDayRecap: [],
+  SingleGameSummary: [],
+} as const;
+
+const LEGACY_DECODE_AWS_JSON_FIELDS = {
   BillingAccount: [],
   BillingPayment: [],
   UserPreference: [],
@@ -6,9 +32,9 @@ const AWS_JSON_FIELDS = {
   TrackedTeam: ["summaryJson"],
   TrackedPlayer: ["profileJson"],
   PlayerSkillObservation: [],
-  TrackedMatch: ["matchJson"],
+  TrackedMatch: [],
   MatchBoxscore: ["boxscoreJson"],
-  LeagueStanding: ["standingJson"],
+  LeagueStanding: [],
   LeagueHistoryStandingCache: [],
   LeagueHistoryBackfill: [],
   RivalsWorkspaceCache: ["summaryJson", "matchesJson"],
@@ -17,13 +43,24 @@ const AWS_JSON_FIELDS = {
   SharedPlayerCard: ["payloadJson"],
   OpponentForecastJob: ["requestJson", "resolvedContextJson", "resultJson"],
   NextGameRecommendationJob: ["requestJson", "resultJson"],
+  NextGamePlannerArtifact: [
+    "evaluatedScenariosJson",
+    "ourPairsJson",
+    "opponentPairsJson",
+  ],
+  NextGamePlannerArtifactRow: ["rowJson"],
   GameDayRecap: ["requestJson", "coverageJson", "resultJson"],
   LeagueGameDayRecap: ["requestJson", "coverageJson", "resultJson"],
   SingleGameSummary: ["requestJson", "coverageJson", "resultJson"],
 } as const;
 
 type JsonRecord = Record<string, unknown>;
-const awsJsonFieldsByModel = AWS_JSON_FIELDS as Record<string, readonly string[]>;
+const encodedAwsJsonFieldsByModel = ENCODED_AWS_JSON_FIELDS as Record<
+  string,
+  readonly string[]
+>;
+const legacyDecodeAwsJsonFieldsByModel =
+  LEGACY_DECODE_AWS_JSON_FIELDS as Record<string, readonly string[]>;
 
 export function encodeAwsJsonValue(value: unknown): unknown {
   if (value === null || value === undefined) {
@@ -49,14 +86,24 @@ export function encodeAwsJsonFields<TRecord>(
   modelName: string,
   record: TRecord,
 ): TRecord {
-  return transformAwsJsonFields(modelName, record, encodeAwsJsonValue);
+  return transformAwsJsonFields(
+    encodedAwsJsonFieldsByModel,
+    modelName,
+    record,
+    encodeAwsJsonValue,
+  );
 }
 
 export function decodeAwsJsonFields<TRecord>(
   modelName: string,
   record: TRecord,
 ): TRecord {
-  return transformAwsJsonFields(modelName, record, decodeAwsJsonValue);
+  return transformAwsJsonFields(
+    legacyDecodeAwsJsonFieldsByModel,
+    modelName,
+    record,
+    decodeAwsJsonValue,
+  );
 }
 
 export function decodeAwsJsonList<TRecord>(
@@ -67,6 +114,7 @@ export function decodeAwsJsonList<TRecord>(
 }
 
 function transformAwsJsonFields<TRecord>(
+  fieldsByModel: Record<string, readonly string[]>,
   modelName: string,
   record: TRecord,
   transform: (value: unknown) => unknown,
@@ -78,7 +126,7 @@ function transformAwsJsonFields<TRecord>(
   const source = record as JsonRecord;
   let updated: JsonRecord | null = null;
 
-  for (const field of awsJsonFieldsByModel[modelName] ?? []) {
+  for (const field of fieldsByModel[modelName] ?? []) {
     if (!(field in source)) {
       continue;
     }

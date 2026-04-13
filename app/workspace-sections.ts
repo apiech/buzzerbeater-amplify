@@ -7,8 +7,14 @@ export const workspaceSections = [
   },
   {
     id: "scout",
-    label: "Opponents",
-    description: "Public team view, tendencies, recent games, and box scores.",
+    label: "Scout opponent",
+    description: "Opponent-only scouting sheets with editable forecast output.",
+    group: "Club",
+  },
+  {
+    id: "opponent-schedule",
+    label: "Opponent schedule",
+    description: "Full schedule, filters, and boxscore browsing for any opponent.",
     group: "Club",
   },
   {
@@ -53,8 +59,8 @@ export const workspaceSections = [
   },
   {
     id: "predictions",
-    label: "Predictions",
-    description: "Matchup previews from saved box scores or manual ratings.",
+    label: "Game prediction",
+    description: "Standalone matchup simulator with the full tactic-pair matrix.",
     group: "Competition",
   },
   {
