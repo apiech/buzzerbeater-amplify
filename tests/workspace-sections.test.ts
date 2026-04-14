@@ -12,9 +12,13 @@ test("normalizeWorkspaceSection accepts known product routes", () => {
   }
 });
 
-test("workspace sections expose the dedicated highlights, lineups, opponent schedule, league history, and rivals routes", () => {
+test("workspace sections expose the dedicated highlights, lineups, next-game, opponent schedule, league history, rivals, and staff-market routes", () => {
   assert.equal(
     workspaceSections.some((section) => section.id === "lineups"),
+    true,
+  );
+  assert.equal(
+    workspaceSections.some((section) => section.id === "next-game"),
     true,
   );
   assert.equal(
@@ -31,6 +35,10 @@ test("workspace sections expose the dedicated highlights, lineups, opponent sche
   );
   assert.equal(
     workspaceSections.some((section) => section.id === "rivals"),
+    true,
+  );
+  assert.equal(
+    workspaceSections.some((section) => section.id === "staff-market"),
     true,
   );
 });

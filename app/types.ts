@@ -158,6 +158,9 @@ export type SubmitSingleGameSummaryResult = NonNullable<
 export type SubmitOpponentForecastJobResult = NonNullable<
   Schema["submitOpponentForecastJob"]["returnType"]
 >;
+export type RepairOwnerRosterDataResult = NonNullable<
+  Schema["repairOwnerRosterData"]["returnType"]
+>;
 export type SubmitNextGameRecommendationJobResult = NonNullable<
   Schema["submitNextGameRecommendationJob"]["returnType"]
 >;
@@ -173,8 +176,21 @@ export type SharedPlayerCardResult = NonNullable<
 export type LineupHelperWorkspaceRecord = NonNullable<
   Schema["getLineupHelperWorkspace"]["returnType"]
 >;
+export type LineupHelperDependencyState = {
+  errorMessage: string | null;
+  status: "loading" | "ready" | "error";
+};
 export type LineupHelperEvaluationRecord = NonNullable<
   Schema["evaluateLineupHelper"]["returnType"]
+>;
+export type SalaryCalculatorSkillsInput = NonNullable<
+  NonNullable<Schema["getManualSalaryEstimate"]["args"]>["input"]
+>["skills"];
+export type SalaryCalculatorSeed = NonNullable<
+  Schema["getSalaryCalculatorSeed"]["returnType"]
+>;
+export type ManualSalaryEstimate = NonNullable<
+  Schema["getManualSalaryEstimate"]["returnType"]
 >;
 export type SalaryProjection = NonNullable<
   Schema["getSalaryProjection"]["returnType"]
@@ -208,6 +224,9 @@ export type NextGamePlannerDetailPayload = NonNullable<
 >;
 export type PlayerLabPayload = NonNullable<
   Schema["getPlayerLab"]["returnType"]
+>;
+export type ArenaWorkspacePayload = NonNullable<
+  Schema["getArenaWorkspace"]["returnType"]
 >;
 export type RivalsWorkspacePayload = NonNullable<
   Schema["getRivalsWorkspace"]["returnType"]
@@ -335,6 +354,11 @@ export type OpponentForecastResult = NonNullable<
 export type NextGameRecommendationResult = NonNullable<
   NextGameRecommendationSnapshot["result"]
 >;
+export type NextGameRecommendationProgress = NonNullable<
+  NextGameRecommendationSnapshot["progress"]
+>;
+export type NextGameRecommendationCompletedPhase =
+  NextGameRecommendationProgress["completedPhases"][number];
 export type RecommendationMode =
   | "BIGGEST_WIN"
   | "BEST_EXPECTED"
@@ -343,10 +367,23 @@ export type RecommendationMode =
 export type NextGameRecommendationStatus =
   | "QUEUED"
   | "PREPARING_INPUTS"
+  | "RESOLVING_CONTEXT"
+  | "OPTIMIZING_LINEUPS"
   | "EVALUATING_CANDIDATES"
+  | "SCORING_MATCHUPS"
+  | "BUILDING_PLANNER"
+  | "SUCCEEDED"
+  | "FAILED";
+export type NextGameRecommendationProgressPhaseKey =
+  | "QUEUED"
+  | "RESOLVING_CONTEXT"
+  | "OPTIMIZING_LINEUPS"
+  | "SCORING_MATCHUPS"
+  | "BUILDING_PLANNER"
   | "SUCCEEDED"
   | "FAILED";
 export type NextGameRecommendationInput = {
+  excludedPlayerIds: string[];
   enthusiasm: number;
   defensiveSwitch: {
     pg: PositionCode;
@@ -358,11 +395,14 @@ export type NextGameRecommendationInput = {
 };
 export type RecommendedGamePlan =
   NextGameRecommendationResult["bestExpectedPlan"];
-export type RecommendedGamePlanLineupRow = RecommendedGamePlan["lineup"][number];
-export type NextGamePlannerTacticPair = NextGamePlannerDetailPayload["ourPairs"][number];
+export type RecommendedGamePlanLineupRow =
+  RecommendedGamePlan["lineup"][number];
+export type NextGamePlannerTacticPair =
+  NextGamePlannerDetailPayload["ourPairs"][number];
 export type NextGamePlannerView = NextGamePlannerDetailPayload["views"][number];
 export type NextGamePlannerMatrixRow = NextGamePlannerView["rows"][number];
-export type NextGamePlannerMatrixCell = NextGamePlannerMatrixRow["cells"][number];
+export type NextGamePlannerMatrixCell =
+  NextGamePlannerMatrixRow["cells"][number];
 export type OpponentForecastScenario =
   OpponentForecastResult["topScenarios"][number];
 export type OpponentForecastPlayerProjection =
@@ -374,7 +414,9 @@ export type OpponentForecastSignal =
 export type PlayerTrendPoint = PlayerTrendPayload["history"][number];
 export type MatchBoxscoreTeam = NonNullable<MatchBoxscorePayload["homeTeam"]>;
 export type MatchMetricEntry = MatchBoxscoreTeam["teamTotals"][number];
-export type MatchBoxscoreTeamRatings = NonNullable<MatchBoxscoreTeam["ratings"]>;
+export type MatchBoxscoreTeamRatings = NonNullable<
+  MatchBoxscoreTeam["ratings"]
+>;
 export type MatchBoxscorePlayerLine = MatchBoxscoreTeam["players"][number];
 export type EditableTeamRatings = MatchBoxscoreTeamRatings;
 export type TeamHighlightsScanStatus = NonNullable<
@@ -391,6 +433,7 @@ export type DashboardShellData = {
   lineupHelper: LineupHelperWorkspaceRecord | null;
   leagueIntel: LeagueIntelPayload | null;
   playerLab: PlayerLabPayload | null;
+  arena: ArenaWorkspacePayload | null;
   syncedAt: string | null;
 };
 
@@ -422,6 +465,7 @@ export type PredictionSideInput = {
 };
 
 export type PredictionDraft = {
+  modelKey?: string | null;
   teamA: PredictionSideInput;
   teamB: PredictionSideInput;
   venue: PredictionVenue;
@@ -448,7 +492,8 @@ export type PredictionMatrixResult = NonNullable<
 export type PredictionMatrixView = PredictionMatrixResult["views"][number];
 export type PredictionMatrixRow = PredictionMatrixView["rows"][number];
 export type PredictionMatrixCell = PredictionMatrixRow["cells"][number];
-export type PredictionMatrixTacticPair = PredictionMatrixResult["teamAPairs"][number];
+export type PredictionMatrixTacticPair =
+  PredictionMatrixResult["teamAPairs"][number];
 
 export type RecapPanelContext = {
   connection: Pick<
@@ -463,7 +508,10 @@ export type HighlightsPanelContext = {
 };
 
 export type LeagueHistoryPanelContext = {
-  connection: Pick<HomeWorkspacePayload["connection"], "leagueId" | "leagueName">;
+  connection: Pick<
+    HomeWorkspacePayload["connection"],
+    "leagueId" | "leagueName"
+  >;
 };
 
 export type RivalsPanelContext = {
@@ -515,6 +563,7 @@ export type PredictionForecastAppliedValues = {
 export type PredictionSubmissionRequest = {
   input: PredictionInput;
   forecastContext?: PredictionForecastContext;
+  modelKey?: string | null;
 };
 
 export type PredictionForecastPrefill = {
@@ -526,6 +575,7 @@ export type PredictionForecastPrefill = {
 export type PredictionDraftState = {
   input: PredictionInput;
   forecastPrefill: PredictionForecastPrefill | null;
+  modelKey?: string | null;
   sourceSelection: PredictionSourceSelection;
 };
 

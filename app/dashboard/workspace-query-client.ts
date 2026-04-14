@@ -9,6 +9,7 @@ import { formatAmplifyErrors } from "@/app/dashboard/remote-errors";
 import { isThemeId, type ThemeId } from "@/app/theme";
 import type {
   AccessibleMatchSummary,
+  ArenaWorkspacePayload,
   BillingPaymentsPage,
   BillingSummary,
   BbConnectionRecord,
@@ -22,6 +23,7 @@ import type {
   LineupHelperEvaluationRecord,
   LineupHelperWorkspaceRecord,
   MatchBoxscorePayload,
+  ManualSalaryEstimate,
   NextGamePlannerDetailPayload,
   NextGameRecommendationInput,
   NextGameRecommendationSnapshot,
@@ -33,8 +35,11 @@ import type {
   PredictionSideInput,
   PlayerLabPayload,
   PlayerTrendPayload,
+  RepairOwnerRosterDataResult,
   RecapHistoryRecord,
   RivalsWorkspacePayload,
+  SalaryCalculatorSeed,
+  SalaryCalculatorSkillsInput,
   SalaryProjection,
   ScoutSchedulePayload,
   ScoutTeamSummaryPayload,
@@ -238,7 +243,10 @@ const connectionResultSchema = z
     status: z.string(),
     teamId: nullableStringSchema,
     teamName: nullableStringSchema,
-    workspaceCacheJson: z.lazy(() => workspaceCachePayloadSchema).nullable().optional(),
+    workspaceCacheJson: z
+      .lazy(() => workspaceCachePayloadSchema)
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -450,6 +458,129 @@ const playerLabSchema = z
   .nullable()
   .optional();
 
+const arenaSeatStateSchema = z
+  .object({
+    section: z.string(),
+    capacity: nullableNumberSchema,
+    price: nullableNumberSchema,
+    nextPrice: nullableNumberSchema,
+    minPrice: z.number(),
+    maxPrice: z.number(),
+  })
+  .passthrough();
+
+const arenaExpansionSectionSchema = z
+  .object({
+    section: z.string(),
+    capacityDelta: nullableNumberSchema,
+  })
+  .passthrough();
+
+const arenaExpansionSchema = z
+  .object({
+    daysLeft: nullableNumberSchema,
+    sections: z.array(arenaExpansionSectionSchema),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const arenaEconomyTransactionSchema = z
+  .object({
+    kind: nullableStringSchema,
+    amount: nullableNumberSchema,
+    date: nullableStringSchema,
+    description: nullableStringSchema,
+    rawType: nullableStringSchema,
+    rawAmount: nullableStringSchema,
+    rawDate: nullableStringSchema,
+  })
+  .passthrough();
+
+const arenaWorkspaceSchema = z
+  .object({
+    syncedAt: nullableStringSchema,
+    nextHomeMatch: homeNextMatchSchema,
+    arena: z
+      .object({
+        name: nullableStringSchema,
+        seats: z.array(arenaSeatStateSchema),
+        expansion: arenaExpansionSchema,
+      })
+      .passthrough(),
+    economy: z
+      .object({
+        cash: nullableNumberSchema,
+        availableBalance: nullableNumberSchema,
+        transactions: z.array(arenaEconomyTransactionSchema),
+      })
+      .passthrough(),
+    recentHomeGames: z.array(
+      z
+        .object({
+          matchId: nullableStringSchema,
+          startTime: nullableStringSchema,
+          type: nullableStringSchema,
+          opponentTeamId: nullableStringSchema,
+          opponentTeamName: nullableStringSchema,
+          competitionKey: nullableStringSchema,
+          competitionLabel: nullableStringSchema,
+          estimatedRealizedGate: nullableNumberSchema,
+          matchedSnapshotCapturedAt: nullableStringSchema,
+          sections: z.array(
+            z
+              .object({
+                section: z.string(),
+                attendance: nullableNumberSchema,
+                capacity: nullableNumberSchema,
+                price: nullableNumberSchema,
+                occupancyPct: nullableNumberSchema,
+                realizedRevenue: nullableNumberSchema,
+                usedMatchedSnapshot: z.boolean(),
+              })
+              .passthrough(),
+          ),
+        })
+        .passthrough(),
+    ),
+    recommendation: z
+      .object({
+        overallConfidence: nullableNumberSchema,
+        heuristicDisclaimer: nullableStringSchema,
+        projectedCurrentRevenue: nullableNumberSchema,
+        projectedRecommendedRevenue: nullableNumberSchema,
+        projectedRevenueDelta: nullableNumberSchema,
+        sections: z.array(
+          z
+            .object({
+              section: z.string(),
+              currentPrice: nullableNumberSchema,
+              recommendedPrice: nullableNumberSchema,
+              delta: nullableNumberSchema,
+              reason: nullableStringSchema,
+              confidence: nullableNumberSchema,
+              weightedOccupancyPct: nullableNumberSchema,
+              projectedAttendance: nullableNumberSchema,
+              projectedRevenue: nullableNumberSchema,
+            })
+            .passthrough(),
+        ),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    diagnostics: z
+      .object({
+        comparableGameCount: z.number(),
+        matchedSnapshotCount: z.number(),
+        lowConfidenceReasons: z.array(z.string()),
+      })
+      .passthrough(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
 const scoutOpponentSummarySchema = z
   .object({
     losses: nullableNumberSchema,
@@ -632,6 +763,7 @@ const workspaceCachePayloadSchema = z
     scout: scoutWorkspaceSchema,
     leagueIntel: leagueIntelSchema,
     playerLab: playerLabSchema,
+    arena: arenaWorkspaceSchema,
   })
   .passthrough();
 
@@ -839,10 +971,58 @@ const nextGamePlannerDetailSchema = z
   .nullable()
   .optional();
 
+const nextGameRecommendationCompletedPhaseSchema = z
+  .object({
+    completedAt: z.string(),
+    durationMs: z.number(),
+    phaseKey: z.string(),
+    startedAt: z.string(),
+    summary: z.string(),
+  })
+  .passthrough();
+
+const nextGameRecommendationProgressContextSchema = z
+  .object({
+    artifactKey: nullableStringSchema,
+    availableRosterCount: nullableNumberSchema,
+    candidateCount: nullableNumberSchema,
+    excludedPlayerCount: nullableNumberSchema,
+    forecastJobId: nullableStringSchema,
+    forecastScenarioCount: nullableNumberSchema,
+    plannerPairCount: nullableNumberSchema,
+    sourceMatchId: nullableStringSchema,
+    sourceTeamLocation: nullableStringSchema,
+    workspaceCacheKind: nullableStringSchema,
+    workspaceCacheState: nullableStringSchema,
+    workspaceSyncedAt: nullableStringSchema,
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const nextGameRecommendationProgressSchema = z
+  .object({
+    completedPhases: z.array(nextGameRecommendationCompletedPhaseSchema),
+    completedUnits: nullableNumberSchema,
+    context: nextGameRecommendationProgressContextSchema,
+    currentPhaseStartedAt: nullableStringSchema,
+    phaseCount: z.number(),
+    phaseIndex: z.number(),
+    phaseKey: z.string(),
+    summary: z.string(),
+    totalUnits: nullableNumberSchema,
+    unitLabel: nullableStringSchema,
+    updatedAt: z.string(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
 const nextGameRecommendationSchema = z
   .object({
     completedAt: nullableStringSchema,
     defensiveSwitch: lineupHelperDefensiveSwitchSchema,
+    excludedPlayerIds: z.array(z.string()).optional(),
     enthusiasm: z.number(),
     error: nullableStringSchema,
     executionArn: nullableStringSchema,
@@ -850,6 +1030,7 @@ const nextGameRecommendationSchema = z
     matchId: z.string(),
     opponentTeamId: z.string(),
     opponentTeamName: nullableStringSchema,
+    progress: nextGameRecommendationProgressSchema,
     requestedAt: z.string(),
     result: z
       .object({
@@ -868,6 +1049,7 @@ const nextGameRecommendationSchema = z
         forecastScenarioProbability: z.number(),
         generatedAt: z.string(),
         matchId: z.string(),
+        excludedPlayerIds: z.array(z.string()).optional(),
         opponentSourceMatchId: z.string(),
         opponentTeamId: z.string(),
         opponentTeamName: z.string(),
@@ -1014,72 +1196,71 @@ const operationsActivitySchema = z
   })
   .passthrough();
 
-const recapHistoryRecordSchema = z
-  .discriminatedUnion("kind", [
-    z
-      .object({
-        completedAt: nullableStringSchema,
-        coverageJson: gameDayRecapCoverageSchema.nullable(),
-        error: nullableStringSchema,
-        gameDate: z.string(),
-        gameDayNumber: z.null(),
-        kind: z.literal("LEAGUE_DATE"),
-        leagueId: nullableStringSchema,
-        leagueName: nullableStringSchema,
-        matchId: z.null(),
-        requestJson: gameDayRecapStoredRequestSchema,
-        requestedAt: z.string(),
-        resultJson: gameDayRecapResultSchema.nullable(),
-        season: nullableNumberSchema,
-        selectionKey: z.string(),
-        status: nullableStringSchema,
-        targetKey: z.string(),
-        updatedAt: z.string(),
-      })
-      .passthrough(),
-    z
-      .object({
-        completedAt: nullableStringSchema,
-        coverageJson: gameDayRecapCoverageSchema.nullable(),
-        error: nullableStringSchema,
-        gameDate: z.null(),
-        gameDayNumber: z.number(),
-        kind: z.literal("LEAGUE_GAME_DAY"),
-        leagueId: nullableStringSchema,
-        leagueName: nullableStringSchema,
-        matchId: z.null(),
-        requestJson: leagueGameDayRecapStoredRequestSchema,
-        requestedAt: z.string(),
-        resultJson: gameDayRecapResultSchema.nullable(),
-        season: nullableNumberSchema,
-        selectionKey: z.string(),
-        status: nullableStringSchema,
-        targetKey: z.string(),
-        updatedAt: z.string(),
-      })
-      .passthrough(),
-    z
-      .object({
-        completedAt: nullableStringSchema,
-        coverageJson: gameDayRecapCoverageSchema.nullable(),
-        error: nullableStringSchema,
-        gameDate: nullableStringSchema,
-        gameDayNumber: z.null(),
-        kind: z.literal("SINGLE_GAME"),
-        leagueId: nullableStringSchema,
-        leagueName: nullableStringSchema,
-        matchId: z.string(),
-        requestJson: singleGameSummaryStoredRequestSchema,
-        requestedAt: z.string(),
-        resultJson: gameDayRecapResultSchema.nullable(),
-        season: nullableNumberSchema,
-        selectionKey: z.string(),
-        status: nullableStringSchema,
-        targetKey: z.string(),
-        updatedAt: z.string(),
-      })
-      .passthrough(),
-  ]);
+const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      completedAt: nullableStringSchema,
+      coverageJson: gameDayRecapCoverageSchema.nullable(),
+      error: nullableStringSchema,
+      gameDate: z.string(),
+      gameDayNumber: z.null(),
+      kind: z.literal("LEAGUE_DATE"),
+      leagueId: nullableStringSchema,
+      leagueName: nullableStringSchema,
+      matchId: z.null(),
+      requestJson: gameDayRecapStoredRequestSchema,
+      requestedAt: z.string(),
+      resultJson: gameDayRecapResultSchema.nullable(),
+      season: nullableNumberSchema,
+      selectionKey: z.string(),
+      status: nullableStringSchema,
+      targetKey: z.string(),
+      updatedAt: z.string(),
+    })
+    .passthrough(),
+  z
+    .object({
+      completedAt: nullableStringSchema,
+      coverageJson: gameDayRecapCoverageSchema.nullable(),
+      error: nullableStringSchema,
+      gameDate: z.null(),
+      gameDayNumber: z.number(),
+      kind: z.literal("LEAGUE_GAME_DAY"),
+      leagueId: nullableStringSchema,
+      leagueName: nullableStringSchema,
+      matchId: z.null(),
+      requestJson: leagueGameDayRecapStoredRequestSchema,
+      requestedAt: z.string(),
+      resultJson: gameDayRecapResultSchema.nullable(),
+      season: nullableNumberSchema,
+      selectionKey: z.string(),
+      status: nullableStringSchema,
+      targetKey: z.string(),
+      updatedAt: z.string(),
+    })
+    .passthrough(),
+  z
+    .object({
+      completedAt: nullableStringSchema,
+      coverageJson: gameDayRecapCoverageSchema.nullable(),
+      error: nullableStringSchema,
+      gameDate: nullableStringSchema,
+      gameDayNumber: z.null(),
+      kind: z.literal("SINGLE_GAME"),
+      leagueId: nullableStringSchema,
+      leagueName: nullableStringSchema,
+      matchId: z.string(),
+      requestJson: singleGameSummaryStoredRequestSchema,
+      requestedAt: z.string(),
+      resultJson: gameDayRecapResultSchema.nullable(),
+      season: nullableNumberSchema,
+      selectionKey: z.string(),
+      status: nullableStringSchema,
+      targetKey: z.string(),
+      updatedAt: z.string(),
+    })
+    .passthrough(),
+]);
 
 const paginatedRecapHistorySchema = z
   .object({
@@ -1155,7 +1336,10 @@ const teamHighlightsBrokenMatchSchema = z
 
 const teamHighlightsScanStatusSchema = z
   .object({
-    brokenMatches: z.array(teamHighlightsBrokenMatchSchema).optional().default([]),
+    brokenMatches: z
+      .array(teamHighlightsBrokenMatchSchema)
+      .optional()
+      .default([]),
     completedAt: nullableStringSchema,
     currentSeason: nullableNumberSchema,
     error: nullableStringSchema,
@@ -1429,6 +1613,7 @@ const predictionMatrixSideSummarySchema = z
 const predictionMatrixResultSchema = z
   .object({
     generatedAt: z.string(),
+    modelKey: nullableStringSchema,
     modelVersion: z.string(),
     selectedTeamAPairId: nullableStringSchema,
     selectedTeamBPairId: nullableStringSchema,
@@ -1473,6 +1658,57 @@ const salaryProjectionSchema = z
     projectedSalary: nullableNumberSchema,
     trend: z.string(),
     weeklyDelta: z.number(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const salaryCalculatorSkillsSchema = z
+  .object({
+    driving: z.number(),
+    handling: z.number(),
+    insideDefense: z.number(),
+    insideScoring: z.number(),
+    jumpRange: z.number(),
+    jumpShot: z.number(),
+    outsideDefense: z.number(),
+    passing: z.number(),
+    rebounding: z.number(),
+    shotBlocking: z.number(),
+  })
+  .passthrough();
+
+const salaryByPositionSchema = z
+  .object({
+    C: z.number(),
+    PF: z.number(),
+    PG: z.number(),
+    SF: z.number(),
+    SG: z.number(),
+  })
+  .passthrough();
+
+const salaryCalculatorSeedSchema = z
+  .object({
+    bestPosition: nullableStringSchema,
+    currentSalary: nullableNumberSchema,
+    fullName: z.string(),
+    playerId: z.string(),
+    skills: salaryCalculatorSkillsSchema,
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const manualSalaryEstimateSchema = z
+  .object({
+    bestPosition: z.string(),
+    calibrationMode: z.string(),
+    correctionFactorApplied: z.number(),
+    modelSource: z.string(),
+    modelSourceConfidence: z.string(),
+    predictedSalary: z.number(),
+    salaryByPosition: salaryByPositionSchema,
   })
   .passthrough()
   .nullable()
@@ -1635,7 +1871,11 @@ const rivalsWorkspaceSchema = z
   .nullable()
   .optional();
 
-type SharedWorkspaceSectionKey = "lineupHelper" | "leagueIntel" | "playerLab";
+type SharedWorkspaceSectionKey =
+  | "arena"
+  | "lineupHelper"
+  | "leagueIntel"
+  | "playerLab";
 
 export const workspaceQueryKeys = {
   accessibleMatches: (input?: {
@@ -1659,10 +1899,8 @@ export const workspaceQueryKeys = {
   boxscore: (matchId: string) => ["workspace", "boxscore", matchId] as const,
   connection: ["workspace", "connection"] as const,
   currentPrediction: ["workspace", "prediction", "current"] as const,
-  highlights: (input: {
-    onlyOutcomeChange: boolean;
-    perspective: string;
-  }) =>
+  arena: ["workspace", "arena"] as const,
+  highlights: (input: { onlyOutcomeChange: boolean; perspective: string }) =>
     [
       "workspace",
       "highlights",
@@ -1678,18 +1916,26 @@ export const workspaceQueryKeys = {
     assignments: readonly unknown[];
     context: unknown;
     roster: readonly unknown[];
+  }) => ["workspace", "lineupHelper", "evaluation", input] as const,
+  nextGameRecommendation: (input: {
+    forecastJobId: string;
+    input: NextGameRecommendationInput;
+    matchId: string;
+    opponentTeamId: string;
   }) =>
-    ["workspace", "lineupHelper", "evaluation", input] as const,
-  nextGameRecommendation: (input: NextGameRecommendationInput) =>
     [
       "workspace",
       "recommendation",
-      input.enthusiasm,
-      input.defensiveSwitch.pg,
-      input.defensiveSwitch.sg,
-      input.defensiveSwitch.sf,
-      input.defensiveSwitch.pf,
-      input.defensiveSwitch.c,
+      input.matchId,
+      input.opponentTeamId,
+      input.forecastJobId,
+      ...input.input.excludedPlayerIds,
+      input.input.enthusiasm,
+      input.input.defensiveSwitch.pg,
+      input.input.defensiveSwitch.sg,
+      input.input.defensiveSwitch.sf,
+      input.input.defensiveSwitch.pf,
+      input.input.defensiveSwitch.c,
     ] as const,
   nextGamePlannerDetail: (artifactKey: string | null | undefined) =>
     ["workspace", "recommendation", "planner", artifactKey ?? "none"] as const,
@@ -1698,6 +1944,8 @@ export const workspaceQueryKeys = {
   operationsActivity: (limit = 8) =>
     ["workspace", "operations", limit] as const,
   playerLab: ["workspace", "playerLab"] as const,
+  manualSalaryEstimate: (input: { skills: SalaryCalculatorSkillsInput }) =>
+    ["workspace", "salaryCalculator", "estimate", input] as const,
   predictionMatrix: (request: PredictionDraft) =>
     ["workspace", "prediction", "matrix", request] as const,
   playerTrend: (playerId: string) =>
@@ -1730,6 +1978,8 @@ export const workspaceQueryKeys = {
       args?.selectedOpponentId ?? null,
     ] as const,
   root: ["workspace"] as const,
+  salaryCalculatorSeed: (playerId: string) =>
+    ["workspace", "salaryCalculator", "seed", playerId] as const,
   salaryProjection: (playerId: string) =>
     ["workspace", "salaryProjection", playerId] as const,
   scoutSchedule: (args: {
@@ -1800,12 +2050,10 @@ async function readInternalRouteDataOrThrow<T>(
   schema: z.ZodType<T>,
   emptyMessage: string,
 ): Promise<T> {
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        data?: unknown;
-        errors?: ReadonlyArray<{ message?: string }> | null;
-      }
-    | null;
+  const payload = (await response.json().catch(() => null)) as {
+    data?: unknown;
+    errors?: ReadonlyArray<{ message?: string }> | null;
+  } | null;
 
   if (!response.ok || payload?.errors?.length) {
     throw new Error(payload?.errors?.[0]?.message ?? emptyMessage);
@@ -1821,6 +2069,7 @@ function toRecommendationInputArg(
   input: NextGameRecommendationInput,
 ): NonNullable<Schema["submitNextGameRecommendationJob"]["args"]>["input"] {
   return {
+    excludedPlayerIds: [...input.excludedPlayerIds],
     enthusiasm: input.enthusiasm,
     defensiveSwitch: {
       pg: input.defensiveSwitch.pg as NonNullable<
@@ -1911,7 +2160,8 @@ export async function fetchLineupHelperEvaluationQuery(input: {
   roster: unknown[];
 }): Promise<LineupHelperEvaluationRecord> {
   const response = await client.queries.evaluateLineupHelper({
-    assignments: input.assignments as LineupHelperWorkspaceRecord["defaultAssignments"],
+    assignments:
+      input.assignments as LineupHelperWorkspaceRecord["defaultAssignments"],
     context: input.context as LineupHelperWorkspaceRecord["defaultContext"],
     roster: input.roster as LineupHelperWorkspaceRecord["roster"],
   });
@@ -1954,6 +2204,19 @@ export async function fetchLeagueIntelQuery(args?: {
   ) as LeagueIntelPayload | null;
 }
 
+export async function fetchArenaWorkspaceQuery(args?: {
+  force?: boolean;
+}): Promise<ArenaWorkspacePayload | null> {
+  const response = await client.queries.getArenaWorkspace(
+    args?.force ? { force: true } : undefined,
+  );
+
+  return readAmplifyNullableDataOrThrow(
+    response,
+    arenaWorkspaceSchema,
+  ) as ArenaWorkspacePayload | null;
+}
+
 export async function fetchPlayerLabQuery(args?: {
   force?: boolean;
 }): Promise<PlayerLabPayload | null> {
@@ -1991,6 +2254,34 @@ export async function fetchSalaryProjectionQuery(args: {
     response,
     salaryProjectionSchema,
   ) as SalaryProjection | null;
+}
+
+export async function fetchSalaryCalculatorSeedQuery(args: {
+  playerId: string;
+}): Promise<SalaryCalculatorSeed | null> {
+  const response = await client.queries.getSalaryCalculatorSeed({
+    playerId: args.playerId,
+  });
+
+  return readAmplifyNullableDataOrThrow(
+    response,
+    salaryCalculatorSeedSchema,
+  ) as SalaryCalculatorSeed | null;
+}
+
+export async function fetchManualSalaryEstimateQuery(args: {
+  input: {
+    skills: SalaryCalculatorSkillsInput;
+  };
+}): Promise<ManualSalaryEstimate | null> {
+  const response = await client.queries.getManualSalaryEstimate({
+    input: args.input,
+  });
+
+  return readAmplifyNullableDataOrThrow(
+    response,
+    manualSalaryEstimateSchema,
+  ) as ManualSalaryEstimate | null;
 }
 
 export async function fetchScoutTeamSummaryQuery(args?: {
@@ -2042,10 +2333,16 @@ export async function fetchLatestOpponentForecastQuery(args: {
 }
 
 export async function fetchLatestNextGameRecommendationQuery(args: {
+  forecastJobId: string;
   input: NextGameRecommendationInput;
+  matchId: string;
+  opponentTeamId: string;
 }): Promise<NextGameRecommendationSnapshot | null> {
   const response = await client.queries.getLatestNextGameRecommendation({
+    forecastJobId: args.forecastJobId,
     input: toRecommendationInputArg(args.input),
+    matchId: args.matchId,
+    opponentTeamId: args.opponentTeamId,
   });
 
   return readAmplifyNullableDataOrThrow(
@@ -2121,6 +2418,7 @@ export async function fetchPredictionMatrixQuery(args: {
 
 function toPredictionMatrixRequestInput(draft: PredictionDraft) {
   return {
+    ...(draft.modelKey ? { modelKey: draft.modelKey } : {}),
     teamA: toPredictionMatrixSideInput(draft.teamA),
     teamB: toPredictionMatrixSideInput(draft.teamB),
     venue: draft.venue,
@@ -2237,7 +2535,9 @@ export async function fetchRivalsWorkspaceQuery(args?: {
           ...(normalizeStringArray(args.competitionKeys)
             ? { competitionKeys: normalizeStringArray(args.competitionKeys) }
             : {}),
-          ...(args.endSeason !== undefined ? { endSeason: args.endSeason } : {}),
+          ...(args.endSeason !== undefined
+            ? { endSeason: args.endSeason }
+            : {}),
           ...(normalizeStringArray(args.outcomes)
             ? { outcomes: normalizeStringArray(args.outcomes) }
             : {}),
@@ -2327,6 +2627,20 @@ export async function submitOpponentForecastJobMutation(input: {
       .passthrough(),
     "Unable to submit the opponent forecast job.",
   ) as SubmitOpponentForecastJobResult;
+}
+
+export async function repairOwnerRosterDataMutation(): Promise<RepairOwnerRosterDataResult> {
+  const response = await client.mutations.repairOwnerRosterData();
+  return readAmplifyDataOrThrow(
+    response,
+    z
+      .object({
+        completedAt: z.string(),
+        repairedPlayerCount: z.number(),
+      })
+      .passthrough(),
+    "Unable to repair owner roster data.",
+  ) as RepairOwnerRosterDataResult;
 }
 
 export async function submitNextGameRecommendationJobMutation(input: {
@@ -2475,7 +2789,9 @@ export async function createBillingCheckoutUrlMutation(returnPath?: string) {
   ).url;
 }
 
-export async function createBillingLifetimeCheckoutUrlMutation(returnPath?: string) {
+export async function createBillingLifetimeCheckoutUrlMutation(
+  returnPath?: string,
+) {
   const response = await client.mutations.createBillingLifetimeCheckoutSession(
     returnPath ? { returnPath } : undefined,
   );
@@ -2573,6 +2889,13 @@ export function leagueIntelQueryOptions() {
   });
 }
 
+export function arenaWorkspaceQueryOptions() {
+  return queryOptions({
+    queryFn: () => fetchArenaWorkspaceQuery(),
+    queryKey: workspaceQueryKeys.arena,
+  });
+}
+
 export function playerLabQueryOptions() {
   return queryOptions({
     queryFn: () => fetchPlayerLabQuery(),
@@ -2591,6 +2914,24 @@ export function salaryProjectionQueryOptions(args: { playerId: string }) {
   return queryOptions({
     queryFn: () => fetchSalaryProjectionQuery(args),
     queryKey: workspaceQueryKeys.salaryProjection(args.playerId),
+  });
+}
+
+export function salaryCalculatorSeedQueryOptions(args: { playerId: string }) {
+  return queryOptions({
+    queryFn: () => fetchSalaryCalculatorSeedQuery(args),
+    queryKey: workspaceQueryKeys.salaryCalculatorSeed(args.playerId),
+  });
+}
+
+export function manualSalaryEstimateQueryOptions(args: {
+  input: {
+    skills: SalaryCalculatorSkillsInput;
+  };
+}) {
+  return queryOptions({
+    queryFn: () => fetchManualSalaryEstimateQuery(args),
+    queryKey: workspaceQueryKeys.manualSalaryEstimate(args.input),
   });
 }
 
@@ -2622,11 +2963,14 @@ export function opponentForecastQueryOptions(args: { teamId: string }) {
 }
 
 export function nextGameRecommendationQueryOptions(args: {
+  forecastJobId: string;
   input: NextGameRecommendationInput;
+  matchId: string;
+  opponentTeamId: string;
 }) {
   return queryOptions({
     queryFn: () => fetchLatestNextGameRecommendationQuery(args),
-    queryKey: workspaceQueryKeys.nextGameRecommendation(args.input),
+    queryKey: workspaceQueryKeys.nextGameRecommendation(args),
   });
 }
 
@@ -2649,7 +2993,9 @@ export function accessibleMatchesQueryOptions(args?: {
   });
 }
 
-export function predictionMatrixQueryOptions(args: { request: PredictionDraft }) {
+export function predictionMatrixQueryOptions(args: {
+  request: PredictionDraft;
+}) {
   return queryOptions({
     queryFn: () => fetchPredictionMatrixQuery(args),
     queryKey: workspaceQueryKeys.predictionMatrix(args.request),
@@ -2680,9 +3026,7 @@ export function recapHistoryQueryOptions(args?: {
   });
 }
 
-export function leagueHistoryQueryOptions(args?: {
-  leagueId?: string | null;
-}) {
+export function leagueHistoryQueryOptions(args?: { leagueId?: string | null }) {
   return queryOptions({
     queryFn: () => fetchLeagueHistoryQuery(args),
     queryKey: workspaceQueryKeys.leagueHistory(args?.leagueId),
@@ -2731,10 +3075,23 @@ export async function refreshHomeWorkspace(queryClient: QueryClient) {
   return home;
 }
 
+export async function refreshLineupHelperAfterOwnerRosterRepair(
+  queryClient: QueryClient,
+) {
+  const data = await fetchLineupHelperWorkspaceQuery();
+  queryClient.setQueryData(workspaceQueryKeys.lineupHelper, data);
+  return data;
+}
+
 export async function refreshSharedWorkspaceSection(
   queryClient: QueryClient,
   sectionKey: SharedWorkspaceSectionKey,
 ) {
+  if (sectionKey === "arena") {
+    const data = await fetchArenaWorkspaceQuery({ force: true });
+    queryClient.setQueryData(workspaceQueryKeys.arena, data);
+    return data;
+  }
   if (sectionKey === "lineupHelper") {
     const data = await fetchLineupHelperWorkspaceQuery({ force: true });
     queryClient.setQueryData(workspaceQueryKeys.lineupHelper, data);

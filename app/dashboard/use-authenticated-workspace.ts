@@ -1,13 +1,14 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import {
   COMMERCIAL_MODE_DISABLED_SENTINEL,
   formatClientError,
 } from "@/app/dashboard/remote-errors";
 import {
+  arenaWorkspaceQueryOptions,
   billingSummaryQueryOptions,
   connectionQueryOptions,
   disconnectBbAccountMutation,
@@ -19,21 +20,32 @@ import {
   refreshSharedWorkspaceSection,
 } from "@/app/dashboard/workspace-query-client";
 import type {
+  ArenaWorkspacePayload,
   BillingSummary,
   BbConnectionRecord,
   DashboardShellData,
   HomeWorkspacePayload,
+  LineupHelperDependencyState,
 } from "@/app/types";
 import type { WorkspaceSection } from "@/app/workspace-sections";
 
-type WorkspaceExtraSectionKey = "lineupHelper" | "leagueIntel" | "playerLab";
+type WorkspaceExtraSectionKey =
+  | "arena"
+  | "lineupHelper"
+  | "leagueIntel"
+  | "playerLab";
 
-const sectionDependencies: Record<WorkspaceSection, WorkspaceExtraSectionKey[]> = {
+const sectionDependencies: Record<
+  WorkspaceSection,
+  WorkspaceExtraSectionKey[]
+> = {
+  arena: ["arena"],
   highlights: [],
   home: ["lineupHelper"],
   league: ["leagueIntel"],
   "league-history": [],
   lineups: ["lineupHelper"],
+  "next-game": ["lineupHelper"],
   "opponent-schedule": [],
   ops: [],
   players: ["playerLab"],
@@ -41,11 +53,13 @@ const sectionDependencies: Record<WorkspaceSection, WorkspaceExtraSectionKey[]> 
   recaps: [],
   rivals: [],
   scout: [],
+  "staff-market": [],
 };
 
 function createWorkspaceFromHome(
   home: HomeWorkspacePayload,
   sections: {
+    arena?: ArenaWorkspacePayload | null;
     leagueIntel?: DashboardShellData["leagueIntel"];
     lineupHelper?: DashboardShellData["lineupHelper"];
     playerLab?: DashboardShellData["playerLab"];
@@ -53,6 +67,7 @@ function createWorkspaceFromHome(
 ): DashboardShellData {
   return {
     home,
+    arena: sections.arena ?? null,
     leagueIntel: sections.leagueIntel ?? null,
     lineupHelper: sections.lineupHelper ?? null,
     playerLab: sections.playerLab ?? null,
@@ -68,15 +83,70 @@ function formatQueryErrorMessage(error: unknown): string | null {
   return formatClientError(error);
 }
 
+function resolveLineupHelperDependencyState(args: {
+  connected: boolean;
+  errorMessage: string | null;
+  isPending: boolean;
+  required: boolean;
+}): LineupHelperDependencyState {
+  if (!args.connected || !args.required) {
+    return {
+      errorMessage: null,
+      status: "ready",
+    };
+  }
+
+  if (args.isPending) {
+    return {
+      errorMessage: null,
+      status: "loading",
+    };
+  }
+
+  if (args.errorMessage) {
+    return {
+      errorMessage: args.errorMessage,
+      status: "error",
+    };
+  }
+
+  return {
+    errorMessage: null,
+    status: "ready",
+  };
+}
+
+function shouldAutoRefreshWorkspace(args: {
+  connected: boolean;
+  hasAttemptedAutoRefresh: boolean;
+  hasWorkspace: boolean;
+  isLoadingWorkspaceData: boolean;
+  isRefreshingWorkspace: boolean;
+  showCredentialForm: boolean;
+}) {
+  if (!args.connected || args.showCredentialForm || args.hasWorkspace) {
+    return false;
+  }
+
+  if (args.hasAttemptedAutoRefresh || args.isRefreshingWorkspace) {
+    return false;
+  }
+
+  return !args.isLoadingWorkspaceData;
+}
+
 export function useAuthenticatedWorkspace(args: {
   activeSection: WorkspaceSection;
   commercialModeEnabled: boolean;
 }) {
   const queryClient = useQueryClient();
+  const [hasAttemptedAutoRefresh, setHasAttemptedAutoRefresh] =
+    useState(false);
+  const [isRefreshingWorkspace, setIsRefreshingWorkspace] = useState(false);
   const [showCredentialForm, setShowCredentialForm] = useState(false);
-  const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(
-    null,
-  );
+  const [workspaceActionError, setWorkspaceActionError] = useState<
+    string | null
+  >(null);
   const requiredSections = sectionDependencies[args.activeSection];
 
   const connectionQuery = useQuery(connectionQueryOptions());
@@ -93,6 +163,10 @@ export function useAuthenticatedWorkspace(args: {
   const lineupHelperQuery = useQuery({
     ...lineupHelperWorkspaceQueryOptions(),
     enabled: connected && requiredSections.includes("lineupHelper"),
+  });
+  const arenaQuery = useQuery({
+    ...arenaWorkspaceQueryOptions(),
+    enabled: connected && requiredSections.includes("arena"),
   });
   const leagueIntelQuery = useQuery({
     ...leagueIntelQueryOptions(),
@@ -112,8 +186,24 @@ export function useAuthenticatedWorkspace(args: {
     }
   }, [connectionQuery.data?.status]);
 
+  useEffect(() => {
+    if (!connected) {
+      setHasAttemptedAutoRefresh(false);
+      setIsRefreshingWorkspace(false);
+    }
+  }, [connected]);
+
+  const lineupHelperError = formatQueryErrorMessage(lineupHelperQuery.error);
+  const lineupHelperDependencyState = resolveLineupHelperDependencyState({
+    connected,
+    errorMessage: lineupHelperError,
+    isPending: lineupHelperQuery.isPending,
+    required: requiredSections.includes("lineupHelper"),
+  });
+
   const workspace = homeQuery.data
     ? createWorkspaceFromHome(homeQuery.data, {
+        arena: arenaQuery.data ?? null,
         leagueIntel: leagueIntelQuery.data ?? null,
         lineupHelper: lineupHelperQuery.data ?? null,
         playerLab: playerLabQuery.data ?? null,
@@ -123,9 +213,10 @@ export function useAuthenticatedWorkspace(args: {
   const workspaceError =
     workspaceActionError ??
     formatQueryErrorMessage(homeQuery.error) ??
-    (requiredSections.includes("lineupHelper")
-      ? formatQueryErrorMessage(lineupHelperQuery.error)
+    (requiredSections.includes("arena")
+      ? formatQueryErrorMessage(arenaQuery.error)
       : null) ??
+    (requiredSections.includes("lineupHelper") ? lineupHelperError : null) ??
     (requiredSections.includes("leagueIntel")
       ? formatQueryErrorMessage(leagueIntelQuery.error)
       : null) ??
@@ -133,12 +224,18 @@ export function useAuthenticatedWorkspace(args: {
       ? formatQueryErrorMessage(playerLabQuery.error)
       : null);
 
-  const isLoadingWorkspace =
+  const isLoadingWorkspaceData =
     connected &&
     (homeQuery.isPending ||
-      (requiredSections.includes("lineupHelper") && lineupHelperQuery.isPending) ||
-      (requiredSections.includes("leagueIntel") && leagueIntelQuery.isPending) ||
+      (requiredSections.includes("arena") && arenaQuery.isPending) ||
+      (requiredSections.includes("lineupHelper") &&
+        lineupHelperQuery.isPending) ||
+      (requiredSections.includes("leagueIntel") &&
+        leagueIntelQuery.isPending) ||
       (requiredSections.includes("playerLab") && playerLabQuery.isPending));
+  const isLoadingWorkspace =
+    connected && (isLoadingWorkspaceData || isRefreshingWorkspace);
+  const hasWorkspace = Boolean(workspace);
 
   async function loadConnection(): Promise<BbConnectionRecord | null> {
     try {
@@ -180,8 +277,13 @@ export function useAuthenticatedWorkspace(args: {
     await queryClient.ensureQueryData(homeWorkspaceQueryOptions());
     await Promise.all(
       requiredSections.map((sectionKey) => {
+        if (sectionKey === "arena") {
+          return queryClient.ensureQueryData(arenaWorkspaceQueryOptions());
+        }
         if (sectionKey === "lineupHelper") {
-          return queryClient.ensureQueryData(lineupHelperWorkspaceQueryOptions());
+          return queryClient.ensureQueryData(
+            lineupHelperWorkspaceQueryOptions(),
+          );
         }
         if (sectionKey === "leagueIntel") {
           return queryClient.ensureQueryData(leagueIntelQueryOptions());
@@ -194,13 +296,45 @@ export function useAuthenticatedWorkspace(args: {
 
   async function handleRefresh(): Promise<void> {
     setWorkspaceActionError(null);
+    setIsRefreshingWorkspace(true);
     try {
       await loadWorkspace(true);
       await Promise.all([loadConnection(), loadBilling()]);
     } catch (error) {
       setWorkspaceActionError(formatClientError(error));
+    } finally {
+      setIsRefreshingWorkspace(false);
     }
   }
+
+  const triggerAutoRefresh = useEffectEvent(() => {
+    void handleRefresh();
+  });
+
+  useEffect(() => {
+    if (
+      !shouldAutoRefreshWorkspace({
+        connected,
+        hasAttemptedAutoRefresh,
+        hasWorkspace,
+        isLoadingWorkspaceData,
+        isRefreshingWorkspace,
+        showCredentialForm,
+      })
+    ) {
+      return;
+    }
+
+    setHasAttemptedAutoRefresh(true);
+    triggerAutoRefresh();
+  }, [
+    connected,
+    hasAttemptedAutoRefresh,
+    hasWorkspace,
+    isLoadingWorkspaceData,
+    isRefreshingWorkspace,
+    showCredentialForm,
+  ]);
 
   async function handleDisconnect(): Promise<void> {
     setWorkspaceActionError(null);
@@ -227,9 +361,12 @@ export function useAuthenticatedWorkspace(args: {
     handleDisconnect,
     handleRefresh,
     isDisconnecting: disconnectMutation.isPending,
-    isLoadingBilling: args.commercialModeEnabled ? billingQuery.isPending : false,
+    isLoadingBilling: args.commercialModeEnabled
+      ? billingQuery.isPending
+      : false,
     isLoadingConnection: connectionQuery.isPending,
     isLoadingWorkspace,
+    lineupHelperDependencyState,
     loadConnection,
     loadWorkspace,
     setShowCredentialForm,
@@ -238,3 +375,9 @@ export function useAuthenticatedWorkspace(args: {
     workspaceError,
   };
 }
+
+export const __testing = {
+  createWorkspaceFromHome,
+  resolveLineupHelperDependencyState,
+  shouldAutoRefreshWorkspace,
+};

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import {
+  createDefaultPredictionDraft,
+  reconcilePredictionDraft,
+} from "../app/game-prediction-state";
 import { __testing as gamePredictionTesting } from "../app/game-prediction-panel";
 import type {
   PredictionMatrixTacticPair,
@@ -231,6 +235,166 @@ const minimaxStableTieViewFixture: PredictionMatrixView = {
   viewId: "expected-stable",
 } as PredictionMatrixView;
 
+const overviewTeamAPairs: PredictionMatrixTacticPair[] = [
+  {
+    defense: "Man to Man",
+    estimated: false,
+    offense: "Patient",
+    pairId: "overview-a-patient-m2m",
+    supportTier: "DIRECT",
+  },
+  {
+    defense: "2-3 Zone",
+    estimated: false,
+    offense: "Patient",
+    pairId: "overview-a-patient-23",
+    supportTier: "DIRECT",
+  },
+  {
+    defense: "3-2 Zone",
+    estimated: false,
+    offense: "Motion",
+    pairId: "overview-a-motion-32",
+    supportTier: "DIRECT",
+  },
+] as PredictionMatrixTacticPair[];
+
+const overviewTeamBPairs: PredictionMatrixTacticPair[] = [
+  {
+    defense: "Man to Man",
+    estimated: false,
+    offense: "Patient",
+    pairId: "overview-b-patient-m2m",
+    supportTier: "DIRECT",
+  },
+  {
+    defense: "3-2 Zone",
+    estimated: false,
+    offense: "Patient",
+    pairId: "overview-b-patient-32",
+    supportTier: "DIRECT",
+  },
+  {
+    defense: "2-3 Zone",
+    estimated: false,
+    offense: "Motion",
+    pairId: "overview-b-motion-23",
+    supportTier: "DIRECT",
+  },
+] as PredictionMatrixTacticPair[];
+
+const overviewViewFixture: PredictionMatrixView = {
+  label: "Expected",
+  rows: [
+    {
+      cells: [
+        {
+          available: true,
+          predictedPointDiff: 6,
+          predictedTeamAScore: 116,
+          predictedTeamBScore: 110,
+          teamAPairId: "overview-a-patient-m2m",
+        },
+        {
+          available: true,
+          predictedPointDiff: 4,
+          predictedTeamAScore: 113,
+          predictedTeamBScore: 109,
+          teamAPairId: "overview-a-patient-23",
+        },
+        {
+          available: true,
+          predictedPointDiff: 2,
+          predictedTeamAScore: 108,
+          predictedTeamBScore: 106,
+          teamAPairId: "overview-a-motion-32",
+        },
+      ],
+      teamBPairId: "overview-b-patient-m2m",
+    },
+    {
+      cells: [
+        {
+          available: true,
+          predictedPointDiff: 1,
+          predictedTeamAScore: 104,
+          predictedTeamBScore: 103,
+          teamAPairId: "overview-a-patient-m2m",
+        },
+        {
+          available: true,
+          predictedPointDiff: 3,
+          predictedTeamAScore: 106,
+          predictedTeamBScore: 103,
+          teamAPairId: "overview-a-patient-23",
+        },
+        {
+          available: true,
+          predictedPointDiff: 0,
+          predictedTeamAScore: 101,
+          predictedTeamBScore: 101,
+          teamAPairId: "overview-a-motion-32",
+        },
+      ],
+      teamBPairId: "overview-b-patient-32",
+    },
+    {
+      cells: [
+        {
+          available: true,
+          predictedPointDiff: 5,
+          predictedTeamAScore: 114,
+          predictedTeamBScore: 109,
+          teamAPairId: "overview-a-patient-m2m",
+        },
+        {
+          available: true,
+          predictedPointDiff: 4,
+          predictedTeamAScore: 112,
+          predictedTeamBScore: 108,
+          teamAPairId: "overview-a-patient-23",
+        },
+        {
+          available: true,
+          predictedPointDiff: 7,
+          predictedTeamAScore: 118,
+          predictedTeamBScore: 111,
+          teamAPairId: "overview-a-motion-32",
+        },
+      ],
+      teamBPairId: "overview-b-motion-23",
+    },
+  ],
+  viewId: "overview",
+} as PredictionMatrixView;
+
+test("game prediction drafts default model selection to bundle default", () => {
+  const draft = createDefaultPredictionDraft({
+    teamAId: "team-a",
+    teamAName: "Team A",
+    teamBId: "team-b",
+    teamBName: "Team B",
+  });
+
+  assert.equal(draft.modelKey, null);
+});
+
+test("game prediction draft reconciliation normalizes modelKey", () => {
+  const reconciled = reconcilePredictionDraft(
+    {
+      modelKey: "  catboost  ",
+    },
+    createDefaultPredictionDraft({
+      teamAId: "team-a",
+      teamAName: "Team A",
+      teamBId: "team-b",
+      teamBName: "Team B",
+    }),
+  );
+
+  assert.equal(reconciled.modelKey, "catboost");
+});
+
 test("prediction matrix pair sorting prioritizes offense before defense", () => {
   assert.deepStrictEqual(
     gamePredictionTesting.sortPairs(pairFixtures).map((pair) => pair.pairId),
@@ -433,6 +597,43 @@ test("prediction matrix minimax recommendation keeps stable tactic ordering for 
   assert.equal(result.teamAPair.pairId, "a-patient-m2m");
   assert.equal(result.teamBPair.pairId, "b-patient-32");
   assert.equal(result.cell.predictedPointDiff, 4);
+});
+
+test("prediction matrix offense overview cells compute minimax over visible defenses", () => {
+  const rows = gamePredictionTesting.buildOffenseOverviewRows({
+    teamAPairs: overviewTeamAPairs,
+    teamBPairs: overviewTeamBPairs,
+    view: overviewViewFixture,
+  });
+
+  const patientVsPatient = gamePredictionTesting.findOffenseOverviewCell({
+    rows,
+    teamAOffense: "Patient",
+    teamBOffense: "Patient",
+  });
+
+  assert.ok(patientVsPatient);
+  assert.ok(patientVsPatient.result);
+  assert.equal(patientVsPatient.result.teamAPair.pairId, "overview-a-patient-23");
+  assert.equal(patientVsPatient.result.teamBPair.pairId, "overview-b-patient-32");
+  assert.equal(patientVsPatient.result.cell.predictedPointDiff, 3);
+});
+
+test("prediction matrix offense overview rows stay offense-ordered for Team A and Team B", () => {
+  const rows = gamePredictionTesting.buildOffenseOverviewRows({
+    teamAPairs: overviewTeamAPairs,
+    teamBPairs: overviewTeamBPairs,
+    view: overviewViewFixture,
+  });
+
+  assert.deepStrictEqual(rows.map((row) => row.teamAOffense), [
+    "Patient",
+    "Motion",
+  ]);
+  assert.deepStrictEqual(
+    rows[0]?.cells.map((cell) => cell.teamBOffense),
+    ["Patient", "Motion"],
+  );
 });
 
 test("prediction matrix best and worst helpers honor the active visible pairs only", () => {

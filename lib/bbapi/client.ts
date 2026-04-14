@@ -204,9 +204,13 @@ export class BBXmlApiClient {
       this.getTeamStats(teamInfo.teamId ?? undefined, currentSeason, "averages"),
     ]);
 
-    const standings = teamInfo.league?.id
-      ? await this.getStandings(teamInfo.league.id, currentSeason)
-      : null;
+    const [standings, arena, economy] = await Promise.all([
+      teamInfo.league?.id
+        ? this.getStandings(teamInfo.league.id, currentSeason)
+        : Promise.resolve(null),
+      this.getArena(teamInfo.teamId ?? undefined),
+      this.getEconomy(),
+    ]);
 
     return {
       teamInfo,
@@ -214,6 +218,8 @@ export class BBXmlApiClient {
       schedule,
       standings,
       teamStats,
+      arena,
+      economy,
     };
   }
 

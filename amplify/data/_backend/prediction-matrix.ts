@@ -4,6 +4,7 @@ import {
 } from "@aws-sdk/client-sagemaker-runtime";
 
 import { predictionPlannerResponseSchema } from "../../../lib/prediction/contracts";
+import { normalizePredictionModelKey } from "../../../lib/prediction/model-selection";
 import { normalizePlannerEndpointInvocationError } from "../../../lib/prediction/planner-endpoint-errors";
 import { applyPredictionRatingsContext } from "../../../lib/prediction/normalization";
 import { requireFeatureAccess } from "./billing";
@@ -19,6 +20,7 @@ type PredictionVenue = "TEAM_A_HOME" | "NEUTRAL" | "TEAM_B_HOME";
 type TeamLocation = "HOME" | "AWAY";
 
 type PredictionMatrixRequest = {
+  modelKey?: string | null;
   teamA: PredictionMatrixSideInput;
   teamB: PredictionMatrixSideInput;
   venue: PredictionVenue;
@@ -83,6 +85,7 @@ type PredictionMatrixViewResult = {
 
 type PredictionMatrixResult = {
   generatedAt: string;
+  modelKey: string | null;
   modelVersion: string;
   selectedTeamAPairId: string | null;
   selectedTeamBPairId: string | null;
@@ -148,6 +151,7 @@ export async function evaluatePredictionMatrix(
   const selectedTeamBPairId = resolveSelectedPairId(teamBPairs, request.teamB);
 
   const plannerRequest = buildPlannerRequest({
+    modelKey: request.modelKey ?? null,
     selectedTeamBPairId,
     ourIsHome: request.venue !== "TEAM_B_HOME",
     neutralSite: request.venue === "NEUTRAL",
@@ -169,6 +173,7 @@ export async function evaluatePredictionMatrix(
 
   return {
     generatedAt: new Date().toISOString(),
+    modelKey: response.modelKey ?? request.modelKey ?? null,
     modelVersion: response.modelVersion,
     selectedTeamAPairId,
     selectedTeamBPairId,
@@ -238,6 +243,7 @@ function buildPlannerPairContexts(
 }
 
 function buildPlannerRequest(args: {
+  modelKey?: string | null;
   neutralSite: boolean;
   ourIsHome: boolean;
   selectedTeamBPairId: string | null;
@@ -247,6 +253,7 @@ function buildPlannerRequest(args: {
   teamBPairs: readonly PlannerPairContext[];
 }): JsonRecord {
   return {
+    ...(args.modelKey ? { modelKey: args.modelKey } : {}),
     plannerRequest: {
       effortChoices: [
         {
@@ -309,6 +316,7 @@ function resolveSelectedPairId(
 function normalizePredictionMatrixRequest(input: unknown): PredictionMatrixRequest {
   const record = requireRecord(parseJsonInput(input), "Prediction matrix request");
   return {
+    modelKey: normalizePredictionModelKey(asOptionalString(record.modelKey)),
     teamA: normalizePredictionMatrixSide(record.teamA, "Team A"),
     teamB: normalizePredictionMatrixSide(record.teamB, "Team B"),
     venue: normalizePredictionVenue(record.venue),

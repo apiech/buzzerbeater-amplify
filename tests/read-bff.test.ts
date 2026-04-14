@@ -56,6 +56,40 @@ test("getCurrentBbConnection reads the current owner record via get", async (t) 
   });
 });
 
+test("getCurrentBbConnection suppresses legacy workspace cache coercion errors when the connection record is otherwise readable", async (t) => {
+  installServerDataClient(t, {
+    models: {
+      BbConnection: {
+        get: async () => ({
+          data: {
+            userId: "user-1",
+            bbLoginName: "coach",
+            status: "CONNECTED",
+            workspaceCacheJson: null,
+          },
+          errors: [
+            {
+              message:
+                "Cannot return null for non-nullable type: 'ArenaWorkspace' within parent 'WorkspaceCachePayload' (/getBbConnection/workspaceCacheJson/arena)",
+            },
+          ],
+        }),
+      },
+    },
+  });
+
+  const result = await runReadOperation("getCurrentBbConnection", "user-1");
+
+  assert.equal(result.errors, null);
+  assert.deepStrictEqual(result.data, {
+    userId: "user-1",
+    bbLoginName: "coach",
+    status: "CONNECTED",
+    profileJson: null,
+    workspaceCacheJson: null,
+  });
+});
+
 test("getOperationsActivity uses owner-scoped index queries for every activity stream", async (t) => {
   const calls: Array<{
     model: string;
@@ -129,6 +163,7 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
               home_outsideScoring: 8,
               home_rebounding: 8,
               homeScore: 101.3,
+              modelKey: "catboost",
               neutral: "0",
               pointDiff: 6.5,
               requestId: "request-1",
@@ -238,6 +273,7 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
       result.data as {
         currentPrediction:
           | {
+              modelKey?: string | null;
               requestId: string;
               tacticsGrid?: { cells: unknown[] };
             }
@@ -245,6 +281,18 @@ test("getOperationsActivity uses owner-scoped index queries for every activity s
       }
     ).currentPrediction?.requestId,
     "request-1",
+  );
+  assert.equal(
+    (
+      result.data as {
+        currentPrediction:
+          | {
+              modelKey?: string | null;
+            }
+          | null;
+      }
+    ).currentPrediction?.modelKey,
+    "catboost",
   );
   assert.equal(
     (
@@ -299,6 +347,7 @@ test("getCurrentPrediction reads the owner-keyed preview via get", async (t) => 
               home_outsideScoring: 8,
               home_rebounding: 8,
               homeScore: null,
+              modelKey: "xgb",
               neutral: "0",
               pointDiff: null,
               requestId: "request-1",
@@ -336,11 +385,13 @@ test("getCurrentPrediction reads the owner-keyed preview via get", async (t) => 
   assert.equal(
     (
       result.data as {
+        modelKey?: string | null;
         tacticsGrid?: { cells: Array<Array<{ pointDiff: number | null }>> };
       } | null
     )?.tacticsGrid?.cells[0]?.[0]?.pointDiff,
     6,
   );
+  assert.equal((result.data as { modelKey?: string | null } | null)?.modelKey, "xgb");
 });
 
 test("getRecapHistory merges owner-scoped recap streams and returns a continuation token", async (t) => {

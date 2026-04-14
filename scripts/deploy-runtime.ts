@@ -30,7 +30,10 @@ export type OpponentForecastTargetName =
   (typeof opponentForecastTargetNames)[number];
 
 export type PredictorTargetPin = {
-  artifactPrefix: string;
+  artifactPrefix?: string;
+  bundleDir?: string;
+  defaultModelKey?: string;
+  modelKeys?: string[];
   releaseId: string;
   updatedAt: string;
 };
@@ -156,11 +159,35 @@ export function loadDeployWorkflowEnv(): {
 
 export function createPredictorTargetPin(
   releaseId: string,
-  artifactPrefix: string,
+  artifactPrefix: string | null,
   runtime: Pick<PinRuntime, "nowIso"> = createDefaultPinRuntime(),
+  options: {
+    bundleDir?: string | null;
+    defaultModelKey?: string | null;
+    modelKeys?: string[] | null;
+  } = {},
 ): PredictorTargetPin {
+  const normalizedArtifactPrefix = normalizeOptionalString(artifactPrefix);
+  const normalizedBundleDir = normalizeOptionalString(options.bundleDir);
+  if (!normalizedArtifactPrefix && !normalizedBundleDir) {
+    throw new Error(
+      "Predictor target pins require either artifactPrefix or bundleDir.",
+    );
+  }
+
+  const normalizedDefaultModelKey = normalizeOptionalString(options.defaultModelKey);
+  const normalizedModelKeys =
+    options.modelKeys
+      ?.map((entry) => normalizeOptionalString(entry) ?? "")
+      .filter((entry): entry is string => Boolean(entry)) ?? [];
+
   return {
-    artifactPrefix: artifactPrefix.trim(),
+    ...(normalizedArtifactPrefix ? { artifactPrefix: normalizedArtifactPrefix } : {}),
+    ...(normalizedBundleDir ? { bundleDir: normalizedBundleDir } : {}),
+    ...(normalizedDefaultModelKey
+      ? { defaultModelKey: normalizedDefaultModelKey }
+      : {}),
+    ...(normalizedModelKeys.length > 0 ? { modelKeys: normalizedModelKeys } : {}),
     releaseId: releaseId.trim(),
     updatedAt: runtime.nowIso(),
   };
@@ -342,16 +369,10 @@ export function inspectPredictorTargetPin(
   }
 
   const artifactPrefix = normalizeOptionalString(pin.artifactPrefix);
-  if (!artifactPrefix) {
+  const bundleDir = normalizeOptionalString(pin.bundleDir);
+  if (!artifactPrefix && !bundleDir) {
     return {
-      message: `Predictor pin '${targetLabel}' is missing artifactPrefix.`,
-      status: "invalid",
-    };
-  }
-
-  if (!isAbsolute(artifactPrefix)) {
-    return {
-      message: `Predictor pin '${targetLabel}' must use an absolute artifactPrefix: ${artifactPrefix}`,
+      message: `Predictor pin '${targetLabel}' is missing artifactPrefix and bundleDir.`,
       status: "invalid",
     };
   }
@@ -364,11 +385,60 @@ export function inspectPredictorTargetPin(
     };
   }
 
-  const modelPath = `${artifactPrefix}_model.ubj`;
-  const configPath = `${artifactPrefix}_config.json`;
-  if (!runtime.fileExists(modelPath)) {
+  if (bundleDir) {
+    if (!isAbsolute(bundleDir)) {
+      return {
+        message: `Predictor pin '${targetLabel}' must use an absolute bundleDir: ${bundleDir}`,
+        status: "invalid",
+      };
+    }
+    const registryPath = join(bundleDir, "registry.json");
+    const metadataPath = join(bundleDir, "metadata.json");
+    if (!runtime.fileExists(registryPath) && !runtime.fileExists(metadataPath)) {
+      return {
+        message: `Predictor pin '${targetLabel}' points to a missing bundle descriptor in ${bundleDir}`,
+        status: "invalid",
+      };
+    }
     return {
-      message: `Predictor pin '${targetLabel}' points to a missing model file: ${modelPath}`,
+      configPath: join(bundleDir, "config.json"),
+      modelPath: registryPath,
+      pin: {
+        ...(artifactPrefix ? { artifactPrefix } : {}),
+        bundleDir,
+        ...(normalizeOptionalString(pin.defaultModelKey)
+          ? { defaultModelKey: normalizeOptionalString(pin.defaultModelKey) ?? undefined }
+          : {}),
+        ...(Array.isArray(pin.modelKeys) ? { modelKeys: pin.modelKeys } : {}),
+        releaseId,
+        updatedAt,
+      },
+      status: "ready",
+    };
+  }
+
+  if (!artifactPrefix) {
+    return {
+      message: `Predictor pin '${targetLabel}' is missing artifactPrefix.`,
+      status: "invalid",
+    };
+  }
+  if (!isAbsolute(artifactPrefix)) {
+    return {
+      message: `Predictor pin '${targetLabel}' must use an absolute artifactPrefix: ${artifactPrefix}`,
+      status: "invalid",
+    };
+  }
+
+  const configPath = `${artifactPrefix}_config.json`;
+  const candidateModelPaths = [
+    `${artifactPrefix}_model.ubj`,
+    `${artifactPrefix}_model.cbm`,
+  ];
+  const modelPath = candidateModelPaths.find((path) => runtime.fileExists(path)) ?? null;
+  if (!modelPath) {
+    return {
+      message: `Predictor pin '${targetLabel}' points to a missing model file: ${candidateModelPaths.join(" or ")}`,
       status: "invalid",
     };
   }
@@ -384,6 +454,10 @@ export function inspectPredictorTargetPin(
     modelPath,
     pin: {
       artifactPrefix,
+      ...(normalizeOptionalString(pin.defaultModelKey)
+        ? { defaultModelKey: normalizeOptionalString(pin.defaultModelKey) ?? undefined }
+        : {}),
+      ...(Array.isArray(pin.modelKeys) ? { modelKeys: pin.modelKeys } : {}),
       releaseId,
       updatedAt,
     },

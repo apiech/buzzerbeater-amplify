@@ -27,6 +27,7 @@ type MatchStoreBackend = {
   getMatchBoxscoreDetails: FunctionResource;
   getMyTeamHighlights: FunctionResource;
   getPlayerLab: FunctionResource;
+  getSalaryCalculatorSeed: FunctionResource;
   getPlayerTrend: FunctionResource;
   getSalaryProjection: FunctionResource;
   listAccessibleMatches: FunctionResource;
@@ -100,6 +101,7 @@ export function configureMatchStoreIntegration(
   ];
   const playerSnapshotReadFunctions = [
     backend.getLineupHelperWorkspace,
+    backend.getSalaryCalculatorSeed,
     backend.getPlayerTrend,
     backend.getSalaryProjection,
     backend.generateSharedPlayerCard,

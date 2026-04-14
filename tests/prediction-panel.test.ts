@@ -104,6 +104,7 @@ test("prediction submission uses the editable grid as the source of truth", () =
         },
       },
       input,
+      modelKey: "catboost",
     },
   });
 
@@ -123,6 +124,7 @@ test("prediction submission uses the editable grid as the source of truth", () =
       away_gdp_focus: "N/A",
       away_gdp_pace: "N/A",
     },
+    modelKey: "catboost",
   });
 });
 
@@ -254,6 +256,7 @@ test("reconcilePredictionDraft resets stale GDP values back to N/A", () => {
         home_gdp_focus: "Inside.hit",
         home_gdp_pace: "Fast.hit",
       },
+      modelKey: "  xgb  ",
     },
   );
 
@@ -261,6 +264,7 @@ test("reconcilePredictionDraft resets stale GDP values back to N/A", () => {
   assert.equal(reconciled.input.home_gdp_pace, "N/A");
   assert.equal(reconciled.input.away_gdp_focus, "N/A");
   assert.equal(reconciled.input.away_gdp_pace, "N/A");
+  assert.equal(reconciled.modelKey, "xgb");
 });
 
 test("opponent effort mapping uses the fixed home-normal baseline", () => {

@@ -3,15 +3,21 @@
   "retrievedAt": "2026-03-15T00:00:00Z",
   "fields": {
     "cash": "125000",
-    "availableBalance": "101000",
-    "transactions": {
-      "transaction": {
-        "description": "Merchandise",
-        "@_type": "merchandise",
-        "@_amount": "5500",
-        "@_date": "2026-03-12T00:00:00Z"
+    "availableBalance": "101000"
+  },
+  "transactions": [
+    {
+      "kind": "merchandise",
+      "amount": 5500,
+      "date": "2026-03-12T00:00:00Z",
+      "attributes": {
+        "type": "merchandise",
+        "amount": "5500",
+        "date": "2026-03-12T00:00:00Z"
+      },
+      "fields": {
+        "description": "Merchandise"
       }
     }
-  },
-  "transactions": []
+  ]
 }

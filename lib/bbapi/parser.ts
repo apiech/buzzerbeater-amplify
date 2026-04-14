@@ -253,22 +253,32 @@ export function parseArena(xml: string): BBApiArena {
 export function parseEconomy(xml: string): BBApiEconomy {
   const root = parseRoot(xml);
   const container = requireObject(root.bbapi.economy, "economy");
-  const transactions = toArray(container.transaction).map(
+  const transactions = [
+    ...toArray(container.transaction),
+    ...toArray(getObject(container.transactions)?.transaction),
+  ].map(
     (transaction): BBApiEconomyTransaction => {
       const node = getObject(transaction);
       return {
-        kind: asString(node?.["@_kind"]),
-        amount: asNumber(readText(node?.amount)) ?? readText(node?.amount),
-        date: readText(node?.date),
+        kind:
+          asString(node?.["@_kind"]) ??
+          asString(node?.["@_type"]) ??
+          readText(node?.kind) ??
+          readText(node?.type),
+        amount:
+          asNumber(node?.["@_amount"]) ??
+          asNumber(readText(node?.amount)) ??
+          readText(node?.amount),
+        date: asString(node?.["@_date"]) ?? readText(node?.date),
         attributes: readAttributes(node),
-        fields: stripKeys(node, ["@_kind", "amount", "date"]),
+        fields: stripKeys(node, ["@_kind", "@_type", "@_amount", "@_date", "amount", "date", "kind", "type"]),
       };
     },
   );
   return {
     version: asString(root.bbapi["@_version"]) ?? "1",
     retrievedAt: asString(container["@_retrieved"]),
-    fields: stripKeys(container, ["@_retrieved", "transaction"]),
+    fields: stripKeys(container, ["@_retrieved", "transaction", "transactions"]),
     transactions,
   };
 }

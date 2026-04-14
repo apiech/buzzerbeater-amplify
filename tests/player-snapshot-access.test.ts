@@ -182,6 +182,67 @@ test("getOwnerTrackedPlayerProfile returns the owner-scoped tracked profile", as
   );
 });
 
+test("getOwnerTrackedPlayerProfile falls back to the latest canonical snapshot payload", async () => {
+  await withSnapshotAccessRuntime(
+    {
+      getBbConnection: async () => createWorkspaceConnection("p1"),
+      getTrackedPlayer: async () => null,
+      listCanonicalPlayerSkillSnapshots: async () => [
+        {
+          playerId: "p1",
+          weekKey: "2026-W11",
+          capturedAt: "2026-03-10T10:00:00.000Z",
+          payload: {
+            profile: {
+              id: "p1",
+              firstName: "Lead",
+              lastName: "Guard",
+              fullName: "Lead Guard",
+              salary: 50000,
+              bestPosition: "PG",
+              age: 26,
+              height: 74,
+              dmi: 1500,
+              injuryWeeks: 0,
+              nationality: {
+                id: "1",
+                name: "USA",
+                attributes: {
+                  id: "1",
+                },
+              },
+              skills: {
+                gameShape: 8,
+                potential: 10,
+                jumpShot: 7,
+                range: 6,
+                outsideDef: 5,
+                handling: 8,
+                driving: 7,
+                passing: 9,
+                insideShot: 4,
+                insideDef: 3,
+                rebound: 4,
+                block: 2,
+                stamina: 8,
+                freeThrow: 7,
+                experience: 6,
+              },
+            },
+          },
+        } as any,
+      ],
+    },
+    async () => {
+      const profile = await getOwnerTrackedPlayerProfile({} as any, "user-1", "p1");
+      assert.ok(profile);
+      assert.equal(profile.id, "p1");
+      assert.equal(profile.skills.jumpShot, 7);
+      assert.equal(profile.skills.passing, 9);
+    },
+  );
+});
+
 test("getOwnerTrackedPlayerProfile rejects players outside the caller workspace cache", async () => {
   await withSnapshotAccessRuntime(
     {
@@ -212,6 +273,27 @@ function createWorkspaceConnection(playerId: string) {
       leagueIntel: {},
       playerLab: {
         players: [],
+      },
+      arena: {
+        syncedAt: null,
+        nextHomeMatch: null,
+        arena: {
+          name: null,
+          seats: [],
+          expansion: null,
+        },
+        economy: {
+          cash: null,
+          availableBalance: null,
+          transactions: [],
+        },
+        recentHomeGames: [],
+        recommendation: null,
+        diagnostics: {
+          comparableGameCount: 0,
+          matchedSnapshotCount: 0,
+          lowConfidenceReasons: [],
+        },
       },
     },
   } as any;

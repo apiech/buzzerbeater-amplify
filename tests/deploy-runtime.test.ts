@@ -93,6 +93,98 @@ test("writePredictorTargetPin persists one ready predictor pin", () => {
   }
 });
 
+test("writePredictorTargetPin persists one ready bundle predictor pin", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "bb-predictor-bundle-pin-"));
+  const bundleDir = join(tempDir, "bundle");
+  const targetsPath = join(tempDir, "targets.local.json");
+
+  try {
+    mkdirSync(join(bundleDir, "models", "xgb"), { recursive: true });
+    writeFileSync(
+      join(bundleDir, "registry.json"),
+      JSON.stringify(
+        {
+          defaultModelKey: "xgb",
+          models: {
+            xgb: {
+              path: "models/xgb",
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const pin = createPredictorTargetPin(
+      "matchup-predictor-composite-2026-04-13",
+      null,
+      {
+        nowIso: () => "2026-04-13T12:00:00.000Z",
+      },
+      {
+        bundleDir,
+        defaultModelKey: "xgb",
+        modelKeys: ["xgb", "catboost"],
+      },
+    );
+    writePredictorTargetPin("dev", pin, targetsPath, createPinRuntime());
+
+    const inspection = inspectPredictorTargetPin(
+      "dev",
+      targetsPath,
+      createReadPinRuntime(),
+    );
+    if (inspection.status !== "ready") {
+      assert.fail("bundle predictor pin should have been ready");
+    }
+    assert.equal(inspection.pin.bundleDir, bundleDir);
+    assert.equal(inspection.pin.defaultModelKey, "xgb");
+    assert.deepEqual(inspection.pin.modelKeys, ["xgb", "catboost"]);
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("inspectPredictorTargetPin accepts catboost artifact pins", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "bb-predictor-catboost-pin-"));
+  const artifactPrefix = join(tempDir, "ratings_universal_catboost_all");
+  const targetsPath = join(tempDir, "targets.local.json");
+
+  try {
+    writeFileSync(`${artifactPrefix}_model.cbm`, "model", "utf8");
+    writeFileSync(`${artifactPrefix}_config.json`, "config", "utf8");
+    writeFileSync(
+      targetsPath,
+      JSON.stringify(
+        {
+          dev: {
+            artifactPrefix,
+            releaseId: "ratings-universal-catboost-2026-04-13",
+            updatedAt: "2026-04-13T12:00:00.000Z",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const inspection = inspectPredictorTargetPin(
+      "dev",
+      targetsPath,
+      createReadPinRuntime(),
+    );
+    if (inspection.status !== "ready") {
+      assert.fail("catboost predictor pin should have been ready");
+    }
+    assert.equal(inspection.modelPath, `${artifactPrefix}_model.cbm`);
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
 test("inspectPredictorTargetPin falls back to the legacy sandbox pin when no scoped entry exists", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "bb-predictor-pin-invalid-"));
   const artifactPrefix = join(tempDir, "ratings_universal_xgb_all");

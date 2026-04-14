@@ -1,6 +1,12 @@
 <?xml version='1.0' encoding='utf-8'?>
 <bbapi version='1'>
   <match id='123456' retrieved='2026-03-15T00:00:00Z'>
+    <attendance>
+      <bleachers>12000</bleachers>
+      <lowerTier>3200</lowerTier>
+      <courtside>420</courtside>
+      <luxury>38</luxury>
+    </attendance>
     <awayTeam id='10'>
       <teamName>Away Team</teamName>
       <offStrategy>Push The Ball</offStrategy>

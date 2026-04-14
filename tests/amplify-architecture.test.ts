@@ -113,6 +113,23 @@ test("backend.ts does not manually wire GraphQL endpoint environment variables",
   assert.doesNotMatch(backendSource, /_GRAPHQL_ENDPOINT/);
 });
 
+test("workspace cache schema keeps arena optional for legacy cache compatibility", () => {
+  const resourceSource = readFileSync(
+    join(repoRoot, "amplify", "data", "resource.ts"),
+    "utf8",
+  );
+  const workspaceCacheSection =
+    resourceSource.match(
+      /WorkspaceCachePayload: a\.customType\(\{[\s\S]*?\n    \}\),/,
+    )?.[0] ?? "";
+
+  assert.match(workspaceCacheSection, /arena: a\.ref\("ArenaWorkspace"\),/);
+  assert.doesNotMatch(
+    workspaceCacheSection,
+    /arena: a\.ref\("ArenaWorkspace"\)\.required\(\)/,
+  );
+});
+
 test("match-store runtime wiring imports shared infra resources instead of app-local provisioning", () => {
   const integrationSource = readFileSync(
     join(repoRoot, "amplify", "_backend", "match-store-integration.ts"),

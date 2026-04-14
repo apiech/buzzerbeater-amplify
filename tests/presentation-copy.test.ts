@@ -4,9 +4,12 @@ import test from "node:test";
 import {
   formatConnectionStatus,
   formatHighlightsStatus,
+  formatNextGameRecommendationStatus,
+  formatOpponentForecastStatus,
   formatPreviewStatus,
   formatSyncKind,
   formatWriteupStatus,
+  isActiveStatus,
 } from "../app/ui/presentation";
 
 test("status labels use plain-language connection copy", () => {
@@ -36,6 +39,39 @@ test("status labels use plain-language preview, writeup, and highlights copy", (
   assert.notEqual(formatHighlightsStatus("COMPLETED_WITH_GAPS"), "Moments ready");
   assert.notEqual(formatHighlightsStatus("WAITING_FOR_MATCH_JOBS"), "Moments ready");
   assert.notEqual(formatHighlightsStatus("FAILED"), "Moments ready");
+});
+
+test("next-game and opponent outlook statuses stay user-facing during long-running work", () => {
+  assert.equal(
+    formatOpponentForecastStatus("RESOLVING_CONTEXT"),
+    "Resolving opponent context",
+  );
+  assert.equal(
+    formatOpponentForecastStatus("SUCCEEDED"),
+    "Opponent outlook ready",
+  );
+  assert.equal(
+    formatNextGameRecommendationStatus("PREPARING_INPUTS"),
+    "Preparing recommendation",
+  );
+  assert.equal(
+    formatNextGameRecommendationStatus("OPTIMIZING_LINEUPS"),
+    "Optimizing usable lineups",
+  );
+  assert.equal(
+    formatNextGameRecommendationStatus("SCORING_MATCHUPS"),
+    "Scoring matchup combinations",
+  );
+  assert.equal(
+    formatNextGameRecommendationStatus("BUILDING_PLANNER"),
+    "Building final planner",
+  );
+  assert.equal(
+    formatNextGameRecommendationStatus("SUCCEEDED"),
+    "Recommendation ready",
+  );
+  assert.equal(isActiveStatus("EVALUATING_CANDIDATES"), true);
+  assert.equal(isActiveStatus("OPTIMIZING_LINEUPS"), true);
 });
 
 test("sync labels hide backend kind names", () => {

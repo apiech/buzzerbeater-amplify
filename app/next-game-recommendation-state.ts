@@ -7,12 +7,17 @@ import type {
   PositionCode,
   RecommendationMode,
 } from "@/app/types";
-import { normalizeDefensiveSwitch, validateDefensiveSwitch } from "@/lib/coach-parrot/lineup-rules";
+import { normalizeExcludedPlayerIds } from "@/app/lineup-availability-state";
+import {
+  normalizeDefensiveSwitch,
+  validateDefensiveSwitch,
+} from "@/lib/coach-parrot/lineup-rules";
 import { parseLegacyJsonField } from "@/lib/json-parsing";
 
 export const NEXT_GAME_RECOMMENDATION_STORAGE_KEY =
   "bb.nextGameRecommendation.v1";
 export const NEXT_GAME_RECOMMENDATION_DEFAULTS: NextGameRecommendationInput = {
+  excludedPlayerIds: [],
   enthusiasm: 8,
   defensiveSwitch: {
     pg: "PG",
@@ -39,6 +44,7 @@ const nextGameRecommendationInputStorageSchema = z
       })
       .partial()
       .optional(),
+    excludedPlayerIds: z.array(z.string()).optional(),
     enthusiasm: z.coerce.number().optional(),
   })
   .partial();
@@ -46,8 +52,11 @@ const nextGameRecommendationInputStorageSchema = z
 export function normalizeNextGameRecommendationInput(
   value:
     | {
+        excludedPlayerIds?: string[];
         enthusiasm?: number;
-        defensiveSwitch?: Partial<NextGameRecommendationInput["defensiveSwitch"]>;
+        defensiveSwitch?: Partial<
+          NextGameRecommendationInput["defensiveSwitch"]
+        >;
       }
     | null
     | undefined,
@@ -69,6 +78,7 @@ export function normalizeNextGameRecommendationInput(
   }
 
   return {
+    excludedPlayerIds: normalizeExcludedPlayerIds(value?.excludedPlayerIds),
     enthusiasm: normalizeEnthusiasm(value?.enthusiasm),
     defensiveSwitch: {
       pg: defensiveSwitch.PG,

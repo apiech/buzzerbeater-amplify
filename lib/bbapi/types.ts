@@ -314,4 +314,6 @@ export type BBApiCurrentWorkspace = {
   schedule: BBApiSchedule;
   standings: BBApiStandings | null;
   teamStats: BBApiTeamStats | null;
+  arena: BBApiArena;
+  economy: BBApiEconomy;
 };

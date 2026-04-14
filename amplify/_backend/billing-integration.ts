@@ -24,6 +24,7 @@ type BillingBackend = {
   evaluatePredictionMatrix: FunctionResource;
   gameDayRecapSubmit: FunctionResource;
   getBillingSummary: FunctionResource;
+  nextGameRecommendationSubmit: FunctionResource;
   opponentForecastSubmit: FunctionResource;
   predictionSubmit: FunctionResource;
   submitLeagueGameDayRecap: FunctionResource;
@@ -36,6 +37,10 @@ export function configureBillingIntegration(
   config: BillingSynthConfig,
 ): void {
   backend.getBillingSummary.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
+  backend.nextGameRecommendationSubmit.addEnvironment(
     "COMMERCIAL_MODE_ENABLED",
     String(config.commercialModeEnabled),
   );
@@ -74,6 +79,10 @@ export function configureBillingIntegration(
 
   if (config.defaultPlanId) {
     backend.getBillingSummary.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      config.defaultPlanId,
+    );
+    backend.nextGameRecommendationSubmit.addEnvironment(
       "BILLING_DEFAULT_PLAN",
       config.defaultPlanId,
     );

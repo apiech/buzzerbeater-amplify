@@ -5,6 +5,7 @@ import {
   SageMakerRuntimeClient,
 } from "@aws-sdk/client-sagemaker-runtime";
 
+import { BBXmlApiClient } from "../../../lib/bbapi";
 import {
   POSITION_SEQUENCE,
   normalizeDefensiveSwitch,
@@ -31,30 +32,44 @@ import {
   getLineupHelperWorkspace,
   optimizeLineupHelper,
 } from "./lineup-helper";
-import { assertMaintenanceInactive, toMaintenanceAwareErrorMessage } from "./maintenance";
+import {
+  assertMaintenanceInactive,
+  toMaintenanceAwareErrorMessage,
+} from "./maintenance";
+import { getOrRepairRecentCachedMatchBoxscore } from "./cached-boxscore";
+import { resolveBbAccessKey } from "./credentials";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
 import { normalizeOpponentForecastResult } from "./opponent-forecast";
 import {
   deleteNextGamePlannerArtifact,
   deleteNextGamePlannerArtifactRow,
   createNextGameRecommendationJob,
-  getMatchBoxscore,
+  getBbConnection,
   getNextGameRecommendationJob,
   getNextGamePlannerArtifact,
   listNextGameRecommendationJobsByUser,
   listNextGamePlannerArtifactRowsByArtifactKey,
   listOpponentForecastJobsByUser,
+  readMatchBoxscoreCacheRecord,
   upsertNextGamePlannerArtifact,
   upsertNextGamePlannerArtifactRows,
+  upsertMatchBoxscore,
   updateNextGameRecommendationJob,
   type NextGamePlannerArtifactRecord,
   type NextGamePlannerArtifactRowRecord,
   type NextGameRecommendationJobRecord,
   type OpponentForecastJobRecord,
 } from "./repository";
-import { buildExecutionName, startStateMachineExecution } from "./step-functions";
-import { inflateStoredMatchBoxscore } from "./stored-boxscore";
-import { getOrRefreshWorkspace, getScoutTeamSummaryForTeam } from "./workspace";
+import {
+  buildExecutionName,
+  startStateMachineExecution,
+} from "./step-functions";
+import {
+  getOrRefreshWorkspaceWithMeta,
+  getScoutTeamSummaryForTeam,
+  type WorkspaceRefreshMeta,
+} from "./workspace";
+import { toLoggableError } from "./workspace-request-logging";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -72,6 +87,7 @@ type RecommendationSwitch = {
   c: PositionCode;
 };
 type RecommendationInput = {
+  excludedPlayerIds: string[];
   enthusiasm: number;
   defensiveSwitch: RecommendationSwitch;
 };
@@ -81,11 +97,19 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 >;
 
 type RecommendationSnapshot = ResolverResult<"getLatestNextGameRecommendation">;
+type RecommendationProgress = NonNullable<RecommendationSnapshot["progress"]>;
+type RecommendationCompletedPhase =
+  RecommendationProgress["completedPhases"][number];
+type RecommendationProgressContext = NonNullable<
+  RecommendationProgress["context"]
+>;
+type RecommendationProgressPhaseKey = RecommendationProgress["phaseKey"];
 type RecommendationResult = NonNullable<RecommendationSnapshot["result"]>;
 type PlannerDetail = ResolverResult<"getNextGamePlannerDetail">;
 type RecommendedGamePlan = RecommendationResult["bestExpectedPlan"];
 type RecommendedLineupRow = RecommendedGamePlan["lineup"][number];
-type PlannerEvaluatedScenario = RecommendationResult["evaluatedScenarios"][number];
+type PlannerEvaluatedScenario =
+  RecommendationResult["evaluatedScenarios"][number];
 type PlannerTacticPair = NonNullable<PlannerDetail["ourPairs"]>[number];
 type PlannerMatrixView = NonNullable<PlannerDetail["views"]>[number];
 type PlannerMatrixRow = PlannerMatrixView["rows"][number];
@@ -93,65 +117,107 @@ type PlannerMatrixCell = PlannerMatrixRow["cells"][number];
 type LineupHelperWorkspace = ResolverResult<"getLineupHelperWorkspace">;
 type LineupHelperRosterPlayer = LineupHelperWorkspace["roster"][number];
 type LineupHelperEvaluation = ResolverResult<"optimizeLineupHelper">;
-type ScoutWorkspaceShape = Awaited<
-  ReturnType<typeof getScoutTeamSummaryForTeam>
->["scout"];
+type ScoutWorkspaceShape = ResolverResult<"getScoutTeamSummary">;
 type OpponentForecastScenario = NonNullable<
-  NonNullable<ResolverResult<"getLatestOpponentForecast">["result"]>["topScenarios"][number]
+  NonNullable<
+    ResolverResult<"getLatestOpponentForecast">["result"]
+  >["topScenarios"][number]
 >;
+
+type CreateNextGameRecommendationJobDependency =
+  typeof createNextGameRecommendationJob;
+type DeleteNextGamePlannerArtifactDependency =
+  typeof deleteNextGamePlannerArtifact;
+type DeleteNextGamePlannerArtifactRowDependency =
+  typeof deleteNextGamePlannerArtifactRow;
+type GetBbConnectionDependency = typeof getBbConnection;
+type GetLineupHelperWorkspaceDependency = typeof getLineupHelperWorkspace;
+type GetNextGamePlannerArtifactDependency = typeof getNextGamePlannerArtifact;
+type GetNextGameRecommendationJobDependency =
+  typeof getNextGameRecommendationJob;
+type GetOrRefreshWorkspaceWithMetaDependency =
+  typeof getOrRefreshWorkspaceWithMeta;
+type GetScoutTeamSummaryForTeamDependency =
+  typeof getScoutTeamSummaryForTeam;
+type ListNextGamePlannerArtifactRowsByArtifactKeyDependency =
+  typeof listNextGamePlannerArtifactRowsByArtifactKey;
+type ListNextGameRecommendationJobsByUserDependency =
+  typeof listNextGameRecommendationJobsByUser;
+type ListOpponentForecastJobsByUserDependency =
+  typeof listOpponentForecastJobsByUser;
+type OptimizeLineupHelperDependency = typeof optimizeLineupHelper;
+type ReadMatchBoxscoreCacheRecordDependency =
+  typeof readMatchBoxscoreCacheRecord;
+type RequireFeatureAccessDependency = typeof requireFeatureAccess;
+type ResolveBbAccessKeyDependency = typeof resolveBbAccessKey;
+type UpsertMatchBoxscoreDependency = typeof upsertMatchBoxscore;
+type UpsertNextGamePlannerArtifactDependency =
+  typeof upsertNextGamePlannerArtifact;
+type UpsertNextGamePlannerArtifactRowsDependency =
+  typeof upsertNextGamePlannerArtifactRows;
+type UpdateNextGameRecommendationJobDependency =
+  typeof updateNextGameRecommendationJob;
 
 type SubmitDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
-  createNextGameRecommendationJob: typeof createNextGameRecommendationJob;
-  getMatchBoxscore: typeof getMatchBoxscore;
-  getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
-  listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
-  requireFeatureAccess: typeof requireFeatureAccess;
+  createBbClient: (options: {
+    securityCode: string;
+    username: string;
+  }) => Pick<BBXmlApiClient, "getBoxScore">;
+  createNextGameRecommendationJob: CreateNextGameRecommendationJobDependency;
+  getBbConnection: GetBbConnectionDependency;
+  getOrRefreshWorkspaceWithMeta: GetOrRefreshWorkspaceWithMetaDependency;
+  getScoutTeamSummaryForTeam: GetScoutTeamSummaryForTeamDependency;
+  listOpponentForecastJobsByUser: ListOpponentForecastJobsByUserDependency;
+  readMatchBoxscoreCacheRecord: ReadMatchBoxscoreCacheRecordDependency;
+  requireFeatureAccess: RequireFeatureAccessDependency;
+  resolveBbAccessKey: ResolveBbAccessKeyDependency;
   startWorkflowExecution: (
     stateMachineArn: string,
     executionName: string,
     message: { jobId: string; userId: string },
   ) => Promise<string>;
-  updateNextGameRecommendationJob: typeof updateNextGameRecommendationJob;
+  upsertMatchBoxscore: UpsertMatchBoxscoreDependency;
+  updateNextGameRecommendationJob: UpdateNextGameRecommendationJobDependency;
 };
 
 type GetLatestDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
-  getMatchBoxscore: typeof getMatchBoxscore;
-  getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
-  listNextGameRecommendationJobsByUser: typeof listNextGameRecommendationJobsByUser;
-  listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
+  listNextGameRecommendationJobsByUser:
+    ListNextGameRecommendationJobsByUserDependency;
 };
 
 type GetDetailDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
-  getNextGamePlannerArtifact: typeof getNextGamePlannerArtifact;
+  getNextGamePlannerArtifact: GetNextGamePlannerArtifactDependency;
   listNextGamePlannerArtifactRowsByArtifactKey:
-    typeof listNextGamePlannerArtifactRowsByArtifactKey;
+    ListNextGamePlannerArtifactRowsByArtifactKeyDependency;
 };
 
 type ProcessDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
-  deleteNextGamePlannerArtifact: typeof deleteNextGamePlannerArtifact;
-  deleteNextGamePlannerArtifactRow: typeof deleteNextGamePlannerArtifactRow;
-  getLineupHelperWorkspace: typeof getLineupHelperWorkspace;
-  getMatchBoxscore: typeof getMatchBoxscore;
-  getNextGameRecommendationJob: typeof getNextGameRecommendationJob;
-  getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
+  createBbClient: SubmitDependencies["createBbClient"];
+  deleteNextGamePlannerArtifact: DeleteNextGamePlannerArtifactDependency;
+  deleteNextGamePlannerArtifactRow: DeleteNextGamePlannerArtifactRowDependency;
+  getBbConnection: GetBbConnectionDependency;
+  getLineupHelperWorkspace: GetLineupHelperWorkspaceDependency;
+  getNextGameRecommendationJob: GetNextGameRecommendationJobDependency;
+  getOrRefreshWorkspaceWithMeta: GetOrRefreshWorkspaceWithMetaDependency;
+  getScoutTeamSummaryForTeam: GetScoutTeamSummaryForTeamDependency;
   invokePredictionEndpoint: (
     endpointName: string,
     payload: JsonRecord,
   ) => Promise<PredictionEndpointResponse | PredictionPlannerResponse>;
   listNextGamePlannerArtifactRowsByArtifactKey:
-    typeof listNextGamePlannerArtifactRowsByArtifactKey;
-  listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
-  optimizeLineupHelper: typeof optimizeLineupHelper;
-  upsertNextGamePlannerArtifact: typeof upsertNextGamePlannerArtifact;
-  upsertNextGamePlannerArtifactRows: typeof upsertNextGamePlannerArtifactRows;
-  updateNextGameRecommendationJob: typeof updateNextGameRecommendationJob;
+    ListNextGamePlannerArtifactRowsByArtifactKeyDependency;
+  listOpponentForecastJobsByUser: ListOpponentForecastJobsByUserDependency;
+  optimizeLineupHelper: OptimizeLineupHelperDependency;
+  readMatchBoxscoreCacheRecord: ReadMatchBoxscoreCacheRecordDependency;
+  resolveBbAccessKey: ResolveBbAccessKeyDependency;
+  upsertNextGamePlannerArtifact: UpsertNextGamePlannerArtifactDependency;
+  upsertNextGamePlannerArtifactRows: UpsertNextGamePlannerArtifactRowsDependency;
+  upsertMatchBoxscore: UpsertMatchBoxscoreDependency;
+  updateNextGameRecommendationJob: UpdateNextGameRecommendationJobDependency;
 };
 
 type RecommendationContext = {
@@ -159,6 +225,8 @@ type RecommendationContext = {
   opponentTeamId: string;
   opponentTeamName: string;
   scout: ScoutWorkspaceShape;
+  workspaceMeta: WorkspaceRefreshMeta;
+  workspaceSyncedAt: string | null;
 };
 
 type ForecastContext = {
@@ -240,9 +308,12 @@ const TARGET_EFFICIENT_MARGIN = 10;
 const MAX_JOB_PAGES = 4;
 const RECOMMENDATION_PAGE_SIZE = 50;
 const PREDICTION_CONCURRENCY = 8;
+const LINEUP_PROGRESS_BATCH_SIZE = 10;
 const DEFAULT_PREDICTION_GDP = "N/A";
 const MATRIX_DEFAULT_EFFORT = 0;
 const MAX_EVALUATED_SCENARIOS = 3;
+const RECOMMENDATION_PHASE_COUNT = 4;
+const NEXT_GAME_RECOMMENDATION_LOG_PREFIX = "[next-game-recommendation]";
 const EFFORT_CHOICES = [
   { label: "Take It Easy", value: -1, cost: 0 },
   { label: "Normal", value: 0, cost: 1 },
@@ -307,28 +378,28 @@ const DEFENSE_TO_PREDICTOR: Record<string, string> = {
 
 const defaultSubmitDependencies: SubmitDependencies = {
   assertMaintenanceInactive,
+  createBbClient: (options) => new BBXmlApiClient(options),
   createNextGameRecommendationJob,
-  getMatchBoxscore,
-  getOrRefreshWorkspace,
+  getBbConnection,
+  getOrRefreshWorkspaceWithMeta,
   getScoutTeamSummaryForTeam,
   listOpponentForecastJobsByUser,
+  readMatchBoxscoreCacheRecord,
   requireFeatureAccess,
+  resolveBbAccessKey,
   startWorkflowExecution: async (stateMachineArn, executionName, message) =>
     startStateMachineExecution({
       input: message,
       name: executionName,
       stateMachineArn,
     }),
+  upsertMatchBoxscore,
   updateNextGameRecommendationJob,
 };
 
 const defaultGetLatestDependencies: GetLatestDependencies = {
   assertMaintenanceInactive,
-  getMatchBoxscore,
-  getOrRefreshWorkspace,
-  getScoutTeamSummaryForTeam,
   listNextGameRecommendationJobsByUser,
-  listOpponentForecastJobsByUser,
 };
 
 const defaultGetDetailDependencies: GetDetailDependencies = {
@@ -339,30 +410,41 @@ const defaultGetDetailDependencies: GetDetailDependencies = {
 
 const defaultProcessDependencies: ProcessDependencies = {
   assertMaintenanceInactive,
+  createBbClient: defaultSubmitDependencies.createBbClient,
   deleteNextGamePlannerArtifact,
   deleteNextGamePlannerArtifactRow,
+  getBbConnection,
   getLineupHelperWorkspace,
-  getMatchBoxscore,
   getNextGameRecommendationJob,
-  getOrRefreshWorkspace,
+  getOrRefreshWorkspaceWithMeta,
   getScoutTeamSummaryForTeam,
   invokePredictionEndpoint,
   listNextGamePlannerArtifactRowsByArtifactKey,
   listOpponentForecastJobsByUser,
   optimizeLineupHelper,
+  readMatchBoxscoreCacheRecord,
+  resolveBbAccessKey,
   upsertNextGamePlannerArtifact,
   upsertNextGamePlannerArtifactRows,
+  upsertMatchBoxscore,
   updateNextGameRecommendationJob,
 };
 
 export const __testing = {
+  advanceRecommendationProgress,
   adaptPredictionResultToUserPerspective,
   buildPredictorPerspective,
+  buildLineupOptimizationSummary,
   buildPlannerPairDefinitions,
+  buildScoringMatchupsSummary,
+  buildFailedRecommendationProgress,
   computeRecommendationStale,
   effortChoiceToOrdinal,
   jobMatchesRecommendationSettings,
+  normalizeExcludedPlayerIds,
   normalizeRecommendationInput,
+  normalizeRecommendationProgress,
+  normalizeRecommendationStatus,
   selectBestExpectedCandidate,
   selectSafestCandidate,
   selectBiggestWinCandidate,
@@ -382,6 +464,7 @@ export async function submitNextGameRecommendationJob(
     ...defaultSubmitDependencies,
     ...dependencies,
   };
+  const submitStartedAtMs = Date.now();
   await deps.assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
@@ -396,24 +479,75 @@ export async function submitNextGameRecommendationJob(
   });
 
   const normalizedInput = normalizeRecommendationInput(args.input);
+  const inputFingerprint = buildRecommendationInputFingerprint(normalizedInput);
+  logRecommendationInfo("submit.received", {
+    defensiveSwitch: normalizedInput.defensiveSwitch,
+    enthusiasm: normalizedInput.enthusiasm,
+    excludedPlayerCount: normalizedInput.excludedPlayerIds.length,
+    excludedPlayerIds: normalizedInput.excludedPlayerIds,
+    inputFingerprint,
+    userId,
+  });
   const context = await resolveRecommendationContext({
     env: args.env,
-    getOrRefreshWorkspace: deps.getOrRefreshWorkspace,
+    getOrRefreshWorkspaceWithMeta: deps.getOrRefreshWorkspaceWithMeta,
     getScoutTeamSummaryForTeam: deps.getScoutTeamSummaryForTeam,
     identity: args.identity,
   });
-  await resolveLatestForecastContext({
+  const forecast = await resolveLatestForecastContext({
     env: args.env,
     listOpponentForecastJobsByUser: deps.listOpponentForecastJobsByUser,
     opponentTeamId: context.opponentTeamId,
     userId,
   });
-  await resolveOpponentSourceContext({
+  const opponentSource = await resolveOpponentSourceContext({
+    createBbClient: deps.createBbClient,
     env: args.env,
-    getMatchBoxscore: deps.getMatchBoxscore,
+    getBbConnection: deps.getBbConnection,
     recentGames: context.scout.summary?.recentGames ?? [],
+    readMatchBoxscoreCacheRecord: deps.readMatchBoxscoreCacheRecord,
+    resolveBbAccessKey: deps.resolveBbAccessKey,
     teamId: context.opponentTeamId,
+    upsertMatchBoxscore: deps.upsertMatchBoxscore,
     userId,
+  });
+  const plannerPairCount = buildPlannerPairDefinitions().length;
+  const queuedAt = new Date().toISOString();
+  const initialProgress = createRecommendationProgress({
+    context: mergeRecommendationProgressContext(null, {
+      excludedPlayerCount: normalizedInput.excludedPlayerIds.length,
+      forecastJobId: forecast.job.id,
+      forecastScenarioCount: forecast.scenarios.length,
+      plannerPairCount,
+      sourceMatchId: opponentSource.matchId,
+      sourceTeamLocation: opponentSource.teamLocation,
+      workspaceCacheKind: context.workspaceMeta.cacheKind ?? "workspace_bundle",
+      workspaceCacheState: context.workspaceMeta.cacheState,
+      workspaceSyncedAt:
+        context.workspaceMeta.cachedAt ?? context.workspaceSyncedAt ?? null,
+    }),
+    nextPhaseKey: "QUEUED",
+    summary: "Recommendation queued and waiting for the worker to start.",
+    updatedAt: queuedAt,
+  });
+  logRecommendationInfo("submit.context.resolved", {
+    availableRosterCount: null,
+    elapsedMs: elapsedSince(submitStartedAtMs),
+    forecastJobId: forecast.job.id,
+    forecastScenarioCount: forecast.scenarios.length,
+    inputFingerprint,
+    matchId: context.nextMatch.matchId ?? "",
+    opponentTeamId: context.opponentTeamId,
+    opponentTeamName: context.opponentTeamName,
+    sourceMatchId: opponentSource.matchId,
+    sourceTeamLocation: opponentSource.teamLocation,
+    userId,
+    workspaceCacheAgeMs: context.workspaceMeta.cacheAgeMs ?? null,
+    workspaceCacheKind: context.workspaceMeta.cacheKind ?? "workspace_bundle",
+    workspaceCacheState: context.workspaceMeta.cacheState,
+    workspaceReason: context.workspaceMeta.reason ?? null,
+    workspaceSyncedAt:
+      context.workspaceMeta.cachedAt ?? context.workspaceSyncedAt ?? null,
   });
 
   const jobId = randomUUID();
@@ -433,17 +567,33 @@ export async function submitNextGameRecommendationJob(
     startedAt: null,
     completedAt: null,
     requestJson: {
+      excludedPlayerIds: [...normalizedInput.excludedPlayerIds],
       input: normalizedInput,
       matchId: context.nextMatch.matchId ?? "",
       opponentTeamId: context.opponentTeamId,
       opponentTeamName: context.opponentTeamName,
     },
+    progressJson: initialProgress,
     resultJson: null,
     error: null,
     executionArn: null,
   });
+  logRecommendationInfo("submit.job.persisted", {
+    elapsedMs: elapsedSince(submitStartedAtMs),
+    inputFingerprint,
+    jobId,
+    matchId: context.nextMatch.matchId ?? "",
+    opponentTeamId: context.opponentTeamId,
+    userId,
+  });
 
   try {
+    logRecommendationInfo("submit.execution.started", {
+      elapsedMs: elapsedSince(submitStartedAtMs),
+      inputFingerprint,
+      jobId,
+      userId,
+    });
     const executionArn = await deps.startWorkflowExecution(
       args.stateMachineArn,
       buildExecutionName("next-game-recommendation", jobId),
@@ -453,13 +603,35 @@ export async function submitNextGameRecommendationJob(
       id: jobId,
       executionArn,
     });
+    logRecommendationInfo("submit.execution.succeeded", {
+      elapsedMs: elapsedSince(submitStartedAtMs),
+      executionArn,
+      inputFingerprint,
+      jobId,
+      userId,
+    });
     return { executionArn, jobId };
   } catch (error) {
+    const completedAt = new Date().toISOString();
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
     await deps.updateNextGameRecommendationJob(args.env, {
       id: jobId,
       status: "FAILED",
-      error: error instanceof Error ? error.message : String(error),
-      completedAt: new Date().toISOString(),
+      error: errorMessage,
+      completedAt,
+      progressJson: buildFailedRecommendationProgress({
+        currentProgress: initialProgress,
+        errorMessage,
+        updatedAt: completedAt,
+      }),
+    });
+    logRecommendationError("submit.execution.failed", {
+      elapsedMs: elapsedSince(submitStartedAtMs),
+      inputFingerprint,
+      jobId,
+      userId,
+      ...toLoggableError(error),
     });
     throw error;
   }
@@ -468,8 +640,11 @@ export async function submitNextGameRecommendationJob(
 export async function getLatestNextGameRecommendation(
   args: {
     env: GraphqlEnv;
+    forecastJobId: unknown;
     identity: unknown;
     input: unknown;
+    matchId: unknown;
+    opponentTeamId: unknown;
   },
   dependencies: Partial<GetLatestDependencies> = {},
 ): Promise<RecommendationSnapshot | null> {
@@ -485,47 +660,54 @@ export async function getLatestNextGameRecommendation(
   }
 
   const normalizedInput = normalizeRecommendationInput(args.input);
-  const context = await resolveRecommendationContext({
-    env: args.env,
-    getOrRefreshWorkspace: deps.getOrRefreshWorkspace,
-    getScoutTeamSummaryForTeam: deps.getScoutTeamSummaryForTeam,
-    identity: args.identity,
-  });
-  const forecast = await resolveLatestForecastContext({
-    env: args.env,
-    listOpponentForecastJobsByUser: deps.listOpponentForecastJobsByUser,
-    opponentTeamId: context.opponentTeamId,
-    userId,
-  });
-  await resolveOpponentSourceContext({
-    env: args.env,
-    getMatchBoxscore: deps.getMatchBoxscore,
-    recentGames: context.scout.summary?.recentGames ?? [],
-    teamId: context.opponentTeamId,
+  const inputFingerprint = buildRecommendationInputFingerprint(normalizedInput);
+  const matchId = normalizeRequiredTextArg(
+    args.matchId,
+    "Next-game recommendation match id",
+  );
+  const opponentTeamId = normalizeRequiredTextArg(
+    args.opponentTeamId,
+    "Next-game recommendation opponent team id",
+  );
+  const forecastJobId = normalizeRequiredTextArg(
+    args.forecastJobId,
+    "Next-game recommendation forecast job id",
+  );
+  logRecommendationInfo("get_latest.received", {
+    forecastJobId,
+    inputFingerprint,
+    matchId,
+    opponentTeamId,
     userId,
   });
 
   let nextToken: string | null = null;
+  let matchedJob: NextGameRecommendationJobRecord | null = null;
+  let scannedJobCount = 0;
+  let scannedPageCount = 0;
   for (let pageIndex = 0; pageIndex < MAX_JOB_PAGES; pageIndex += 1) {
-    const page = await deps.listNextGameRecommendationJobsByUser(args.env, userId, {
-      limit: RECOMMENDATION_PAGE_SIZE,
-      nextToken,
-    });
-    const match = page.records.find((job) =>
+    const page = await deps.listNextGameRecommendationJobsByUser(
+      args.env,
+      userId,
+      {
+        limit: RECOMMENDATION_PAGE_SIZE,
+        nextToken,
+      },
+    );
+    scannedPageCount += 1;
+    scannedJobCount += page.records.length;
+    matchedJob =
+      page.records.find((job) =>
       jobMatchesRecommendationSettings(job, {
         defensiveSwitch: normalizedInput.defensiveSwitch,
+        excludedPlayerIds: normalizedInput.excludedPlayerIds,
         enthusiasm: normalizedInput.enthusiasm,
-        matchId: context.nextMatch.matchId ?? "",
-        opponentTeamId: context.opponentTeamId,
+        matchId,
+        opponentTeamId,
       }),
-    );
-    if (match) {
-      return adaptRecommendationJob(match, {
-        stale: computeRecommendationStale(
-          readStoredForecastJobId(match.resultJson),
-          forecast.job.id,
-        ),
-      });
+    ) ?? null;
+    if (matchedJob) {
+      break;
     }
     nextToken = page.nextToken;
     if (!nextToken) {
@@ -533,7 +715,55 @@ export async function getLatestNextGameRecommendation(
     }
   }
 
-  return null;
+  logRecommendationInfo("get_latest.jobs.scanned", {
+    forecastJobId,
+    inputFingerprint,
+    matchedJobId: matchedJob?.id ?? null,
+    pageCount: scannedPageCount,
+    scannedJobCount,
+    userId,
+  });
+
+  if (!matchedJob) {
+    logRecommendationInfo("get_latest.responded", {
+      error: null,
+      forecastJobId,
+      hasResult: false,
+      inputFingerprint,
+      jobId: null,
+      matchId,
+      opponentTeamId,
+      returned: false,
+      stale: false,
+      status: null,
+      userId,
+    });
+    return null;
+  }
+
+  const snapshot = adaptRecommendationJob(matchedJob, {
+    stale: computeRecommendationStale(
+      readStoredForecastJobId(matchedJob.resultJson),
+      forecastJobId,
+    ),
+  });
+  logRecommendationInfo("get_latest.responded", {
+    artifactKey:
+      snapshot.result?.artifactKey ?? snapshot.progress?.context?.artifactKey ?? null,
+    error: snapshot.error ?? null,
+    forecastJobId,
+    hasResult: Boolean(snapshot.result),
+    inputFingerprint,
+    jobId: snapshot.jobId,
+    matchId,
+    opponentTeamId,
+    returned: true,
+    stale: snapshot.result?.stale ?? false,
+    status: snapshot.status,
+    userId,
+  });
+
+  return snapshot;
 }
 
 export async function getNextGamePlannerDetail(
@@ -555,7 +785,10 @@ export async function getNextGamePlannerDetail(
     throw new Error("Authenticated user identity is missing.");
   }
 
-  const artifact = await deps.getNextGamePlannerArtifact(args.env, args.artifactKey);
+  const artifact = await deps.getNextGamePlannerArtifact(
+    args.env,
+    args.artifactKey,
+  );
   if (!artifact || artifact.userId !== userId) {
     return null;
   }
@@ -591,31 +824,62 @@ export async function processNextGameRecommendationJob(
     ...defaultProcessDependencies,
     ...dependencies,
   };
+  const processStartedAtMs = Date.now();
   const message = resolveRecommendationJobMessage(args);
+  logRecommendationInfo("process.message.received", {
+    endpointName: args.endpointName,
+    jobId: message.jobId,
+    userId: message.userId,
+  });
   const job = await deps.getNextGameRecommendationJob(args.env, message.jobId);
   if (!job || job.userId !== message.userId) {
     throw new Error(
       "Next-game recommendation job is missing or no longer belongs to the enqueued user.",
     );
   }
+  logRecommendationInfo("process.job.loaded", {
+    jobId: job.id,
+    requestedAt: job.requestedAt,
+    status: job.status,
+    userId: job.userId,
+  });
 
   const identity = { sub: message.userId };
-  const normalizedInput = normalizeRecommendationRequestRecord(job.requestJson, job);
-  const startedAt = new Date().toISOString();
+  const normalizedInput = normalizeRecommendationRequestRecord(
+    job.requestJson,
+    job,
+  );
+  let progress = normalizeRecommendationProgress(job.progressJson, job);
 
   try {
     await deps.assertMaintenanceInactive();
+    const startedAt = new Date().toISOString();
+    progress = advanceRecommendationProgress({
+      currentProgress: progress,
+      currentPhaseStartedAt: startedAt,
+      nextPhaseKey: "RESOLVING_CONTEXT",
+      summary: "Resolving workspace, forecast, and source match context.",
+      updatedAt: startedAt,
+    });
+    logRecommendationInfo("process.status_transition", {
+      jobId: job.id,
+      nextStatus: "RESOLVING_CONTEXT",
+      phaseIndex: progress.phaseIndex,
+      summary: progress.summary,
+      userId: job.userId,
+    });
     await deps.updateNextGameRecommendationJob(args.env, {
       id: job.id,
-      status: "PREPARING_INPUTS",
+      status: "RESOLVING_CONTEXT",
       startedAt,
       completedAt: null,
       error: null,
+      progressJson: progress,
     });
 
     const context = await resolveRecommendationContext({
       env: args.env,
-      getOrRefreshWorkspace: deps.getOrRefreshWorkspace,
+      getOrRefreshWorkspaceWithMeta: deps.getOrRefreshWorkspaceWithMeta,
       getScoutTeamSummaryForTeam: deps.getScoutTeamSummaryForTeam,
       identity,
     });
@@ -635,26 +899,94 @@ export async function processNextGameRecommendationJob(
       userId: message.userId,
     });
     const opponentSource = await resolveOpponentSourceContext({
+      createBbClient: deps.createBbClient,
       env: args.env,
-      getMatchBoxscore: deps.getMatchBoxscore,
+      getBbConnection: deps.getBbConnection,
       recentGames: context.scout.summary?.recentGames ?? [],
+      readMatchBoxscoreCacheRecord: deps.readMatchBoxscoreCacheRecord,
+      resolveBbAccessKey: deps.resolveBbAccessKey,
       teamId: context.opponentTeamId,
+      upsertMatchBoxscore: deps.upsertMatchBoxscore,
       userId: message.userId,
     });
     const lineupWorkspace = await deps.getLineupHelperWorkspace({
       env: args.env,
       identity,
     });
-    const availableRoster = lineupWorkspace.roster.filter((player) => player.available);
+    const excludedPlayerIds = new Set(normalizedInput.excludedPlayerIds);
+    const availableRoster = lineupWorkspace.roster.filter(
+      (player) => player.available && !excludedPlayerIds.has(player.playerId),
+    );
     if (!availableRoster.length) {
-      throw new Error("No available roster data is ready for lineup optimization.");
+      throw new Error(
+        "No available roster data remains after applying your excluded players.",
+      );
     }
 
+    const plannerPairDefinitions = buildPlannerPairDefinitions();
+    const totalPlannerPairs = plannerPairDefinitions.length;
+    const progressContext = mergeRecommendationProgressContext(
+      progress.context ?? null,
+      {
+        availableRosterCount: availableRoster.length,
+        excludedPlayerCount: normalizedInput.excludedPlayerIds.length,
+        forecastJobId: forecast.job.id,
+        forecastScenarioCount: forecast.scenarios.length,
+        plannerPairCount: totalPlannerPairs,
+        sourceMatchId: opponentSource.matchId,
+        sourceTeamLocation: opponentSource.teamLocation,
+        workspaceCacheKind:
+          context.workspaceMeta.cacheKind ?? "workspace_bundle",
+        workspaceCacheState: context.workspaceMeta.cacheState,
+        workspaceSyncedAt:
+          context.workspaceMeta.cachedAt ?? context.workspaceSyncedAt ?? null,
+      },
+    );
+    logRecommendationInfo("process.context.ready", {
+      availableRosterCount: availableRoster.length,
+      elapsedMs: elapsedSince(processStartedAtMs),
+      excludedPlayerCount: normalizedInput.excludedPlayerIds.length,
+      forecastJobId: forecast.job.id,
+      forecastScenarioCount: forecast.scenarios.length,
+      jobId: job.id,
+      matchId: context.nextMatch.matchId ?? "",
+      opponentTeamId: context.opponentTeamId,
+      opponentTeamName: context.opponentTeamName,
+      sourceMatchId: opponentSource.matchId,
+      sourceTeamLocation: opponentSource.teamLocation,
+      userId: job.userId,
+      workspaceCacheAgeMs: context.workspaceMeta.cacheAgeMs ?? null,
+      workspaceCacheKind: context.workspaceMeta.cacheKind ?? "workspace_bundle",
+      workspaceCacheState: context.workspaceMeta.cacheState,
+      workspaceSyncedAt:
+        context.workspaceMeta.cachedAt ?? context.workspaceSyncedAt ?? null,
+    });
+
+    const optimizingStartedAt = new Date().toISOString();
+    progress = advanceRecommendationProgress({
+      completedUnits: 0,
+      context: progressContext,
+      currentProgress: progress,
+      currentPhaseStartedAt: optimizingStartedAt,
+      nextPhaseKey: "OPTIMIZING_LINEUPS",
+      summary: buildLineupOptimizationSummary(0, totalPlannerPairs),
+      totalUnits: totalPlannerPairs,
+      unitLabel: "tactic pairs",
+      updatedAt: optimizingStartedAt,
+    });
+    logRecommendationInfo("process.status_transition", {
+      jobId: job.id,
+      nextStatus: "OPTIMIZING_LINEUPS",
+      phaseIndex: progress.phaseIndex,
+      summary: progress.summary,
+      userId: job.userId,
+    });
     await deps.updateNextGameRecommendationJob(args.env, {
       id: job.id,
-      status: "EVALUATING_CANDIDATES",
+      status: "OPTIMIZING_LINEUPS",
       opponentTeamName: context.opponentTeamName,
       error: null,
+      progressJson: progress,
     });
 
     const ourIsHome = context.nextMatch.isHome === true;
@@ -663,7 +995,54 @@ export async function processNextGameRecommendationJob(
       lineupWorkspace.roster.map((player) => [player.playerId, player]),
     );
 
-    const plannerPairDefinitions = buildPlannerPairDefinitions();
+    let completedLineupPairs = 0;
+    const reportedLineupMilestones = new Set<number>();
+    let lineupProgressWrite = Promise.resolve();
+    const queueLineupProgressUpdate = (completedUnits: number) => {
+      lineupProgressWrite = lineupProgressWrite.then(async () => {
+        if (
+          completedUnits !== totalPlannerPairs &&
+          completedUnits % LINEUP_PROGRESS_BATCH_SIZE !== 0
+        ) {
+          return;
+        }
+        if (reportedLineupMilestones.has(completedUnits)) {
+          return;
+        }
+        reportedLineupMilestones.add(completedUnits);
+
+        const updatedAt = new Date().toISOString();
+        progress = advanceRecommendationProgress({
+          completedUnits,
+          context: progressContext,
+          currentProgress: progress,
+          nextPhaseKey: "OPTIMIZING_LINEUPS",
+          summary: buildLineupOptimizationSummary(
+            completedUnits,
+            totalPlannerPairs,
+          ),
+          totalUnits: totalPlannerPairs,
+          unitLabel: "tactic pairs",
+          updatedAt,
+        });
+        await deps.updateNextGameRecommendationJob(args.env, {
+          id: job.id,
+          status: "OPTIMIZING_LINEUPS",
+          opponentTeamName: context.opponentTeamName,
+          error: null,
+          progressJson: progress,
+        });
+        logRecommendationInfo("process.lineup_optimization.progress", {
+          completedUnits,
+          jobId: job.id,
+          summary: progress.summary,
+          totalUnits: totalPlannerPairs,
+          userId: job.userId,
+        });
+      });
+
+      return lineupProgressWrite;
+    };
     const ourPairContexts = await mapWithConcurrency(
       plannerPairDefinitions,
       PREDICTION_CONCURRENCY,
@@ -679,6 +1058,8 @@ export async function processNextGameRecommendationJob(
             defensiveSwitch: normalizedInput.defensiveSwitch,
           },
         });
+        completedLineupPairs += 1;
+        await queueLineupProgressUpdate(completedLineupPairs);
 
         return {
           ...pair,
@@ -687,6 +1068,7 @@ export async function processNextGameRecommendationJob(
         };
       },
     );
+    await lineupProgressWrite;
 
     const evaluatedScenarios = buildEvaluatedScenarios(forecast.scenarios);
     const plannerScenarios = buildPlannerScenarioContexts({
@@ -695,12 +1077,44 @@ export async function processNextGameRecommendationJob(
       teamLocation: ourIsHome ? "AWAY" : "HOME",
     });
 
+    const scoringStartedAt = new Date().toISOString();
+    progress = advanceRecommendationProgress({
+      context: progressContext,
+      currentProgress: progress,
+      currentPhaseStartedAt: scoringStartedAt,
+      nextPhaseKey: "SCORING_MATCHUPS",
+      summary: buildScoringMatchupsSummary(plannerScenarios.length),
+      updatedAt: scoringStartedAt,
+    });
+    logRecommendationInfo("process.status_transition", {
+      jobId: job.id,
+      nextStatus: "SCORING_MATCHUPS",
+      phaseIndex: progress.phaseIndex,
+      summary: progress.summary,
+      userId: job.userId,
+    });
+    await deps.updateNextGameRecommendationJob(args.env, {
+      id: job.id,
+      status: "SCORING_MATCHUPS",
+      opponentTeamName: context.opponentTeamName,
+      error: null,
+      progressJson: progress,
+    });
+
     const plannerRequest = buildPlannerRequest({
       opponentScenarios: plannerScenarios,
       ourIsHome,
       ourPairs: ourPairContexts,
     });
-    let rawPlannerResponse: PredictionEndpointResponse | PredictionPlannerResponse;
+    logRecommendationInfo("process.planner.request.ready", {
+      jobId: job.id,
+      opponentScenarioCount: plannerScenarios.length,
+      plannerPairCount: ourPairContexts.length,
+      userId: job.userId,
+    });
+    let rawPlannerResponse:
+      | PredictionEndpointResponse
+      | PredictionPlannerResponse;
     try {
       rawPlannerResponse = await deps.invokePredictionEndpoint(
         args.endpointName,
@@ -710,8 +1124,39 @@ export async function processNextGameRecommendationJob(
       throw normalizePlannerEndpointInvocationError(error, args.endpointName);
     }
     const plannerResponse = expectPlannerResponse(rawPlannerResponse);
+    logRecommendationInfo("process.planner.response.ready", {
+      jobId: job.id,
+      planEvaluationCount: plannerResponse.planEvaluations.length,
+      scenarioMatrixCount: plannerResponse.scenarioMatrices.length,
+      userId: job.userId,
+    });
 
     const artifactKey = job.id;
+    const buildingStartedAt = new Date().toISOString();
+    progress = advanceRecommendationProgress({
+      context: mergeRecommendationProgressContext(progressContext, {
+        artifactKey,
+      }),
+      currentProgress: progress,
+      currentPhaseStartedAt: buildingStartedAt,
+      nextPhaseKey: "BUILDING_PLANNER",
+      summary: "Building planner detail and final recommendation outputs.",
+      updatedAt: buildingStartedAt,
+    });
+    logRecommendationInfo("process.status_transition", {
+      jobId: job.id,
+      nextStatus: "BUILDING_PLANNER",
+      phaseIndex: progress.phaseIndex,
+      summary: progress.summary,
+      userId: job.userId,
+    });
+    await deps.updateNextGameRecommendationJob(args.env, {
+      id: job.id,
+      status: "BUILDING_PLANNER",
+      opponentTeamName: context.opponentTeamName,
+      error: null,
+      progressJson: progress,
+    });
     await replacePlannerArtifactRows(args.env, deps, artifactKey);
     await deps.upsertNextGamePlannerArtifact(
       args.env,
@@ -743,6 +1188,7 @@ export async function processNextGameRecommendationJob(
       planEvaluations: plannerResponse.planEvaluations,
       recommendationInput: normalizedInput,
     });
+    const candidateCount = candidates.length;
 
     const bestExpectedCandidate = selectBestExpectedCandidate(candidates);
     const safestCandidate = selectSafestCandidate(candidates);
@@ -753,7 +1199,9 @@ export async function processNextGameRecommendationJob(
 
     const primaryScenario = forecast.scenarios[0];
     if (!primaryScenario) {
-      throw new Error("The latest opponent forecast did not include a primary scenario.");
+      throw new Error(
+        "The latest opponent forecast did not include a primary scenario.",
+      );
     }
 
     const result: RecommendationResult = {
@@ -768,6 +1216,7 @@ export async function processNextGameRecommendationJob(
       forecastModelVersion:
         forecast.job.modelVersion ?? forecast.result.modelVersion ?? "unknown",
       opponentSourceMatchId: opponentSource.matchId,
+      excludedPlayerIds: [...normalizedInput.excludedPlayerIds],
       enthusiasm: normalizedInput.enthusiasm,
       defensiveSwitch: normalizedInput.defensiveSwitch,
       stale: false,
@@ -778,11 +1227,7 @@ export async function processNextGameRecommendationJob(
         normalizedInput,
         "BEST_EXPECTED",
       ),
-      safestPlan: toRecommendedPlan(
-        safestCandidate,
-        normalizedInput,
-        "SAFEST",
-      ),
+      safestPlan: toRecommendedPlan(safestCandidate, normalizedInput, "SAFEST"),
       efficientPlan: toRecommendedPlan(
         efficientCandidate,
         normalizedInput,
@@ -799,27 +1244,65 @@ export async function processNextGameRecommendationJob(
         "EFFICIENT_WIN",
       ),
     };
+    const completedAt = new Date().toISOString();
+    progress = advanceRecommendationProgress({
+      context: mergeRecommendationProgressContext(progress.context ?? null, {
+        artifactKey,
+        candidateCount,
+      }),
+      currentProgress: progress,
+      nextPhaseKey: "SUCCEEDED",
+      summary: "Recommendation ready for review.",
+      updatedAt: completedAt,
+    });
 
     await deps.updateNextGameRecommendationJob(args.env, {
       id: job.id,
       status: "SUCCEEDED",
       opponentTeamName: context.opponentTeamName,
-      completedAt: new Date().toISOString(),
+      completedAt,
+      progressJson: progress,
       resultJson: result,
       error: null,
     });
+    logRecommendationInfo("process.completed", {
+      artifactKey,
+      candidateCount,
+      elapsedMs: elapsedSince(processStartedAtMs),
+      jobId: job.id,
+      status: "SUCCEEDED",
+      userId: job.userId,
+    });
   } catch (error) {
+    const completedAt = new Date().toISOString();
+    const errorMessage = toMaintenanceAwareErrorMessage(error);
+    progress = buildFailedRecommendationProgress({
+      currentProgress: progress,
+      errorMessage,
+      updatedAt: completedAt,
+    });
+    logRecommendationError("process.failed", {
+      elapsedMs: elapsedSince(processStartedAtMs),
+      jobId: job.id,
+      phaseIndex: progress.phaseIndex,
+      phaseKey: progress.phaseKey,
+      userId: job.userId,
+      ...toLoggableError(error),
+    });
     await deps.updateNextGameRecommendationJob(args.env, {
       id: job.id,
       status: "FAILED",
-      completedAt: new Date().toISOString(),
-      error: toMaintenanceAwareErrorMessage(error),
+      completedAt,
+      error: errorMessage,
+      progressJson: progress,
     });
     throw error;
   }
 }
 
-export function normalizeRecommendationInput(input: unknown): RecommendationInput {
+export function normalizeRecommendationInput(
+  input: unknown,
+): RecommendationInput {
   const record = requireRecord(input, "Next-game recommendation input");
   const defensiveSwitch = normalizeDefensiveSwitch(
     asOptionalRecord(record.defensiveSwitch) ?? {},
@@ -830,6 +1313,7 @@ export function normalizeRecommendationInput(input: unknown): RecommendationInpu
   }
 
   return {
+    excludedPlayerIds: normalizeExcludedPlayerIds(record.excludedPlayerIds),
     enthusiasm: normalizeEnthusiasm(record.enthusiasm),
     defensiveSwitch: {
       pg: normalizePositionCode(defensiveSwitch.PG),
@@ -890,7 +1374,10 @@ export function buildPredictorPerspective(args: {
 }
 
 export function adaptPredictionResultToUserPerspective(
-  result: Pick<PredictionEndpointResponse, "awayScore" | "homeScore" | "pointDiff">,
+  result: Pick<
+    PredictionEndpointResponse,
+    "awayScore" | "homeScore" | "pointDiff"
+  >,
   teamIsHome: boolean,
 ): {
   predictedOpponentScore: number;
@@ -958,7 +1445,9 @@ export function computeRecommendationStale(
   storedForecastJobId: string | null,
   latestForecastJobId: string,
 ): boolean {
-  return Boolean(storedForecastJobId && storedForecastJobId !== latestForecastJobId);
+  return Boolean(
+    storedForecastJobId && storedForecastJobId !== latestForecastJobId,
+  );
 }
 
 export function jobMatchesRecommendationSettings(
@@ -967,6 +1456,7 @@ export function jobMatchesRecommendationSettings(
     | "enthusiasm"
     | "matchId"
     | "opponentTeamId"
+    | "requestJson"
     | "switchC"
     | "switchPf"
     | "switchPg"
@@ -974,12 +1464,17 @@ export function jobMatchesRecommendationSettings(
     | "switchSg"
   >,
   args: {
+    excludedPlayerIds: string[];
     defensiveSwitch: RecommendationSwitch;
     enthusiasm: number;
     matchId: string;
     opponentTeamId: string;
   },
 ): boolean {
+  const normalizedExcludedPlayerIds = normalizeExcludedPlayerIds(
+    args.excludedPlayerIds,
+  );
+
   return (
     job.matchId === args.matchId &&
     job.opponentTeamId === args.opponentTeamId &&
@@ -988,17 +1483,21 @@ export function jobMatchesRecommendationSettings(
     job.switchSg === args.defensiveSwitch.sg &&
     job.switchSf === args.defensiveSwitch.sf &&
     job.switchPf === args.defensiveSwitch.pf &&
-    job.switchC === args.defensiveSwitch.c
+    job.switchC === args.defensiveSwitch.c &&
+    areExcludedPlayerListsEqual(
+      readStoredExcludedPlayerIds(job.requestJson),
+      normalizedExcludedPlayerIds,
+    )
   );
 }
 
 async function resolveRecommendationContext(args: {
   env: GraphqlEnv;
-  getOrRefreshWorkspace: typeof getOrRefreshWorkspace;
-  getScoutTeamSummaryForTeam: typeof getScoutTeamSummaryForTeam;
+  getOrRefreshWorkspaceWithMeta: GetOrRefreshWorkspaceWithMetaDependency;
+  getScoutTeamSummaryForTeam: GetScoutTeamSummaryForTeamDependency;
   identity: unknown;
 }): Promise<RecommendationContext> {
-  const workspace = await args.getOrRefreshWorkspace({
+  const { meta, workspace } = await args.getOrRefreshWorkspaceWithMeta({
     env: args.env,
     identity: args.identity,
   });
@@ -1027,23 +1526,36 @@ async function resolveRecommendationContext(args: {
       scoutWorkspace.scout.summary.teamName ??
       "Next opponent",
     scout: scoutWorkspace.scout,
+    workspaceMeta: meta,
+    workspaceSyncedAt:
+      workspace.home.syncedAt ??
+      workspace.teamHub.syncedAt ??
+      workspace.scout.syncedAt ??
+      workspace.playerLab.syncedAt ??
+      null,
   };
 }
 
 async function resolveLatestForecastContext(args: {
   env: GraphqlEnv;
-  listOpponentForecastJobsByUser: typeof listOpponentForecastJobsByUser;
+  listOpponentForecastJobsByUser: ListOpponentForecastJobsByUserDependency;
   opponentTeamId: string;
   userId: string;
 }): Promise<ForecastContext> {
-  const page = await args.listOpponentForecastJobsByUser(args.env, args.userId, {
-    limit: 50,
-  });
+  const page = await args.listOpponentForecastJobsByUser(
+    args.env,
+    args.userId,
+    {
+      limit: 50,
+    },
+  );
   const match = page.records.find(
     (job) => job.teamId === args.opponentTeamId && job.status === "SUCCEEDED",
   );
   if (!match?.resultJson) {
-    throw new Error("No successful opponent forecast is available for the next opponent yet.");
+    throw new Error(
+      "No successful opponent forecast is available for the next opponent yet.",
+    );
   }
 
   const result = normalizeOpponentForecastResult(
@@ -1064,13 +1576,17 @@ async function resolveLatestForecastContext(args: {
 }
 
 async function resolveOpponentSourceContext(args: {
+  createBbClient: SubmitDependencies["createBbClient"];
   env: GraphqlEnv;
-  getMatchBoxscore: typeof getMatchBoxscore;
+  getBbConnection: GetBbConnectionDependency;
   recentGames: ReadonlyArray<{
     hasBoxscore?: boolean | null;
     matchId?: string | null;
   }>;
+  readMatchBoxscoreCacheRecord: ReadMatchBoxscoreCacheRecordDependency;
+  resolveBbAccessKey: ResolveBbAccessKeyDependency;
   teamId: string;
+  upsertMatchBoxscore: UpsertMatchBoxscoreDependency;
   userId: string;
 }): Promise<OpponentSourceContext> {
   for (const game of args.recentGames) {
@@ -1078,13 +1594,24 @@ async function resolveOpponentSourceContext(args: {
       continue;
     }
 
-    const record = await args.getMatchBoxscore(args.env, args.userId, game.matchId);
-    const boxscore = inflateStoredMatchBoxscore(record?.boxscoreJson);
-    if (!boxscore) {
+    const cachedBoxscore = await getOrRepairRecentCachedMatchBoxscore({
+      createBbClient: args.createBbClient,
+      env: args.env,
+      getBbConnection: args.getBbConnection,
+      matchId: game.matchId,
+      readRecord: args.readMatchBoxscoreCacheRecord,
+      resolveBbAccessKey: args.resolveBbAccessKey,
+      upsertMatchBoxscore: args.upsertMatchBoxscore,
+      userId: args.userId,
+    });
+    if (!cachedBoxscore) {
       continue;
     }
 
-    const perspective = selectBoxscorePerspective(boxscore, args.teamId);
+    const perspective = selectBoxscorePerspective(
+      cachedBoxscore.boxscore,
+      args.teamId,
+    );
     if (!perspective.team?.ratings) {
       continue;
     }
@@ -1099,7 +1626,9 @@ async function resolveOpponentSourceContext(args: {
     };
   }
 
-  throw new Error("No usable opponent source boxscore with ratings is available yet.");
+  throw new Error(
+    "No usable opponent source boxscore with ratings is available yet.",
+  );
 }
 
 export function buildPlannerPairDefinitions(): PlannerPairDefinition[] {
@@ -1110,10 +1639,7 @@ export function buildPlannerPairDefinitions(): PlannerPairDefinition[] {
       pairId: buildPlannerPairId(predictorOffense, predictorDefense),
       predictorDefense,
       predictorOffense,
-      supportTier: isPlannerPairEstimated(
-        predictorOffense,
-        predictorDefense,
-      )
+      supportTier: isPlannerPairEstimated(predictorOffense, predictorDefense)
         ? "ESTIMATED"
         : "DIRECT",
     })),
@@ -1145,7 +1671,9 @@ function buildPlannerScenarioContexts(args: {
   teamLocation: PredictionTeamLocation;
 }): PlannerScenarioContext[] {
   const pairDefinitions = buildPlannerPairDefinitions();
-  const normalizedProbabilities = normalizeScenarioProbabilities(args.scenarios);
+  const normalizedProbabilities = normalizeScenarioProbabilities(
+    args.scenarios,
+  );
 
   return args.scenarios.map((scenario, scenarioIndex) => ({
     effortChoice: asOptionalString(scenario.effortChoice) ?? "Normal",
@@ -1228,7 +1756,8 @@ async function replacePlannerArtifactRows(
   env: GraphqlEnv,
   deps: Pick<
     ProcessDependencies,
-    "deleteNextGamePlannerArtifactRow" | "listNextGamePlannerArtifactRowsByArtifactKey"
+    | "deleteNextGamePlannerArtifactRow"
+    | "listNextGamePlannerArtifactRowsByArtifactKey"
   >,
   artifactKey: string,
 ): Promise<void> {
@@ -1290,7 +1819,10 @@ function buildPlannerArtifactRowRecords(args: {
   response: PredictionPlannerResponse;
   userId: string;
 }): NextGamePlannerArtifactRowRecord[] {
-  const views = [args.response.expectedMatrix, ...args.response.scenarioMatrices];
+  const views = [
+    args.response.expectedMatrix,
+    ...args.response.scenarioMatrices,
+  ];
   const records: NextGamePlannerArtifactRowRecord[] = [];
 
   views.forEach((view, viewIndex) => {
@@ -1327,7 +1859,10 @@ function buildCandidatesFromPlanEvaluations(args: {
 }): Candidate[] {
   const pairById = new Map(args.ourPairs.map((pair) => [pair.pairId, pair]));
   const probabilityByScenarioId = new Map(
-    args.evaluatedScenarios.map((scenario) => [scenario.scenarioId, scenario.probability]),
+    args.evaluatedScenarios.map((scenario) => [
+      scenario.scenarioId,
+      scenario.probability,
+    ]),
   );
 
   return args.planEvaluations.flatMap((evaluation) => {
@@ -1373,7 +1908,8 @@ function buildCandidatesFromPlanEvaluations(args: {
     }
 
     const availableWeight = availableResults.reduce(
-      (sum, result) => sum + (probabilityByScenarioId.get(result.scenarioId) ?? 0),
+      (sum, result) =>
+        sum + (probabilityByScenarioId.get(result.scenarioId) ?? 0),
       0,
     );
     const safeWeight = availableWeight > 0 ? availableWeight : 1;
@@ -1430,8 +1966,10 @@ function buildCandidatesFromPlanEvaluations(args: {
           scenarioResults.reduce(
             (sum, result) =>
               sum +
-              ((probabilityByScenarioId.get(result.scenarioId) ?? 0) *
-                ((result.predictedPointDiff ?? Number.NEGATIVE_INFINITY) > 0 ? 1 : 0)),
+              (probabilityByScenarioId.get(result.scenarioId) ?? 0) *
+                ((result.predictedPointDiff ?? Number.NEGATIVE_INFINITY) > 0
+                  ? 1
+                  : 0),
             0,
           ),
         ),
@@ -1494,7 +2032,7 @@ function buildPlannerViewsFromRows(
     grouped.set(viewId, current);
   }
 
-  return [...grouped.values()].map((view) => ({
+  return Array.from(grouped.values()).map((view) => ({
     label: view.label,
     probability: view.probability,
     rows: view.rows,
@@ -1523,7 +2061,8 @@ function toRecommendedPlan(
   input: RecommendationInput,
   mode: RecommendedGamePlan["mode"],
 ): RecommendedGamePlan {
-  const targetMargin = mode === "EFFICIENT_WIN" ? TARGET_EFFICIENT_MARGIN : null;
+  const targetMargin =
+    mode === "EFFICIENT_WIN" ? TARGET_EFFICIENT_MARGIN : null;
   return {
     mode,
     pairId: candidate.pairId,
@@ -1566,7 +2105,8 @@ function buildRecommendedLineup(
     )
     .map((assignment) => ({
       playerId: assignment.playerId,
-      fullName: rosterById.get(assignment.playerId)?.fullName ?? "Unknown player",
+      fullName:
+        rosterById.get(assignment.playerId)?.fullName ?? "Unknown player",
       position: normalizePositionCode(assignment.position),
       minutes: assignment.minutes,
     }));
@@ -1576,12 +2116,7 @@ function normalizeRecommendationRequestRecord(
   requestJson: unknown,
   job: Pick<
     NextGameRecommendationJobRecord,
-    | "enthusiasm"
-    | "switchC"
-    | "switchPf"
-    | "switchPg"
-    | "switchSf"
-    | "switchSg"
+    "enthusiasm" | "switchC" | "switchPf" | "switchPg" | "switchSf" | "switchSg"
   >,
 ): RecommendationInput {
   const request = asOptionalRecord(requestJson);
@@ -1590,6 +2125,7 @@ function normalizeRecommendationRequestRecord(
     return normalizeRecommendationInput(input);
   }
   return {
+    excludedPlayerIds: normalizeExcludedPlayerIds(request?.excludedPlayerIds),
     enthusiasm: normalizeEnthusiasm(job.enthusiasm),
     defensiveSwitch: {
       pg: normalizePositionCode(job.switchPg),
@@ -1601,15 +2137,451 @@ function normalizeRecommendationRequestRecord(
   };
 }
 
+function normalizeRequiredTextArg(value: unknown, label: string): string {
+  const normalized = asOptionalString(value)?.trim();
+  if (!normalized) {
+    throw new Error(`${label} is required.`);
+  }
+  return normalized;
+}
+
+function buildRecommendationInputFingerprint(input: RecommendationInput): string {
+  return JSON.stringify({
+    defensiveSwitch: input.defensiveSwitch,
+    enthusiasm: input.enthusiasm,
+    excludedPlayerIds: input.excludedPlayerIds,
+  });
+}
+
+function elapsedSince(startedAtMs: number): number {
+  return Date.now() - startedAtMs;
+}
+
+function buildLineupOptimizationSummary(
+  completedUnits: number,
+  totalUnits: number,
+): string {
+  return `Optimizing usable lineups: ${completedUnits} of ${totalUnits} tactic pairs evaluated.`;
+}
+
+function buildScoringMatchupsSummary(opponentScenarioCount: number): string {
+  return `Scoring matchup combinations across ${opponentScenarioCount} forecast scenario${opponentScenarioCount === 1 ? "" : "s"}.`;
+}
+
+function isTrackableRecommendationPhase(
+  value: RecommendationProgressPhaseKey,
+): boolean {
+  return (
+    value === "RESOLVING_CONTEXT" ||
+    value === "OPTIMIZING_LINEUPS" ||
+    value === "SCORING_MATCHUPS" ||
+    value === "BUILDING_PLANNER"
+  );
+}
+
+function deriveRecommendationPhaseIndex(
+  phaseKey: RecommendationProgressPhaseKey,
+): number {
+  switch (phaseKey) {
+    case "QUEUED":
+      return 0;
+    case "RESOLVING_CONTEXT":
+      return 1;
+    case "OPTIMIZING_LINEUPS":
+      return 2;
+    case "SCORING_MATCHUPS":
+      return 3;
+    case "BUILDING_PLANNER":
+    case "SUCCEEDED":
+      return 4;
+    case "FAILED":
+      return 0;
+  }
+}
+
+function normalizeRecommendationProgressPhaseKey(
+  value: unknown,
+): RecommendationProgressPhaseKey {
+  switch (asOptionalString(value)) {
+    case null:
+    case "RESOLVING_CONTEXT":
+      return "RESOLVING_CONTEXT";
+    case "OPTIMIZING_LINEUPS":
+      return "OPTIMIZING_LINEUPS";
+    case "SCORING_MATCHUPS":
+    case "EVALUATING_CANDIDATES":
+      return "SCORING_MATCHUPS";
+    case "BUILDING_PLANNER":
+      return "BUILDING_PLANNER";
+    case "SUCCEEDED":
+      return "SUCCEEDED";
+    case "FAILED":
+      return "FAILED";
+    case "PREPARING_INPUTS":
+    case "QUEUED":
+    default:
+      return "QUEUED";
+  }
+}
+
+function defaultRecommendationProgressSummary(args: {
+  context?: RecommendationProgressContext | null;
+  errorMessage?: string | null;
+  phaseKey: RecommendationProgressPhaseKey;
+  progress?: RecommendationProgress | null;
+}): string {
+  if (args.phaseKey === "FAILED") {
+    return args.errorMessage?.trim() || "Recommendation failed.";
+  }
+  if (args.phaseKey === "OPTIMIZING_LINEUPS") {
+    return buildLineupOptimizationSummary(
+      args.progress?.completedUnits ?? 0,
+      args.progress?.totalUnits ?? args.context?.plannerPairCount ?? 0,
+    );
+  }
+  if (args.phaseKey === "SCORING_MATCHUPS") {
+    return buildScoringMatchupsSummary(args.context?.forecastScenarioCount ?? 0);
+  }
+
+  switch (args.phaseKey) {
+    case "QUEUED":
+      return "Recommendation queued and waiting for the worker to start.";
+    case "RESOLVING_CONTEXT":
+      return "Resolving workspace, forecast, and source match context.";
+    case "BUILDING_PLANNER":
+      return "Building planner detail and final recommendation outputs.";
+    case "SUCCEEDED":
+      return "Recommendation ready for review.";
+  }
+}
+
+function mergeRecommendationProgressContext(
+  current: RecommendationProgressContext | null | undefined,
+  updates: Partial<RecommendationProgressContext>,
+): RecommendationProgressContext | null {
+  const next = {
+    ...current,
+    ...updates,
+  };
+
+  return Object.values(next).some((value) => value !== null && value !== undefined)
+    ? next
+    : null;
+}
+
+function createRecommendationProgress(args: {
+  completedPhases?: RecommendationCompletedPhase[];
+  completedUnits?: number | null;
+  context?: RecommendationProgressContext | null;
+  currentPhaseStartedAt?: string | null;
+  nextPhaseKey: RecommendationProgressPhaseKey;
+  phaseIndexOverride?: number | null;
+  summary: string;
+  totalUnits?: number | null;
+  unitLabel?: string | null;
+  updatedAt: string;
+}): RecommendationProgress {
+  return {
+    phaseKey: args.nextPhaseKey,
+    phaseIndex:
+      args.phaseIndexOverride ??
+      deriveRecommendationPhaseIndex(args.nextPhaseKey),
+    phaseCount: RECOMMENDATION_PHASE_COUNT,
+    summary: args.summary,
+    updatedAt: args.updatedAt,
+    currentPhaseStartedAt: args.currentPhaseStartedAt ?? null,
+    completedPhases: args.completedPhases ?? [],
+    context: args.context ?? null,
+    completedUnits: args.completedUnits ?? null,
+    totalUnits: args.totalUnits ?? null,
+    unitLabel: args.unitLabel ?? null,
+  };
+}
+
+function advanceRecommendationProgress(args: {
+  completedUnits?: number | null;
+  context?: RecommendationProgressContext | null;
+  currentProgress: RecommendationProgress;
+  currentPhaseStartedAt?: string | null;
+  nextPhaseKey: RecommendationProgressPhaseKey;
+  phaseIndexOverride?: number | null;
+  summary: string;
+  totalUnits?: number | null;
+  unitLabel?: string | null;
+  updatedAt: string;
+}): RecommendationProgress {
+  const current = args.currentProgress;
+  const completedPhases = [...current.completedPhases];
+  if (
+    current.phaseKey !== args.nextPhaseKey &&
+    args.nextPhaseKey !== "FAILED" &&
+    isTrackableRecommendationPhase(current.phaseKey) &&
+    current.currentPhaseStartedAt
+  ) {
+    completedPhases.push({
+      completedAt: args.updatedAt,
+      durationMs: Math.max(
+        0,
+        Date.parse(args.updatedAt) - Date.parse(current.currentPhaseStartedAt),
+      ),
+      phaseKey: current.phaseKey,
+      startedAt: current.currentPhaseStartedAt,
+      summary: current.summary,
+    });
+  }
+
+  const nextPhaseStartedAt =
+    args.nextPhaseKey === current.phaseKey
+      ? args.currentPhaseStartedAt ?? current.currentPhaseStartedAt ?? null
+      : isTrackableRecommendationPhase(args.nextPhaseKey)
+        ? args.currentPhaseStartedAt ?? args.updatedAt
+        : null;
+
+  return createRecommendationProgress({
+    completedPhases,
+    completedUnits:
+      args.nextPhaseKey === "OPTIMIZING_LINEUPS"
+        ? args.completedUnits ?? current.completedUnits ?? null
+        : null,
+    context: args.context ?? current.context ?? null,
+    currentPhaseStartedAt: nextPhaseStartedAt,
+    nextPhaseKey: args.nextPhaseKey,
+    phaseIndexOverride: args.phaseIndexOverride,
+    summary: args.summary,
+    totalUnits:
+      args.nextPhaseKey === "OPTIMIZING_LINEUPS"
+        ? args.totalUnits ?? current.totalUnits ?? null
+        : null,
+    unitLabel:
+      args.nextPhaseKey === "OPTIMIZING_LINEUPS"
+        ? args.unitLabel ?? current.unitLabel ?? null
+        : null,
+    updatedAt: args.updatedAt,
+  });
+}
+
+function buildFailedRecommendationProgress(args: {
+  currentProgress: RecommendationProgress;
+  errorMessage: string;
+  updatedAt: string;
+}): RecommendationProgress {
+  return createRecommendationProgress({
+    completedPhases: args.currentProgress.completedPhases,
+    completedUnits: args.currentProgress.completedUnits ?? null,
+    context: args.currentProgress.context ?? null,
+    currentPhaseStartedAt: args.currentProgress.currentPhaseStartedAt ?? null,
+    nextPhaseKey: "FAILED",
+    phaseIndexOverride:
+      args.currentProgress.phaseIndex ??
+      deriveRecommendationPhaseIndex(args.currentProgress.phaseKey),
+    summary: args.errorMessage,
+    totalUnits: args.currentProgress.totalUnits ?? null,
+    unitLabel: args.currentProgress.unitLabel ?? null,
+    updatedAt: args.updatedAt,
+  });
+}
+
+function normalizeRecommendationProgress(
+  input: unknown,
+  job: Pick<
+    NextGameRecommendationJobRecord,
+    | "completedAt"
+    | "error"
+    | "requestJson"
+    | "requestedAt"
+    | "resultJson"
+    | "startedAt"
+    | "status"
+  >,
+): RecommendationProgress {
+  const fallbackContext = mergeRecommendationProgressContext(null, {
+    artifactKey: asOptionalString(asOptionalRecord(job.resultJson)?.artifactKey),
+    excludedPlayerCount: readStoredExcludedPlayerIds(
+      job.resultJson ?? job.requestJson,
+    ).length,
+    forecastJobId: readStoredForecastJobId(job.resultJson),
+    sourceMatchId: asOptionalString(
+      asOptionalRecord(job.resultJson)?.opponentSourceMatchId,
+    ),
+  });
+  const fallbackPhaseKey = normalizeRecommendationProgressPhaseKey(job.status);
+  const fallbackUpdatedAt =
+    asOptionalString(job.completedAt) ??
+    asOptionalString(job.startedAt) ??
+    job.requestedAt;
+
+  const record = asOptionalRecord(input);
+  if (!record) {
+    return createRecommendationProgress({
+      context: fallbackContext,
+      currentPhaseStartedAt: isTrackableRecommendationPhase(fallbackPhaseKey)
+        ? asOptionalString(job.startedAt) ?? job.requestedAt
+        : null,
+      nextPhaseKey: fallbackPhaseKey,
+      phaseIndexOverride:
+        fallbackPhaseKey === "FAILED"
+          ? deriveRecommendationPhaseIndex(
+              normalizeRecommendationProgressPhaseKey(job.status),
+            )
+          : null,
+      summary: defaultRecommendationProgressSummary({
+        context: fallbackContext,
+        errorMessage: asOptionalString(job.error),
+        phaseKey: fallbackPhaseKey,
+      }),
+      updatedAt: fallbackUpdatedAt,
+    });
+  }
+
+  const context = mergeRecommendationProgressContext(
+    fallbackContext,
+    normalizeRecommendationProgressContext(record.context),
+  );
+  const phaseKey = normalizeRecommendationProgressPhaseKey(record.phaseKey);
+  const currentPhaseStartedAt = asOptionalString(record.currentPhaseStartedAt);
+  const completedUnits = asFiniteInteger(record.completedUnits);
+  const totalUnits = asFiniteInteger(record.totalUnits);
+  const unitLabel = asOptionalString(record.unitLabel);
+
+  const progress = createRecommendationProgress({
+    completedPhases: normalizeRecommendationCompletedPhases(
+      record.completedPhases,
+      fallbackUpdatedAt,
+    ),
+    completedUnits,
+    context,
+    currentPhaseStartedAt:
+      phaseKey === "FAILED" || phaseKey === "SUCCEEDED"
+        ? currentPhaseStartedAt
+        : currentPhaseStartedAt ?? asOptionalString(job.startedAt),
+    nextPhaseKey: phaseKey,
+    phaseIndexOverride:
+      asFiniteInteger(record.phaseIndex) ??
+      (phaseKey === "FAILED"
+        ? deriveRecommendationPhaseIndex(fallbackPhaseKey)
+        : null),
+    summary:
+      asOptionalString(record.summary) ??
+      defaultRecommendationProgressSummary({
+        context,
+        errorMessage: asOptionalString(job.error),
+        phaseKey,
+      }),
+    totalUnits,
+    unitLabel,
+    updatedAt: asOptionalString(record.updatedAt) ?? fallbackUpdatedAt,
+  });
+
+  return progress;
+}
+
+function normalizeRecommendationCompletedPhases(
+  value: unknown,
+  fallbackTimestamp: string,
+): RecommendationCompletedPhase[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    const record = asOptionalRecord(entry);
+    if (!record) {
+      return [];
+    }
+
+    const phaseKey = normalizeRecommendationProgressPhaseKey(record.phaseKey);
+    const startedAt =
+      asOptionalString(record.startedAt) ?? fallbackTimestamp;
+    const completedAt =
+      asOptionalString(record.completedAt) ?? fallbackTimestamp;
+
+    return [
+      {
+        completedAt,
+        durationMs:
+          asFiniteInteger(record.durationMs) ??
+          Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)),
+        phaseKey,
+        startedAt,
+        summary:
+          asOptionalString(record.summary) ??
+          defaultRecommendationProgressSummary({
+            phaseKey,
+          }),
+      },
+    ];
+  });
+}
+
+function normalizeRecommendationProgressContext(
+  value: unknown,
+): Partial<RecommendationProgressContext> {
+  const record = asOptionalRecord(value);
+  if (!record) {
+    return {};
+  }
+
+  return {
+    artifactKey: asOptionalString(record.artifactKey),
+    availableRosterCount: asFiniteInteger(record.availableRosterCount),
+    candidateCount: asFiniteInteger(record.candidateCount),
+    excludedPlayerCount: asFiniteInteger(record.excludedPlayerCount),
+    forecastJobId: asOptionalString(record.forecastJobId),
+    forecastScenarioCount: asFiniteInteger(record.forecastScenarioCount),
+    plannerPairCount: asFiniteInteger(record.plannerPairCount),
+    sourceMatchId: asOptionalString(record.sourceMatchId),
+    sourceTeamLocation: asOptionalString(record.sourceTeamLocation),
+    workspaceCacheKind: asOptionalString(record.workspaceCacheKind),
+    workspaceCacheState: asOptionalString(record.workspaceCacheState),
+    workspaceSyncedAt: asOptionalString(record.workspaceSyncedAt),
+  };
+}
+
+function writeRecommendationLog(
+  level: "INFO" | "ERROR",
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  const line = `${NEXT_GAME_RECOMMENDATION_LOG_PREFIX} ${JSON.stringify({
+    details,
+    event,
+    level,
+    loggedAt: new Date().toISOString(),
+  })}\n`;
+  if (level === "INFO") {
+    process.stdout.write(line);
+    return;
+  }
+  process.stderr.write(line);
+}
+
+function logRecommendationInfo(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  writeRecommendationLog("INFO", event, details);
+}
+
+function logRecommendationError(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  writeRecommendationLog("ERROR", event, details);
+}
+
 function adaptRecommendationJob(
   job: NextGameRecommendationJobRecord,
   args: { stale: boolean },
 ): RecommendationSnapshot {
+  const excludedPlayerIds = readStoredExcludedPlayerIds(
+    job.resultJson ?? job.requestJson,
+  );
   return {
     jobId: job.id,
     matchId: job.matchId,
     opponentTeamId: job.opponentTeamId,
     opponentTeamName: asOptionalString(job.opponentTeamName),
+    excludedPlayerIds,
     enthusiasm: job.enthusiasm,
     defensiveSwitch: {
       pg: normalizePositionCode(job.switchPg),
@@ -1624,6 +2596,7 @@ function adaptRecommendationJob(
     startedAt: asOptionalString(job.startedAt),
     completedAt: asOptionalString(job.completedAt),
     error: asOptionalString(job.error),
+    progress: normalizeRecommendationProgress(job.progressJson, job),
     result: job.resultJson
       ? normalizeRecommendationResult(
           requireRecord(job.resultJson, "stored recommendation result"),
@@ -1642,16 +2615,21 @@ function normalizeRecommendationResult(
   );
 
   return {
-    generatedAt: asOptionalString(input.generatedAt) ?? new Date().toISOString(),
+    generatedAt:
+      asOptionalString(input.generatedAt) ?? new Date().toISOString(),
     matchId: asOptionalString(input.matchId) ?? "",
     opponentTeamId: asOptionalString(input.opponentTeamId) ?? "",
-    opponentTeamName: asOptionalString(input.opponentTeamName) ?? "Next opponent",
+    opponentTeamName:
+      asOptionalString(input.opponentTeamName) ?? "Next opponent",
     forecastJobId: asOptionalString(input.forecastJobId) ?? "",
     forecastScenarioId: asOptionalString(input.forecastScenarioId) ?? "",
     forecastScenarioLabel: asOptionalString(input.forecastScenarioLabel) ?? "",
-    forecastScenarioProbability: asFiniteNumber(input.forecastScenarioProbability) ?? 0,
-    forecastModelVersion: asOptionalString(input.forecastModelVersion) ?? "unknown",
+    forecastScenarioProbability:
+      asFiniteNumber(input.forecastScenarioProbability) ?? 0,
+    forecastModelVersion:
+      asOptionalString(input.forecastModelVersion) ?? "unknown",
     opponentSourceMatchId: asOptionalString(input.opponentSourceMatchId) ?? "",
+    excludedPlayerIds: normalizeExcludedPlayerIds(input.excludedPlayerIds),
     enthusiasm: normalizeEnthusiasm(input.enthusiasm),
     defensiveSwitch,
     stale,
@@ -1703,7 +2681,8 @@ function normalizeRecommendedPlan(
   const record = input ?? {};
   return {
     mode: normalizeRecommendationMode(record.mode, fallbackMode),
-    pairId: asOptionalString(record.pairId) ?? buildPlannerPairId("Base", "ManToMan"),
+    pairId:
+      asOptionalString(record.pairId) ?? buildPlannerPairId("Base", "ManToMan"),
     predictedPointDiff: asFiniteNumber(record.predictedPointDiff) ?? 0,
     predictedTeamScore: asFiniteNumber(record.predictedTeamScore) ?? 0,
     predictedOpponentScore: asFiniteNumber(record.predictedOpponentScore) ?? 0,
@@ -1799,7 +2778,9 @@ function normalizePlannerPairArray(value: unknown): PlannerTacticPair[] {
   return value.map((entry) => {
     const record = asOptionalRecord(entry);
     return {
-      pairId: asOptionalString(record?.pairId) ?? buildPlannerPairId("Base", "ManToMan"),
+      pairId:
+        asOptionalString(record?.pairId) ??
+        buildPlannerPairId("Base", "ManToMan"),
       offense: asOptionalString(record?.offense) ?? "Base Offense",
       defense: asOptionalString(record?.defense) ?? "Man to man",
       estimated: asOptionalBoolean(record?.estimated) ?? false,
@@ -1819,7 +2800,9 @@ function normalizePlannerMatrixCellArray(value: unknown): PlannerMatrixCell[] {
   return value.map((entry) => {
     const record = asOptionalRecord(entry);
     return {
-      ourPairId: asOptionalString(record?.ourPairId) ?? buildPlannerPairId("Base", "ManToMan"),
+      ourPairId:
+        asOptionalString(record?.ourPairId) ??
+        buildPlannerPairId("Base", "ManToMan"),
       opponentPairId:
         asOptionalString(record?.opponentPairId) ??
         buildPlannerPairId("Base", "ManToMan"),
@@ -1841,7 +2824,11 @@ function normalizeRecommendationStatus(
   switch (value) {
     case "QUEUED":
     case "PREPARING_INPUTS":
+    case "RESOLVING_CONTEXT":
+    case "OPTIMIZING_LINEUPS":
     case "EVALUATING_CANDIDATES":
+    case "SCORING_MATCHUPS":
+    case "BUILDING_PLANNER":
     case "SUCCEEDED":
     case "FAILED":
       return value;
@@ -1867,15 +2854,16 @@ function normalizeRecommendationDefensiveSwitch(
   fallback?: RecommendationSwitch,
 ): RecommendationSwitch {
   const normalized = normalizeDefensiveSwitch(
-    asOptionalRecord(value) ?? (fallback
-      ? {
-          PG: fallback.pg,
-          SG: fallback.sg,
-          SF: fallback.sf,
-          PF: fallback.pf,
-          C: fallback.c,
-        }
-      : {}),
+    asOptionalRecord(value) ??
+      (fallback
+        ? {
+            PG: fallback.pg,
+            SG: fallback.sg,
+            SF: fallback.sf,
+            PF: fallback.pf,
+            C: fallback.c,
+          }
+        : {}),
   );
   return {
     pg: normalizePositionCode(normalized.PG),
@@ -1886,7 +2874,10 @@ function normalizeRecommendationDefensiveSwitch(
   };
 }
 
-function compareBestExpectedCandidates(left: Candidate, right: Candidate): number {
+function compareBestExpectedCandidates(
+  left: Candidate,
+  right: Candidate,
+): number {
   return (
     right.weightedExpectedPointDiff - left.weightedExpectedPointDiff ||
     left.effortCost - right.effortCost ||
@@ -1913,11 +2904,9 @@ function compareEfficientCandidates(left: Candidate, right: Candidate): number {
 }
 
 function stableCandidateKey(candidate: Candidate): string {
-  return [
-    candidate.offense,
-    candidate.defense,
-    candidate.effortChoice,
-  ].join("|");
+  return [candidate.offense, candidate.defense, candidate.effortChoice].join(
+    "|",
+  );
 }
 
 function toSidePredictionInput(
@@ -2020,9 +3009,10 @@ function resolveRecommendationJobMessage(args: {
   return parseRecommendationQueueMessage(args.messageBody);
 }
 
-function parseRecommendationQueueMessage(
-  body: string,
-): { jobId: string; userId: string } {
+function parseRecommendationQueueMessage(body: string): {
+  jobId: string;
+  userId: string;
+} {
   const parsed = requireRecord(
     JSON.parse(body),
     "SQS next-game recommendation job message",
@@ -2134,7 +3124,45 @@ function toPredictorOffense(value: unknown): string {
 
 function toPredictorDefense(value: unknown): string {
   const normalized = asOptionalString(value);
-  return normalized ? (DEFENSE_TO_PREDICTOR[normalized] ?? "ManToMan") : "ManToMan";
+  return normalized
+    ? (DEFENSE_TO_PREDICTOR[normalized] ?? "ManToMan")
+    : "ManToMan";
+}
+
+export function normalizeExcludedPlayerIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => asOptionalString(entry)?.trim() ?? null)
+        .filter((entry): entry is string => Boolean(entry)),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function readStoredExcludedPlayerIds(value: unknown): string[] {
+  const record = asOptionalRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  const input = asOptionalRecord(record.input);
+  return normalizeExcludedPlayerIds(
+    record.excludedPlayerIds ?? input?.excludedPlayerIds,
+  );
+}
+
+function areExcludedPlayerListsEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function normalizeEnthusiasm(value: unknown): number {

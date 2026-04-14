@@ -9,7 +9,10 @@ import {
   getLineupHelperWorkspace,
   optimizeLineupHelper,
 } from "../amplify/data/_backend/lineup-helper";
-import { WORKSPACE_CACHE_VERSION } from "../amplify/data/_backend/workspace-cache";
+import {
+  WORKSPACE_CACHE_VERSION,
+  readWorkspaceCachePayload,
+} from "../amplify/data/_backend/workspace-cache";
 import type {
   BBApiOwnedRosterPlayer,
   BBApiOwnedRosterPlayerSkills,
@@ -20,6 +23,7 @@ import {
   buildScoutWorkspace,
   getPlayerTrend,
   lookupSharedPlayerCardByToken,
+  repairOwnerRosterData,
   revokePlayerCard,
 } from "../amplify/data/_backend/workspace";
 import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
@@ -46,6 +50,24 @@ const scoutTeamSummaryHandlerSource = readFileSync(
 );
 const scoutScheduleHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "get-scout-schedule", "handler.ts"),
+  "utf8",
+);
+const lineupHelperSource = readFileSync(
+  join(repoRoot, "amplify", "data", "_backend", "lineup-helper.ts"),
+  "utf8",
+);
+const nextGameRecommendationSource = readFileSync(
+  join(
+    repoRoot,
+    "amplify",
+    "data",
+    "_backend",
+    "next-game-recommendation.ts",
+  ),
+  "utf8",
+);
+const opponentForecastSource = readFileSync(
+  join(repoRoot, "amplify", "data", "_backend", "opponent-forecast.ts"),
   "utf8",
 );
 const workspaceLoggingSource = readFileSync(
@@ -211,6 +233,7 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
       scout: {},
       leagueIntel: {},
       playerLab: {},
+      arena: createEmptyArenaWorkspace(),
     },
   } as any;
 
@@ -252,6 +275,7 @@ test("workspace cache version mismatches force a refresh", () => {
       scout: {},
       leagueIntel: {},
       playerLab: {},
+      arena: createEmptyArenaWorkspace(),
     },
   } as any;
 
@@ -264,6 +288,189 @@ test("workspace cache version mismatches force a refresh", () => {
     }),
     true,
   );
+});
+
+test("workspace cache rows missing arena are treated as unreadable cache misses", () => {
+  const cache = readWorkspaceCachePayload({
+    version: WORKSPACE_CACHE_VERSION,
+    home: {},
+    teamHub: {},
+    scout: {},
+    leagueIntel: {},
+    playerLab: {},
+  });
+
+  assert.equal(cache, null);
+});
+
+test("repairOwnerRosterData upserts owner snapshots and patches only the cached team-hub roster", async () => {
+  const existingCache = {
+    version: WORKSPACE_CACHE_VERSION,
+    home: {
+      marker: "home",
+    },
+    teamHub: {
+      roster: [
+        {
+          age: 26,
+          bestPosition: "PG",
+          dmi: 1500,
+          fullName: "Old Guard",
+          gameShape: "proficient",
+          injuryWeeks: 0,
+          nationalityName: "USA",
+          playerId: "p1",
+          ppg: 12.4,
+          projectedStarterCount: 3,
+          recentAvgMinutes: 31.2,
+          recentStartCount: 5,
+          salary: 50000,
+        },
+      ],
+      syncedAt: "2026-04-10T00:00:00.000Z",
+      team: {
+        country: null,
+        isBot: false,
+        league: null,
+        ownerName: "Coach",
+        rival: null,
+        shortName: "Visionaries",
+        teamId: "team-1",
+        teamName: "Visionaries",
+      },
+    },
+    scout: {
+      marker: "scout",
+    },
+    leagueIntel: {
+      marker: "league",
+    },
+    playerLab: {
+      marker: "playerLab",
+      players: [],
+    },
+    arena: createEmptyArenaWorkspace(),
+  } as any;
+
+  const connection = {
+    bbLoginName: "coach",
+    lastSyncAt: "2026-04-10T00:00:00.000Z",
+    status: "CONNECTED",
+    teamId: "team-1",
+    teamName: "Visionaries",
+    userId: "user-1",
+    workspaceCacheJson: existingCache,
+  } as any;
+  const repairedPlayer = {
+    ...createOwnerTrackedPlayerProfile({
+      block: 2,
+      driving: 7,
+      experience: 6,
+      freeThrow: 7,
+      gameShape: 10,
+      handling: 8,
+      insideDef: 3,
+      insideShot: 4,
+      jumpShot: 9,
+      outsideDef: 5,
+      passing: 9,
+      potential: 10,
+      range: 7,
+      rebound: 4,
+      stamina: 8,
+    }),
+    age: 27,
+    dmi: 2000,
+    fullName: "Fresh Snapshot",
+    salary: 62000,
+  };
+
+  let updatedConnection: Record<string, unknown> | null = null;
+  const trackedPlayers: unknown[] = [];
+  const observations: unknown[] = [];
+  const snapshots: unknown[] = [];
+
+  const result = await repairOwnerRosterData(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+    },
+    {
+      createClient: () => ({
+        getRoster: async () => ({
+          players: [repairedPlayer],
+        }),
+      }),
+      getBbConnection: async () => connection,
+      resolveAccessKey: async () => "secret",
+      storeCanonicalPlayerSkillSnapshot: async (_env, record) => {
+        snapshots.push(record);
+      },
+      upsertBbConnection: async (_env, record) => {
+        updatedConnection = record as Record<string, unknown>;
+      },
+      upsertPlayerSkillObservation: async (_env, record) => {
+        observations.push(record);
+      },
+      upsertTrackedPlayer: async (_env, record) => {
+        trackedPlayers.push(record);
+      },
+    },
+  );
+
+  assert.equal(result.repairedPlayerCount, 1);
+  assert.ok(result.completedAt);
+  assert.equal(trackedPlayers.length, 1);
+  assert.equal(observations.length, 1);
+  assert.equal(snapshots.length, 1);
+  assert.ok(updatedConnection);
+  assert.equal(updatedConnection.lastSyncAt, "2026-04-10T00:00:00.000Z");
+  assert.deepStrictEqual(updatedConnection.workspaceCacheJson?.home, existingCache.home);
+  assert.deepStrictEqual(updatedConnection.workspaceCacheJson?.scout, existingCache.scout);
+  assert.deepStrictEqual(
+    updatedConnection.workspaceCacheJson?.leagueIntel,
+    existingCache.leagueIntel,
+  );
+  assert.deepStrictEqual(
+    updatedConnection.workspaceCacheJson?.playerLab,
+    existingCache.playerLab,
+  );
+  assert.deepStrictEqual(
+    updatedConnection.workspaceCacheJson?.arena,
+    existingCache.arena,
+  );
+  assert.equal(
+    updatedConnection.workspaceCacheJson?.teamHub?.roster?.[0]?.fullName,
+    "Fresh Snapshot",
+  );
+  assert.equal(
+    updatedConnection.workspaceCacheJson?.teamHub?.roster?.[0]?.projectedStarterCount,
+    3,
+  );
+  assert.equal(
+    updatedConnection.workspaceCacheJson?.teamHub?.roster?.[0]?.ppg,
+    12.4,
+  );
+});
+
+test("recent-context readers share the repair-aware cached-boxscore helper while bulk readers stay lightweight", () => {
+  assert.match(workspaceSource, /getNormalizedCachedMatchBoxscore/);
+  assert.match(lineupHelperSource, /getOrRepairRecentCachedMatchBoxscore/);
+  assert.match(nextGameRecommendationSource, /getOrRepairRecentCachedMatchBoxscore/);
+  assert.match(opponentForecastSource, /normalizeCachedMatchBoxscoreRecord/);
+  assert.doesNotMatch(workspaceSource, /getOrRepairRecentCachedMatchBoxscore/);
+  assert.doesNotMatch(opponentForecastSource, /getOrRepairRecentCachedMatchBoxscore/);
+});
+
+test("repairOwnerRosterData stays on the roster-only repair path instead of broad workspace sync", () => {
+  const repairSection =
+    workspaceSource.match(
+      /export async function repairOwnerRosterData[\s\S]*?export async function getOrRefreshWorkspace/,
+    )?.[0] ?? "";
+
+  assert.match(repairSection, /client\.getRoster\(/);
+  assert.doesNotMatch(repairSection, /getCurrentWorkspace\(/);
+  assert.doesNotMatch(repairSection, /syncWorkspace\(/);
 });
 
 test("browse-time workspace refresh defaults to app-only persistence while explicit refresh paths sync owned active tracked teams", () => {
@@ -678,6 +885,20 @@ test("live-match workspace refresh falls back to cached data instead of flipping
   assert.match(syncWorkspaceSection, /syncWorkspace\.match_in_progress_fallback/);
   assert.match(syncWorkspaceSection, /status:\s*"CONNECTED"/);
   assert.match(syncWorkspaceSection, /usedCachedWorkspace:\s*true/);
+});
+
+test("workspace cache-hit logs explain which cached workspace bundle was reused", () => {
+  assert.match(syncWorkspaceSection, /syncWorkspace\.cache_hit/);
+  assert.match(syncWorkspaceSection, /buildWorkspaceCacheMeta/);
+  assert.match(workspaceSource, /cacheKind:\s*"workspace_bundle"/);
+  assert.match(workspaceSource, /\bcachedAt\b/);
+  assert.match(workspaceSource, /cacheAgeMs:/);
+  assert.match(workspaceSource, /matchId:/);
+  assert.match(workspaceSource, /opponentTeamName:/);
+  assert.match(
+    workspaceSource,
+    /reason:\s*"force=false and cached workspace exists"/,
+  );
 });
 
 test("scout loaders degrade to cached or partial data when a live match blocks current workspace reads", () => {
@@ -1245,8 +1466,9 @@ test("lineup helper uses owner tracked profiles instead of shared snapshot paylo
       identity: { sub: "user-1" },
     },
     {
-      getBbConnection: async () => createLineupHelperConnection(),
-      getMatchBoxscore: async () => null,
+      ...createLineupHelperDependencies({
+        getBbConnection: async () => createLineupHelperConnection(),
+      }),
       getOwnerTrackedPlayerProfile: async () =>
         createOwnerTrackedPlayerProfile({
           gameShape: 8,
@@ -1302,6 +1524,48 @@ test("lineup helper uses owner tracked profiles instead of shared snapshot paylo
   assert.deepStrictEqual(workspace.snapshotWarnings, []);
 });
 
+test("lineup helper keeps players usable when owner skills exist but snapshot history is missing", async () => {
+  const workspace = await getLineupHelperWorkspace(
+    {
+      env: {} as any,
+      identity: { sub: "user-1" },
+    },
+    {
+      ...createLineupHelperDependencies({
+        getBbConnection: async () => createLineupHelperConnection(),
+      }),
+      getOwnerTrackedPlayerProfile: async () =>
+        createOwnerTrackedPlayerProfile({
+          gameShape: 8,
+          potential: 10,
+          jumpShot: 7,
+          range: 6,
+          outsideDef: 5,
+          handling: 8,
+          driving: 7,
+          passing: 9,
+          insideShot: 4,
+          insideDef: 3,
+          rebound: 4,
+          block: 2,
+          stamina: 8,
+          freeThrow: 7,
+          experience: 6,
+        }),
+      listWorkspacePlayerHistory: async () => [],
+    },
+  );
+
+  const rosterPlayer = workspace.roster[0] as Record<string, unknown>;
+  const rosterSkills = rosterPlayer.skills as Record<string, unknown>;
+  assert.equal(rosterPlayer.available, true);
+  assert.equal(rosterPlayer.snapshotWeekKey, null);
+  assert.equal(rosterPlayer.snapshotCapturedAt, null);
+  assert.equal(rosterSkills.js, 7);
+  assert.equal(rosterSkills.pa, 9);
+  assert.deepStrictEqual(workspace.snapshotWarnings, []);
+});
+
 test("lineup helper ignores shared snapshot payload bait when no owner profile exists", async () => {
   const workspace = await getLineupHelperWorkspace(
     {
@@ -1309,8 +1573,9 @@ test("lineup helper ignores shared snapshot payload bait when no owner profile e
       identity: { sub: "user-1" },
     },
     {
-      getBbConnection: async () => createLineupHelperConnection(),
-      getMatchBoxscore: async () => null,
+      ...createLineupHelperDependencies({
+        getBbConnection: async () => createLineupHelperConnection(),
+      }),
       getOwnerTrackedPlayerProfile: async () => null,
       listWorkspacePlayerHistory: async () => [
         {
@@ -1345,6 +1610,123 @@ test("lineup helper ignores shared snapshot payload bait when no owner profile e
       warning: "No canonical skill snapshot is available for this player.",
     },
   ]);
+});
+
+test("lineup helper repairs an unreadable cached boxscore before falling through to later matches", async () => {
+  const requestedMatchIds: string[] = [];
+  const repairedMatchIds: string[] = [];
+  const persistedMatchIds: string[] = [];
+  const connection = createLineupHelperConnection();
+  connection.workspaceCacheJson.home.recentMatches = [
+    { matchId: "m-unreadable" },
+    { matchId: "m-usable" },
+  ];
+
+  const workspace = await getLineupHelperWorkspace(
+    {
+      env: {} as any,
+      identity: { sub: "user-1" },
+    },
+    {
+      ...createLineupHelperDependencies({
+        createBbClient: () => ({
+          getBoxScore: async (matchId: string) => {
+            repairedMatchIds.push(matchId);
+            return {
+              matchId,
+              homeTeam: {
+                id: "team-1",
+                teamName: "Our Team",
+                offStrategy: "Motion",
+                defStrategy: "23Zone",
+                players: [],
+              },
+              awayTeam: {
+                id: "opp-1",
+                teamName: "Opp Team",
+                offStrategy: "Base",
+                defStrategy: "ManToMan",
+                players: [],
+              },
+            } as any;
+          },
+        }),
+        getBbConnection: async () => connection,
+        readMatchBoxscoreCacheRecord: async (_env, _userId, matchId) => {
+          requestedMatchIds.push(matchId);
+          if (matchId === "m-unreadable") {
+            return {
+              status: "unreadable",
+              errorMessage: "legacy row",
+            };
+          }
+
+          return {
+            status: "hit",
+            record: {
+              matchId,
+              boxscoreJson: {
+                matchId,
+                homeTeam: {
+                  id: "team-1",
+                  teamName: "Our Team",
+                  offStrategy: "Base",
+                  defStrategy: "ManToMan",
+                  players: [],
+                },
+                awayTeam: {
+                  id: "opp-1",
+                  teamName: "Opp Team",
+                  offStrategy: "Push",
+                  defStrategy: "32Zone",
+                  players: [],
+                },
+              },
+            } as any,
+          };
+        },
+        upsertMatchBoxscore: async (_env, record) => {
+          persistedMatchIds.push(String(record.matchId));
+        },
+      }),
+      getOwnerTrackedPlayerProfile: async () =>
+        createOwnerTrackedPlayerProfile({
+          gameShape: 8,
+          potential: 10,
+          jumpShot: 7,
+          range: 6,
+          outsideDef: 5,
+          handling: 8,
+          driving: 7,
+          passing: 9,
+          insideShot: 4,
+          insideDef: 3,
+          rebound: 4,
+          block: 2,
+          stamina: 8,
+          freeThrow: 7,
+          experience: 6,
+        }),
+      listWorkspacePlayerHistory: async () => [
+        {
+          weekKey: "2026-W11",
+          capturedAt: "2026-03-15T00:00:00.000Z",
+          salary: 50000,
+          bestPosition: "PG",
+          gameShape: "respectable",
+          dmi: 1500,
+          injuryWeeks: 0,
+        } as any,
+      ],
+    },
+  );
+
+  assert.deepStrictEqual(requestedMatchIds, ["m-unreadable"]);
+  assert.deepStrictEqual(repairedMatchIds, ["m-unreadable"]);
+  assert.deepStrictEqual(persistedMatchIds, ["m-unreadable"]);
+  assert.equal(workspace.defaultContext.offense, "Motion");
+  assert.equal(workspace.defaultContext.defense, "2-3 Zone");
+  assert.equal(workspace.defaultContext.homeCourt, "Home Court");
 });
 
 test("lineup helper evaluation payload rejects invalid minutes", () => {
@@ -1782,6 +2164,7 @@ function createLineupHelperConnection() {
   return {
     userId: "user-1",
     teamId: "team-1",
+    bbLoginName: "coach-alpha",
     lastSyncAt: "2026-03-15T00:00:00.000Z",
     workspaceCacheJson: {
       version: WORKSPACE_CACHE_VERSION,
@@ -1805,8 +2188,52 @@ function createLineupHelperConnection() {
       playerLab: {
         players: [],
       },
+      arena: createEmptyArenaWorkspace(),
     },
   } as any;
+}
+
+function createEmptyArenaWorkspace() {
+  return {
+    syncedAt: null,
+    nextHomeMatch: null,
+    arena: {
+      name: null,
+      seats: [],
+      expansion: null,
+    },
+    economy: {
+      cash: null,
+      availableBalance: null,
+      transactions: [],
+    },
+    recentHomeGames: [],
+    recommendation: null,
+    diagnostics: {
+      comparableGameCount: 0,
+      matchedSnapshotCount: 0,
+      lowConfidenceReasons: [],
+    },
+  };
+}
+
+function createLineupHelperDependencies(overrides: Record<string, unknown> = {}) {
+  return {
+    createBbClient: () => ({
+      getBoxScore: async () => {
+        throw new Error("repair should not run in this test");
+      },
+    }),
+    getBbConnection: async () => createLineupHelperConnection(),
+    getOwnerTrackedPlayerProfile: async () => null,
+    listWorkspacePlayerHistory: async () => [],
+    readMatchBoxscoreCacheRecord: async () => ({
+      status: "missing" as const,
+    }),
+    resolveBbAccessKey: async () => "secret",
+    upsertMatchBoxscore: async () => undefined,
+    ...overrides,
+  };
 }
 
 function createOwnerTrackedPlayerProfile(

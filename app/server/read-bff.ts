@@ -1,5 +1,8 @@
 import { decodeAwsJsonFields } from "@/amplify/data/_backend/awsjson";
-import { readWorkspaceCachePayload } from "@/amplify/data/_backend/workspace-cache";
+import {
+  partitionLegacyWorkspaceCacheCoercionErrors,
+  readWorkspaceCachePayload,
+} from "@/amplify/data/_backend/workspace-cache";
 import { getServerDataClient } from "@/app/server/amplify-server";
 import {
   adaptLeagueDateRecap,
@@ -66,6 +69,7 @@ type PredictionJobRecord = {
   forecastScenarioProbability?: number | null;
   forecastSourceTeamId?: string | null;
   homeScore?: number | null;
+  modelKey?: string | null;
   modelVersion?: string | null;
   pointDiff?: number | null;
   requestId: string;
@@ -149,11 +153,20 @@ async function getCurrentBbConnection(
 ): Promise<OperationResult<unknown>> {
   const serverDataClient = await runtime.getServerDataClient();
   const result = await serverDataClient.models.BbConnection.get({ userId });
+  const { legacyErrors, otherErrors } =
+    partitionLegacyWorkspaceCacheCoercionErrors(result.errors);
+  const canSuppressLegacyWorkspaceCacheErrors =
+    Boolean(result.data) && legacyErrors.length > 0;
+
   return {
     data: result.data
       ? normalizeCurrentBbConnectionRecord(result.data as Record<string, unknown>)
       : null,
-    errors: result.errors,
+    errors: canSuppressLegacyWorkspaceCacheErrors
+      ? otherErrors.length
+        ? otherErrors
+        : null
+      : result.errors,
   };
 }
 
@@ -432,6 +445,7 @@ function assembleCurrentPredictionPreview(
     executionArn: job.executionArn ?? null,
     forecastContext: buildCurrentPredictionForecastContext(job),
     homeScore: job.homeScore ?? null,
+    modelKey: job.modelKey ?? null,
     modelVersion: job.modelVersion ?? null,
     pointDiff: job.pointDiff ?? null,
     requestId: job.requestId,

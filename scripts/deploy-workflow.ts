@@ -116,7 +116,10 @@ type ParsedWorkflowArgs = {
 
 type PredictorCommandOptions = {
   artifactPrefix: string | null;
+  bundleDir: string | null;
+  defaultModelKey: string | null;
   identifier: string | null;
+  modelKeys: string[];
   releaseId: string | null;
   usePin: boolean;
 };
@@ -266,7 +269,7 @@ export function collectSandboxDoctorReport(
   );
   if (pinInspection.status === "ready") {
     checks.push({
-      detail: `Pinned sandbox predictor release '${pinInspection.pin.releaseId}' is ready at ${pinInspection.pin.artifactPrefix}.`,
+      detail: `Pinned sandbox predictor release '${pinInspection.pin.releaseId}' is ready at ${describePredictorPinSource(pinInspection.pin)}.`,
       label: "Predictor pin",
       status: "pass",
     });
@@ -334,7 +337,7 @@ export function collectDevDoctorReport(
   );
   if (pinInspection.status === "ready") {
     checks.push({
-      detail: `Pinned dev predictor release '${pinInspection.pin.releaseId}' is ready at ${pinInspection.pin.artifactPrefix}.`,
+      detail: `Pinned dev predictor release '${pinInspection.pin.releaseId}' is ready at ${describePredictorPinSource(pinInspection.pin)}.`,
       label: "Predictor pin",
       status: "pass",
     });
@@ -703,7 +706,15 @@ function runSandboxUp(
     runPredictorRelease({
       args: buildPredictorReleaseArgs(
         "sandbox",
-        { artifactPrefix: null, identifier: null, releaseId: null, usePin: true },
+        {
+          artifactPrefix: null,
+          bundleDir: null,
+          defaultModelKey: null,
+          identifier: null,
+          modelKeys: [],
+          releaseId: null,
+          usePin: true,
+        },
         sandboxIdentifier,
       ),
       runtime,
@@ -1223,8 +1234,13 @@ function resolveWrittenPin(
     );
     return createPredictorTargetPin(
       existing.releaseId,
-      existing.artifactPrefix,
+      existing.artifactPrefix ?? null,
       runtime,
+      {
+        bundleDir: existing.bundleDir ?? null,
+        defaultModelKey: existing.defaultModelKey ?? null,
+        modelKeys: existing.modelKeys ?? [],
+      },
     );
   }
 
@@ -1232,6 +1248,11 @@ function resolveWrittenPin(
     normalizeOptionalString(options.releaseId) ?? "",
     normalizeOptionalString(options.artifactPrefix) ?? "",
     runtime,
+    {
+      bundleDir: normalizeOptionalString(options.bundleDir),
+      defaultModelKey: normalizeOptionalString(options.defaultModelKey),
+      modelKeys: options.modelKeys,
+    },
   );
 }
 
@@ -1278,14 +1299,24 @@ function buildPredictorReleaseArgs(
 
   const releaseId = normalizeOptionalString(options.releaseId);
   const artifactPrefix = normalizeOptionalString(options.artifactPrefix);
+  const bundleDir = normalizeOptionalString(options.bundleDir);
+  if (releaseId && artifactPrefix && bundleDir) {
+    throw new Error(
+      "Provide either --artifact-prefix or --bundle-dir together with --release-id, not both.",
+    );
+  }
+  if (releaseId && bundleDir) {
+    args.push("--release-id", releaseId, "--bundle-dir", bundleDir);
+    return args;
+  }
   if (releaseId && artifactPrefix) {
     args.push("--release-id", releaseId, "--artifact-prefix", artifactPrefix);
     return args;
   }
 
-  if (releaseId || artifactPrefix) {
+  if (releaseId || artifactPrefix || bundleDir) {
     throw new Error(
-      "Provide both --release-id and --artifact-prefix together, or use --use-pin.",
+      "Provide both --release-id and exactly one of --artifact-prefix or --bundle-dir together, or use --use-pin.",
     );
   }
 
@@ -1295,7 +1326,7 @@ function buildPredictorReleaseArgs(
         ? buildSandboxPredictorNpmCommand(sandboxIdentifier, false)
         : buildDevPredictorNpmCommand(false);
     throw new Error(
-      `Predictor deployment requires --release-id and --artifact-prefix, or --use-pin. From ${projectRoot} run: ${command}`,
+      `Predictor deployment requires --release-id and one of --artifact-prefix or --bundle-dir, or --use-pin. From ${projectRoot} run: ${command}`,
     );
   }
 
@@ -1351,7 +1382,10 @@ function parsePredictorCommandOptions(
   allowIdentifier: boolean,
 ): PredictorCommandOptions {
   let artifactPrefix: string | null = null;
+  let bundleDir: string | null = null;
+  let defaultModelKey: string | null = null;
   let identifier: string | null = null;
+  const modelKeys: string[] = [];
   let releaseId: string | null = null;
   let usePin = false;
 
@@ -1379,6 +1413,33 @@ function parsePredictorCommandOptions(
       artifactPrefix = argument.slice("--artifact-prefix=".length);
       continue;
     }
+    if (argument === "--bundle-dir") {
+      bundleDir = argv[index + 1] ?? null;
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--bundle-dir=")) {
+      bundleDir = argument.slice("--bundle-dir=".length);
+      continue;
+    }
+    if (argument === "--default-model-key") {
+      defaultModelKey = argv[index + 1] ?? null;
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--default-model-key=")) {
+      defaultModelKey = argument.slice("--default-model-key=".length);
+      continue;
+    }
+    if (argument === "--model-key") {
+      modelKeys.push(argv[index + 1] ?? "");
+      index += 1;
+      continue;
+    }
+    if (argument?.startsWith("--model-key=")) {
+      modelKeys.push(argument.slice("--model-key=".length));
+      continue;
+    }
     if (allowIdentifier && argument === "--identifier") {
       identifier = argv[index + 1] ?? null;
       index += 1;
@@ -1394,7 +1455,10 @@ function parsePredictorCommandOptions(
 
   return {
     artifactPrefix,
+    bundleDir,
+    defaultModelKey,
     identifier,
+    modelKeys,
     releaseId,
     usePin,
   };
@@ -1505,8 +1569,8 @@ function buildSandboxPredictorNpmCommand(
     commandParts.push(
       "--release-id",
       "<release-id>",
-      "--artifact-prefix",
-      "<absolute-artifact-stem>",
+      "--bundle-dir",
+      "<absolute-bundle-dir>",
     );
   }
 
@@ -1516,7 +1580,14 @@ function buildSandboxPredictorNpmCommand(
 function buildDevPredictorNpmCommand(usePin: boolean): string {
   return usePin
     ? "npm run dev:predictor -- --use-pin"
-    : "npm run dev:predictor -- --release-id <release-id> --artifact-prefix <absolute-artifact-stem>";
+    : "npm run dev:predictor -- --release-id <release-id> --bundle-dir <absolute-bundle-dir>";
+}
+
+function describePredictorPinSource(pin: {
+  artifactPrefix?: string;
+  bundleDir?: string;
+}): string {
+  return pin.bundleDir ?? pin.artifactPrefix ?? "<unknown>";
 }
 
 function buildSandboxOpponentForecastNpmCommand(

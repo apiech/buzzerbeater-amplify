@@ -17,7 +17,9 @@ import {
 import type { DefensiveSwitch } from "@/lib/coach-parrot/types";
 import { POSITION_SEQUENCE } from "@/lib/coach-parrot/types";
 
-export const LINEUP_POSITIONS: PositionCode[] = [...POSITION_SEQUENCE] as PositionCode[];
+export const LINEUP_POSITIONS: PositionCode[] = [
+  ...POSITION_SEQUENCE,
+] as PositionCode[];
 export const LINEUP_POSITION_LABELS: Record<PositionCode, string> = {
   PG: "Point guard",
   SG: "Shooting guard",
@@ -107,10 +109,7 @@ export const LINEUP_SPLIT_PATTERNS: Array<{
 const DEFAULT_PATTERN_KEY: LineupSplitPatternKey = "42-6";
 const PATTERN_BY_KEY = Object.fromEntries(
   LINEUP_SPLIT_PATTERNS.map((pattern) => [pattern.key, pattern]),
-) as Record<
-  LineupSplitPatternKey,
-  (typeof LINEUP_SPLIT_PATTERNS)[number]
->;
+) as Record<LineupSplitPatternKey, (typeof LINEUP_SPLIT_PATTERNS)[number]>;
 const MINUTES_TO_PATTERN_KEY = new Map(
   LINEUP_SPLIT_PATTERNS.map((pattern) => [
     LINEUP_ROLE_SEQUENCE.flatMap((role) =>
@@ -250,7 +249,8 @@ export function validateLineupLayout(
     assignments,
     playerTotals: report.playerTotals,
     positionTotals: report.positionTotals as Record<PositionCode, number>,
-    roleAssignments: report.roleAssignments as LineupValidation["roleAssignments"],
+    roleAssignments:
+      report.roleAssignments as LineupValidation["roleAssignments"],
     rolesByPlayerPosition:
       report.rolesByPlayerPosition as LineupValidation["rolesByPlayerPosition"],
     rotationFeasible: report.rotationFeasible,
@@ -258,6 +258,38 @@ export function validateLineupLayout(
     teamTotal: report.teamTotal,
     errors,
   };
+}
+
+export function removeUnavailablePlayersFromLineupLayout(
+  layout: LineupSlotLayout,
+  players: readonly Pick<LineupHelperRosterPlayer, "available" | "playerId">[],
+): LineupSlotLayout {
+  const availablePlayerIds = new Set(
+    players
+      .filter((player) => player.available)
+      .map((player) => player.playerId),
+  );
+
+  return Object.fromEntries(
+    LINEUP_POSITIONS.map((position) => {
+      const current = layout[position];
+      return [
+        position,
+        {
+          ...current,
+          starterPlayerId: availablePlayerIds.has(current.starterPlayerId)
+            ? current.starterPlayerId
+            : "",
+          backupPlayerId: availablePlayerIds.has(current.backupPlayerId)
+            ? current.backupPlayerId
+            : "",
+          reservePlayerId: availablePlayerIds.has(current.reservePlayerId)
+            ? current.reservePlayerId
+            : "",
+        },
+      ];
+    }),
+  ) as LineupSlotLayout;
 }
 
 export function lineupRuleSummary(): string {

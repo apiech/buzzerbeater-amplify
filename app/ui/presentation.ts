@@ -45,9 +45,13 @@ export function isActiveStatus(status: string | null | undefined): boolean {
   return (
     ["pending", "queued", "running", "syncing"].includes(normalized) ||
     normalized.startsWith("building_") ||
+    normalized.startsWith("evaluating_") ||
     normalized.startsWith("enqueuing_") ||
     normalized.startsWith("invoking_") ||
+    normalized.startsWith("optimizing_") ||
+    normalized.startsWith("preparing_") ||
     normalized.startsWith("resolving_") ||
+    normalized.startsWith("scoring_") ||
     normalized.startsWith("waiting_")
   );
 }
@@ -131,6 +135,69 @@ export function formatHighlightsStatus(
   }
 
   return "Highlights unavailable";
+}
+
+export function formatOpponentForecastStatus(
+  status: string | null | undefined,
+): string {
+  const normalized = normalizeStatusValue(status);
+  if (!normalized) {
+    return "Opponent outlook unavailable";
+  }
+
+  if (isSuccessfulStatus(status)) {
+    return "Opponent outlook ready";
+  }
+
+  if (isFailedStatus(status)) {
+    return "Opponent outlook failed";
+  }
+
+  switch (normalized) {
+    case "invoking_model":
+      return "Building opponent outlook";
+    case "resolving_context":
+      return "Resolving opponent context";
+    case "queued":
+      return "Queueing opponent outlook";
+    default:
+      return "Preparing opponent outlook";
+  }
+}
+
+export function formatNextGameRecommendationStatus(
+  status: string | null | undefined,
+): string {
+  const normalized = normalizeStatusValue(status);
+  if (!normalized) {
+    return "Recommendation unavailable";
+  }
+
+  if (isSuccessfulStatus(status)) {
+    return "Recommendation ready";
+  }
+
+  if (isFailedStatus(status)) {
+    return "Recommendation failed";
+  }
+
+  switch (normalized) {
+    case "queued":
+      return "Queueing recommendation";
+    case "preparing_inputs":
+      return "Preparing recommendation";
+    case "resolving_context":
+      return "Resolving game context";
+    case "optimizing_lineups":
+      return "Optimizing usable lineups";
+    case "evaluating_candidates":
+    case "scoring_matchups":
+      return "Scoring matchup combinations";
+    case "building_planner":
+      return "Building final planner";
+    default:
+      return "Recommendation running";
+  }
 }
 
 export function formatSyncKind(kind: string | null | undefined): string {

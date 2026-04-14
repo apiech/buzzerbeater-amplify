@@ -23,6 +23,7 @@ test("analytics wiring covers providers, auth, store, and key outcome flows", ()
   const highlightsSource = readRepoFile("app", "highlights-panel.tsx");
   const operationsSource = readRepoFile("app", "operations-panel.tsx");
   const predictionSource = readRepoFile("app", "prediction-panel.tsx");
+  const gamePredictionSource = readRepoFile("app", "game-prediction-panel.tsx");
   const recapSource = readRepoFile("app", "recap-panel.tsx");
   const themeSource = readRepoFile("app", "ui", "theme", "theme-select.tsx");
   const workspaceNavSource = readRepoFile(
@@ -55,6 +56,9 @@ test("analytics wiring covers providers, auth, store, and key outcome flows", ()
   assert.match(predictionSource, /prediction_requested/);
   assert.match(predictionSource, /prediction_completed/);
   assert.match(predictionSource, /prediction_source_loaded/);
+  assert.match(gamePredictionSource, /game_prediction_matrix_requested/);
+  assert.match(gamePredictionSource, /game_prediction_overview_cell_selected/);
+  assert.match(gamePredictionSource, /game_prediction_pair_selected/);
   assert.match(recapSource, /recap_requested/);
   assert.match(recapSource, /recap_forum_post_copied/);
   assert.match(themeSource, /theme_changed/);

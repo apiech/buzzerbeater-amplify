@@ -7,6 +7,7 @@ import {
   createOpponentForecastJob,
   createSyncRun,
   getBbConnection,
+  getMatchBoxscore,
   upsertNextGamePlannerArtifact,
   upsertNextGamePlannerArtifactRows,
   getRivalsBackfill,
@@ -20,6 +21,7 @@ import {
   upsertRivalsBackfill,
   upsertPredictionGridCells,
   upsertPredictionJob,
+  upsertMatchBoxscore,
   upsertUserPreference,
   upsertTrackedPlayer,
   updatePredictionJobIfRequestMatches,
@@ -161,9 +163,19 @@ test("createNextGameRecommendationJob serializes AWSJSON payloads before model.c
                   switchC: "C",
                   status: "QUEUED",
                   requestJson: {
+                    excludedPlayerIds: [],
                     input: {
+                      excludedPlayerIds: [],
                       enthusiasm: 8,
                     },
+                  },
+                  progressJson: {
+                    phaseKey: "QUEUED",
+                    phaseIndex: 0,
+                    phaseCount: 4,
+                    summary: "Queued",
+                    updatedAt: "2026-04-14T17:51:33.000Z",
+                    completedPhases: [],
                   },
                 },
               };
@@ -189,9 +201,19 @@ test("createNextGameRecommendationJob serializes AWSJSON payloads before model.c
     startedAt: null,
     completedAt: null,
     requestJson: {
+      excludedPlayerIds: [],
       input: {
+        excludedPlayerIds: [],
         enthusiasm: 8,
       },
+    },
+    progressJson: {
+      phaseKey: "QUEUED",
+      phaseIndex: 0,
+      phaseCount: 4,
+      summary: "Queued",
+      updatedAt: "2026-04-14T17:51:33.000Z",
+      completedPhases: [],
     },
     resultJson: {
       biggestWinPlan: {
@@ -218,9 +240,19 @@ test("createNextGameRecommendationJob serializes AWSJSON payloads before model.c
     startedAt: null,
     completedAt: null,
     requestJson: {
+      excludedPlayerIds: [],
       input: {
+        excludedPlayerIds: [],
         enthusiasm: 8,
       },
+    },
+    progressJson: {
+      phaseKey: "QUEUED",
+      phaseIndex: 0,
+      phaseCount: 4,
+      summary: "Queued",
+      updatedAt: "2026-04-14T17:51:33.000Z",
+      completedPhases: [],
     },
     resultJson: {
       biggestWinPlan: {
@@ -234,9 +266,19 @@ test("createNextGameRecommendationJob serializes AWSJSON payloads before model.c
     expiresAt: createInput?.["expiresAt"],
   });
   assert.deepStrictEqual(record.requestJson, {
+    excludedPlayerIds: [],
     input: {
+      excludedPlayerIds: [],
       enthusiasm: 8,
     },
+  });
+  assert.deepStrictEqual(record.progressJson, {
+    phaseKey: "QUEUED",
+    phaseIndex: 0,
+    phaseCount: 4,
+    summary: "Queued",
+    updatedAt: "2026-04-14T17:51:33.000Z",
+    completedPhases: [],
   });
 });
 
@@ -282,8 +324,12 @@ test("planner artifact upserts serialize planner AWSJSON payloads", async (t) =>
     opponentTeamId: "opp-1",
     generatedAt: "2026-04-12T00:00:00.000Z",
     evaluatedScenariosJson: [{ scenarioId: "s1", label: "Base" }],
-    ourPairsJson: [{ pairId: "p1", offense: "Base Offense", defense: "Man to man" }],
-    opponentPairsJson: [{ pairId: "p2", offense: "Motion", defense: "2-3 Zone" }],
+    ourPairsJson: [
+      { pairId: "p1", offense: "Base Offense", defense: "Man to man" },
+    ],
+    opponentPairsJson: [
+      { pairId: "p2", offense: "Motion", defense: "2-3 Zone" },
+    ],
     expiryKey: "EXPIRABLE",
     expiresAt: "2026-04-26T00:00:00.000Z",
   });
@@ -314,8 +360,12 @@ test("planner artifact upserts serialize planner AWSJSON payloads", async (t) =>
     opponentTeamId: "opp-1",
     generatedAt: "2026-04-12T00:00:00.000Z",
     evaluatedScenariosJson: [{ scenarioId: "s1", label: "Base" }],
-    ourPairsJson: [{ pairId: "p1", offense: "Base Offense", defense: "Man to man" }],
-    opponentPairsJson: [{ pairId: "p2", offense: "Motion", defense: "2-3 Zone" }],
+    ourPairsJson: [
+      { pairId: "p1", offense: "Base Offense", defense: "Man to man" },
+    ],
+    opponentPairsJson: [
+      { pairId: "p2", offense: "Motion", defense: "2-3 Zone" },
+    ],
     expiryKey: "EXPIRABLE",
     expiresAt: "2026-04-26T00:00:00.000Z",
   });
@@ -663,6 +713,140 @@ test("upsertBbConnection updates the existing record without adding refresh meta
   });
 });
 
+test("prepareModelInput strips unsupported named-reference attributes from BbConnection payloads", () => {
+  const payload = repositoryTesting.prepareModelInput("BbConnection", {
+    userId: "u1",
+    bbLoginName: "coach",
+    profileJson: {
+      teamId: "29656",
+      teamName: "Visionaries",
+      isBot: false,
+      league: {
+        id: "1000",
+        name: "NBBA",
+        attributes: {
+          level: "D.II",
+        },
+      },
+      country: {
+        id: "1",
+        name: "USA",
+        attributes: {
+          continent: "North America",
+        },
+      },
+      rival: null,
+    },
+    status: "CONNECTED",
+    workspaceCacheJson: {
+      home: {
+        connection: {
+          bbLoginName: "coach",
+          status: "CONNECTED",
+        },
+        league: {
+          league: {
+            id: "1000",
+            name: "NBBA",
+            attributes: {
+              level: "D.II",
+            },
+          },
+          standings: [],
+        },
+        recentMatches: [],
+        team: {
+          injuries: [],
+          topPlayers: [],
+        },
+      },
+    },
+  });
+
+  assert.deepStrictEqual(payload, {
+    userId: "u1",
+    bbLoginName: "coach",
+    profileJson: {
+      teamId: "29656",
+      teamName: "Visionaries",
+      isBot: false,
+      league: {
+        id: "1000",
+        name: "NBBA",
+      },
+      country: {
+        id: "1",
+        name: "USA",
+      },
+      rival: null,
+    },
+    status: "CONNECTED",
+    workspaceCacheJson: {
+      home: {
+        connection: {
+          bbLoginName: "coach",
+          status: "CONNECTED",
+        },
+        league: {
+          league: {
+            id: "1000",
+            name: "NBBA",
+          },
+          standings: [],
+        },
+        recentMatches: [],
+        team: {
+          injuries: [],
+          topPlayers: [],
+        },
+      },
+    },
+  });
+});
+
+test("prepareModelInput strips unsupported named-reference attributes from tracked-team summaries", () => {
+  const payload = repositoryTesting.prepareModelInput("TrackedTeam", {
+    name: "Visionaries",
+    summaryJson: {
+      country: null,
+      isBot: false,
+      league: {
+        id: "1000",
+        name: "NBBA",
+        attributes: {
+          level: "D.II",
+        },
+      },
+      ownerName: "apiech",
+      rival: null,
+      shortName: "Visionaries",
+      teamId: "29656",
+      teamName: "Visionaries",
+    },
+    teamId: "29656",
+    userId: "u1",
+  });
+
+  assert.deepStrictEqual(payload, {
+    name: "Visionaries",
+    summaryJson: {
+      country: null,
+      isBot: false,
+      league: {
+        id: "1000",
+        name: "NBBA",
+      },
+      ownerName: "apiech",
+      rival: null,
+      shortName: "Visionaries",
+      teamId: "29656",
+      teamName: "Visionaries",
+    },
+    teamId: "29656",
+    userId: "u1",
+  });
+});
+
 test("getBbConnection returns JSON fields as plain objects", async (t) => {
   t.mock.method(
     repositoryTesting.runtime,
@@ -713,6 +897,45 @@ test("getBbConnection returns JSON fields as plain objects", async (t) => {
     scout: {},
     leagueIntel: {},
     playerLab: {},
+  });
+});
+
+test("getBbConnection suppresses legacy workspace cache coercion errors when the record data is otherwise available", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          BbConnection: {
+            get: async () => ({
+              data: {
+                userId: "u1",
+                bbLoginName: "apiech",
+                status: "CONNECTED",
+                teamId: "123",
+                workspaceCacheJson: null,
+              },
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'ArenaWorkspace' within parent 'WorkspaceCachePayload' (/getBbConnection/workspaceCacheJson/arena)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getBbConnection({} as any, "u1");
+
+  assert.deepStrictEqual(record, {
+    userId: "u1",
+    bbLoginName: "apiech",
+    status: "CONNECTED",
+    teamId: "123",
+    workspaceCacheJson: null,
   });
 });
 
@@ -904,6 +1127,7 @@ test("upsertPredictionJob stores typed prediction fields without AWSJSON encodin
     home_outsideScoring: 8,
     home_rebounding: 8,
     homeScore: null,
+    modelKey: "catboost",
     modelVersion: null,
     neutral: "0",
     pointDiff: null,
@@ -918,6 +1142,7 @@ test("upsertPredictionJob stores typed prediction fields without AWSJSON encodin
   assert.equal(createInput.home_outsideScoring, 8);
   assert.equal(createInput.executionArn, null);
   assert.equal(createInput.homeScore, null);
+  assert.equal(createInput.modelKey, "catboost");
   assert.equal(createInput.pointDiff, null);
 });
 
@@ -950,6 +1175,7 @@ test("getPredictionJob returns the typed persisted prediction record", async (t)
                 home_outsideDefense: 8,
                 home_outsideScoring: 8,
                 home_rebounding: 8,
+                modelKey: "xgb",
                 neutral: "0",
                 modelVersion: "bundle-v1",
                 requestId: "request-1",
@@ -972,7 +1198,156 @@ test("getPredictionJob returns the typed persisted prediction record", async (t)
   assert.equal(record.home_outsideScoring, 8);
   assert.equal(record.away_gdp_focus, "N/A");
   assert.equal(record.homeScore, 101.3);
+  assert.equal(record.modelKey, "xgb");
   assert.equal(record.pointDiff, 6.5);
+});
+
+test("getMatchBoxscore treats legacy AppSync boxscore coercion failures as cache misses", async (t) => {
+  const warnings: Array<{
+    details: Record<string, unknown>;
+    message: string;
+  }> = [];
+
+  t.mock.method(console, "warn", (message: string, details: Record<string, unknown>) => {
+    warnings.push({ message, details });
+  });
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          MatchBoxscore: {
+            get: async () => ({
+              data: null,
+              errors: [
+                {
+                  message:
+                    "Can't resolve value (/getMatchBoxscore/boxscoreJson/homeTeam/teamTotals) : type mismatch error, expected type LIST",
+                },
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'Boolean' within parent 'MatchBoxscorePlayerLine' (/getMatchBoxscore/boxscoreJson/homeTeam/players[0]/isStarter)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getMatchBoxscore({} as any, "u1", "m-legacy");
+
+  assert.equal(record, null);
+  assert.equal(warnings.length, 1);
+  const warning = warnings[0];
+  assert.ok(warning);
+  assert.match(
+    warning.message,
+    /Treating unreadable MatchBoxscore cache row as a cache miss/,
+  );
+  assert.equal(warning.details.userId, "u1");
+  assert.equal(warning.details.matchId, "m-legacy");
+  assert.match(
+    String(warning.details.errorMessage),
+    /load match boxscore failed:/,
+  );
+});
+
+test("getMatchBoxscore rethrows unrelated model read failures", async (t) => {
+  const warnings: Array<Record<string, unknown>> = [];
+
+  t.mock.method(console, "warn", (_message: string, details: Record<string, unknown>) => {
+    warnings.push(details);
+  });
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          MatchBoxscore: {
+            get: async () => ({
+              data: null,
+              errors: [
+                {
+                  message: "AccessDenied: user is not authorized to read MatchBoxscore",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  await assert.rejects(
+    () => getMatchBoxscore({} as any, "u1", "m-1"),
+    /load match boxscore failed: AccessDenied/,
+  );
+  assert.deepStrictEqual(warnings, []);
+});
+
+test("upsertMatchBoxscore overwrites unreadable legacy rows instead of failing the refresh path", async (t) => {
+  const warnings: Array<{
+    details: Record<string, unknown>;
+    message: string;
+  }> = [];
+  const updateInputs: Array<Record<string, unknown>> = [];
+
+  t.mock.method(console, "warn", (message: string, details: Record<string, unknown>) => {
+    warnings.push({ message, details });
+  });
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          MatchBoxscore: {
+            get: async () => ({
+              data: null,
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'String' within parent 'StoredMatchBoxscore' (/getMatchBoxscore/boxscoreJson/source)",
+                },
+              ],
+            }),
+            update: async (input: Record<string, unknown>) => {
+              updateInputs.push(input);
+              return { data: input };
+            },
+            create: async () => {
+              throw new Error("MatchBoxscore.create should not be called");
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertMatchBoxscore({} as any, {
+    userId: "u1",
+    matchId: "m-legacy",
+    fetchedAt: "2026-04-14T00:00:00.000Z",
+    boxscoreJson: {
+      matchId: "m-legacy",
+      source: "WORKSPACE_CACHE",
+      homeTeam: null,
+      awayTeam: null,
+      context: null,
+    } as any,
+  });
+
+  assert.equal(updateInputs.length, 1);
+  const updateInput = updateInputs[0];
+  assert.ok(updateInput);
+  assert.equal(updateInput.userId, "u1");
+  assert.equal(updateInput.matchId, "m-legacy");
+  assert.equal(warnings.length, 1);
+  assert.match(
+    warnings[0]?.message ?? "",
+    /Overwriting unreadable MatchBoxscore cache row during upsert/,
+  );
 });
 
 test("prediction grid cells are stored and read as typed rows", async (t) => {

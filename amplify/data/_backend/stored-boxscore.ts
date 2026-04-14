@@ -7,6 +7,7 @@ type MatchBoxscoreDetails = NonNullable<
 type StoredMatchBoxscore = NonNullable<
   Schema["MatchBoxscore"]["type"]["boxscoreJson"]
 >;
+type StoredAttendance = NonNullable<StoredMatchBoxscore["attendance"]>;
 type StoredMatchBoxscoreTeam = NonNullable<StoredMatchBoxscore["homeTeam"]>;
 type StoredMatchBoxscorePlayer = StoredMatchBoxscoreTeam["players"][number];
 type StoredMetricEntry = { key: string; numberValue: number };
@@ -15,30 +16,12 @@ export function toStoredMatchBoxscore(input: {
   boxscore: BBApiBoxScore;
   source?: string | null;
 }): StoredMatchBoxscore | null {
-  const matchId = asOptionalString(input.boxscore.matchId);
-  if (!matchId) {
+  const record = asRecord(input.boxscore);
+  if (!record) {
     return null;
   }
 
-  return {
-    matchId,
-    matchType: asOptionalString(input.boxscore.type),
-    startTime: asOptionalString(input.boxscore.startTime),
-    endTime: asOptionalString(input.boxscore.endTime),
-    homeTeam: serializeTeam(asRecord(input.boxscore.homeTeam)),
-    awayTeam: serializeTeam(asRecord(input.boxscore.awayTeam)),
-    context: {
-      homeTeamName: asOptionalString(
-        asRecord(input.boxscore.homeTeam)?.teamName,
-      ),
-      awayTeamName: asOptionalString(
-        asRecord(input.boxscore.awayTeam)?.teamName,
-      ),
-      effortDelta: asOptionalInteger(input.boxscore.effortDelta),
-      neutral: asOptionalBoolean(input.boxscore.neutral),
-    },
-    source: normalizeSourceLabel(input.source),
-  };
+  return normalizeStoredMatchBoxscoreRecord(record, input.source);
 }
 
 export function inflateStoredMatchBoxscore(value: unknown): BBApiBoxScore | null {
@@ -52,15 +35,24 @@ export function inflateStoredMatchBoxscore(value: unknown): BBApiBoxScore | null
     return record as BBApiBoxScore;
   }
 
+  const normalized = normalizeStoredMatchBoxscoreRecord(
+    record,
+    asOptionalString(record.source),
+  );
+  if (!normalized) {
+    return null;
+  }
+
   return {
-    matchId: record.matchId,
-    type: record.matchType ?? undefined,
-    startTime: record.startTime ?? undefined,
-    endTime: record.endTime ?? undefined,
-    effortDelta: record.context?.effortDelta ?? undefined,
-    neutral: record.context?.neutral ?? undefined,
-    homeTeam: inflateStoredTeam(record.homeTeam ?? null),
-    awayTeam: inflateStoredTeam(record.awayTeam ?? null),
+    matchId: normalized.matchId,
+    type: normalized.matchType ?? undefined,
+    startTime: normalized.startTime ?? undefined,
+    endTime: normalized.endTime ?? undefined,
+    attendance: normalized.attendance ?? undefined,
+    effortDelta: normalized.context?.effortDelta ?? undefined,
+    neutral: normalized.context?.neutral ?? undefined,
+    homeTeam: inflateStoredTeam(normalized.homeTeam ?? null),
+    awayTeam: inflateStoredTeam(normalized.awayTeam ?? null),
   } as BBApiBoxScore;
 }
 
@@ -74,17 +66,49 @@ export function readStoredMatchBoxscoreDetails(
     return null;
   }
 
-  if (isStoredMatchBoxscore(record)) {
-    return record;
-  }
-
-  return toStoredMatchBoxscore({
-    boxscore: record as BBApiBoxScore,
-    source: sourceFallback,
-  });
+  return normalizeStoredMatchBoxscoreRecord(record, sourceFallback);
 }
 
-function serializeTeam(value: Record<string, unknown> | null): StoredMatchBoxscoreTeam | null {
+function normalizeStoredMatchBoxscoreRecord(
+  value: Record<string, unknown>,
+  sourceFallback: string | null | undefined,
+): StoredMatchBoxscore | null {
+  const matchId = asOptionalString(value.matchId);
+  if (!matchId) {
+    return null;
+  }
+
+  const homeTeam = asRecord(value.homeTeam);
+  const awayTeam = asRecord(value.awayTeam);
+  const context = asRecord(value.context);
+
+  return {
+    matchId,
+    matchType: asOptionalString(value.matchType ?? value.type),
+    startTime: asOptionalString(value.startTime),
+    endTime: asOptionalString(value.endTime),
+    attendance: normalizeAttendance(value.attendance),
+    homeTeam: normalizeStoredTeam(homeTeam),
+    awayTeam: normalizeStoredTeam(awayTeam),
+    context: {
+      homeTeamName:
+        asOptionalString(context?.homeTeamName) ??
+        asOptionalString(homeTeam?.teamName),
+      awayTeamName:
+        asOptionalString(context?.awayTeamName) ??
+        asOptionalString(awayTeam?.teamName),
+      effortDelta: asOptionalInteger(context?.effortDelta ?? value.effortDelta),
+      neutral: asOptionalBoolean(context?.neutral ?? value.neutral),
+    },
+    source: normalizeSourceLabel(
+      asOptionalString(value.source) ?? sourceFallback,
+    ),
+  };
+}
+
+function normalizeStoredTeam(
+  value: Record<string, unknown> | null,
+): StoredMatchBoxscoreTeam | null {
   if (!value) {
     return null;
   }
@@ -97,14 +121,14 @@ function serializeTeam(value: Record<string, unknown> | null): StoredMatchBoxsco
     defStrategy: asOptionalString(value.defStrategy),
     score: asOptionalInteger(value.score),
     partialScores: toIntegerArray(value.partialScores),
-    teamTotals: toMetricEntries(asRecord(value.teamTotals)),
+    teamTotals: normalizeMetricEntries(value.teamTotals),
     ratings: toRatings(value.ratings),
-    efficiency: toMetricEntries(asRecord(value.efficiency)),
-    players: toPlayerLines(value.players),
+    efficiency: normalizeMetricEntries(value.efficiency),
+    players: normalizePlayerLines(value.players),
   };
 }
 
-function toPlayerLines(value: unknown): StoredMatchBoxscorePlayer[] {
+function normalizePlayerLines(value: unknown): StoredMatchBoxscorePlayer[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -113,7 +137,7 @@ function toPlayerLines(value: unknown): StoredMatchBoxscorePlayer[] {
     .map((entry) => asRecord(entry))
     .filter((entry): entry is Record<string, unknown> => Boolean(entry))
     .map((player) => {
-      const minutesByPosition = toMetricEntries(asRecord(player.minutesByPosition));
+      const minutesByPosition = normalizeMetricEntries(player.minutesByPosition);
       return {
         playerId: asOptionalString(player.id ?? player.playerId),
         firstName: asOptionalString(player.firstName),
@@ -123,8 +147,8 @@ function toPlayerLines(value: unknown): StoredMatchBoxscorePlayer[] {
         minutes:
           asOptionalNumber(player.minutes) ??
           deriveMinutesFromPositions(minutesByPosition),
-        performance: toMetricEntries(
-          asRecord(player.performanceStats) ?? asRecord(player.performance),
+        performance: normalizeMetricEntries(
+          player.performanceStats ?? player.performance,
         ),
         minutesByPosition,
       };
@@ -161,6 +185,24 @@ function inflateStoredTeam(value: StoredMatchBoxscoreTeam | null): Record<string
   };
 }
 
+function normalizeAttendance(value: unknown): StoredAttendance | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const attendance = {
+    bleachers: asOptionalInteger(record.bleachers),
+    lowerTier: asOptionalInteger(record.lowerTier),
+    courtside: asOptionalInteger(record.courtside),
+    luxury: asOptionalInteger(record.luxury),
+  } satisfies StoredAttendance;
+
+  return Object.values(attendance).some((entry) => entry !== null)
+    ? attendance
+    : null;
+}
+
 function toMetricEntries(
   value: Record<string, unknown> | null,
 ): StoredMetricEntry[] {
@@ -179,6 +221,27 @@ function toMetricEntries(
           }];
     })
     .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function normalizeMetricEntries(value: unknown): StoredMetricEntry[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .flatMap((entry) => {
+        const key = asOptionalString(entry.key);
+        const numberValue = asOptionalNumber(entry.numberValue ?? entry.value);
+        return !key || numberValue === null
+          ? []
+          : [{
+              key,
+              numberValue,
+            }];
+      })
+      .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  return toMetricEntries(asRecord(value));
 }
 
 function deriveMinutesFromPositions(

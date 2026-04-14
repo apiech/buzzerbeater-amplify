@@ -26,6 +26,11 @@ import {
   clearForecastPrefill,
   createDefaultPredictionInput,
 } from "@/app/prediction-panel-state";
+import {
+  PredictionModelMetadata,
+  PredictionModelPicker,
+} from "@/app/prediction-model-controls";
+import { useRuntimeEnvironment } from "@/app/runtime-environment";
 import type {
   CurrentPredictionPreview,
   MatchBoxscorePayload,
@@ -53,6 +58,7 @@ import {
 import { formatPreviewStatus } from "@/app/ui/presentation";
 import { buzzerBeaterColorStyle } from "@/lib/buzzerbeater/rating-scale";
 import { captureAnalyticsEvent } from "@/lib/analytics/client";
+import { isInternalPredictionModelPickerEnabled } from "@/lib/prediction/model-selection";
 import {
   applyBoxscoreRatingsToPredictionInput,
   PREDICTION_HOME_COURT_FACTOR,
@@ -138,6 +144,9 @@ export function PredictionPanel({
   onDraftChange,
 }: PredictionPanelProps) {
   const queryClient = useQueryClient();
+  const { environmentName } = useRuntimeEnvironment();
+  const modelPickerEnabled =
+    isInternalPredictionModelPickerEnabled(environmentName);
   const predictionFormId = useId();
   const predictionMatrixRef = useRef<HTMLDivElement | null>(null);
   const hasInitializedPredictionLoadRef = useRef(false);
@@ -213,6 +222,21 @@ export function PredictionPanel({
     ? findBestPredictionGridCell(currentGrid)
     : null;
   const forecastContext = currentPrediction?.forecastContext ?? null;
+
+  useEffect(() => {
+    if (modelPickerEnabled) {
+      return;
+    }
+
+    onDraftChange((current) =>
+      current.modelKey
+        ? {
+            ...current,
+            modelKey: null,
+          }
+        : current,
+    );
+  }, [modelPickerEnabled, onDraftChange]);
 
   useEffect(() => {
     onDraftChange((current) => {
@@ -338,7 +362,9 @@ export function PredictionPanel({
 
     try {
       await submitPredictionMutation.mutateAsync(
-        buildSubmissionRequest({ draft }),
+        buildSubmissionRequest({
+          draft: modelPickerEnabled ? draft : { ...draft, modelKey: null },
+        }),
       );
       await currentPredictionQuery.refetch();
     } catch (error) {
@@ -465,6 +491,13 @@ export function PredictionPanel({
         ...current.input,
         neutral: nextValue,
       },
+    }));
+  }
+
+  function updateModelKey(nextValue: string | null) {
+    onDraftChange((current) => ({
+      ...current,
+      modelKey: nextValue,
     }));
   }
 
@@ -640,6 +673,7 @@ export function PredictionPanel({
                   <strong className="text-ink text-base">
                     {currentPredictionSummary}
                   </strong>
+                  <PredictionModelMetadata value={currentPrediction} />
                   <span className="text-ink-muted text-sm">
                     Updated {formatTimestamp(currentPrediction.updatedAt)}
                   </span>
@@ -762,6 +796,11 @@ export function PredictionPanel({
                   value={input.effortDelta}
                 />
               </Field>
+
+              <PredictionModelPicker
+                onChange={updateModelKey}
+                value={draft.modelKey}
+              />
             </div>
 
             <p className={statusCopyClassName}>
@@ -800,6 +839,7 @@ export function PredictionPanel({
                 Current preview updated{" "}
                 {formatTimestamp(currentPrediction?.updatedAt)}
               </span>
+              <PredictionModelMetadata value={currentPrediction} />
             </div>
 
             <TableShell className="mt-4" tableClassName="min-w-[56rem]">

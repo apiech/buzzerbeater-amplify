@@ -14,6 +14,7 @@ type OperationResult<TData> = {
 type QueryName =
   | "evaluatePredictionMatrix"
   | "evaluateLineupHelper"
+  | "getArenaWorkspace"
   | "getBillingSummary"
   | "getHomeWorkspace"
   | "getLeagueHistory"
@@ -24,9 +25,11 @@ type QueryName =
   | "getLineupHelperWorkspace"
   | "getMatchBoxscoreDetails"
   | "getMyTeamHighlights"
+  | "getManualSalaryEstimate"
   | "getPlayerLab"
   | "getPlayerTrend"
   | "getRivalsWorkspace"
+  | "getSalaryCalculatorSeed"
   | "getSalaryProjection"
   | "getScoutSchedule"
   | "getScoutTeamSummary"
@@ -40,6 +43,7 @@ type MutationName =
   | "createBillingLifetimeCheckoutSession"
   | "createBillingPortalSession"
   | "disconnectBbAccount"
+  | "repairOwnerRosterData"
   | "refreshWorkspace"
   | "submitRivalsBackfill"
   | "setBbLeagueTimeZone"
@@ -83,6 +87,10 @@ const queryOperations = {
   ) =>
     (await runtime.getServerDataClient()).queries.evaluateLineupHelper(
       requiredInput(input),
+    ),
+  getArenaWorkspace: async (input?: QueryInput<"getArenaWorkspace">) =>
+    (await runtime.getServerDataClient()).queries.getArenaWorkspace(
+      optionalInput(input),
     ),
   getBillingSummary: async () =>
     (await runtime.getServerDataClient()).queries.getBillingSummary(),
@@ -137,6 +145,12 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.getMyTeamHighlights(
       optionalInput(input),
     ),
+  getManualSalaryEstimate: async (
+    input: QueryInput<"getManualSalaryEstimate">,
+  ) =>
+    (await runtime.getServerDataClient()).queries.getManualSalaryEstimate(
+      requiredInput(input),
+    ),
   getPlayerLab: async (input?: QueryInput<"getPlayerLab">) =>
     (
       (await runtime.getServerDataClient()).queries.getPlayerLab as (
@@ -153,6 +167,12 @@ const queryOperations = {
         queryInput?: QueryInput<"getRivalsWorkspace">,
       ) => Promise<OperationResult<QueryOutput<"getRivalsWorkspace">>>
     )(optionalInput(input)),
+  getSalaryCalculatorSeed: async (
+    input: QueryInput<"getSalaryCalculatorSeed">,
+  ) =>
+    (await runtime.getServerDataClient()).queries.getSalaryCalculatorSeed(
+      requiredInput(input),
+    ),
   getSalaryProjection: async (input: QueryInput<"getSalaryProjection">) =>
     (await runtime.getServerDataClient()).queries.getSalaryProjection(
       requiredInput(input),
@@ -210,6 +230,8 @@ const mutationOperations = {
     ),
   disconnectBbAccount: async () =>
     (await runtime.getServerDataClient()).mutations.disconnectBbAccount(),
+  repairOwnerRosterData: async () =>
+    (await runtime.getServerDataClient()).mutations.repairOwnerRosterData(),
   refreshWorkspace: async () =>
     (await runtime.getServerDataClient()).mutations.refreshWorkspace(),
   submitRivalsBackfill: async () =>

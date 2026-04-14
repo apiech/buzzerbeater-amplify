@@ -9,7 +9,10 @@ import {
   runMutationOperation,
 } from "../app/server/amplify-bff";
 
-function installServerDataClient(t: TestContext, client: Record<string, unknown>) {
+function installServerDataClient(
+  t: TestContext,
+  client: Record<string, unknown>,
+) {
   const originalGetServerDataClient = bffTesting.runtime.getServerDataClient;
   bffTesting.runtime.getServerDataClient = async () => client as never;
   t.after(() => {
@@ -54,13 +57,16 @@ test("getLatestNextGameRecommendation is routed through the query BFF", async (t
 
   installServerDataClient(t, {
     queries: {
-      getLatestNextGameRecommendation: async (value: Record<string, unknown>) => {
+      getLatestNextGameRecommendation: async (
+        value: Record<string, unknown>,
+      ) => {
         input = value;
         return {
           data: {
             jobId: "recommendation-1",
             matchId: "m-1",
             opponentTeamId: "opp-1",
+            excludedPlayerIds: [],
             enthusiasm: 8,
             defensiveSwitch: {
               pg: "PG",
@@ -80,7 +86,9 @@ test("getLatestNextGameRecommendation is routed through the query BFF", async (t
   assert.equal(isQueryName("getLatestNextGameRecommendation"), true);
 
   const result = await runQueryOperation("getLatestNextGameRecommendation", {
+    forecastJobId: "forecast-1",
     input: {
+      excludedPlayerIds: [],
       enthusiasm: 8,
       defensiveSwitch: {
         pg: "PG",
@@ -90,10 +98,14 @@ test("getLatestNextGameRecommendation is routed through the query BFF", async (t
         c: "C",
       },
     },
+    matchId: "m-1",
+    opponentTeamId: "opp-1",
   });
 
   assert.deepStrictEqual(input, {
+    forecastJobId: "forecast-1",
     input: {
+      excludedPlayerIds: [],
       enthusiasm: 8,
       defensiveSwitch: {
         pg: "PG",
@@ -103,6 +115,8 @@ test("getLatestNextGameRecommendation is routed through the query BFF", async (t
         c: "C",
       },
     },
+    matchId: "m-1",
+    opponentTeamId: "opp-1",
   });
   assert.equal((result.data as { jobId: string }).jobId, "recommendation-1");
 });
@@ -137,7 +151,10 @@ test("getNextGamePlannerDetail is routed through the query BFF", async (t) => {
   assert.deepStrictEqual(input, {
     artifactKey: "artifact-1",
   });
-  assert.equal((result.data as { artifactKey: string }).artifactKey, "artifact-1");
+  assert.equal(
+    (result.data as { artifactKey: string }).artifactKey,
+    "artifact-1",
+  );
 });
 
 test("evaluatePredictionMatrix forwards the typed request object to GraphQL", async (t) => {
@@ -150,6 +167,7 @@ test("evaluatePredictionMatrix forwards the typed request object to GraphQL", as
         return {
           data: {
             generatedAt: "2026-04-12T00:00:00.000Z",
+            modelKey: "catboost",
             modelVersion: "matrix-v1",
             selectedTeamAPairId: "Base__ManToMan",
             selectedTeamBPairId: "Base__ManToMan",
@@ -209,6 +227,7 @@ test("evaluatePredictionMatrix forwards the typed request object to GraphQL", as
         teamId: "opp-team",
         teamName: "Opponent",
       },
+      modelKey: "catboost",
       venue: "NEUTRAL",
     },
   });
@@ -245,6 +264,7 @@ test("evaluatePredictionMatrix forwards the typed request object to GraphQL", as
         teamId: "opp-team",
         teamName: "Opponent",
       },
+      modelKey: "catboost",
       venue: "NEUTRAL",
     },
   });

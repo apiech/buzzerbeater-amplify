@@ -40,6 +40,7 @@ type QueryOperationName =
   | "evaluatePredictionMatrix"
   | "evaluateLineupHelper"
   | "getBillingSummary"
+  | "getArenaWorkspace"
   | "getHomeWorkspace"
   | "getLeagueHistory"
   | "getLeagueIntel"
@@ -49,9 +50,11 @@ type QueryOperationName =
   | "getLineupHelperWorkspace"
   | "getMatchBoxscoreDetails"
   | "getMyTeamHighlights"
+  | "getManualSalaryEstimate"
   | "getPlayerLab"
   | "getPlayerTrend"
   | "getRivalsWorkspace"
+  | "getSalaryCalculatorSeed"
   | "getSalaryProjection"
   | "getScoutSchedule"
   | "getScoutTeamSummary"
@@ -65,6 +68,7 @@ type MutationOperationName =
   | "createBillingLifetimeCheckoutSession"
   | "createBillingPortalSession"
   | "disconnectBbAccount"
+  | "repairOwnerRosterData"
   | "refreshWorkspace"
   | "setBbLeagueTimeZone"
   | "submitGameDayRecap"
@@ -253,6 +257,7 @@ export const client = {
     ) =>
       requestMutation("createBillingPortalSession", input),
     disconnectBbAccount: () => requestMutation("disconnectBbAccount"),
+    repairOwnerRosterData: () => requestMutation("repairOwnerRosterData"),
     refreshWorkspace: () => requestMutation("refreshWorkspace"),
     setBbLeagueTimeZone: (input: OperationInput<"setBbLeagueTimeZone">) =>
       requestMutation("setBbLeagueTimeZone", input),
@@ -289,6 +294,8 @@ export const client = {
       requestQuery("evaluatePredictionMatrix", input),
     evaluateLineupHelper: (input: OperationInput<"evaluateLineupHelper">) =>
       requestQuery("evaluateLineupHelper", input),
+    getArenaWorkspace: (input?: OperationInput<"getArenaWorkspace">) =>
+      requestQuery("getArenaWorkspace", input),
     getBillingSummary: () => requestQuery("getBillingSummary"),
     getHomeWorkspace: (input?: OperationInput<"getHomeWorkspace">) =>
       requestQuery("getHomeWorkspace", input),
@@ -318,12 +325,18 @@ export const client = {
       requestQuery("getMatchBoxscoreDetails", input),
     getMyTeamHighlights: (input: OperationInput<"getMyTeamHighlights">) =>
       requestQuery("getMyTeamHighlights", input),
+    getManualSalaryEstimate: (
+      input: OperationInput<"getManualSalaryEstimate">,
+    ) => requestQuery("getManualSalaryEstimate", input),
     getPlayerLab: (input?: OperationInput<"getPlayerLab">) =>
       requestQuery("getPlayerLab", input),
     getPlayerTrend: (input: OperationInput<"getPlayerTrend">) =>
       requestQuery("getPlayerTrend", input),
     getRivalsWorkspace: (input?: OperationInput<"getRivalsWorkspace">) =>
       requestQuery("getRivalsWorkspace", input),
+    getSalaryCalculatorSeed: (
+      input: OperationInput<"getSalaryCalculatorSeed">,
+    ) => requestQuery("getSalaryCalculatorSeed", input),
     getSalaryProjection: (input: OperationInput<"getSalaryProjection">) =>
       requestQuery("getSalaryProjection", input),
     getScoutSchedule: (input?: OperationInput<"getScoutSchedule">) =>

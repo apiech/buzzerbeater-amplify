@@ -21,17 +21,14 @@ import {
   statusToneFromValue,
 } from "@/app/ui/primitives/status-badge";
 import { StatCard } from "@/app/ui/primitives/stat-card";
+import { formatNextGameRecommendationStatus } from "@/app/ui/presentation";
 
 type GamePlannerPanelProps = {
-  blockedReason: string | null;
   detail: NextGamePlannerDetailPayload | null;
   detailError: string | null;
   detailLoading: boolean;
   forecast: OpponentForecastSnapshot | null;
   input: NextGameRecommendationInput;
-  isLoading: boolean;
-  isRefreshing: boolean;
-  onRefresh: () => void;
   recommendation: NextGameRecommendationSnapshot | null;
 };
 
@@ -47,15 +44,11 @@ type PlannerScenario = NonNullable<
 >[number];
 
 export function GamePlannerPanel({
-  blockedReason,
   detail,
   detailError,
   detailLoading,
   forecast,
   input,
-  isLoading,
-  isRefreshing,
-  onRefresh,
   recommendation,
 }: GamePlannerPanelProps) {
   const result = recommendation?.result ?? null;
@@ -166,21 +159,7 @@ export function GamePlannerPanel({
 
   return (
     <Panel>
-      <SectionHeading
-        actions={
-          <Button
-            disabled={Boolean(blockedReason)}
-            loading={isRefreshing || (isLoading && recommendation?.status !== "SUCCEEDED")}
-            onClick={onRefresh}
-            size="sm"
-            variant="secondary"
-          >
-            {recommendation ? "Refresh planner" : "Generate planner"}
-          </Button>
-        }
-        eyebrow="Predictions"
-        title="Game planner"
-      />
+      <SectionHeading eyebrow="Predictions" title="Game planner" />
 
       <p className="text-sm leading-7 text-ink-muted">
         Compare every tactic pair against the next opponent&apos;s likely looks,
@@ -189,7 +168,7 @@ export function GamePlannerPanel({
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <StatusBadge tone={statusToneFromValue(recommendation?.status ?? "QUEUED")}>
-          {recommendation?.status ?? "NOT_READY"}
+          {formatNextGameRecommendationStatus(recommendation?.status ?? null)}
         </StatusBadge>
         <span className="text-xs font-semibold text-ink-muted">
           Enthusiasm {input.enthusiasm}
@@ -213,9 +192,7 @@ export function GamePlannerPanel({
       {recommendation?.error ? <Alert>{recommendation.error}</Alert> : null}
       {detailError ? <Alert>{detailError}</Alert> : null}
 
-      {blockedReason ? (
-        <Alert>{blockedReason}</Alert>
-      ) : result ? (
+      {result ? (
         <div className="mt-4 grid gap-4">
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
             <Panel as="article" padding="sm" variant="solid">
@@ -542,9 +519,7 @@ export function GamePlannerPanel({
         </div>
       ) : (
         <p className="mt-4 text-sm leading-7 text-ink-muted">
-          {isLoading
-            ? "Loading the latest stored planner."
-            : "No stored planner is available yet."}
+          No stored planner is available yet.
         </p>
       )}
     </Panel>

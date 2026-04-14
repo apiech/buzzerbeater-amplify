@@ -118,6 +118,67 @@ export type AnalyticsEventMap = {
     has_scout_summary: boolean;
     neutral_site: boolean;
   };
+  game_prediction_defense_filter_changed: {
+    axis: "team_a" | "team_b";
+    defense: string;
+    selected_count: number;
+    state: "enabled" | "disabled";
+    total_count: number;
+  };
+  game_prediction_matrix_completed: {
+    has_estimated_team_a_pair: boolean;
+    has_estimated_team_b_pair: boolean;
+    team_a_pair_count: number;
+    team_b_pair_count: number;
+    venue: string;
+    view_count: number;
+  };
+  game_prediction_matrix_request_failed: {
+    has_team_a_source_match: boolean;
+    has_team_b_source_match: boolean;
+    venue: string;
+  };
+  game_prediction_matrix_requested: {
+    has_team_a_source_match: boolean;
+    has_team_b_source_match: boolean;
+    venue: string;
+  };
+  game_prediction_offense_filter_changed: {
+    axis: "team_a" | "team_b";
+    offense: string;
+    selected_count: number;
+    state: "expanded" | "collapsed";
+    total_count: number;
+  };
+  game_prediction_overview_cell_selected: {
+    is_recommended: boolean;
+    margin: number | null;
+    source: "mobile_overview_picker" | "overview_heatmap";
+    team_a_offense: string;
+    team_b_offense: string;
+  };
+  game_prediction_pair_selected: {
+    is_recommended: boolean;
+    margin: number | null;
+    source: "advanced_matrix" | "defense_drilldown";
+    team_a_defense: string;
+    team_a_offense: string;
+    team_b_defense: string;
+    team_b_offense: string;
+  };
+  game_prediction_surface_toggled: {
+    source: "game_prediction_panel";
+    state: "closed" | "opened";
+    surface:
+      | "advanced_filters"
+      | "advanced_matrix"
+      | "defense_drilldown"
+      | "explore_extremes";
+  };
+  game_prediction_view_changed: {
+    next_view_id: string;
+    next_view_label: string;
+  };
   prediction_source_load_failed: {
     reason:
       | "missing_match"

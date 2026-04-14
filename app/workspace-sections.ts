@@ -14,7 +14,8 @@ export const workspaceSections = [
   {
     id: "opponent-schedule",
     label: "Opponent schedule",
-    description: "Full schedule, filters, and boxscore browsing for any opponent.",
+    description:
+      "Full schedule, filters, and boxscore browsing for any opponent.",
     group: "Club",
   },
   {
@@ -29,6 +30,13 @@ export const workspaceSections = [
     label: "Lineups",
     description:
       "Lineup helper with minute grids, tactics, and rating outputs.",
+    group: "Club",
+  },
+  {
+    id: "arena",
+    label: "Arena",
+    description:
+      "Ticket price recommendations, arena demand, and economy context.",
     group: "Club",
   },
   {
@@ -58,9 +66,24 @@ export const workspaceSections = [
     group: "Competition",
   },
   {
+    id: "staff-market",
+    label: "Staff Market",
+    description:
+      "Staff auction math for severance, salary growth, and max rational bids.",
+    group: "Competition",
+  },
+  {
+    id: "next-game",
+    label: "Next game",
+    description:
+      "Guided game-plan wizard that blends scout, lineup, and prediction tools.",
+    group: "Competition",
+  },
+  {
     id: "predictions",
     label: "Game prediction",
-    description: "Standalone matchup simulator with the full tactic-pair matrix.",
+    description:
+      "Standalone matchup simulator with the full tactic-pair matrix.",
     group: "Competition",
   },
   {

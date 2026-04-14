@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   BBXmlApiClient,
   BBXmlApiError,
+  assertOwnedRoster,
   formatRosterGameShapeLabel,
   ownedRosterPlayerToRawPlayerSkills,
 } from "../../../lib/bbapi";
@@ -11,6 +12,7 @@ import type {
   BBApiBoxScorePlayer,
   BBApiBoxScoreTeam,
   BBApiCurrentWorkspace,
+  BBApiNamedReference,
   BBApiOwnedRosterPlayer,
   BBApiRosterPlayer,
   BBApiSchedule,
@@ -28,10 +30,16 @@ import {
   listActiveTrackedTeamsForUser,
   upsertActiveTrackedTeam,
 } from "./active-tracked-teams";
+import {
+  buildArenaPricingSnapshotRecord,
+  buildArenaWorkspace,
+  selectNextHomeMatch,
+} from "./arena-pricing";
 import { encryptValue, resolveBbConnectionSecretState } from "./encryption";
 import {
   listWorkspacePlayerHistory,
   storeCanonicalPlayerSkillSnapshot,
+  type CanonicalPlayerSkillSnapshotRecord,
 } from "./player-snapshot-access";
 import {
   buildPlayerSkillObservationSortKey,
@@ -46,8 +54,10 @@ import {
   getMatchBoxscore,
   getTrackedPlayer as getTrackedPlayerRecord,
   getSharedPlayerCardRecord,
+  listArenaPricingSnapshotsByUserId,
   type PlayerSkillObservationRecord,
   type TrackedPlayerRecord,
+  upsertArenaPricingSnapshot,
   upsertBbConnection,
   upsertBbCredential,
   updateSharedPlayerCard,
@@ -77,11 +87,10 @@ import { assertMaintenanceInactive } from "./maintenance";
 import {
   buildWorkspaceCachePayload,
   readWorkspaceCachePayload,
+  type WorkspaceCachePayload,
 } from "./workspace-cache";
-import {
-  inflateStoredMatchBoxscore,
-  toStoredMatchBoxscore,
-} from "./stored-boxscore";
+import { getNormalizedCachedMatchBoxscore } from "./cached-boxscore";
+import { toStoredMatchBoxscore } from "./stored-boxscore";
 import {
   buildConnectionRecord,
   loadActiveTrackedTeamCredentialContext,
@@ -126,6 +135,7 @@ type ScoutWorkspaceResult = ScoutTeamSummaryResult;
 type ScoutScheduleResult = NonNullable<ScoutWorkspaceResult["schedule"]>;
 type LeagueIntelWorkspaceResult = ResolverResult<"getLeagueIntel">;
 type PlayerLabWorkspaceResult = ResolverResult<"getPlayerLab">;
+type ArenaWorkspaceResult = ResolverResult<"getArenaWorkspace">;
 type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
 type SharedPlayerCardResult = ResolverResult<"generateSharedPlayerCard">;
 type SalaryProjectionResult = ResolverResult<"getSalaryProjection">;
@@ -149,6 +159,7 @@ export type WorkspaceBundle = {
   scout: ScoutWorkspaceResult;
   leagueIntel: LeagueIntelWorkspaceResult;
   playerLab: PlayerLabWorkspaceResult;
+  arena: ArenaWorkspaceResult;
 };
 
 type WorkspaceDependencies = {
@@ -166,6 +177,34 @@ type WorkspaceDependencies = {
   updateSharedPlayerCard: typeof updateSharedPlayerCard;
 };
 
+type OwnerRosterRepairDependencies = {
+  createClient: (args: {
+    accessKey: string;
+    bbLoginName: string;
+  }) => Pick<BBXmlApiClient, "getRoster">;
+  getBbConnection: (
+    env: GraphqlEnv,
+    userId: string,
+  ) => Promise<BbConnectionRecord | null>;
+  resolveAccessKey: (env: GraphqlEnv, userId: string) => Promise<string>;
+  storeCanonicalPlayerSkillSnapshot: (
+    env: GraphqlEnv,
+    record: CanonicalPlayerSkillSnapshotRecord,
+  ) => Promise<void>;
+  upsertBbConnection: (
+    env: GraphqlEnv,
+    record: BbConnectionRecord,
+  ) => Promise<void>;
+  upsertPlayerSkillObservation: (
+    env: GraphqlEnv,
+    record: PlayerSkillObservationRecord,
+  ) => Promise<void>;
+  upsertTrackedPlayer: (
+    env: GraphqlEnv,
+    record: TrackedPlayerRecord,
+  ) => Promise<void>;
+};
+
 const SHARED_PLAYER_CARD_TTL_DAYS = 30;
 const WORKSPACE_PLAYER_PERSIST_CONCURRENCY = 4;
 const WORKSPACE_BOXSCORE_PERSIST_CONCURRENCY = 4;
@@ -180,9 +219,29 @@ const defaultWorkspaceDependencies: WorkspaceDependencies = {
   updateSharedPlayerCard,
 };
 
-type WorkspaceRefreshMeta = {
+const defaultOwnerRosterRepairDependencies: OwnerRosterRepairDependencies = {
+  createClient: ({ accessKey, bbLoginName }) =>
+    new BBXmlApiClient({
+      username: bbLoginName,
+      securityCode: accessKey,
+    }),
+  getBbConnection,
+  resolveAccessKey,
+  storeCanonicalPlayerSkillSnapshot,
+  upsertBbConnection,
+  upsertPlayerSkillObservation,
+  upsertTrackedPlayer,
+};
+
+export type WorkspaceRefreshMeta = {
   cacheState: "forced" | "hit" | "miss";
+  cacheAgeMs?: number | null;
+  cacheKind?: "workspace_bundle";
+  cachedAt?: string | null;
+  matchId?: string | null;
   nextOpponentTeamId: string | null;
+  opponentTeamName?: string | null;
+  reason?: string | null;
   usedCachedWorkspace: boolean;
 };
 
@@ -233,8 +292,10 @@ export const __testing = {
   buildConnectionRecord,
   buildHomeCorePlayers,
   buildHomeWorkspace,
+  buildTeamHubRosterFromOwnedRoster,
   countStarters,
   matchIncludesTeam,
+  patchWorkspaceCacheTeamHubRoster,
   resolveScoutTeamId,
   selectCompletedMatches,
   selectNextMatch,
@@ -382,6 +443,110 @@ export async function setLeagueTimeZone(args: {
   });
   await upsertBbConnection(args.env, updatedConnection);
   return updatedConnection;
+}
+
+export async function repairOwnerRosterData(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+  },
+  dependencies: OwnerRosterRepairDependencies = defaultOwnerRosterRepairDependencies,
+): Promise<{
+  completedAt: string;
+  repairedPlayerCount: number;
+}> {
+  await assertMaintenanceInactive();
+
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+
+  const connection = await dependencies.getBbConnection(args.env, userId);
+  if (!connection) {
+    throw new Error(
+      "Connect a BuzzerBeater account before repairing roster data.",
+    );
+  }
+
+  const cachedWorkspace = readWorkspaceCachePayload(connection.workspaceCacheJson);
+  if (!cachedWorkspace?.teamHub) {
+    throw new Error(
+      "No cached workspace is available yet. Refresh your workspace before repairing roster data.",
+    );
+  }
+
+  const bbLoginName = connection.bbLoginName?.trim();
+  if (!bbLoginName) {
+    throw new Error("The saved BuzzerBeater login is unavailable.");
+  }
+
+  const accessKey = await dependencies.resolveAccessKey(args.env, userId);
+  const client = dependencies.createClient({
+    accessKey,
+    bbLoginName,
+  });
+  const roster = assertOwnedRoster(
+    await client.getRoster(connection.teamId ?? undefined),
+    "Owned roster.aspx response",
+  );
+  const completedAt = new Date().toISOString();
+  const teamId = connection.teamId ?? cachedWorkspace.teamHub.team.teamId ?? null;
+  const teamName =
+    connection.teamName ?? cachedWorkspace.teamHub.team.teamName ?? null;
+
+  if (!teamId) {
+    throw new Error("Roster repair requires a resolved owner team id.");
+  }
+
+  await mapWithConcurrency(
+    roster.players,
+    WORKSPACE_PLAYER_PERSIST_CONCURRENCY,
+    async (player) => {
+      const trackedPlayer = playerToTrackedPlayerRecord(
+        userId,
+        teamId,
+        teamName,
+        player,
+        completedAt,
+      );
+      const snapshot = playerToCanonicalPlayerSnapshot(
+        userId,
+        teamId,
+        teamName,
+        player,
+        completedAt,
+      );
+      const observation = playerToHistoricalPlayerObservation(
+        userId,
+        teamId,
+        teamName,
+        player,
+        completedAt,
+      );
+      await Promise.all([
+        dependencies.storeCanonicalPlayerSkillSnapshot(args.env, snapshot),
+        dependencies.upsertPlayerSkillObservation(args.env, observation),
+        dependencies.upsertTrackedPlayer(args.env, trackedPlayer),
+      ]);
+    },
+  );
+
+  const updatedConnection = buildConnectionRecord(userId, connection, {
+    workspaceCacheJson: patchWorkspaceCacheTeamHubRoster(
+      cachedWorkspace,
+      buildTeamHubRosterFromOwnedRoster(
+        roster.players,
+        cachedWorkspace.teamHub.roster,
+      ),
+    ),
+  });
+  await dependencies.upsertBbConnection(args.env, updatedConnection);
+
+  return {
+    completedAt,
+    repairedPlayerCount: roster.players.length,
+  };
 }
 
 export async function getOrRefreshWorkspace(args: {
@@ -1203,16 +1368,17 @@ async function syncWorkspace(args: {
     cachedWorkspace &&
     !shouldSyncWorkspace({ force: args.force ?? false, cachedWorkspace })
   ) {
+    const cacheMeta = buildWorkspaceCacheMeta(cachedWorkspace);
     logWorkspaceInfo("syncWorkspace.cache_hit", {
+      ...cacheMeta,
       elapsedMs: elapsedMs(syncStartedAt),
       force: args.force ?? false,
-      nextOpponentTeamId: cachedWorkspace.home.nextMatch?.opponentTeamId ?? null,
       userId: args.userId,
     });
     return {
       meta: {
+        ...cacheMeta,
         cacheState: "hit",
-        nextOpponentTeamId: cachedWorkspace.home.nextMatch?.opponentTeamId ?? null,
         usedCachedWorkspace: true,
       },
       workspace: cachedWorkspace,
@@ -1255,6 +1421,10 @@ async function syncWorkspace(args: {
       userId: args.userId,
     });
     const nextMatch = selectNextMatch(
+      currentWorkspace.schedule.matches,
+      currentWorkspace.teamInfo.teamId,
+    );
+    const nextHomeMatch = selectNextHomeMatch(
       currentWorkspace.schedule.matches,
       currentWorkspace.teamInfo.teamId,
     );
@@ -1364,6 +1534,17 @@ async function syncWorkspace(args: {
       currentBoxScores,
       connectionForViews.lastSyncAt ?? null,
     );
+    const historicalArenaSnapshots = await listArenaPricingSnapshotsByUserId(
+      args.env,
+      args.userId,
+    );
+    const arena = buildArenaWorkspace({
+      referenceBoxScores: currentBoxScores,
+      referenceMatches: currentWorkspace.schedule.matches,
+      snapshots: historicalArenaSnapshots,
+      syncedAt: connectionForViews.lastSyncAt ?? null,
+      workspace: currentWorkspace,
+    });
 
     const updatedConnection = buildConnectionRecord(
       args.userId,
@@ -1375,6 +1556,7 @@ async function syncWorkspace(args: {
           scout,
           leagueIntel,
           playerLab,
+          arena,
         }),
       },
     );
@@ -1397,6 +1579,15 @@ async function syncWorkspace(args: {
       stepMs: elapsedMs(persistWorkspaceStartedAt),
       userId: args.userId,
     });
+    await upsertArenaPricingSnapshot(
+      args.env,
+      buildArenaPricingSnapshotRecord({
+        capturedAt: now,
+        nextHomeMatch,
+        userId: args.userId,
+        workspace: currentWorkspace,
+      }),
+    );
     if (currentWorkspace.teamInfo.teamId) {
       const rivalsSyncStartedAt = Date.now();
       try {
@@ -1481,6 +1672,7 @@ async function syncWorkspace(args: {
         scout,
         leagueIntel,
         playerLab,
+        arena,
       },
     };
   } catch (error) {
@@ -1530,18 +1722,18 @@ async function syncWorkspace(args: {
           usedCachedWorkspace: true,
         },
       });
+      const cacheMeta = buildWorkspaceCacheMeta(cachedWorkspace);
       logWorkspaceWarn("syncWorkspace.match_in_progress_fallback", {
+        ...cacheMeta,
         elapsedMs: elapsedMs(syncStartedAt),
         force: args.force ?? false,
-        nextOpponentTeamId: cachedWorkspace.home.nextMatch?.opponentTeamId ?? null,
         userId: args.userId,
         ...toLoggableError(error),
       });
       return {
         meta: {
+          ...cacheMeta,
           cacheState: args.force ? "forced" : "hit",
-          nextOpponentTeamId:
-            cachedWorkspace.home.nextMatch?.opponentTeamId ?? null,
           usedCachedWorkspace: true,
         },
         workspace: {
@@ -1599,6 +1791,7 @@ async function persistWorkspace(
       userId,
       teamId: primaryTeamId,
       name: workspace.teamInfo.teamName ?? "Unknown team",
+      arenaName: workspace.arena.name ?? null,
       shortName: workspace.teamInfo.shortName ?? null,
       leagueId: workspace.teamInfo.league?.id ?? null,
       leagueName: workspace.teamInfo.league?.name ?? null,
@@ -2246,17 +2439,24 @@ async function hydrateCompletedBoxScoresForMatches(args: {
     };
   }
 
-  const storedRecords = await Promise.all(
-    completedMatchIds.map((matchId) => getMatchBoxscore(args.env, args.userId, matchId)),
-  );
   const boxScoresByMatchId = new Map<string, BBApiBoxScore>();
   const missingMatchIds: string[] = [];
 
+  const normalizedCachedBoxscores = await Promise.all(
+    completedMatchIds.map((matchId) =>
+      getNormalizedCachedMatchBoxscore({
+        env: args.env,
+        getRecord: getMatchBoxscore,
+        matchId,
+        userId: args.userId,
+      }),
+    ),
+  );
+
   completedMatchIds.forEach((matchId, index) => {
-    const record = storedRecords[index];
-    const boxScore = inflateStoredMatchBoxscore(record?.boxscoreJson);
-    if (boxScore) {
-      boxScoresByMatchId.set(matchId, boxScore);
+    const cachedBoxscore = normalizedCachedBoxscores[index];
+    if (cachedBoxscore) {
+      boxScoresByMatchId.set(matchId, cachedBoxscore.boxscore);
       return;
     }
     missingMatchIds.push(matchId);
@@ -2471,6 +2671,53 @@ function buildTeamHub(
   };
 }
 
+function buildTeamHubRosterFromOwnedRoster(
+  players: readonly BBApiOwnedRosterPlayer[],
+  existingRoster: readonly PlayerSummaryRecord[],
+): PlayerSummaryRecord[] {
+  const existingRosterByPlayerId = new Map(
+    existingRoster
+      .map((player) => [asString(player.playerId), player] as const)
+      .filter((entry): entry is [string, PlayerSummaryRecord] => Boolean(entry[0])),
+  );
+
+  return players.map((player) => {
+    const existing = existingRosterByPlayerId.get(player.id ?? "");
+    return {
+      playerId: player.id,
+      fullName: player.fullName,
+      bestPosition: player.bestPosition,
+      nationalityName: player.nationality?.name ?? null,
+      salary: player.salary,
+      age: player.age,
+      gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
+      dmi: player.dmi,
+      injuryWeeks: player.injuryWeeks,
+      projectedStarterCount: asNumber(existing?.projectedStarterCount),
+      ppg: asNumber(existing?.ppg),
+      recentAvgMinutes: asNumber(existing?.recentAvgMinutes),
+      recentStartCount: asNumber(existing?.recentStartCount),
+    };
+  });
+}
+
+function patchWorkspaceCacheTeamHubRoster(
+  cache: WorkspaceCachePayload,
+  roster: PlayerSummaryRecord[],
+): WorkspaceCachePayload {
+  return buildWorkspaceCachePayload({
+    home: cache.home,
+    teamHub: {
+      ...cache.teamHub,
+      roster,
+    },
+    scout: cache.scout,
+    leagueIntel: cache.leagueIntel,
+    playerLab: cache.playerLab,
+    arena: cache.arena,
+  });
+}
+
 export function buildScoutWorkspace(
   currentWorkspace: BBApiCurrentWorkspace,
   currentBoxScores: BBApiBoxScore[],
@@ -2591,7 +2838,7 @@ function buildLeagueIntel(
   }
 
   return {
-    league: standings.league,
+    league: projectNamedReference(standings.league),
     standings: standings.conferences.map((conference) => ({
       index: conference.index,
       teams: conference.teams.map((team) => ({
@@ -3016,9 +3263,22 @@ function projectTeamInfo(teamInfo: BBApiTeamInfo): TeamInfoSummary {
     shortName: teamInfo.shortName,
     ownerName: teamInfo.ownerName,
     isBot: teamInfo.isBot,
-    league: teamInfo.league,
-    country: teamInfo.country,
-    rival: teamInfo.rival,
+    league: projectNamedReference(teamInfo.league),
+    country: projectNamedReference(teamInfo.country),
+    rival: projectNamedReference(teamInfo.rival),
+  };
+}
+
+function projectNamedReference(
+  reference: BBApiNamedReference | null,
+): { id: string | null; name: string | null } | null {
+  if (!reference) {
+    return null;
+  }
+
+  return {
+    id: reference.id ?? null,
+    name: reference.name ?? null,
   };
 }
 
@@ -3676,7 +3936,7 @@ function readCachedWorkspace(
   if (!cache) {
     return null;
   }
-  const { home, teamHub, scout, leagueIntel, playerLab } = cache;
+  const { home, teamHub, scout, leagueIntel, playerLab, arena } = cache;
 
   const syncedAt = connection.lastSyncAt ?? null;
 
@@ -3700,6 +3960,10 @@ function readCachedWorkspace(
       ...playerLab,
       syncedAt: asString(playerLab.syncedAt) ?? syncedAt,
     } as unknown as PlayerLabWorkspaceResult,
+    arena: {
+      ...arena,
+      syncedAt: asString(arena.syncedAt) ?? syncedAt,
+    } as unknown as ArenaWorkspaceResult,
   };
 }
 
@@ -3722,6 +3986,37 @@ async function getCachedWorkspacePlayer(
   return (
     candidates.find((player) => asString(player.playerId) === playerId) ?? null
   );
+}
+
+function buildWorkspaceCacheMeta(
+  workspace: WorkspaceBundle,
+): Pick<
+  WorkspaceRefreshMeta,
+  | "cacheAgeMs"
+  | "cacheKind"
+  | "cachedAt"
+  | "matchId"
+  | "nextOpponentTeamId"
+  | "opponentTeamName"
+  | "reason"
+> {
+  const cachedAt =
+    workspace.home.syncedAt ??
+    workspace.teamHub.syncedAt ??
+    workspace.scout.syncedAt ??
+    workspace.playerLab.syncedAt ??
+    workspace.connection.lastSyncAt ??
+    null;
+
+  return {
+    cacheAgeMs: computeCacheAgeMs(cachedAt),
+    cacheKind: "workspace_bundle",
+    cachedAt,
+    matchId: workspace.home.nextMatch?.matchId ?? null,
+    nextOpponentTeamId: workspace.home.nextMatch?.opponentTeamId ?? null,
+    opponentTeamName: workspace.home.nextMatch?.opponentTeamName ?? null,
+    reason: "force=false and cached workspace exists",
+  };
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -3760,6 +4055,19 @@ function classifyConnectionError(error: unknown): ConnectionStatus {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
+}
+
+function computeCacheAgeMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+
+  return Math.max(0, Date.now() - parsed);
 }
 
 function maskAccessKey(accessKey: string): string {

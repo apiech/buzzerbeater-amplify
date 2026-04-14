@@ -381,6 +381,141 @@ test("getMatchBoxscoreDetails tolerates malformed cached optional metrics and le
   assert.equal(homePlayer.minutes, 24);
 });
 
+test("getMatchBoxscoreDetails normalizes malformed stored cache payloads before returning them", async () => {
+  const payload = await getMatchBoxscoreDetails(
+    {
+      env: {
+        MATCH_STORE_BUCKET_NAME: "bucket",
+        MATCH_CATALOG_TABLE_NAME: "catalog",
+        TEAM_MATCH_PROJECTION_TABLE_NAME: "projection",
+        MATCH_INGEST_QUEUE_URL: "ingest",
+        MATCH_MATERIALIZE_QUEUE_URL: "materialize",
+      },
+      identity: { sub: "user-1" },
+      matchId: "m11",
+    },
+    createDependencies({
+      getCatalog: async () => null,
+      getLegacyMatchBoxscore: async () => ({
+        matchId: "m11",
+        boxscoreJson: {
+          matchId: "m11",
+          source: " ",
+          homeTeam: {
+            teamId: "T8",
+            teamName: "Stored Home",
+            offStrategy: "Motion",
+            defStrategy: "32Zone",
+            ratings: createCompletePredictionRatings(9.1),
+            teamTotals: {
+              fg: "40",
+            },
+            efficiency: {
+              pp100: "101.2",
+            },
+            players: [
+              {
+                playerId: "p1",
+                fullName: "Stored Starter",
+                isStarter: null,
+                performance: null,
+                minutesByPosition: {
+                  PG: "22",
+                  SG: "10",
+                },
+              },
+            ],
+          },
+          awayTeam: {
+            teamId: "T9",
+            teamName: "Stored Away",
+            offStrategy: "Push",
+            defStrategy: "23Zone",
+            ratings: createCompletePredictionRatings(8.4),
+            players: [
+              {
+                playerId: "p2",
+                fullName: "Stored Bench",
+                isStarter: "false",
+                performance: [
+                  {
+                    key: "points",
+                    numberValue: "14",
+                  },
+                ],
+                minutesByPosition: [
+                  {
+                    key: "PF",
+                    numberValue: "18",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+      listTrackedTeamsForUser: async () => [],
+      getBbConnection: async () => ({ teamId: "T1" }),
+    }),
+  );
+
+  const typedPayload = payload as {
+    awayTeam: {
+      players: Array<{
+        isStarter: boolean;
+        minutes: number | null;
+        minutesByPosition: Array<{ key: string; numberValue: number }>;
+        performance: Array<{ key: string; numberValue: number }>;
+      }>;
+      teamId: string | null;
+    } | null;
+    homeTeam: {
+      efficiency: Array<{ key: string; numberValue: number }>;
+      players: Array<{
+        isStarter: boolean;
+        minutes: number | null;
+        minutesByPosition: Array<{ key: string; numberValue: number }>;
+        performance: Array<{ key: string; numberValue: number }>;
+      }>;
+      teamId: string | null;
+      teamTotals: Array<{ key: string; numberValue: number }>;
+    } | null;
+    source: string;
+  };
+  assert.equal(typedPayload.source, "MATCH_BOXSCORE_CACHE");
+  if (!typedPayload.homeTeam || !typedPayload.awayTeam) {
+    assert.fail("Expected both normalized teams to be present.");
+  }
+  const homePlayer = typedPayload.homeTeam.players[0];
+  const awayPlayer = typedPayload.awayTeam.players[0];
+  if (!homePlayer || !awayPlayer) {
+    assert.fail("Expected normalized stored player lines.");
+  }
+  assert.equal(typedPayload.homeTeam.teamId, "T8");
+  assert.equal(typedPayload.awayTeam.teamId, "T9");
+  assert.deepStrictEqual(typedPayload.homeTeam.teamTotals, [
+    { key: "fg", numberValue: 40 },
+  ]);
+  assert.deepStrictEqual(typedPayload.homeTeam.efficiency, [
+    { key: "pp100", numberValue: 101.2 },
+  ]);
+  assert.equal(homePlayer.isStarter, false);
+  assert.equal(homePlayer.minutes, 32);
+  assert.deepStrictEqual(homePlayer.performance, []);
+  assert.deepStrictEqual(homePlayer.minutesByPosition, [
+    { key: "PG", numberValue: 22 },
+    { key: "SG", numberValue: 10 },
+  ]);
+  assert.equal(awayPlayer.isStarter, false);
+  assert.equal(awayPlayer.minutes, 18);
+  assert.deepStrictEqual(awayPlayer.performance, [
+    { key: "points", numberValue: 14 },
+  ]);
+  assert.deepStrictEqual(awayPlayer.minutesByPosition, [
+    { key: "PF", numberValue: 18 },
+  ]);
+});
+
 test("getMatchBoxscoreDetails fetches live BB data when both caches miss", async () => {
   let receivedOptions: { securityCode: string; username: string } | null = null;
 

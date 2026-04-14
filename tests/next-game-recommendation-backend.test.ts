@@ -1,16 +1,29 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import {
-  __testing as recommendationTesting,
-} from "../amplify/data/_backend/next-game-recommendation";
+import { __testing as recommendationTesting } from "../amplify/data/_backend/next-game-recommendation";
 import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
 
 installInactiveMaintenanceRuntime();
 
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(currentDir, "..");
+const nextGameRecommendationJobsSource = readFileSync(
+  join(repoRoot, "amplify", "_backend", "next-game-recommendation-jobs.ts"),
+  "utf8",
+);
+const nextGameRecommendationWorkerResourceSource = readFileSync(
+  join(repoRoot, "amplify", "next-game-recommendation-worker", "resource.ts"),
+  "utf8",
+);
+
 test("normalizeRecommendationInput defaults enthusiasm and validates switch mappings", () => {
   assert.deepStrictEqual(
     recommendationTesting.normalizeRecommendationInput({
+      excludedPlayerIds: ["p2", "p1", "p2"],
       defensiveSwitch: {
         c: "c",
         pf: "pf",
@@ -20,6 +33,7 @@ test("normalizeRecommendationInput defaults enthusiasm and validates switch mapp
       },
     }),
     {
+      excludedPlayerIds: ["p1", "p2"],
       enthusiasm: 8,
       defensiveSwitch: {
         pg: "PG",
@@ -47,12 +61,192 @@ test("normalizeRecommendationInput defaults enthusiasm and validates switch mapp
   );
 });
 
+test("normalizeExcludedPlayerIds sorts and dedupes recommendation exclusions", () => {
+  assert.deepStrictEqual(
+    recommendationTesting.normalizeExcludedPlayerIds([" p3 ", "p1", "p3", ""]),
+    ["p1", "p3"],
+  );
+});
+
 test("effortChoiceToOrdinal maps take-it-easy, normal, and crunch-time labels", () => {
   assert.equal(recommendationTesting.effortChoiceToOrdinal("Take It Easy"), -1);
   assert.equal(recommendationTesting.effortChoiceToOrdinal("TIE"), -1);
   assert.equal(recommendationTesting.effortChoiceToOrdinal("Normal"), 0);
   assert.equal(recommendationTesting.effortChoiceToOrdinal("CT"), 1);
   assert.equal(recommendationTesting.effortChoiceToOrdinal("Crunch Time"), 1);
+});
+
+test("next-game recommendation worker keeps lineup-helper snapshot prerequisites", () => {
+  assert.match(
+    nextGameRecommendationWorkerResourceSource,
+    /buildBbConnectionSecretFunctionEnvironment/,
+  );
+  assert.match(
+    nextGameRecommendationJobsSource,
+    /PLAYER_SKILL_SNAPSHOT_TABLE_NAME/,
+  );
+  assert.match(
+    nextGameRecommendationJobsSource,
+    /playerSkillSnapshotTable\.grantReadData/,
+  );
+  assert.doesNotMatch(
+    nextGameRecommendationJobsSource,
+    /ACTIVE_TRACKED_TEAMS_TABLE_NAME/,
+  );
+});
+
+test("next-game recommendation statuses normalize legacy and granular worker phases", () => {
+  assert.equal(
+    recommendationTesting.normalizeRecommendationStatus("PREPARING_INPUTS"),
+    "PREPARING_INPUTS",
+  );
+  assert.equal(
+    recommendationTesting.normalizeRecommendationStatus("EVALUATING_CANDIDATES"),
+    "EVALUATING_CANDIDATES",
+  );
+  assert.equal(
+    recommendationTesting.normalizeRecommendationStatus("RESOLVING_CONTEXT"),
+    "RESOLVING_CONTEXT",
+  );
+  assert.equal(
+    recommendationTesting.normalizeRecommendationStatus("OPTIMIZING_LINEUPS"),
+    "OPTIMIZING_LINEUPS",
+  );
+  assert.equal(
+    recommendationTesting.normalizeRecommendationStatus("SCORING_MATCHUPS"),
+    "SCORING_MATCHUPS",
+  );
+  assert.equal(
+    recommendationTesting.normalizeRecommendationStatus("BUILDING_PLANNER"),
+    "BUILDING_PLANNER",
+  );
+  assert.equal(
+    recommendationTesting.normalizeRecommendationStatus("mystery"),
+    "FAILED",
+  );
+});
+
+test("next-game recommendation worker persists granular progress phases in order", () => {
+  const source = readFileSync(
+    join(
+      repoRoot,
+      "amplify",
+      "data",
+      "_backend",
+      "next-game-recommendation.ts",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /status: "RESOLVING_CONTEXT"/);
+  assert.match(source, /status: "OPTIMIZING_LINEUPS"/);
+  assert.match(source, /status: "SCORING_MATCHUPS"/);
+  assert.match(source, /status: "BUILDING_PLANNER"/);
+  assert.ok(
+    source.indexOf('status: "RESOLVING_CONTEXT"') <
+      source.indexOf('status: "OPTIMIZING_LINEUPS"') &&
+      source.indexOf('status: "OPTIMIZING_LINEUPS"') <
+        source.indexOf('status: "SCORING_MATCHUPS"') &&
+      source.indexOf('status: "SCORING_MATCHUPS"') <
+        source.indexOf('status: "BUILDING_PLANNER"'),
+  );
+});
+
+test("next-game recommendation progress records completed phases and preserves the failed phase index", () => {
+  const queued = recommendationTesting.normalizeRecommendationProgress(null, {
+    completedAt: null,
+    error: null,
+    requestJson: {
+      excludedPlayerIds: ["p1"],
+    },
+    requestedAt: "2026-04-14T17:51:33.000Z",
+    resultJson: null,
+    startedAt: null,
+    status: "QUEUED",
+  } as any);
+
+  const resolving = recommendationTesting.advanceRecommendationProgress({
+    currentProgress: queued,
+    currentPhaseStartedAt: "2026-04-14T17:51:35.000Z",
+    nextPhaseKey: "RESOLVING_CONTEXT",
+    summary: "Resolving workspace, forecast, and source match context.",
+    updatedAt: "2026-04-14T17:51:35.000Z",
+  });
+  const optimizing = recommendationTesting.advanceRecommendationProgress({
+    completedUnits: 10,
+    currentProgress: resolving,
+    currentPhaseStartedAt: "2026-04-14T17:51:41.000Z",
+    nextPhaseKey: "OPTIMIZING_LINEUPS",
+    summary: recommendationTesting.buildLineupOptimizationSummary(10, 70),
+    totalUnits: 70,
+    unitLabel: "tactic pairs",
+    updatedAt: "2026-04-14T17:51:41.000Z",
+  });
+  const failed = recommendationTesting.buildFailedRecommendationProgress({
+    currentProgress: optimizing,
+    errorMessage: "No usable opponent source boxscore with ratings is available yet.",
+    updatedAt: "2026-04-14T17:51:45.000Z",
+  });
+
+  assert.deepStrictEqual(
+    optimizing.completedPhases.map((phase) => phase.phaseKey),
+    ["RESOLVING_CONTEXT"],
+  );
+  assert.equal(optimizing.completedPhases[0]?.durationMs, 6000);
+  assert.equal(optimizing.phaseIndex, 2);
+  assert.equal(optimizing.completedUnits, 10);
+  assert.equal(optimizing.totalUnits, 70);
+  assert.equal(failed.phaseKey, "FAILED");
+  assert.equal(failed.phaseIndex, 2);
+  assert.equal(
+    failed.summary,
+    "No usable opponent source boxscore with ratings is available yet.",
+  );
+});
+
+test("next-game recommendation latest lookup uses explicit ids instead of recomputing context", () => {
+  const source = readFileSync(
+    join(
+      repoRoot,
+      "amplify",
+      "data",
+      "_backend",
+      "next-game-recommendation.ts",
+    ),
+    "utf8",
+  );
+  const getLatestSection = source.slice(
+    source.indexOf("export async function getLatestNextGameRecommendation"),
+    source.indexOf("export async function getNextGamePlannerDetail"),
+  );
+
+  assert.match(getLatestSection, /forecastJobId: unknown/);
+  assert.match(getLatestSection, /matchId: unknown/);
+  assert.match(getLatestSection, /opponentTeamId: unknown/);
+  assert.match(getLatestSection, /get_latest\.received/);
+  assert.doesNotMatch(getLatestSection, /resolveRecommendationContext/);
+  assert.doesNotMatch(getLatestSection, /resolveLatestForecastContext/);
+  assert.doesNotMatch(getLatestSection, /resolveOpponentSourceContext/);
+});
+
+test("next-game recommendation worker emits structured progress diagnostics", () => {
+  const source = readFileSync(
+    join(
+      repoRoot,
+      "amplify",
+      "data",
+      "_backend",
+      "next-game-recommendation.ts",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /process\.status_transition/);
+  assert.match(source, /process\.context\.ready/);
+  assert.match(source, /process\.lineup_optimization\.progress/);
+  assert.match(source, /process\.planner\.request\.ready/);
+  assert.match(source, /process\.planner\.response\.ready/);
+  assert.match(source, /progressJson/);
 });
 
 test("buildPredictorPerspective flips home-away orientation for away games", () => {
@@ -112,7 +306,15 @@ test("candidate selection prefers biggest win and efficient 10-point win", () =>
   const candidates = [
     createCandidate("Base Offense", "Man to man", "Normal", 12.2, 108, 95, 1),
     createCandidate("Motion", "2-3 Zone", "Take It Easy", 10.1, 102, 91.9, 0),
-    createCandidate("Run and Gun", "Full Court Press", "Crunch Time", 15.4, 111, 95.6, 2),
+    createCandidate(
+      "Run and Gun",
+      "Full Court Press",
+      "Crunch Time",
+      15.4,
+      111,
+      95.6,
+      2,
+    ),
   ];
 
   assert.equal(
@@ -152,6 +354,9 @@ test("jobMatchesRecommendationSettings and stale detection use exact persisted s
         enthusiasm: 8,
         matchId: "m-1",
         opponentTeamId: "opp-1",
+        requestJson: {
+          excludedPlayerIds: ["p1", "p2"],
+        },
         switchC: "C",
         switchPf: "PF",
         switchPg: "PG",
@@ -159,6 +364,7 @@ test("jobMatchesRecommendationSettings and stale detection use exact persisted s
         switchSg: "SG",
       },
       {
+        excludedPlayerIds: ["p2", "p1", "p2"],
         enthusiasm: 8,
         matchId: "m-1",
         opponentTeamId: "opp-1",
@@ -174,11 +380,48 @@ test("jobMatchesRecommendationSettings and stale detection use exact persisted s
     true,
   );
   assert.equal(
-    recommendationTesting.computeRecommendationStale("forecast-1", "forecast-2"),
+    recommendationTesting.jobMatchesRecommendationSettings(
+      {
+        enthusiasm: 8,
+        matchId: "m-1",
+        opponentTeamId: "opp-1",
+        requestJson: {
+          excludedPlayerIds: ["p9"],
+        },
+        switchC: "C",
+        switchPf: "PF",
+        switchPg: "PG",
+        switchSf: "SF",
+        switchSg: "SG",
+      },
+      {
+        excludedPlayerIds: ["p1"],
+        enthusiasm: 8,
+        matchId: "m-1",
+        opponentTeamId: "opp-1",
+        defensiveSwitch: {
+          pg: "PG",
+          sg: "SG",
+          sf: "SF",
+          pf: "PF",
+          c: "C",
+        },
+      },
+    ),
+    false,
+  );
+  assert.equal(
+    recommendationTesting.computeRecommendationStale(
+      "forecast-1",
+      "forecast-2",
+    ),
     true,
   );
   assert.equal(
-    recommendationTesting.computeRecommendationStale("forecast-2", "forecast-2"),
+    recommendationTesting.computeRecommendationStale(
+      "forecast-2",
+      "forecast-2",
+    ),
     false,
   );
 });

@@ -6,6 +6,7 @@ import {
   decodeAwsJsonList,
 } from "./awsjson";
 import { getDataClient, type AmplifyDataFunctionEnv } from "./data-client";
+import { partitionLegacyWorkspaceCacheCoercionErrors } from "./workspace-cache";
 import type { PredictionInputShape } from "../../../lib/prediction/normalization";
 import type { Schema } from "../resource";
 
@@ -34,6 +35,9 @@ type OpponentForecastStoredResult = NonNullable<
 >;
 type NextGameRecommendationStoredRequest = NonNullable<
   Schema["NextGameRecommendationJob"]["type"]["requestJson"]
+>;
+type NextGameRecommendationStoredProgress = NonNullable<
+  Schema["NextGameRecommendationJob"]["type"]["progressJson"]
 >;
 type NextGameRecommendationStoredResult = NonNullable<
   Schema["NextGameRecommendationJob"]["type"]["resultJson"]
@@ -93,7 +97,20 @@ export type OpponentForecastJobStatus =
 export type NextGameRecommendationStatus =
   | "QUEUED"
   | "PREPARING_INPUTS"
+  | "RESOLVING_CONTEXT"
+  | "OPTIMIZING_LINEUPS"
   | "EVALUATING_CANDIDATES"
+  | "SCORING_MATCHUPS"
+  | "BUILDING_PLANNER"
+  | "SUCCEEDED"
+  | "FAILED";
+
+export type NextGameRecommendationProgressPhaseKey =
+  | "QUEUED"
+  | "RESOLVING_CONTEXT"
+  | "OPTIMIZING_LINEUPS"
+  | "SCORING_MATCHUPS"
+  | "BUILDING_PLANNER"
   | "SUCCEEDED"
   | "FAILED";
 
@@ -218,6 +235,21 @@ export type TrackedPlayerRecord = RepositoryModel<Schema["TrackedPlayer"]["type"
 export type TrackedMatchRecord = RepositoryModel<Schema["TrackedMatch"]["type"]>;
 
 export type MatchBoxscoreRecord = RepositoryModel<Schema["MatchBoxscore"]["type"]>;
+export type ArenaPricingSnapshotRecord = RepositoryModel<
+  Schema["ArenaPricingSnapshot"]["type"]
+>;
+export type MatchBoxscoreCacheReadResult =
+  | {
+      status: "hit";
+      record: MatchBoxscoreRecord;
+    }
+  | {
+      status: "missing";
+    }
+  | {
+      status: "unreadable";
+      errorMessage: string;
+    };
 
 export type LeagueStandingRecord = RepositoryModel<Schema["LeagueStanding"]["type"]>;
 
@@ -244,6 +276,7 @@ export type PredictionJobRecord = {
   awayScore?: number | null;
   pointDiff?: number | null;
   error?: string | null;
+  modelKey?: string | null;
   modelVersion?: string | null;
   forecastJobId?: string | null;
   forecastModelVersion?: string | null;
@@ -308,6 +341,7 @@ export type NextGameRecommendationJobRecord = {
   startedAt?: string | null;
   completedAt?: string | null;
   requestJson: NextGameRecommendationStoredRequest;
+  progressJson?: NextGameRecommendationStoredProgress | null;
   resultJson?: NextGameRecommendationStoredResult | null;
   error?: string | null;
   createdAt?: string;
@@ -564,6 +598,7 @@ const runtime = {
 };
 
 export const __testing = {
+  prepareModelInput,
   runtime,
 };
 
@@ -571,14 +606,28 @@ export async function getBbConnection(
   env: RepositoryEnv,
   userId: string,
 ): Promise<BbConnectionRecord | null> {
-  const record = await getModelRecord<BbConnectionRecord>(
-    env,
-    "BbConnection",
-    { userId },
-    "load BB connection",
-  );
+  const model = await getModel<BbConnectionRecord>(env, "BbConnection");
+  const result = await model.get({ userId });
+  const { legacyErrors, otherErrors } =
+    partitionLegacyWorkspaceCacheCoercionErrors(result.errors);
 
-  return decodeAwsJsonFields("BbConnection", record);
+  if (!result.errors?.length) {
+    return decodeAwsJsonFields("BbConnection", result.data ?? null);
+  }
+
+  if (result.data && legacyErrors.length > 0 && otherErrors.length === 0) {
+    const record = decodeAwsJsonFields("BbConnection", result.data);
+    return record
+      ? {
+          ...record,
+          workspaceCacheJson: null,
+        }
+      : null;
+  }
+
+  const errorsToReport =
+    result.data && legacyErrors.length > 0 ? otherErrors : result.errors;
+  throw new Error(`load BB connection failed: ${formatClientErrors(errorsToReport)}`);
 }
 
 export async function getBillingAccount(
@@ -1450,14 +1499,57 @@ export async function getMatchBoxscore(
   userId: string,
   matchId: string,
 ): Promise<MatchBoxscoreRecord | null> {
-  const record = await getModelRecord<MatchBoxscoreRecord>(
-    env,
-    "MatchBoxscore",
-    { userId, matchId },
-    "load match boxscore",
-  );
+  const result = await readMatchBoxscoreCacheRecord(env, userId, matchId);
+  if (result.status === "hit") {
+    return result.record;
+  }
 
-  return decodeAwsJsonFields("MatchBoxscore", record);
+  if (result.status === "unreadable") {
+    console.warn(
+      "[repository] Treating unreadable MatchBoxscore cache row as a cache miss.",
+      {
+        errorMessage: result.errorMessage,
+        matchId,
+        userId,
+      },
+    );
+  }
+
+  return null;
+}
+
+export async function readMatchBoxscoreCacheRecord(
+  env: RepositoryEnv,
+  userId: string,
+  matchId: string,
+): Promise<MatchBoxscoreCacheReadResult> {
+  try {
+    const record = await getModelRecord<MatchBoxscoreRecord>(
+      env,
+      "MatchBoxscore",
+      { userId, matchId },
+      "load match boxscore",
+    );
+    if (!record) {
+      return {
+        status: "missing",
+      };
+    }
+
+    return {
+      status: "hit",
+      record: decodeAwsJsonFields("MatchBoxscore", record),
+    };
+  } catch (error) {
+    if (isLegacyMatchBoxscoreCacheReadFailure(error)) {
+      return {
+        status: "unreadable",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    throw error;
+  }
 }
 
 export async function listTrackedTeamsForUser(
@@ -1587,6 +1679,49 @@ export async function upsertMatchBoxscore(
   input: MatchBoxscoreRecord,
 ): Promise<void> {
   await upsertModelRecord(env, "MatchBoxscore", ["userId", "matchId"], input);
+}
+
+export async function upsertArenaPricingSnapshot(
+  env: RepositoryEnv,
+  input: ArenaPricingSnapshotRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "ArenaPricingSnapshot",
+    ["userId", "capturedAt"],
+    input,
+  );
+}
+
+export async function listArenaPricingSnapshotsByUserId(
+  env: RepositoryEnv,
+  userId: string,
+  limit = 30,
+): Promise<ArenaPricingSnapshotRecord[]> {
+  const records: ArenaPricingSnapshotRecord[] = [];
+  let nextToken: string | null = null;
+
+  do {
+    const page: PagedRecords<ArenaPricingSnapshotRecord> =
+      await queryModelIndexPage<ArenaPricingSnapshotRecord>(
+        env,
+        "ArenaPricingSnapshot",
+        "listArenaPricingSnapshotsByUserIdAndCapturedAt",
+        { userId },
+        {
+          limit: Math.max(1, limit - records.length),
+          nextToken,
+          sortDirection: "DESC",
+        },
+        "list arena pricing snapshots",
+      );
+    records.push(
+      ...decodeAwsJsonList("ArenaPricingSnapshot", page.records),
+    );
+    nextToken = page.nextToken;
+  } while (nextToken && records.length < limit);
+
+  return records.slice(0, limit);
 }
 
 export async function upsertLeagueStanding(
@@ -1816,11 +1951,31 @@ async function upsertModelRecord(
 ): Promise<void> {
   const model = await getModel<Record<string, unknown>>(env, modelName);
   const identifier = pickFields(input, identifierFields);
-  const currentRecord = await assertSuccessful(
-    model.get(identifier),
-    `load ${modelName} record`,
-  );
   const payload = prepareModelInput(modelName, input);
+  let currentRecord: Record<string, unknown> | null;
+
+  try {
+    currentRecord = await assertSuccessful(
+      model.get(identifier),
+      `load ${modelName} record`,
+    );
+  } catch (error) {
+    if (canOverwriteUnreadableMatchBoxscoreRecord(modelName, error)) {
+      console.warn(
+        "[repository] Overwriting unreadable MatchBoxscore cache row during upsert.",
+        {
+          errorMessage: error instanceof Error ? error.message : String(error),
+          identifier,
+        },
+      );
+      await assertSuccessful(
+        model.update(payload),
+        `update ${modelName} record`,
+      );
+      return;
+    }
+    throw error;
+  }
 
   if (currentRecord) {
     await assertSuccessful(model.update(payload), `update ${modelName} record`);
@@ -1834,7 +1989,113 @@ function prepareModelInput<TRecord extends Record<string, unknown>>(
   modelName: string,
   input: TRecord,
 ): TRecord {
-  return omitUndefinedValues(encodeAwsJsonFields(modelName, input));
+  return omitUndefinedValues(
+    encodeAwsJsonFields(modelName, sanitizeModelInput(modelName, input)),
+  );
+}
+
+function sanitizeModelInput<TRecord extends Record<string, unknown>>(
+  modelName: string,
+  input: TRecord,
+): TRecord {
+  if (modelName === "BbConnection") {
+    return sanitizeBbConnectionInput(input);
+  }
+  if (modelName === "TrackedTeam") {
+    return sanitizeTrackedTeamInput(input);
+  }
+  if (modelName === "TrackedPlayer") {
+    return sanitizeTrackedPlayerInput(input);
+  }
+
+  return input;
+}
+
+function sanitizeBbConnectionInput<TRecord extends Record<string, unknown>>(
+  input: TRecord,
+): TRecord {
+  return sanitizeNestedAttributes(input, ["profileJson", "workspaceCacheJson"]);
+}
+
+function sanitizeTrackedTeamInput<TRecord extends Record<string, unknown>>(
+  input: TRecord,
+): TRecord {
+  return sanitizeNestedAttributes(input, ["summaryJson"]);
+}
+
+function sanitizeTrackedPlayerInput<TRecord extends Record<string, unknown>>(
+  input: TRecord,
+): TRecord {
+  return sanitizeNestedAttributes(input, ["profileJson"]);
+}
+
+function sanitizeNestedAttributes<TRecord extends Record<string, unknown>>(
+  input: TRecord,
+  fieldNames: readonly string[],
+): TRecord {
+  let updated: Record<string, unknown> | null = null;
+
+  for (const fieldName of fieldNames) {
+    if (!(fieldName in input)) {
+      continue;
+    }
+
+    const currentValue = input[fieldName];
+    const nextValue = stripAttributesDeep(currentValue);
+
+    if (nextValue === currentValue) {
+      continue;
+    }
+
+    updated ??= { ...input };
+    updated[fieldName] = nextValue;
+  }
+
+  return (updated ?? input) as TRecord;
+}
+
+function stripAttributesDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    let updated: unknown[] | null = null;
+
+    for (let index = 0; index < value.length; index += 1) {
+      const entry = value[index];
+      const nextEntry = stripAttributesDeep(entry);
+      if (nextEntry === entry) {
+        continue;
+      }
+
+      updated ??= [...value];
+      updated[index] = nextEntry;
+    }
+
+    return updated ?? value;
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const source = value as Record<string, unknown>;
+  let updated: Record<string, unknown> | null = null;
+
+  for (const [key, entry] of Object.entries(source)) {
+    if (key === "attributes") {
+      updated ??= { ...source };
+      delete updated[key];
+      continue;
+    }
+
+    const nextEntry = stripAttributesDeep(entry);
+    if (nextEntry === entry) {
+      continue;
+    }
+
+    updated ??= { ...source };
+    updated[key] = nextEntry;
+  }
+
+  return updated ?? value;
 }
 
 async function getModelRecord<TRecord>(
@@ -1919,11 +2180,13 @@ async function assertSuccessful<TData>(
     return result.data ?? null;
   }
 
-  throw new Error(
-    `${context} failed: ${result.errors
-      .map((error) => error.message ?? "Unknown Amplify data client error")
-      .join("; ")}`,
-  );
+  throw new Error(`${context} failed: ${formatClientErrors(result.errors)}`);
+}
+
+function formatClientErrors(errors: ReadonlyArray<ClientError> | null | undefined): string {
+  return (errors ?? [])
+    .map((error) => error.message ?? "Unknown Amplify data client error")
+    .join("; ");
 }
 
 function assertPresent<TData>(value: TData | null, context: string): TData {
@@ -1932,6 +2195,27 @@ function assertPresent<TData>(value: TData | null, context: string): TData {
   }
 
   throw new Error(`${context} failed: Amplify data client returned no data.`);
+}
+
+function isLegacyMatchBoxscoreCacheReadFailure(error: unknown): boolean {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  return (
+    (errorMessage.includes("load match boxscore failed:") ||
+      errorMessage.includes("load MatchBoxscore record failed:")) &&
+    errorMessage.includes("/getMatchBoxscore/boxscoreJson") &&
+    (errorMessage.includes("type mismatch error") ||
+      errorMessage.includes("Cannot return null for non-nullable type"))
+  );
+}
+
+function canOverwriteUnreadableMatchBoxscoreRecord(
+  modelName: string,
+  error: unknown,
+): boolean {
+  return (
+    modelName === "MatchBoxscore" &&
+    isLegacyMatchBoxscoreCacheReadFailure(error)
+  );
 }
 
 function omitUndefinedValues<TRecord extends Record<string, unknown>>(

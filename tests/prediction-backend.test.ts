@@ -52,6 +52,7 @@ test("normalizePredictionRequest accepts the editable grid payload and provenanc
   const normalized = normalizePredictionRequest({
     forecastContext,
     input: legacyGdpPredictionInput,
+    modelKey: "catboost",
   });
 
   assert.deepStrictEqual(normalized, {
@@ -60,6 +61,7 @@ test("normalizePredictionRequest accepts the editable grid payload and provenanc
       enthusiasmBand: null,
     },
     input: predictionInput,
+    modelKey: "catboost",
   });
 });
 
@@ -136,7 +138,7 @@ test("submitPredictionJob overwrites the current preview with a new request id",
     {
       env: {},
       identity: { sub: "user-1" },
-      request: { forecastContext, input: predictionInput },
+      request: { forecastContext, input: predictionInput, modelKey: "xgb" },
       stateMachineArn:
         "arn:aws:states:us-east-1:123456789012:stateMachine:prediction",
     },
@@ -178,8 +180,10 @@ test("submitPredictionJob overwrites the current preview with a new request id",
   assert.equal(firstUpsert.status, "QUEUED");
   assert.equal(secondUpsert.status, "QUEUED");
   assert.notEqual(firstUpsert.requestId, secondUpsert.requestId);
+  assert.equal(firstUpsert.modelKey, null);
   assert.equal(secondUpsert.error, null);
   assert.equal(secondUpsert.executionArn, null);
+  assert.equal(secondUpsert.modelKey, "xgb");
   assert.equal(secondUpsert.modelVersion, null);
   assert.equal(secondUpsert.away_gdp_focus, "N/A");
   assert.equal(secondUpsert.away_gdp_pace, "N/A");
@@ -251,6 +255,7 @@ test("processPredictionJob expands the grid input with fixed hidden tactics", as
       getPredictionJob: async () =>
         ({
           ...predictionInput,
+          modelKey: "catboost",
           requestId: "request-1",
           requestedAt: "2026-03-15T00:00:00.000Z",
           status: "QUEUED",
@@ -261,6 +266,7 @@ test("processPredictionJob expands the grid input with fixed hidden tactics", as
         return {
           awayScore: 94.8,
           homeScore: 101.3,
+          modelKey: "catboost",
           modelVersion: "bundle-v1",
           pointDiff: 6.5,
           tacticsGrid: {
@@ -319,12 +325,14 @@ test("processPredictionJob expands the grid input with fixed hidden tactics", as
     away_offStrategy: "Base",
     home_defStrategy: "ManToMan",
     home_offStrategy: "Base",
+    modelKey: "catboost",
   });
   assert.equal(updates[0]?.status, "RESOLVING_INPUT");
   assert.equal(updates[1]?.status, "INVOKING_MODEL");
   const successUpdate = updates[2];
   assert.ok(successUpdate);
   assert.equal(successUpdate.status, "SUCCEEDED");
+  assert.equal(successUpdate.modelKey, "catboost");
   assert.equal(successUpdate.modelVersion, "bundle-v1");
   assert.equal(successUpdate.homeScore, 101.3);
   assert.equal(successUpdate.awayScore, 94.8);

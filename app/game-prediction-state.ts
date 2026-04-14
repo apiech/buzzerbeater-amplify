@@ -12,6 +12,7 @@ import type {
   ScoutedOpponentSheet,
 } from "@/app/types";
 import { parseLegacyJsonField } from "@/lib/json-parsing";
+import { normalizePredictionModelKey } from "@/lib/prediction/model-selection";
 import { normalizePredictionRatingsFromBoxscore } from "@/lib/prediction/normalization";
 
 export const GAME_PREDICTION_DRAFT_STORAGE_KEY = "bb.gamePredictionDraft.v1";
@@ -119,6 +120,7 @@ export function createDefaultPredictionDraft(args?: {
   teamBName?: string | null;
 }): PredictionDraft {
   return {
+    modelKey: null,
     teamA: createDefaultPredictionSide({
       teamId: args?.teamAId ?? null,
       teamName: args?.teamAName ?? "Team A",
@@ -162,6 +164,7 @@ export function createPredictionDraftFromScout(args: {
       : createDefaultPredictionSide({ teamName: "Team A" });
 
   return {
+    modelKey: null,
     teamA,
     teamB: cloneScoutedOpponentSheet(args.sheet),
     venue: args.isNextOpponent
@@ -259,6 +262,7 @@ export function reconcilePredictionDraft(
   }
 
   return {
+    modelKey: normalizePredictionModelKey(value.modelKey),
     teamA: reconcilePredictionSide(value.teamA, fallback.teamA),
     teamB: reconcilePredictionSide(value.teamB, fallback.teamB),
     venue: normalizePredictionVenue(value.venue, fallback.venue),

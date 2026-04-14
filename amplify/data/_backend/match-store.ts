@@ -52,6 +52,7 @@ type MatchBoxscoreTeamRatingsResult = NonNullable<
   NonNullable<MatchBoxscoreDetailsResult["homeTeam"]>["ratings"]
 >;
 type MatchContextResult = NonNullable<MatchBoxscoreDetailsResult["context"]>;
+type MatchAttendanceResult = NonNullable<MatchBoxscoreDetailsResult["attendance"]>;
 type MatchBoxscoreTeamResult = NonNullable<
   MatchBoxscoreDetailsResult["homeTeam"]
 >;
@@ -686,11 +687,30 @@ function buildNormalizedBoxscorePayload(input: {
     matchType: input.matchType,
     startTime: input.startTime,
     endTime: input.endTime,
+    attendance: buildMatchAttendance(input.boxscore),
     homeTeam,
     awayTeam,
     context: buildMatchContext(input.boxscore),
     source: input.source,
   };
+}
+
+function buildMatchAttendance(
+  boxscore: Record<string, unknown> | null,
+): MatchAttendanceResult | null {
+  const attendance = asRecord(boxscore?.attendance);
+  if (!attendance) {
+    return null;
+  }
+
+  const result = {
+    bleachers: asOptionalInteger(attendance.bleachers),
+    lowerTier: asOptionalInteger(attendance.lowerTier),
+    courtside: asOptionalInteger(attendance.courtside),
+    luxury: asOptionalInteger(attendance.luxury),
+  } satisfies MatchAttendanceResult;
+
+  return Object.values(result).some((entry) => entry !== null) ? result : null;
 }
 
 function hasCompletePredictionRatings(
@@ -1079,6 +1099,11 @@ function asOptionalNumber(value: unknown): number | null {
     : typeof value === "string" && value
       ? Number(value)
       : null;
+}
+
+function asOptionalInteger(value: unknown): number | null {
+  const numeric = asOptionalNumber(value);
+  return numeric === null || Number.isNaN(numeric) ? null : Math.trunc(numeric);
 }
 
 function asOptionalBoolean(value: unknown): boolean | null {

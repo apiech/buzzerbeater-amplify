@@ -13,6 +13,7 @@ import {
   buildModelInputFromPredictionInput,
   type PredictionInputShape,
 } from "../../../lib/prediction/normalization";
+import { normalizePredictionModelKey } from "../../../lib/prediction/model-selection";
 import { requireFeatureAccess } from "./billing";
 import {
   deletePredictionGridCellsByUserAndRequestId,
@@ -56,6 +57,7 @@ type PredictionForecastContext = {
 type PredictionSubmissionRequest = {
   forecastContext?: PredictionForecastContext;
   input: PredictionInputShape;
+  modelKey?: string | null;
 };
 
 type SubmitPredictionDependencies = {
@@ -177,6 +179,7 @@ export async function submitPredictionJob(
     error: null,
     executionArn: null,
     homeScore: null,
+    modelKey: normalizedRequest.modelKey ?? null,
     modelVersion: null,
     pointDiff: null,
   });
@@ -239,9 +242,10 @@ export async function processPredictionJob(
       return;
     }
 
-    const resolvedInput = buildModelInputFromPredictionInput(
-      extractPredictionInput(job),
-    );
+    const resolvedInput = {
+      ...buildModelInputFromPredictionInput(extractPredictionInput(job)),
+      ...(job.modelKey ? { modelKey: job.modelKey } : {}),
+    };
 
     const canInvoke = await runtimeDependencies.updatePredictionJobIfRequestMatches(
       args.env,
@@ -304,6 +308,7 @@ export async function processPredictionJob(
         awayScore: result.awayScore ?? null,
         error: null,
         homeScore: result.homeScore ?? null,
+        modelKey: result.modelKey ?? job.modelKey ?? null,
         modelVersion: result.modelVersion ?? null,
         pointDiff: result.pointDiff ?? null,
       });
@@ -340,14 +345,17 @@ export function normalizePredictionRequest(
   const forecastContext = normalizePredictionForecastContext(
     record.forecastContext,
   );
+  const modelKey = normalizePredictionModelKey(asOptionalString(record.modelKey));
 
   return forecastContext
     ? {
         input: normalizedInput,
         forecastContext,
+        ...(modelKey ? { modelKey } : {}),
       }
     : {
         input: normalizedInput,
+        ...(modelKey ? { modelKey } : {}),
       };
 }
 

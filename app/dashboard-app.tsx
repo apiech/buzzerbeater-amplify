@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { BillingPanel, PremiumFeatureGatePanel } from "@/app/billing-panel";
+import { ArenaPanel } from "@/app/arena-panel";
 import {
   COMMERCIAL_MODE_DISABLED_SENTINEL,
   formatClientError,
@@ -20,8 +21,10 @@ import { PanelErrorBoundary } from "@/app/dashboard/panel-error-boundary";
 import { useAuthenticatedWorkspace } from "@/app/dashboard/use-authenticated-workspace";
 import {
   connectBbAccountMutation,
+  manualSalaryEstimateQueryOptions,
   opponentForecastQueryOptions,
   playerTrendQueryOptions,
+  salaryCalculatorSeedQueryOptions,
   salaryProjectionQueryOptions,
   scoutScheduleQueryOptions,
   scoutTeamSummaryQueryOptions,
@@ -36,12 +39,14 @@ import {
 import { HighlightsPanel } from "@/app/highlights-panel";
 import { LeagueHistoryPanel } from "@/app/league-history-panel";
 import { LineupHelper } from "@/app/lineup-helper";
+import { NextGameWizardPanel } from "@/app/next-game-wizard-panel";
 import { OperationsPanel } from "@/app/operations-panel";
 import { OpponentPicker } from "@/app/opponent-picker";
 import { OpponentSchedulePanel } from "@/app/opponent-schedule-panel";
 import { RecapPanel } from "@/app/recap-panel";
 import { RivalsPanel } from "@/app/rivals-panel";
 import { ScoutOpponentPanel } from "@/app/scout-opponent-panel";
+import { StaffMarketPanel } from "@/app/staff-market-panel";
 import type {
   BillingSummary,
   BbConnectionRecord,
@@ -52,11 +57,14 @@ import type {
   HomeWorkspacePayload,
   LeagueHistoryPanelContext,
   LineupHelperWorkspaceRecord,
+  ManualSalaryEstimate,
   LineupHelperRosterPlayer,
   OpponentForecastSnapshot,
   PlayerSummary,
   RecapPanelContext,
   RivalsPanelContext,
+  SalaryCalculatorSeed,
+  SalaryCalculatorSkillsInput,
   ScoutWorkspacePayload,
   ScoutedOpponentSheet,
 } from "@/app/types";
@@ -64,7 +72,7 @@ import { Alert } from "@/app/ui/primitives/alert";
 import { BuzzerBeaterRatingText } from "@/app/ui/primitives/buzzerbeater-rating-text";
 import { Button } from "@/app/ui/primitives/button";
 import { cn } from "@/app/ui/primitives/cn";
-import { Field, Input } from "@/app/ui/primitives/field";
+import { Field, Input, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
@@ -93,6 +101,11 @@ import { type WorkspaceSection } from "@/app/workspace-sections";
 
 type ConnectionFormState = ConnectBbAccountInput;
 type OwnerRosterSkillKey = keyof LineupHelperRosterPlayer["skills"];
+type SalaryCalculatorSkillKey = keyof SalaryCalculatorSkillsInput;
+type SalaryCalculatorFormState = Record<SalaryCalculatorSkillKey, string>;
+type SalaryCalculatorFormErrors = Partial<
+  Record<SalaryCalculatorSkillKey, string>
+>;
 type OwnerRosterSortKey =
   | "player"
   | "pos"
@@ -134,6 +147,22 @@ const ownerRosterSkillColumns = [
 ] as const satisfies ReadonlyArray<{
   key: OwnerRosterSkillKey;
   label: string;
+}>;
+const salaryCalculatorSkillFields = [
+  { key: "jumpShot", label: "Jump Shot", shortLabel: "JS" },
+  { key: "jumpRange", label: "Jump Range", shortLabel: "JR" },
+  { key: "outsideDefense", label: "Outside Defense", shortLabel: "OD" },
+  { key: "handling", label: "Handling", shortLabel: "HA" },
+  { key: "driving", label: "Driving", shortLabel: "DR" },
+  { key: "passing", label: "Passing", shortLabel: "PA" },
+  { key: "insideScoring", label: "Inside Scoring", shortLabel: "IS" },
+  { key: "insideDefense", label: "Inside Defense", shortLabel: "ID" },
+  { key: "rebounding", label: "Rebounding", shortLabel: "RB" },
+  { key: "shotBlocking", label: "Shot Blocking", shortLabel: "SB" },
+] as const satisfies ReadonlyArray<{
+  key: SalaryCalculatorSkillKey;
+  label: string;
+  shortLabel: string;
 }>;
 const terminalOpponentForecastStatuses = new Set(["SUCCEEDED", "FAILED"]);
 const terminalNextGameRecommendationStatuses = new Set(["SUCCEEDED", "FAILED"]);
@@ -198,8 +227,8 @@ function AuthenticatedWorkspace({
     isLoadingBilling,
     isLoadingConnection,
     isLoadingWorkspace,
+    lineupHelperDependencyState,
     loadConnection,
-    loadWorkspace,
     setShowCredentialForm,
     showCredentialForm,
     workspace,
@@ -313,7 +342,7 @@ function AuthenticatedWorkspace({
               await loadConnection();
               if (status === "CONNECTED") {
                 setShowCredentialForm(false);
-                await loadWorkspace(false);
+                await handleRefresh();
               }
             }}
           />
@@ -328,14 +357,16 @@ function AuthenticatedWorkspace({
                     >
                       {formatConnectionStatus(connectedConnection.status)}
                     </StatusBadge>
-                    <Button
-                      loading={isLoadingWorkspace}
-                      onClick={() => void handleTrackedRefresh()}
-                    >
-                      {activeSection === "home"
-                        ? "Refresh club data"
-                        : "Refresh this section"}
-                    </Button>
+                    {activeSection !== "next-game" ? (
+                      <Button
+                        loading={isLoadingWorkspace}
+                        onClick={() => void handleTrackedRefresh()}
+                      >
+                        {activeSection === "home"
+                          ? "Refresh club data"
+                          : "Refresh this section"}
+                      </Button>
+                    ) : null}
                     <Button
                       onClick={() => {
                         captureAnalyticsEvent(
@@ -423,17 +454,16 @@ function AuthenticatedWorkspace({
                 billingError={billingError}
                 billingSummary={billingSummary}
                 isLoadingBilling={isLoadingBilling}
+                lineupHelperDependencyState={lineupHelperDependencyState}
                 workspace={workspace}
               />
             ) : (
               <Panel>
-                <SectionHeading
-                  title="Your club is ready to load"
-                  titleAs="h4"
-                />
+                <SectionHeading title="Preparing your club view" titleAs="h4" />
                 <p className={statusCopyClassName}>
-                  Refresh your club link or reconnect your BuzzerBeater account
-                  to start filling in the companion view.
+                  We&apos;re still waiting for your club data to settle. If this
+                  sticks around, check the connection note above and the page
+                  will refill automatically once the refresh succeeds.
                 </p>
               </Panel>
             )}
@@ -586,12 +616,16 @@ function WorkspaceDashboard({
   billingError,
   billingSummary,
   isLoadingBilling,
+  lineupHelperDependencyState,
   workspace,
 }: {
   activeSection: WorkspaceSection;
   billingError: string | null;
   billingSummary: BillingSummary | null;
   isLoadingBilling: boolean;
+  lineupHelperDependencyState: ReturnType<
+    typeof useAuthenticatedWorkspace
+  >["lineupHelperDependencyState"];
   workspace: DashboardShellData;
 }) {
   const queryClient = useQueryClient();
@@ -624,6 +658,27 @@ function WorkspaceDashboard({
   const [selectedSalaryPlayerId, setSelectedSalaryPlayerId] = useState<
     string | null
   >(null);
+  const [selectedSalaryCalculatorPlayerId, setSelectedSalaryCalculatorPlayerId] =
+    useState("");
+  const [salaryCalculatorForm, setSalaryCalculatorForm] =
+    useState<SalaryCalculatorFormState>(() =>
+      createEmptySalaryCalculatorFormState(),
+    );
+  const [salaryCalculatorFormErrors, setSalaryCalculatorFormErrors] =
+    useState<SalaryCalculatorFormErrors>({});
+  const [salaryCalculatorSeed, setSalaryCalculatorSeed] =
+    useState<SalaryCalculatorSeed | null>(null);
+  const [salaryCalculatorSeedError, setSalaryCalculatorSeedError] = useState<
+    string | null
+  >(null);
+  const [salaryCalculatorEstimate, setSalaryCalculatorEstimate] =
+    useState<ManualSalaryEstimate | null>(null);
+  const [salaryCalculatorEstimateError, setSalaryCalculatorEstimateError] =
+    useState<string | null>(null);
+  const [isLoadingSalaryCalculatorSeed, setIsLoadingSalaryCalculatorSeed] =
+    useState(false);
+  const [isCalculatingSalaryEstimate, setIsCalculatingSalaryEstimate] =
+    useState(false);
   const recapContext = useMemo<RecapPanelContext>(
     () => ({
       connection: {
@@ -830,6 +885,14 @@ function WorkspaceDashboard({
   const loadingSalaryPlayerId = salaryProjectionQuery.isFetching
     ? selectedSalaryPlayerId
     : null;
+  const playerLabPlayers = workspace.playerLab?.players ?? [];
+  const salaryCalculatorDelta =
+    salaryCalculatorSeed?.currentSalary !== null &&
+    salaryCalculatorSeed?.currentSalary !== undefined &&
+    salaryCalculatorEstimate
+      ? salaryCalculatorEstimate.predictedSalary -
+        salaryCalculatorSeed.currentSalary
+      : null;
 
   async function handleScoutLoad() {
     const nextTeamId = manualScoutTeamId.trim() || scoutTeamDraftId;
@@ -903,6 +966,75 @@ function WorkspaceDashboard({
       return;
     }
     setSelectedSalaryPlayerId(player.playerId);
+  }
+
+  async function handleLoadSalaryCalculatorSeed() {
+    if (!selectedSalaryCalculatorPlayerId) {
+      return;
+    }
+
+    setIsLoadingSalaryCalculatorSeed(true);
+    setSalaryCalculatorSeedError(null);
+    setSalaryCalculatorEstimateError(null);
+
+    try {
+      const seed = await queryClient.fetchQuery(
+        salaryCalculatorSeedQueryOptions({
+          playerId: selectedSalaryCalculatorPlayerId,
+        }),
+      );
+
+      if (!seed) {
+        setSalaryCalculatorSeedError(
+          "The selected player does not have synced salary skills yet.",
+        );
+        return;
+      }
+
+      setSalaryCalculatorSeed(seed);
+      setSalaryCalculatorForm(createSalaryCalculatorFormState(seed.skills));
+      setSalaryCalculatorFormErrors({});
+      setSalaryCalculatorEstimate(null);
+    } catch (error) {
+      setSalaryCalculatorSeedError(formatClientError(error));
+    } finally {
+      setIsLoadingSalaryCalculatorSeed(false);
+    }
+  }
+
+  async function handleCalculateSalaryEstimate() {
+    const parsed = parseSalaryCalculatorFormState(salaryCalculatorForm);
+    setSalaryCalculatorFormErrors(parsed.errors);
+
+    if (!parsed.skills) {
+      return;
+    }
+
+    setIsCalculatingSalaryEstimate(true);
+    setSalaryCalculatorEstimateError(null);
+
+    try {
+      const estimate = await queryClient.fetchQuery(
+        manualSalaryEstimateQueryOptions({
+          input: {
+            skills: parsed.skills,
+          },
+        }),
+      );
+
+      if (!estimate) {
+        setSalaryCalculatorEstimateError(
+          "No salary estimate was returned for these inputs.",
+        );
+        return;
+      }
+
+      setSalaryCalculatorEstimate(estimate);
+    } catch (error) {
+      setSalaryCalculatorEstimateError(formatClientError(error));
+    } finally {
+      setIsCalculatingSalaryEstimate(false);
+    }
   }
 
   return (
@@ -1046,8 +1178,21 @@ function WorkspaceDashboard({
             />
             <LineupHelper
               initialWorkspace={workspace.lineupHelper ?? undefined}
+              teamId={home.team.teamId ?? null}
             />
           </Panel>
+        </PanelErrorBoundary>
+      ) : null}
+
+      {activeSection === "arena" ? (
+        <PanelErrorBoundary
+          resetKeys={[
+            workspace.arena?.syncedAt ?? null,
+            workspace.arena?.nextHomeMatch?.matchId ?? null,
+          ]}
+          title="Arena pricing advisor"
+        >
+          <ArenaPanel arena={workspace.arena ?? null} />
         </PanelErrorBoundary>
       ) : null}
 
@@ -1090,7 +1235,10 @@ function WorkspaceDashboard({
             </PanelErrorBoundary>
           ) : (
             <Panel>
-              <SectionHeading eyebrow="Scout opponent" title="Loading opponent context" />
+              <SectionHeading
+                eyebrow="Scout opponent"
+                title="Loading opponent context"
+              />
               <p className={statusCopyClassName}>
                 Pulling the selected opponent&apos;s public scouting context.
               </p>
@@ -1122,12 +1270,15 @@ function WorkspaceDashboard({
             ]}
             title="Opponent schedule"
           >
-            {scoutScheduleStatusMessage ? <Alert>{scoutScheduleStatusMessage}</Alert> : null}
+            {scoutScheduleStatusMessage ? (
+              <Alert>{scoutScheduleStatusMessage}</Alert>
+            ) : null}
             <OpponentSchedulePanel
               isLoading={isFetchingScout}
               onApplyFilters={async (input) => {
                 const action = resolveScoutFilterApplyAction({
-                  currentCompetitionKeys: selectedScoutCompetitionKeysParam ?? null,
+                  currentCompetitionKeys:
+                    selectedScoutCompetitionKeysParam ?? null,
                   currentSeason: selectedScoutSeasonParam ?? null,
                   nextCompetitionKeys: input.competitionKeys,
                   nextSeason: input.season ?? null,
@@ -1170,6 +1321,33 @@ function WorkspaceDashboard({
             featureName="Matchup previews"
             isLoading={isLoadingBilling}
             message="Run matchup forecasts from imported games or manual team sheets with a premium plan."
+          />
+        )
+      ) : null}
+
+      {activeSection === "next-game" ? (
+        canUsePredictions ? (
+          <PanelErrorBoundary
+            resetKeys={[
+              home.team.teamId ?? null,
+              home.nextMatch?.matchId ?? null,
+              workspace.lineupHelper?.generatedAt ?? null,
+            ]}
+            title="Next game wizard"
+          >
+            <NextGameWizardPanel
+              home={home}
+              initialLineupHelper={workspace.lineupHelper ?? null}
+              lineupHelperState={lineupHelperDependencyState}
+            />
+          </PanelErrorBoundary>
+        ) : (
+          <PremiumFeatureGatePanel
+            billingSummary={billingSummary}
+            error={billingError}
+            featureName="Next game wizard"
+            isLoading={isLoadingBilling}
+            message="Combine scouting, lineup planning, and matchup guidance into one guided prep flow with a premium plan."
           />
         )
       ) : null}
@@ -1284,20 +1462,19 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "players" ? (
-        workspace.playerLab ? (
-          <PanelErrorBoundary
-            resetKeys={[workspace.playerLab.syncedAt ?? null]}
-            title="Player lab"
-          >
-            <Panel>
-              <SectionHeading
-                eyebrow="Players"
-                title="Trend lines, salary movement, and roster calls"
-              />
-              {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
-              {salaryProjectionError ? (
-                <Alert>{salaryProjectionError}</Alert>
-              ) : null}
+        <PanelErrorBoundary
+          resetKeys={[workspace.playerLab?.syncedAt ?? null]}
+          title="Player lab"
+        >
+          <Panel>
+            <SectionHeading
+              eyebrow="Players"
+              title="Trend lines, salary movement, and roster calls"
+            />
+            {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
+            {salaryProjectionError ? <Alert>{salaryProjectionError}</Alert> : null}
+
+            {workspace.playerLab ? (
               <TableShell>
                 <thead>
                   <tr>
@@ -1362,90 +1539,296 @@ function WorkspaceDashboard({
                   )}
                 </tbody>
               </TableShell>
+            ) : (
+              <Panel as="article" padding="sm" variant="solid">
+                <p className={statusCopyClassName}>
+                  Synced player summaries are unavailable right now. You can
+                  still use the manual salary calculator below.
+                </p>
+              </Panel>
+            )}
 
-              <div className={twoColumnGridClassName}>
-                <Panel as="article" padding="sm" variant="solid">
-                  <SectionHeading
-                    description="Weekly updates from your saved club history."
-                    title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
-                    titleAs="h4"
-                  />
-                  {playerTrend ? (
-                    playerTrend.history.length > 1 ? (
-                      <PlayerTrendChart
-                        formatCurrency={formatCurrency}
-                        formatInjury={formatInjury}
-                        formatTimestamp={formatTimestamp}
-                        history={playerTrend.history}
-                      />
-                    ) : (
-                      <p className={statusCopyClassName}>
-                        Need at least two weekly updates to draw a trend chart.
-                      </p>
-                    )
+            <div className={twoColumnGridClassName}>
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading
+                  description="Weekly updates from your saved club history."
+                  title={`${String(playerTrend?.player.fullName ?? "Player")} trend`}
+                  titleAs="h4"
+                />
+                {playerTrend ? (
+                  playerTrend.history.length > 1 ? (
+                    <PlayerTrendChart
+                      formatCurrency={formatCurrency}
+                      formatInjury={formatInjury}
+                      formatTimestamp={formatTimestamp}
+                      history={playerTrend.history}
+                    />
                   ) : (
                     <p className={statusCopyClassName}>
-                      Load a player trend to inspect weekly salary, DMI, and
-                      availability changes.
+                      Need at least two weekly updates to draw a trend chart.
                     </p>
-                  )}
-                </Panel>
+                  )
+                ) : (
+                  <p className={statusCopyClassName}>
+                    Load a player trend to inspect weekly salary, DMI, and
+                    availability changes.
+                  </p>
+                )}
+              </Panel>
 
-                <Panel as="article" padding="sm" variant="solid">
-                  <SectionHeading title="Salary projection" titleAs="h4" />
-                  {salaryProjection ? (
-                    <div className={summaryGridClassName}>
-                      <StatCard
-                        detail={
-                          salaryProjection.bestPosition ?? "No listed role"
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading title="Salary projection" titleAs="h4" />
+                {salaryProjection ? (
+                  <div className={summaryGridClassName}>
+                    <StatCard
+                      detail={salaryProjection.bestPosition ?? "No listed role"}
+                      label="Player"
+                      value={salaryProjection.fullName}
+                    />
+                    <StatCard
+                      detail={`Trend ${salaryProjection.trend}`}
+                      label="Current salary"
+                      value={formatCurrency(salaryProjection.currentSalary)}
+                    />
+                    <StatCard
+                      detail={`Δ ${formatSigned((salaryProjection.weeklyDelta ?? 0) / 1)}`}
+                      label="Projected next week"
+                      value={formatCurrency(salaryProjection.projectedSalary)}
+                    />
+                    <StatCard
+                      detail={
+                        salaryProjection.flagReason ??
+                        "No flag guidance available."
+                      }
+                      label="Flag fit"
+                      value={
+                        salaryProjection.isFlagTarget ? "Aligned" : "Not aligned"
+                      }
+                    />
+                  </div>
+                ) : (
+                  <p className={statusCopyClassName}>
+                    Load a salary projection to estimate next-week movement and
+                    flag fit.
+                  </p>
+                )}
+              </Panel>
+            </div>
+
+            <Panel as="article" padding="sm" variant="solid">
+              <SectionHeading
+                description="Load a synced player as a starting point or enter the 10 salary-priced skills manually. Values above 20 are supported."
+                title="Salary calculator"
+                titleAs="h4"
+              />
+              {salaryCalculatorSeedError ? (
+                <Alert>{salaryCalculatorSeedError}</Alert>
+              ) : null}
+              {salaryCalculatorEstimateError ? (
+                <Alert>{salaryCalculatorEstimateError}</Alert>
+              ) : null}
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                <div className="grid gap-4">
+                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                    <Field
+                      hint={
+                        playerLabPlayers.length
+                          ? "Use a synced roster player as a starting point."
+                          : "No synced players are available to seed the form yet."
+                      }
+                      label="Start from synced player"
+                    >
+                      <Select
+                        onChange={(event) =>
+                          setSelectedSalaryCalculatorPlayerId(
+                            event.currentTarget.value,
+                          )
                         }
-                        label="Player"
-                        value={salaryProjection.fullName}
-                      />
-                      <StatCard
-                        detail={`Trend ${salaryProjection.trend}`}
-                        label="Current salary"
-                        value={formatCurrency(salaryProjection.currentSalary)}
-                      />
-                      <StatCard
-                        detail={`Δ ${formatSigned((salaryProjection.weeklyDelta ?? 0) / 1)}`}
-                        label="Projected next week"
-                        value={formatCurrency(salaryProjection.projectedSalary)}
-                      />
-                      <StatCard
-                        detail={
-                          salaryProjection.flagReason ??
-                          "No flag guidance available."
-                        }
-                        label="Flag fit"
-                        value={
-                          salaryProjection.isFlagTarget
-                            ? "Aligned"
-                            : "Not aligned"
-                        }
-                      />
+                        value={selectedSalaryCalculatorPlayerId}
+                      >
+                        <option value="">Select a synced player</option>
+                        {playerLabPlayers.map((player) =>
+                          player.playerId ? (
+                            <option
+                              key={player.playerId}
+                              value={player.playerId}
+                            >
+                              {player.fullName}
+                            </option>
+                          ) : null,
+                        )}
+                      </Select>
+                    </Field>
+                    <div className="flex items-end">
+                      <Button
+                        disabled={!selectedSalaryCalculatorPlayerId}
+                        loading={isLoadingSalaryCalculatorSeed}
+                        onClick={() => void handleLoadSalaryCalculatorSeed()}
+                        variant="secondary"
+                      >
+                        Load player
+                      </Button>
                     </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                    {salaryCalculatorSkillFields.map((field) => (
+                      <Field
+                        error={salaryCalculatorFormErrors[field.key]}
+                        hint={`${field.shortLabel} • 1-99`}
+                        key={field.key}
+                        label={field.label}
+                      >
+                        <Input
+                          inputMode="numeric"
+                          min={1}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setSalaryCalculatorForm((current) => ({
+                              ...current,
+                              [field.key]: value,
+                            }));
+                            setSalaryCalculatorFormErrors((current) => {
+                              if (!current[field.key]) {
+                                return current;
+                              }
+
+                              const next = { ...current };
+                              delete next[field.key];
+                              return next;
+                            });
+                          }}
+                          placeholder="1-99"
+                          step={1}
+                          type="number"
+                          value={salaryCalculatorForm[field.key]}
+                        />
+                      </Field>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      loading={isCalculatingSalaryEstimate}
+                      onClick={() => void handleCalculateSalaryEstimate()}
+                    >
+                      Calculate
+                    </Button>
+                    <span className={statusCopyClassName}>
+                      {salaryCalculatorSeed
+                        ? `Seeded from ${salaryCalculatorSeed.fullName}.`
+                        : "Manual entry is available even without a synced seed."}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid gap-4">
+                  {salaryCalculatorEstimate ? (
+                    <>
+                      <div className={summaryGridClassName}>
+                        <StatCard
+                          detail={
+                            salaryCalculatorSeed?.bestPosition ??
+                            "No synced profile loaded"
+                          }
+                          label="Profile"
+                          value={
+                            salaryCalculatorSeed?.fullName ?? "Manual input"
+                          }
+                        />
+                        <StatCard
+                          detail="Synced club salary"
+                          label="Current salary"
+                          value={
+                            salaryCalculatorSeed
+                              ? formatCurrency(
+                                  salaryCalculatorSeed.currentSalary,
+                                )
+                              : "Not loaded"
+                          }
+                        />
+                        <StatCard
+                          detail={
+                            salaryCalculatorDelta === null
+                              ? "No synced comparison loaded"
+                              : `Δ ${formatSignedCurrencyValue(
+                                  salaryCalculatorDelta,
+                                )}`
+                          }
+                          label="Estimated salary"
+                          value={formatCurrency(
+                            salaryCalculatorEstimate.predictedSalary,
+                          )}
+                        />
+                        <StatCard
+                          detail={`${salaryCalculatorEstimate.modelSource} • ${salaryCalculatorEstimate.calibrationMode}`}
+                          label="Best position"
+                          value={salaryCalculatorEstimate.bestPosition}
+                        />
+                      </div>
+
+                      <TableShell>
+                        <thead>
+                          <tr>
+                            <TableHeadCell>Position</TableHeadCell>
+                            <TableHeadCell className={numericTableHeadClassName}>
+                              Estimated salary
+                            </TableHeadCell>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(
+                            [
+                              "PG",
+                              "SG",
+                              "SF",
+                              "PF",
+                              "C",
+                            ] as const
+                          ).map((position) => (
+                            <tr key={position}>
+                              <TableCell>{position}</TableCell>
+                              <TableCell className={numericTableCellClassName}>
+                                {formatCurrency(
+                                  salaryCalculatorEstimate.salaryByPosition[
+                                    position
+                                  ],
+                                )}
+                              </TableCell>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </TableShell>
+
+                      <p className={statusCopyClassName}>
+                        Source: {salaryCalculatorEstimate.modelSource} (
+                        {salaryCalculatorEstimate.modelSourceConfidence}) with{" "}
+                        {salaryCalculatorEstimate.calibrationMode.toLowerCase()}{" "}
+                        calibration at{" "}
+                        {salaryCalculatorEstimate.correctionFactorApplied.toFixed(
+                          2,
+                        )}
+                        x.
+                      </p>
+                    </>
                   ) : (
                     <p className={statusCopyClassName}>
-                      Load a salary projection to estimate next-week movement
-                      and flag fit.
+                      Load a synced player or enter the 10 salary-priced skills
+                      to estimate salary and see the position-by-position
+                      breakdown.
                     </p>
                   )}
-                </Panel>
+                </div>
               </div>
             </Panel>
-          </PanelErrorBoundary>
-        ) : (
-          <Panel>
-            <SectionHeading
-              eyebrow="Players"
-              title="Loading player trend context"
-            />
-            <p className={statusCopyClassName}>
-              Pulling roster trend and salary data for this section.
-            </p>
           </Panel>
-        )
+        </PanelErrorBoundary>
+      ) : null}
+
+      {activeSection === "staff-market" ? (
+        <PanelErrorBoundary title="Staff market">
+          <StaffMarketPanel />
+        </PanelErrorBoundary>
       ) : null}
 
       {activeSection === "ops" ? (
@@ -1965,6 +2348,19 @@ function formatSigned(value: number | null | undefined): string {
   return value > 0 ? `+${value}` : String(value);
 }
 
+function formatSignedCurrencyValue(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "N/A";
+  }
+
+  const absoluteValue = formatCurrency(Math.abs(value));
+  if (value === 0) {
+    return absoluteValue;
+  }
+
+  return value > 0 ? `+${absoluteValue}` : `-${absoluteValue}`;
+}
+
 function formatMatchResult(match: {
   outcome?: string | null;
   teamScore?: number | null;
@@ -2139,6 +2535,78 @@ function formatPlayerMeta(player: PlayerSummary): string {
   return parts.filter(Boolean).join(" • ") || "No profile details yet.";
 }
 
+function createEmptySalaryCalculatorFormState(): SalaryCalculatorFormState {
+  return {
+    driving: "",
+    handling: "",
+    insideDefense: "",
+    insideScoring: "",
+    jumpRange: "",
+    jumpShot: "",
+    outsideDefense: "",
+    passing: "",
+    rebounding: "",
+    shotBlocking: "",
+  };
+}
+
+function createSalaryCalculatorFormState(
+  skills: Partial<Record<SalaryCalculatorSkillKey, number | null | undefined>>,
+): SalaryCalculatorFormState {
+  return {
+    driving: toSalaryCalculatorFormValue(skills.driving),
+    handling: toSalaryCalculatorFormValue(skills.handling),
+    insideDefense: toSalaryCalculatorFormValue(skills.insideDefense),
+    insideScoring: toSalaryCalculatorFormValue(skills.insideScoring),
+    jumpRange: toSalaryCalculatorFormValue(skills.jumpRange),
+    jumpShot: toSalaryCalculatorFormValue(skills.jumpShot),
+    outsideDefense: toSalaryCalculatorFormValue(skills.outsideDefense),
+    passing: toSalaryCalculatorFormValue(skills.passing),
+    rebounding: toSalaryCalculatorFormValue(skills.rebounding),
+    shotBlocking: toSalaryCalculatorFormValue(skills.shotBlocking),
+  };
+}
+
+function parseSalaryCalculatorFormState(
+  formState: SalaryCalculatorFormState,
+): {
+  errors: SalaryCalculatorFormErrors;
+  skills: SalaryCalculatorSkillsInput | null;
+} {
+  const errors: SalaryCalculatorFormErrors = {};
+  const skills = {} as SalaryCalculatorSkillsInput;
+
+  for (const field of salaryCalculatorSkillFields) {
+    const rawValue = formState[field.key].trim();
+    if (!rawValue) {
+      errors[field.key] = "Enter a whole number from 1 to 99.";
+      continue;
+    }
+
+    const numericValue = Number(rawValue);
+    if (!Number.isFinite(numericValue) || !Number.isInteger(numericValue)) {
+      errors[field.key] = "Enter a whole number from 1 to 99.";
+      continue;
+    }
+
+    if (numericValue < 1 || numericValue > 99) {
+      errors[field.key] = "Enter a whole number from 1 to 99.";
+      continue;
+    }
+
+    skills[field.key] = numericValue;
+  }
+
+  return {
+    errors,
+    skills: Object.keys(errors).length ? null : skills,
+  };
+}
+
+function toSalaryCalculatorFormValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
 function readPayload<T>(response: { payload: T | string }): T {
   return typeof response.payload === "string"
     ? (safeJsonParse(response.payload) as T)
@@ -2148,9 +2616,13 @@ function readPayload<T>(response: { payload: T | string }): T {
 export const __testing = {
   areStringArraysEqual,
   compareOwnerRosterValues,
+  createEmptySalaryCalculatorFormState,
+  createSalaryCalculatorFormState,
   formatPlayerMeta,
+  formatSignedCurrencyValue,
   isNextGameRecommendationTerminalStatus,
   isOpponentForecastTerminalStatus,
+  parseSalaryCalculatorFormState,
   readGameShapeSortValue,
   readOwnerRosterSortValue,
   readPayload,

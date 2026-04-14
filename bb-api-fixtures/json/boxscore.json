@@ -7,7 +7,12 @@
   "endTime": null,
   "neutral": null,
   "effortDelta": null,
-  "attendance": {},
+  "attendance": {
+    "bleachers": 12000,
+    "lowerTier": 3200,
+    "courtside": 420,
+    "luxury": 38
+  },
   "awayTeam": {
     "id": "10",
     "teamName": "Away Team",

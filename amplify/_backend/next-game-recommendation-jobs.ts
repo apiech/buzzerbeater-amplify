@@ -1,4 +1,5 @@
 import { Stack, type RemovalPolicy } from "aws-cdk-lib";
+import { Table } from "aws-cdk-lib/aws-dynamodb";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import type { IFunction } from "aws-cdk-lib/aws-lambda";
 
@@ -19,10 +20,18 @@ type NextGameRecommendationBackend = {
 
 export function configureNextGameRecommendationJobs(
   backend: NextGameRecommendationBackend,
-  bindings: Pick<SharedInfraBindings, "predictionEndpointName">,
+  bindings: Pick<
+    SharedInfraBindings,
+    "playerSkillSnapshotTableName" | "predictionEndpointName"
+  >,
   removalPolicy: RemovalPolicy,
 ): void {
   const workflowStack = Stack.of(backend.nextGameRecommendationWorker.resources.lambda);
+  const playerSkillSnapshotTable = Table.fromTableName(
+    workflowStack,
+    "ImportedPlayerSkillSnapshotTableForNextGameRecommendation",
+    bindings.playerSkillSnapshotTableName,
+  );
   const workflow = createSingleLambdaWorkflow(workflowStack, {
     idPrefix: "NextGameRecommendationJob",
     logGroupRemovalPolicy: removalPolicy,
@@ -37,9 +46,16 @@ export function configureNextGameRecommendationJobs(
     "PREDICTION_ENDPOINT_NAME",
     bindings.predictionEndpointName,
   );
+  backend.nextGameRecommendationWorker.addEnvironment(
+    "PLAYER_SKILL_SNAPSHOT_TABLE_NAME",
+    bindings.playerSkillSnapshotTableName,
+  );
 
   workflow.grantStartExecution(
     backend.nextGameRecommendationSubmit.resources.lambda,
+  );
+  playerSkillSnapshotTable.grantReadData(
+    backend.nextGameRecommendationWorker.resources.lambda,
   );
 
   const workerLambda = backend.nextGameRecommendationWorker.resources.lambda;

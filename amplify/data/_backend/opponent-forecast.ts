@@ -7,6 +7,10 @@ import {
 
 import type { Schema } from "../resource";
 import { requireFeatureAccess } from "./billing";
+import {
+  getNormalizedCachedMatchBoxscore,
+  normalizeCachedMatchBoxscoreRecord,
+} from "./cached-boxscore";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
 import {
   createOpponentForecastJob,
@@ -25,7 +29,6 @@ import {
   buildExecutionName,
   startStateMachineExecution,
 } from "./step-functions";
-import { inflateStoredMatchBoxscore } from "./stored-boxscore";
 import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
@@ -397,11 +400,22 @@ async function loadStoredBoxscores(
 ): Promise<StoredForecastBoxscore[]> {
   const results = await Promise.all(
     Array.from(new Set(matchIds)).map(async (matchId) => {
-      const record = await getMatchBoxscore(env, userId, matchId);
-      return record
-        ? adaptStoredBoxscoreForForecast(record, {
-            teamId,
-          })
+      const cachedBoxscore = await getNormalizedCachedMatchBoxscore({
+        env,
+        getRecord: getMatchBoxscore,
+        matchId,
+        userId,
+      });
+      return cachedBoxscore
+        ? adaptStoredBoxscoreForForecast(
+            {
+              ...cachedBoxscore.record,
+              boxscoreJson: cachedBoxscore.boxscore,
+            },
+            {
+              teamId,
+            },
+          )
         : null;
     }),
   );
@@ -575,11 +589,11 @@ function adaptStoredBoxscoreForForecast(
     teamId: string | null;
   },
 ): StoredForecastBoxscore | null {
-  const boxscore = inflateStoredMatchBoxscore(matchBoxscore.boxscoreJson);
-  if (!boxscore) {
+  const normalized = normalizeCachedMatchBoxscoreRecord(matchBoxscore);
+  if (!normalized) {
     return null;
   }
-  const perspective = selectBoxscorePerspective(boxscore, args.teamId);
+  const perspective = selectBoxscorePerspective(normalized.boxscore, args.teamId);
   const teamSide = perspective.team;
   const opponentSide = perspective.opponent;
 
@@ -589,9 +603,10 @@ function adaptStoredBoxscoreForForecast(
 
   return {
     effortDelta:
-      asFiniteInteger(args.effortDelta) ?? asFiniteInteger(boxscore.effortDelta),
-    matchId: asOptionalString(matchBoxscore.matchId),
-    neutral: asOptionalBoolean(boxscore.neutral),
+      asFiniteInteger(args.effortDelta) ??
+      asFiniteInteger(normalized.boxscore.effortDelta),
+    matchId: asOptionalString(normalized.record.matchId),
+    neutral: asOptionalBoolean(normalized.boxscore.neutral),
     season: asFiniteInteger(args.season),
     seriousness: asOptionalString(args.seriousness),
     seriousnessReason: asOptionalString(args.seriousnessReason),
@@ -608,7 +623,7 @@ function adaptStoredBoxscoreForForecast(
       teamId: asOptionalString(opponentSide.id),
       teamName: asOptionalString(opponentSide.teamName),
     },
-    startTime: asOptionalString(boxscore.startTime),
+    startTime: asOptionalString(normalized.boxscore.startTime),
     team: {
       defStrategy: asOptionalString(teamSide.defStrategy),
       efficiency: toMetricEntries(asOptionalRecord(teamSide.efficiency)),
@@ -621,7 +636,7 @@ function adaptStoredBoxscoreForForecast(
       teamId: asOptionalString(teamSide.id),
       teamName: asOptionalString(teamSide.teamName),
     },
-    type: asOptionalString(boxscore.type),
+    type: asOptionalString(normalized.boxscore.type),
   };
 }
 

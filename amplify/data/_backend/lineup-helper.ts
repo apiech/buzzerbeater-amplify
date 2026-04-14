@@ -16,7 +16,10 @@ import {
   type Position,
   type RawPlayerSkills,
 } from "../../../lib/coach-parrot";
-import { ownedRosterPlayerToRawPlayerSkills } from "../../../lib/bbapi";
+import {
+  BBXmlApiClient,
+  ownedRosterPlayerToRawPlayerSkills,
+} from "../../../lib/bbapi";
 import type { Schema } from "../resource";
 import {
   LineupHelperAlgorithm,
@@ -28,9 +31,14 @@ import {
   type WorkspacePlayerHistoryRecord,
 } from "./player-snapshot-access";
 import { assertMaintenanceInactive } from "./maintenance";
+import { getOrRepairRecentCachedMatchBoxscore } from "./cached-boxscore";
+import { resolveBbAccessKey } from "./credentials";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
-import { getBbConnection, getMatchBoxscore } from "./repository";
-import { inflateStoredMatchBoxscore } from "./stored-boxscore";
+import {
+  getBbConnection,
+  readMatchBoxscoreCacheRecord,
+  upsertMatchBoxscore,
+} from "./repository";
 import { readWorkspaceCachePayload } from "./workspace-cache";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -76,11 +84,26 @@ type HelperRosterPlayer = {
   skills: HelperRosterSkills;
 };
 
+type GetBbConnectionDependency = typeof getBbConnection;
+type GetOwnerTrackedPlayerProfileDependency =
+  typeof getOwnerTrackedPlayerProfile;
+type ListWorkspacePlayerHistoryDependency = typeof listWorkspacePlayerHistory;
+type ReadMatchBoxscoreCacheRecordDependency =
+  typeof readMatchBoxscoreCacheRecord;
+type ResolveBbAccessKeyDependency = typeof resolveBbAccessKey;
+type UpsertMatchBoxscoreDependency = typeof upsertMatchBoxscore;
+
 type LineupHelperDependencies = {
-  getBbConnection: typeof getBbConnection;
-  getMatchBoxscore: typeof getMatchBoxscore;
-  getOwnerTrackedPlayerProfile: typeof getOwnerTrackedPlayerProfile;
-  listWorkspacePlayerHistory: typeof listWorkspacePlayerHistory;
+  createBbClient: (options: {
+    securityCode: string;
+    username: string;
+  }) => Pick<BBXmlApiClient, "getBoxScore">;
+  getBbConnection: GetBbConnectionDependency;
+  getOwnerTrackedPlayerProfile: GetOwnerTrackedPlayerProfileDependency;
+  listWorkspacePlayerHistory: ListWorkspacePlayerHistoryDependency;
+  readMatchBoxscoreCacheRecord: ReadMatchBoxscoreCacheRecordDependency;
+  resolveBbAccessKey: ResolveBbAccessKeyDependency;
+  upsertMatchBoxscore: UpsertMatchBoxscoreDependency;
 };
 
 const EMPTY_HELPER_SKILLS: HelperRosterSkills = {
@@ -101,10 +124,13 @@ const EMPTY_HELPER_SKILLS: HelperRosterSkills = {
 };
 
 const defaultLineupHelperDependencies: LineupHelperDependencies = {
+  createBbClient: (options) => new BBXmlApiClient(options),
   getBbConnection,
-  getMatchBoxscore,
   getOwnerTrackedPlayerProfile,
   listWorkspacePlayerHistory,
+  readMatchBoxscoreCacheRecord,
+  resolveBbAccessKey,
+  upsertMatchBoxscore,
 };
 
 export const __testing = {
@@ -149,6 +175,7 @@ dependencies: LineupHelperDependencies = defaultLineupHelperDependencies,
   const defaultContext = await resolveDefaultContext(
     args.env,
     userId,
+    connection,
     asString(connection.teamId),
     toRecord(cachedWorkspace.home),
     dependencies,
@@ -314,7 +341,7 @@ async function buildHelperRosterPlayer(
     : [[], null];
   const snapshot = selectLatestHistory(history);
 
-  if (!playerId || !snapshot || !profile) {
+  if (!playerId || !profile) {
     return {
       playerId: playerId ?? fullName.toLowerCase().replace(/\s+/g, "-"),
       fullName,
@@ -339,15 +366,22 @@ async function buildHelperRosterPlayer(
     playerId,
     fullName,
     bestPosition:
-      asString(player.bestPosition) ?? asString(snapshot.bestPosition),
-    salary: asNumber(player.salary) ?? asNumber(snapshot.salary),
-    age: asNumber(player.age) ?? asNumber(profile?.age),
-    gameShape: asString(player.gameShape) ?? asString(snapshot.gameShape),
-    dmi: asNumber(player.dmi) ?? asNumber(snapshot.dmi),
+      asString(player.bestPosition) ??
+      asString(snapshot?.bestPosition) ??
+      asString(profile.bestPosition),
+    salary:
+      asNumber(player.salary) ??
+      asNumber(snapshot?.salary) ??
+      asNumber(profile.salary),
+    age: asNumber(player.age) ?? asNumber(profile.age),
+    gameShape: asString(player.gameShape) ?? asString(snapshot?.gameShape),
+    dmi: asNumber(player.dmi) ?? asNumber(snapshot?.dmi) ?? asNumber(profile.dmi),
     injuryWeeks:
-      asNumber(player.injuryWeeks) ?? asNumber(snapshot.injuryWeeks),
-    snapshotWeekKey: asString(snapshot.weekKey),
-    snapshotCapturedAt: asString(snapshot.capturedAt),
+      asNumber(player.injuryWeeks) ??
+      asNumber(snapshot?.injuryWeeks) ??
+      asNumber(profile.injuryWeeks),
+    snapshotWeekKey: asString(snapshot?.weekKey),
+    snapshotCapturedAt: asString(snapshot?.capturedAt),
     available: true,
     snapshotWarning: null,
     skills: {
@@ -372,6 +406,7 @@ async function buildHelperRosterPlayer(
 async function resolveDefaultContext(
   env: GraphqlEnv,
   userId: string,
+  connection: Record<string, unknown> | null,
   teamId: string | null,
   home: Record<string, unknown> | null,
   dependencies: LineupHelperDependencies = defaultLineupHelperDependencies,
@@ -382,16 +417,26 @@ async function resolveDefaultContext(
     if (!matchId) {
       continue;
     }
-    const boxscore = await dependencies.getMatchBoxscore(env, userId, matchId);
-    if (!boxscore) {
+    const cachedBoxscore = await getOrRepairRecentCachedMatchBoxscore({
+      createBbClient: dependencies.createBbClient,
+      env,
+      getBbConnection: async () =>
+        connection
+          ? {
+              bbLoginName: asString(connection.bbLoginName),
+            }
+          : null,
+      matchId,
+      readRecord: dependencies.readMatchBoxscoreCacheRecord,
+      resolveBbAccessKey: dependencies.resolveBbAccessKey,
+      upsertMatchBoxscore: dependencies.upsertMatchBoxscore,
+      userId,
+    });
+    if (!cachedBoxscore) {
       continue;
     }
 
-    const boxscorePayload = inflateStoredMatchBoxscore(boxscore.boxscoreJson);
-    if (!boxscorePayload) {
-      continue;
-    }
-    const perspective = selectBoxscorePerspective(boxscorePayload, teamId);
+    const perspective = selectBoxscorePerspective(cachedBoxscore.boxscore, teamId);
     if (!perspective.team) {
       continue;
     }

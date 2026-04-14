@@ -7,6 +7,7 @@ import {
   emptyLineupLayout,
   lineupLayoutFromAssignments,
   normalizeHelperContext,
+  removeUnavailablePlayersFromLineupLayout,
   validateLineupLayout,
 } from "../app/lineup-helper-state";
 
@@ -127,7 +128,11 @@ test("lineup helper validation rejects non-bijective defensive switch mappings",
     },
   });
 
-  const validation = validateLineupLayout(players, layout, context.defensiveSwitch);
+  const validation = validateLineupLayout(
+    players,
+    layout,
+    context.defensiveSwitch,
+  );
   assert.equal(
     validation.errors.includes(
       "Defensive switch must be a one-to-one mapping across PG, SG, SF, PF, and C.",
@@ -140,4 +145,21 @@ test("lineup helper enthusiasm coercion now accepts the documented 1..15 range",
   assert.equal(coerceEnthusiasm(15), 15);
   assert.equal(coerceEnthusiasm(99), 15);
   assert.equal(coerceEnthusiasm(0), 1);
+});
+
+test("removeUnavailablePlayersFromLineupLayout clears slots for unavailable players", () => {
+  const layout = buildLegalLayout();
+  layout.PG.starterPlayerId = "p7";
+  layout.SF.reservePlayerId = "p3";
+
+  const cleaned = removeUnavailablePlayersFromLineupLayout(
+    layout,
+    players.map((player) =>
+      player.playerId === "p7" ? { ...player, available: false } : player,
+    ),
+  );
+
+  assert.equal(cleaned.PG.starterPlayerId, "");
+  assert.equal(cleaned.PG.backupPlayerId, "p6");
+  assert.equal(cleaned.SF.reservePlayerId, "p3");
 });

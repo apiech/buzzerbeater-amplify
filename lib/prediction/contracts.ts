@@ -26,6 +26,7 @@ export const predictionEndpointTacticsGridSchema = z.object({
 export const predictionEndpointResponseSchema = z.object({
   awayScore: finiteNumberSchema.optional(),
   homeScore: finiteNumberSchema.optional(),
+  modelKey: z.string().trim().min(1).optional(),
   modelVersion: z.string().trim().min(1).optional(),
   pointDiff: finiteNumberSchema.optional(),
   tacticsGrid: predictionEndpointTacticsGridSchema,
@@ -74,6 +75,7 @@ export const predictionPlannerMatrixViewSchema = z.object({
 
 export const predictionPlannerResponseSchema = z.object({
   expectedMatrix: predictionPlannerMatrixViewSchema,
+  modelKey: z.string().trim().min(1).optional(),
   modelVersion: z.string().trim().min(1),
   planEvaluations: z.array(predictionPlannerPlanEvaluationSchema).min(1),
   scenarioMatrices: z.array(predictionPlannerMatrixViewSchema).min(1),
@@ -96,6 +98,7 @@ export const currentPredictionPreviewSchema = z.object({
   executionArn: z.string().trim().min(1).nullable().optional(),
   forecastContext: currentPredictionForecastContextSchema.nullable().optional(),
   homeScore: finiteNumberSchema.nullable().optional(),
+  modelKey: z.string().trim().min(1).nullable().optional(),
   modelVersion: z.string().trim().min(1).nullable().optional(),
   pointDiff: finiteNumberSchema.nullable().optional(),
   requestId: z.string().trim().min(1),

@@ -8,6 +8,7 @@ import {
   AnalyticsProvider,
   type AnalyticsProviderProps,
 } from "@/app/analytics-provider";
+import { RuntimeEnvironmentProvider } from "@/app/runtime-environment";
 
 function createQueryClient() {
   return new QueryClient({
@@ -37,7 +38,9 @@ export function AppProviders({
   return (
     <NuqsAdapter>
       <QueryClientProvider client={queryClient}>
-        <AnalyticsProvider {...analytics}>{children}</AnalyticsProvider>
+        <RuntimeEnvironmentProvider environmentName={analytics.environmentName}>
+          <AnalyticsProvider {...analytics}>{children}</AnalyticsProvider>
+        </RuntimeEnvironmentProvider>
       </QueryClientProvider>
     </NuqsAdapter>
   );

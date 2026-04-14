@@ -18,6 +18,8 @@ import { readWorkspaceCachePayload } from "./workspace-cache";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
+export type { CanonicalPlayerSkillSnapshotRecord };
+
 export type WorkspacePlayerHistoryRecord = {
   bestPosition: string | null;
   capturedAt: string | null;
@@ -39,6 +41,7 @@ const runtime = {
 export const __testing = {
   buildHistoryKey,
   mergeWorkspacePlayerHistory,
+  parseCanonicalSnapshotProfile,
   resolveWorkspacePlayer,
   runtime,
 };
@@ -72,7 +75,22 @@ export async function getOwnerTrackedPlayerProfile(
   }
 
   const trackedPlayer = await runtime.getTrackedPlayer(env, userId, playerId);
-  return parseStoredOwnedRosterPlayer(trackedPlayer?.profileJson);
+  const trackedProfile = parseStoredOwnedRosterPlayer(trackedPlayer?.profileJson);
+  if (trackedProfile) {
+    return trackedProfile;
+  }
+
+  const canonicalSnapshots = await runtime.listCanonicalPlayerSkillSnapshots(
+    env,
+    playerId,
+    12,
+  );
+  return (
+    canonicalSnapshots
+      .map(parseCanonicalSnapshotProfile)
+      .find((profile): profile is BBApiOwnedRosterPlayer => profile !== null) ??
+    null
+  );
 }
 
 export async function storeCanonicalPlayerSkillSnapshot(
@@ -105,6 +123,13 @@ function mergeWorkspacePlayerHistory(
   }
 
   return Array.from(merged.values());
+}
+
+function parseCanonicalSnapshotProfile(
+  snapshot: CanonicalPlayerSkillSnapshotRecord,
+): BBApiOwnedRosterPlayer | null {
+  const payload = toRecord(snapshot.payload);
+  return parseStoredOwnedRosterPlayer(payload?.profile ?? payload);
 }
 
 function toWorkspacePlayerHistoryRecord(
@@ -159,6 +184,12 @@ function toRecordArray(value: unknown): Record<string, unknown>[] {
           Boolean(entry) && typeof entry === "object" && !Array.isArray(entry),
       )
     : [];
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function asNumber(value: unknown): number | null {

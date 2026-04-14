@@ -1,18 +1,21 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   lineupHelperEvaluationQueryOptions,
   lineupHelperWorkspaceQueryOptions,
   optimizeLineupHelperQuery,
+  repairOwnerRosterDataMutation,
+  refreshLineupHelperAfterOwnerRosterRepair,
 } from "@/app/dashboard/workspace-query-client";
 import {
   LINEUP_POSITION_LABELS,
   LINEUP_POSITIONS,
   LINEUP_ROLE_SEQUENCE,
   LINEUP_SPLIT_PATTERNS,
+  removeUnavailablePlayersFromLineupLayout,
   assignmentsFromLineupLayout,
   coerceEnthusiasm,
   emptyLineupLayout,
@@ -25,6 +28,14 @@ import {
   validateLineupLayout,
   type LineupSlotLayout,
 } from "@/app/lineup-helper-state";
+import {
+  applyLineupAvailabilityOverride,
+  readTeamLineupAvailabilityOverride,
+  toggleExcludedPlayerId,
+  writeTeamLineupAvailabilityOverride,
+  type EffectiveLineupHelperRosterPlayer,
+  type TeamLineupAvailabilityOverride,
+} from "@/app/lineup-availability-state";
 import type {
   LineupHelperAlgorithm,
   DecodedLineupHelperWorkspace,
@@ -76,9 +87,12 @@ const minuteSummaryGridClassName = "grid gap-3 md:grid-cols-3 xl:grid-cols-6";
 
 export function LineupHelper({
   initialWorkspace,
+  teamId,
 }: {
   initialWorkspace?: LineupHelperWorkspaceRecord;
+  teamId?: string | null;
 }) {
+  const queryClient = useQueryClient();
   const workspaceQuery = useQuery({
     ...lineupHelperWorkspaceQueryOptions(),
     initialData: initialWorkspace ?? undefined,
@@ -109,9 +123,17 @@ export function LineupHelper({
       ? decodeLineupHelperWorkspace(initialWorkspace).defaultContext
       : normalizeHelperContext({}),
   );
-  const [algorithm, setAlgorithm] =
-    useState<LineupHelperAlgorithm>("EXACT");
+  const [algorithm, setAlgorithm] = useState<LineupHelperAlgorithm>("EXACT");
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const [availabilityOverride, setAvailabilityOverride] =
+    useState<TeamLineupAvailabilityOverride>({
+      excludedPlayerIds: [],
+    });
+  const [ownerRosterRepairExhausted, setOwnerRosterRepairExhausted] =
+    useState(false);
+  const [loadedAvailabilityTeamId, setLoadedAvailabilityTeamId] = useState<
+    string | null
+  >(null);
   const [debouncedEvaluationInput, setDebouncedEvaluationInput] = useState<{
     assignments: ReturnType<typeof assignmentsFromLineupLayout>;
     context: ReturnType<typeof encodeLineupHelperContext>;
@@ -138,24 +160,51 @@ export function LineupHelper({
   });
 
   const roster = workspace?.roster ?? EMPTY_ROSTER;
+  const effectiveRoster = useMemo<EffectiveLineupHelperRosterPlayer[]>(
+    () => applyLineupAvailabilityOverride(roster, availabilityOverride),
+    [availabilityOverride, roster],
+  );
   const validation = validateLineupLayout(
-    roster,
+    effectiveRoster,
     lineupLayout,
     context.defensiveSwitch,
   );
-  const availableRosterCount = roster.filter(
+  const availableRosterCount = effectiveRoster.filter(
     (player) => player.available,
   ).length;
+  const coachExcludedCount = effectiveRoster.filter(
+    (player) => player.isCoachExcluded,
+  ).length;
+  const workspaceError = readQueryError(workspaceQuery.error);
+  const isLoadingWorkspace = workspaceQuery.isPending;
+  const isEvaluating = evaluationQuery.isFetching;
+  const isOptimizing = optimizeMutation.isPending;
+  const ownerRosterRepairState = resolveOwnerRosterRepairState({
+    availableRosterCount,
+    excludedPlayerCount: coachExcludedCount,
+    repairExhausted: ownerRosterRepairExhausted,
+    workspaceRecord: workspaceQuery.data ?? null,
+    workspaceError,
+    workspaceLoading: isLoadingWorkspace,
+  });
   const hasGeneratedLineup = Boolean(workspace?.defaultAssignments.length);
   const canEvaluate =
     Boolean(workspace) &&
     availableRosterCount > 0 &&
     validation.errors.length === 0;
   const visibleEvaluation = canEvaluate ? evaluation : null;
-  const workspaceError = readQueryError(workspaceQuery.error);
-  const isLoadingWorkspace = workspaceQuery.isPending;
-  const isEvaluating = evaluationQuery.isFetching;
-  const isOptimizing = optimizeMutation.isPending;
+  const repairOwnerRosterMutation = useMutation({
+    mutationFn: repairOwnerRosterDataMutation,
+    onSuccess: async () => {
+      const refreshed = await refreshLineupHelperAfterOwnerRosterRepair(
+        queryClient,
+      );
+      setOwnerRosterRepairExhausted(
+        !refreshed ||
+          refreshed.roster.filter((player) => player.available).length === 0,
+      );
+    },
+  });
 
   useEffect(() => {
     if (!workspace) {
@@ -165,11 +214,40 @@ export function LineupHelper({
     setEvaluation(workspace.evaluation);
     setContext(workspace.defaultContext);
     suppressNextEvaluationRef.current = true;
-    setLineupLayout(
-      lineupLayoutFromAssignments(workspace.defaultAssignments),
-    );
+    setLineupLayout(lineupLayoutFromAssignments(workspace.defaultAssignments));
     setEvaluationError(null);
   }, [workspace]);
+
+  useEffect(() => {
+    setAvailabilityOverride(
+      readTeamLineupAvailabilityOverride(
+        typeof window === "undefined" ? null : window.localStorage,
+        teamId ?? null,
+      ),
+    );
+    setLoadedAvailabilityTeamId(teamId ?? null);
+  }, [teamId]);
+
+  useEffect(() => {
+    setOwnerRosterRepairExhausted(false);
+  }, [teamId]);
+
+  useEffect(() => {
+    if (!ownerRosterRepairState.blockedByMissingSnapshots) {
+      setOwnerRosterRepairExhausted(false);
+    }
+  }, [ownerRosterRepairState.blockedByMissingSnapshots]);
+
+  useEffect(() => {
+    if (loadedAvailabilityTeamId !== (teamId ?? null)) {
+      return;
+    }
+    writeTeamLineupAvailabilityOverride(
+      typeof window === "undefined" ? null : window.localStorage,
+      teamId ?? null,
+      availabilityOverride,
+    );
+  }, [availabilityOverride, loadedAvailabilityTeamId, teamId]);
 
   useEffect(() => {
     if (
@@ -186,7 +264,7 @@ export function LineupHelper({
       return;
     }
 
-    const nextRoster = workspace.roster;
+    const nextRoster = effectiveRoster;
     if (suppressNextEvaluationRef.current) {
       suppressNextEvaluationRef.current = false;
       setEvaluationError(null);
@@ -212,6 +290,8 @@ export function LineupHelper({
       return;
     }
 
+    setEvaluation(null);
+
     const timer = window.setTimeout(() => {
       setDebouncedEvaluationInput({
         assignments: assignmentsFromLineupLayout(lineupLayout),
@@ -223,7 +303,17 @@ export function LineupHelper({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [context, lineupLayout, workspace]);
+  }, [context, effectiveRoster, lineupLayout, workspace]);
+
+  useEffect(() => {
+    if (!workspace) {
+      return;
+    }
+
+    setLineupLayout((current) =>
+      removeUnavailablePlayersFromLineupLayout(current, effectiveRoster),
+    );
+  }, [effectiveRoster, workspace]);
 
   useEffect(() => {
     if (!evaluationQuery.data) {
@@ -259,7 +349,8 @@ export function LineupHelper({
   }
 
   function updatePattern(position: PositionCode, patternKey: string) {
-    const nextPatternKey = patternKey as typeof LINEUP_SPLIT_PATTERNS[number]["key"];
+    const nextPatternKey =
+      patternKey as (typeof LINEUP_SPLIT_PATTERNS)[number]["key"];
     setLineupLayout((current) => {
       const nextState = current[position];
       return {
@@ -321,7 +412,7 @@ export function LineupHelper({
     try {
       const nextEvaluationRecord = await optimizeMutation.mutateAsync({
         algorithm,
-        roster: workspace.roster.map(encodeLineupHelperRosterPlayer),
+        roster: effectiveRoster.map(encodeLineupHelperRosterPlayer),
         context: encodeLineupHelperContext(context),
       });
       const nextEvaluation = decodeLineupHelperEvaluation(nextEvaluationRecord);
@@ -340,6 +431,16 @@ export function LineupHelper({
     } catch (error) {
       setEvaluationError(readQueryError(error));
     }
+  }
+
+  function handleTogglePlayerExclusion(playerId: string) {
+    setAvailabilityOverride((current) =>
+      toggleExcludedPlayerId(current, playerId),
+    );
+  }
+
+  function handleClearExcludedPlayers() {
+    setAvailabilityOverride({ excludedPlayerIds: [] });
   }
 
   const legacyAlgorithmDisabled = !isIdentityDefensiveSwitch(
@@ -385,11 +486,25 @@ export function LineupHelper({
                 : "No default lineup"}
             </Button>
             <Button
-              disabled={!workspace || availableRosterCount === 0}
-              loading={isOptimizing}
-              onClick={() => void handleOptimize()}
+              disabled={
+                ownerRosterRepairState.shouldOfferRepair
+                  ? false
+                  : !workspace || availableRosterCount === 0
+              }
+              loading={
+                ownerRosterRepairState.shouldOfferRepair
+                  ? repairOwnerRosterMutation.isPending
+                  : isOptimizing
+              }
+              onClick={() =>
+                void (ownerRosterRepairState.shouldOfferRepair
+                  ? repairOwnerRosterMutation.mutateAsync()
+                  : handleOptimize())
+              }
             >
-              Optimize
+              {ownerRosterRepairState.shouldOfferRepair
+                ? "Repair roster data"
+                : "Optimize"}
             </Button>
           </div>
         }
@@ -418,12 +533,25 @@ export function LineupHelper({
         <>
           {availableRosterCount === 0 ? (
             <Alert>
-              Player data is not ready yet. Ratings and optimization stay disabled
-              until a fresh roster update completes.
+              {ownerRosterRepairState.blockedByMissingSnapshots
+                ? "Every saved player is still missing a canonical skill snapshot. Ratings and optimization stay disabled until roster repair succeeds."
+                : "Player data is not ready yet. Ratings and optimization stay disabled until a fresh roster update completes."}
+            </Alert>
+          ) : null}
+          {readQueryError(repairOwnerRosterMutation.error) ? (
+            <Alert>{readQueryError(repairOwnerRosterMutation.error)}</Alert>
+          ) : null}
+          {coachExcludedCount > 0 ? (
+            <Alert tone="note">
+              Coach exclusions are active for {coachExcludedCount} player
+              {coachExcludedCount === 1 ? "" : "s"}. Excluded players are
+              removed from active lineup slots and skipped during optimization.
             </Alert>
           ) : null}
           {validation.errors.length
-            ? validation.errors.map((error) => <Alert key={error}>{error}</Alert>)
+            ? validation.errors.map((error) => (
+                <Alert key={error}>{error}</Alert>
+              ))
             : null}
           {evaluationError ? <Alert>{evaluationError}</Alert> : null}
 
@@ -443,14 +571,16 @@ export function LineupHelper({
               value={validation.teamTotal}
             />
             <StatCard
-              detail="Unavailable players stay disabled"
+              detail={
+                coachExcludedCount > 0
+                  ? `${coachExcludedCount} coach excluded`
+                  : "Unavailable players stay disabled"
+              }
               label="Players needing updates"
               value={workspace.snapshotWarnings.length}
             />
             <StatCard
-              detail={
-                isEvaluating ? "Refreshing analysis" : "Latest analysis"
-              }
+              detail={isEvaluating ? "Refreshing analysis" : "Latest analysis"}
               label="Analysis status"
               value={
                 isEvaluating
@@ -542,9 +672,82 @@ export function LineupHelper({
                 </div>
                 {legacyAlgorithmDisabled ? (
                   <p className="text-ink-muted text-xs">
-                    Legacy heuristic is disabled while defensive switch is active.
+                    Legacy heuristic is disabled while defensive switch is
+                    active.
                   </p>
                 ) : null}
+              </Panel>
+
+              <Panel as="article" padding="sm" variant="solid">
+                <SectionHeading
+                  description="Exclude players you know will not dress, then clear them when they are back in the rotation."
+                  title="Availability overrides"
+                  titleAs="h5"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className={statusCopyClassName}>
+                    These overrides are saved in this browser for your current
+                    team.
+                  </p>
+                  <Button
+                    disabled={coachExcludedCount === 0}
+                    onClick={handleClearExcludedPlayers}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Clear exclusions
+                  </Button>
+                </div>
+                <div className="grid gap-3">
+                  {effectiveRoster.map((player) => (
+                    <div
+                      className="rounded-card flex flex-wrap items-center justify-between gap-3 border border-black/8 bg-white/70 p-3"
+                      key={`availability-${player.playerId}`}
+                    >
+                      <div className="grid gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <strong className="text-ink text-sm">
+                            {player.fullName}
+                          </strong>
+                          <StatusBadge
+                            tone={
+                              player.availabilityStatus === "AVAILABLE"
+                                ? "success"
+                                : player.availabilityStatus === "COACH_EXCLUDED"
+                                  ? "note"
+                                  : "neutral"
+                            }
+                          >
+                            {player.availabilityStatus === "AVAILABLE"
+                              ? "Available"
+                              : player.availabilityStatus === "COACH_EXCLUDED"
+                                ? "Coach excluded"
+                                : "System unavailable"}
+                          </StatusBadge>
+                        </div>
+                        <span className="text-ink-muted text-xs">
+                          {player.bestPosition ?? "Flex"} •{" "}
+                          <BuzzerBeaterRatingText scale="game_shape">
+                            {player.gameShape ?? "unknown shape"}
+                          </BuzzerBeaterRatingText>
+                          {player.snapshotWarning
+                            ? ` • ${player.snapshotWarning}`
+                            : ""}
+                        </span>
+                      </div>
+                      <Button
+                        disabled={!player.isSystemAvailable}
+                        onClick={() =>
+                          handleTogglePlayerExclusion(player.playerId)
+                        }
+                        size="sm"
+                        variant={player.isCoachExcluded ? "secondary" : "ghost"}
+                      >
+                        {player.isCoachExcluded ? "Include" : "Exclude"}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               </Panel>
 
               <Panel as="article" padding="sm" variant="solid">
@@ -569,7 +772,7 @@ export function LineupHelper({
                   />
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {roster
+                  {effectiveRoster
                     .filter((player) => player.available)
                     .sort(
                       (left, right) =>
@@ -588,12 +791,14 @@ export function LineupHelper({
                               ? "border-danger-border bg-danger-bg text-accent-strong"
                               : totalMinutes === 42
                                 ? "border-note-border bg-note-bg text-note"
-                                : "border-black/10 bg-black/5 text-ink",
+                                : "text-ink border-black/10 bg-black/5",
                           )}
                           key={`player-total-${player.playerId}`}
                         >
                           {player.fullName}
-                          <span className="text-ink-muted">{totalMinutes} min</span>
+                          <span className="text-ink-muted">
+                            {totalMinutes} min
+                          </span>
                         </span>
                       );
                     })}
@@ -601,7 +806,8 @@ export function LineupHelper({
                 <div className="grid gap-3">
                   {LINEUP_POSITIONS.map((position) => {
                     const positionLayout = lineupLayout[position];
-                    const positionAssignments = validation.roleAssignments[position];
+                    const positionAssignments =
+                      validation.roleAssignments[position];
                     const positionOutputRankings =
                       visibleEvaluation?.rankings[position] ?? [];
 
@@ -630,8 +836,9 @@ export function LineupHelper({
                               </StatusBadge>
                             </div>
                             <p className={statusCopyClassName}>
-                              Defends as {context.defensiveSwitch[position]}. Choose a
-                              legal split, then assign starter, backup, and reserve.
+                              Defends as {context.defensiveSwitch[position]}.
+                              Choose a legal split, then assign starter, backup,
+                              and reserve.
                             </p>
                           </div>
 
@@ -648,7 +855,10 @@ export function LineupHelper({
                                 value={context.defensiveSwitch[position]}
                               >
                                 {LINEUP_POSITIONS.map((option) => (
-                                  <option key={`${position}-switch-${option}`} value={option}>
+                                  <option
+                                    key={`${position}-switch-${option}`}
+                                    value={option}
+                                  >
                                     {option}
                                   </option>
                                 ))}
@@ -663,7 +873,10 @@ export function LineupHelper({
                                 value={positionLayout.patternKey}
                               >
                                 {LINEUP_SPLIT_PATTERNS.map((pattern) => (
-                                  <option key={`${position}-${pattern.key}`} value={pattern.key}>
+                                  <option
+                                    key={`${position}-${pattern.key}`}
+                                    value={pattern.key}
+                                  >
                                     {pattern.label}
                                   </option>
                                 ))}
@@ -674,21 +887,30 @@ export function LineupHelper({
 
                         <div className="grid gap-3 lg:grid-cols-3">
                           {LINEUP_ROLE_SEQUENCE.map((role) => {
-                            const enabled = roleIsEnabled(positionLayout.patternKey, role);
+                            const enabled = roleIsEnabled(
+                              positionLayout.patternKey,
+                              role,
+                            );
                             const playerId =
                               role === "starter"
                                 ? positionLayout.starterPlayerId
                                 : role === "backup"
                                   ? positionLayout.backupPlayerId
                                   : positionLayout.reservePlayerId;
-                            const selectedPlayer = roster.find(
+                            const selectedPlayer = effectiveRoster.find(
                               (player) => player.playerId === playerId,
                             );
                             const selectedOtherPlayers = new Set(
-                              [positionLayout.starterPlayerId, positionLayout.backupPlayerId, positionLayout.reservePlayerId]
-                                .filter((candidateId) => candidateId && candidateId !== playerId),
+                              [
+                                positionLayout.starterPlayerId,
+                                positionLayout.backupPlayerId,
+                                positionLayout.reservePlayerId,
+                              ].filter(
+                                (candidateId) =>
+                                  candidateId && candidateId !== playerId,
+                              ),
                             );
-                            const options = roster.filter(
+                            const options = effectiveRoster.filter(
                               (player) =>
                                 player.available &&
                                 (!selectedOtherPlayers.has(player.playerId) ||
@@ -728,7 +950,11 @@ export function LineupHelper({
                                   <Select
                                     disabled={!enabled || isOptimizing}
                                     onChange={(event) =>
-                                      updatePlayerSlot(position, role, event.target.value)
+                                      updatePlayerSlot(
+                                        position,
+                                        role,
+                                        event.target.value,
+                                      )
                                     }
                                     value={playerId}
                                   >
@@ -736,7 +962,10 @@ export function LineupHelper({
                                       {enabled ? "Choose player" : "Unused"}
                                     </option>
                                     {options.map((player) => (
-                                      <option key={`${position}-${role}-${player.playerId}`} value={player.playerId}>
+                                      <option
+                                        key={`${position}-${role}-${player.playerId}`}
+                                        value={player.playerId}
+                                      >
                                         {player.fullName}
                                       </option>
                                     ))}
@@ -748,9 +977,10 @@ export function LineupHelper({
                                     Output{" "}
                                     {formatDecimal(
                                       selectedPlayer
-                                        ? visibleEvaluation?.playerPositionOutputs[
+                                        ? (visibleEvaluation
+                                            ?.playerPositionOutputs[
                                             selectedPlayer.playerId
-                                          ]?.[position] ?? null
+                                          ]?.[position] ?? null)
                                         : null,
                                     )}
                                   </span>
@@ -765,10 +995,10 @@ export function LineupHelper({
                                       {selectedPlayer.bestPosition ?? "Flex"} •{" "}
                                       {formatCurrency(selectedPlayer.salary)} •{" "}
                                       <BuzzerBeaterRatingText scale="game_shape">
-                                        {selectedPlayer.gameShape ?? "unknown shape"}
+                                        {selectedPlayer.gameShape ??
+                                          "unknown shape"}
                                       </BuzzerBeaterRatingText>{" "}
-                                      •{" "}
-                                      {skillHeadline(selectedPlayer)}
+                                      • {skillHeadline(selectedPlayer)}
                                     </span>
                                   ) : (
                                     <span className="text-ink-muted">
@@ -786,7 +1016,7 @@ export function LineupHelper({
                             <MinuteRolePill
                               key={`${position}-${assignment.playerId}-${assignment.role}`}
                               label={`${resolvePlayerName(
-                                roster,
+                                effectiveRoster,
                                 assignment.playerId,
                               )} ${assignment.minutes}m`}
                               role={assignment.role}
@@ -800,13 +1030,13 @@ export function LineupHelper({
                         </div>
 
                         <div className="grid gap-2">
-                          <span className="text-ink-muted text-[0.72rem] font-bold uppercase tracking-[0.16em]">
+                          <span className="text-ink-muted text-[0.72rem] font-bold tracking-[0.16em] uppercase">
                             Top fits for {position}
                           </span>
                           <ol className="grid list-decimal gap-1 pl-5 text-sm">
                             {positionOutputRankings.slice(0, 5).map((entry) => (
                               <li key={`${position}-rank-${entry.playerId}`}>
-                                <span className="font-semibold text-ink">
+                                <span className="text-ink font-semibold">
                                   {entry.name}
                                 </span>{" "}
                                 <span className="text-ink-muted">
@@ -834,7 +1064,9 @@ export function LineupHelper({
                           detail={
                             <>
                               <BuzzerBeaterRatingText
-                                label={visibleEvaluation.ratingLabels[rating.key]}
+                                label={
+                                  visibleEvaluation.ratingLabels[rating.key]
+                                }
                                 scale="team_rating"
                               >
                                 {visibleEvaluation.ratingLabels[rating.key]}
@@ -846,7 +1078,9 @@ export function LineupHelper({
                           value={
                             <BuzzerBeaterRatingText
                               scale="team_rating"
-                              value={visibleEvaluation.roundedRatings[rating.key]}
+                              value={
+                                visibleEvaluation.roundedRatings[rating.key]
+                              }
                             >
                               {Number(
                                 visibleEvaluation.roundedRatings[rating.key],
@@ -892,7 +1126,7 @@ export function LineupHelper({
                     </tr>
                   </thead>
                   <tbody>
-                    {roster.map((player) => (
+                    {effectiveRoster.map((player) => (
                       <tr key={`outputs-${player.playerId}`}>
                         <TableCell>{player.fullName}</TableCell>
                         {LINEUP_POSITIONS.map((position) => (
@@ -964,8 +1198,12 @@ function decodeLineupHelperWorkspace(
     syncedAt: record.syncedAt ?? null,
     roster: record.roster.map(decodeLineupHelperRosterPlayer),
     defaultContext: decodeLineupHelperContext(record.defaultContext),
-    defaultAssignments: record.defaultAssignments.map(decodeLineupHelperAssignment),
-    evaluation: record.evaluation ? decodeLineupHelperEvaluation(record.evaluation) : null,
+    defaultAssignments: record.defaultAssignments.map(
+      decodeLineupHelperAssignment,
+    ),
+    evaluation: record.evaluation
+      ? decodeLineupHelperEvaluation(record.evaluation)
+      : null,
     snapshotWarnings: record.snapshotWarnings.map((warning) => ({
       playerId: warning.playerId,
       fullName: warning.fullName,
@@ -976,6 +1214,39 @@ function decodeLineupHelperWorkspace(
     availableLocations: [...record.availableLocations],
   };
 }
+
+function resolveOwnerRosterRepairState(args: {
+  availableRosterCount: number;
+  excludedPlayerCount: number;
+  repairExhausted: boolean;
+  workspaceError: string | null;
+  workspaceLoading: boolean;
+  workspaceRecord: LineupHelperWorkspaceRecord | null;
+}): {
+  blockedByMissingSnapshots: boolean;
+  shouldOfferRepair: boolean;
+} {
+  const blockedByMissingSnapshots = Boolean(
+    !args.workspaceLoading &&
+      !args.workspaceError &&
+      args.workspaceRecord &&
+      args.availableRosterCount === 0 &&
+      args.excludedPlayerCount === 0 &&
+      args.workspaceRecord.roster.length > 0 &&
+      args.workspaceRecord.roster.every(
+        (player) => !player.available && Boolean(player.snapshotWarning),
+      ),
+  );
+
+  return {
+    blockedByMissingSnapshots,
+    shouldOfferRepair: blockedByMissingSnapshots && !args.repairExhausted,
+  };
+}
+
+export const __testing = {
+  resolveOwnerRosterRepairState,
+};
 
 function decodeLineupHelperEvaluation(
   record: LineupHelperEvaluationRecord,
@@ -1014,7 +1285,9 @@ function decodeLineupHelperEvaluation(
       insideDefense: decodePositionOutput(
         record.perPositionContributions.insideDefense,
       ),
-      rebounding: decodePositionOutput(record.perPositionContributions.rebounding),
+      rebounding: decodePositionOutput(
+        record.perPositionContributions.rebounding,
+      ),
       offensiveFlow: decodePositionOutput(
         record.perPositionContributions.offensiveFlow,
       ),
@@ -1050,11 +1323,16 @@ function encodeLineupHelperContext(
     enthusiasm: context.enthusiasm,
     homeCourt: context.homeCourt,
     defensiveSwitch: {
-      pg: context.defensiveSwitch.PG as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["pg"],
-      sg: context.defensiveSwitch.SG as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["sg"],
-      sf: context.defensiveSwitch.SF as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["sf"],
-      pf: context.defensiveSwitch.PF as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["pf"],
-      c: context.defensiveSwitch.C as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["c"],
+      pg: context.defensiveSwitch
+        .PG as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["pg"],
+      sg: context.defensiveSwitch
+        .SG as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["sg"],
+      sf: context.defensiveSwitch
+        .SF as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["sf"],
+      pf: context.defensiveSwitch
+        .PF as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["pf"],
+      c: context.defensiveSwitch
+        .C as LineupHelperWorkspaceRecord["defaultContext"]["defensiveSwitch"]["c"],
     },
   };
 }
@@ -1193,7 +1471,9 @@ function resolvePlayerName(
   roster: LineupHelperRosterPlayer[],
   playerId: string,
 ) {
-  return roster.find((player) => player.playerId === playerId)?.fullName ?? playerId;
+  return (
+    roster.find((player) => player.playerId === playerId)?.fullName ?? playerId
+  );
 }
 
 function MinuteSummaryTile({
@@ -1219,11 +1499,11 @@ function MinuteSummaryTile({
             : "border-note-border bg-note-bg",
       )}
     >
-      <span className="text-ink-muted text-[0.72rem] font-bold uppercase tracking-[0.16em]">
+      <span className="text-ink-muted text-[0.72rem] font-bold tracking-[0.16em] uppercase">
         {label}
       </span>
       <strong className="text-ink text-2xl leading-none">{current}</strong>
-      <span className="text-xs text-ink-muted">
+      <span className="text-ink-muted text-xs">
         {exact ? "On target" : `${current}/${target} minutes`}
       </span>
     </div>
@@ -1245,7 +1525,7 @@ function MinuteRolePill({
           ? "border-success/20 bg-success/10 text-success"
           : role === "backup"
             ? "border-note-border bg-note-bg text-note"
-            : "border-black/10 bg-black/5 text-ink",
+            : "text-ink border-black/10 bg-black/5",
       )}
     >
       {label}

@@ -20,6 +20,7 @@ import {
   toRecord,
 } from "@/app/prediction-parsing";
 import { parseLegacyJsonField } from "@/lib/json-parsing";
+import { normalizePredictionModelKey } from "@/lib/prediction/model-selection";
 
 export const PREDICTION_DRAFT_STORAGE_KEY = "bb.predictionDraft.v2";
 const predictionDraftStorageSchema = z.object({}).passthrough();
@@ -68,6 +69,7 @@ export function createDefaultPredictionDraft(
   return {
     input: createDefaultPredictionInput(),
     forecastPrefill: null,
+    modelKey: null,
     sourceSelection: createDefaultPredictionSourceSelection(context),
   };
 }
@@ -84,6 +86,7 @@ export function reconcilePredictionDraft(
   return {
     input: normalizePredictionInputValue(draft.input, defaults.input),
     forecastPrefill: normalizeForecastPrefill(draft.forecastPrefill),
+    modelKey: normalizePredictionModelKey(draft.modelKey),
     sourceSelection: {
       homeSourceMatchId:
         asOptionalString(draft.sourceSelection?.homeSourceMatchId) ??
@@ -98,11 +101,14 @@ export function reconcilePredictionDraft(
 export function buildSubmissionRequest(args: {
   draft: PredictionDraftState;
 }): PredictionSubmissionRequest {
+  const modelKey = normalizePredictionModelKey(args.draft.modelKey);
+
   return {
     input: normalizePredictionInputValue(
       args.draft.input,
       createDefaultPredictionInput(),
     ),
+    ...(modelKey ? { modelKey } : {}),
     ...(args.draft.forecastPrefill
       ? { forecastContext: args.draft.forecastPrefill.context }
       : {}),

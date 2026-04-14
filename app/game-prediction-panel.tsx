@@ -27,6 +27,11 @@ import {
   readPredictionDraftFromStorage,
   writePredictionDraftToStorage,
 } from "@/app/game-prediction-state";
+import {
+  PredictionModelMetadata,
+  PredictionModelPicker,
+} from "@/app/prediction-model-controls";
+import { useRuntimeEnvironment } from "@/app/runtime-environment";
 import type {
   AccessibleMatchSummary,
   MatchBoxscorePayload,
@@ -44,6 +49,8 @@ import { Field, Input, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
+import { captureAnalyticsEvent } from "@/lib/analytics/client";
+import { isInternalPredictionModelPickerEnabled } from "@/lib/prediction/model-selection";
 
 type GamePredictionPanelProps = {
   currentTeamId: string | null;
@@ -110,6 +117,9 @@ export function GamePredictionPanel({
   currentTeamName,
 }: GamePredictionPanelProps) {
   const queryClient = useQueryClient();
+  const { environmentName } = useRuntimeEnvironment();
+  const modelPickerEnabled =
+    isInternalPredictionModelPickerEnabled(environmentName);
   const defaultDraft = useMemo(
     () =>
       createBlankPredictionDraft({
@@ -137,6 +147,10 @@ export function GamePredictionPanel({
     [],
   );
   const [enabledTeamBDefenses, setEnabledTeamBDefenses] = useState<string[]>([]);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [showAdvancedMatrix, setShowAdvancedMatrix] = useState(false);
+  const [showDefenseDrilldown, setShowDefenseDrilldown] = useState(false);
+  const [showExtremes, setShowExtremes] = useState(false);
 
   useEffect(() => {
     if (didRestoreDraftRef.current) {
@@ -165,6 +179,21 @@ export function GamePredictionPanel({
     );
   }, [draft]);
 
+  useEffect(() => {
+    if (modelPickerEnabled) {
+      return;
+    }
+
+    setDraft((current) =>
+      current.modelKey
+        ? {
+            ...current,
+            modelKey: null,
+          }
+        : current,
+    );
+  }, [modelPickerEnabled]);
+
   const accessibleMatchesQuery = useQuery(accessibleMatchesQueryOptions());
   const accessibleMatches = useMemo(
     () => sortAccessibleMatches(accessibleMatchesQuery.data ?? []),
@@ -182,6 +211,23 @@ export function GamePredictionPanel({
   const matrixMutation = useMutation({
     mutationFn: async (request: PredictionDraft) =>
       queryClient.fetchQuery(predictionMatrixQueryOptions({ request })),
+    onError: () => {
+      captureAnalyticsEvent("game_prediction_matrix_request_failed", {
+        has_team_a_source_match: Boolean(draft.teamA.sourceMatchId),
+        has_team_b_source_match: Boolean(draft.teamB.sourceMatchId),
+        venue: draft.venue,
+      });
+    },
+    onSuccess: (result, request) => {
+      captureAnalyticsEvent("game_prediction_matrix_completed", {
+        has_estimated_team_a_pair: result.teamAPairs.some((pair) => pair.estimated),
+        has_estimated_team_b_pair: result.teamBPairs.some((pair) => pair.estimated),
+        team_a_pair_count: result.teamAPairs.length,
+        team_b_pair_count: result.teamBPairs.length,
+        venue: request.venue,
+        view_count: result.views.length,
+      });
+    },
   });
   const matrix = matrixMutation.data ?? null;
   const activeView =
@@ -446,6 +492,181 @@ export function GamePredictionPanel({
         : null,
     [selectedCell, selectedTeamAPair, selectedTeamBPair],
   );
+  const offenseOverviewRows = useMemo(
+    () =>
+      buildOffenseOverviewRows({
+        teamAPairs: visibleTeamAPairs,
+        teamBPairs: visibleTeamBPairs,
+        view: activeView,
+      }),
+    [activeView, visibleTeamAPairs, visibleTeamBPairs],
+  );
+  const selectedOverviewCell = useMemo(
+    () =>
+      findOffenseOverviewCell({
+        rows: offenseOverviewRows,
+        teamAOffense:
+          selectedResult?.teamAPair.offense ??
+          recommendedResult?.teamAPair.offense ??
+          null,
+        teamBOffense:
+          selectedResult?.teamBPair.offense ??
+          recommendedResult?.teamBPair.offense ??
+          null,
+      }),
+    [offenseOverviewRows, recommendedResult, selectedResult],
+  );
+  const recommendedOverviewCell = useMemo(
+    () =>
+      findOffenseOverviewCell({
+        rows: offenseOverviewRows,
+        teamAOffense: recommendedResult?.teamAPair.offense ?? null,
+        teamBOffense: recommendedResult?.teamBPair.offense ?? null,
+      }),
+    [offenseOverviewRows, recommendedResult],
+  );
+  const selectedOverviewResult = selectedOverviewCell?.result ?? null;
+  const selectedOverviewTeamAPairs = selectedOverviewCell?.teamAPairs ?? [];
+  const selectedOverviewTeamBPairs = selectedOverviewCell?.teamBPairs ?? [];
+  const visibleOverviewTeamAOffenses = useMemo(
+    () => offenseOverviewRows.map((row) => row.teamAOffense),
+    [offenseOverviewRows],
+  );
+  const visibleOverviewTeamBOffenses = useMemo(() => {
+    const seen = new Set<string>();
+    const offenses: string[] = [];
+
+    for (const row of offenseOverviewRows) {
+      for (const cell of row.cells) {
+        if (seen.has(cell.teamBOffense)) {
+          continue;
+        }
+        seen.add(cell.teamBOffense);
+        offenses.push(cell.teamBOffense);
+      }
+    }
+
+    return offenses;
+  }, [offenseOverviewRows]);
+  const selectedOverviewTeamAOffense =
+    selectedOverviewCell?.teamAOffense ??
+    recommendedOverviewCell?.teamAOffense ??
+    visibleOverviewTeamAOffenses[0] ??
+    "";
+  const selectedOverviewTeamBOffense =
+    selectedOverviewCell?.teamBOffense ??
+    recommendedOverviewCell?.teamBOffense ??
+    visibleOverviewTeamBOffenses[0] ??
+    "";
+
+  function handleRunMatchupMatrix() {
+    if (matrixMutation.isPending) {
+      return;
+    }
+
+    captureAnalyticsEvent("game_prediction_matrix_requested", {
+      has_team_a_source_match: Boolean(draft.teamA.sourceMatchId),
+      has_team_b_source_match: Boolean(draft.teamB.sourceMatchId),
+      venue: draft.venue,
+    });
+
+    void matrixMutation
+      .mutateAsync(modelPickerEnabled ? draft : { ...draft, modelKey: null })
+      .catch(() => undefined);
+  }
+
+  function handleMatrixViewSelection(view: PredictionMatrixView) {
+    if (view.viewId === activeView?.viewId) {
+      return;
+    }
+    setSelectedViewId(view.viewId);
+    captureAnalyticsEvent("game_prediction_view_changed", {
+      next_view_id: view.viewId,
+      next_view_label: view.label,
+    });
+  }
+
+  function handleSurfaceToggle(
+    surface:
+      | "advanced_filters"
+      | "advanced_matrix"
+      | "defense_drilldown"
+      | "explore_extremes",
+    setter: Dispatch<SetStateAction<boolean>>,
+  ) {
+    setter((current) => {
+      const next = !current;
+      captureAnalyticsEvent("game_prediction_surface_toggled", {
+        source: "game_prediction_panel",
+        state: next ? "opened" : "closed",
+        surface,
+      });
+      return next;
+    });
+  }
+
+  function handleOffenseFilterToggle(args: {
+    allOffenses: readonly string[];
+    axis: "team_a" | "team_b";
+    offense: string;
+    setter: Dispatch<SetStateAction<string[]>>;
+  }) {
+    args.setter((current) => {
+      const next = toggleExpandedOffense(current, args.offense, args.allOffenses);
+      if (areStringListsEqual(current, next)) {
+        return current;
+      }
+      captureAnalyticsEvent("game_prediction_offense_filter_changed", {
+        axis: args.axis,
+        offense: args.offense,
+        selected_count: next.length,
+        state: next.includes(args.offense) ? "expanded" : "collapsed",
+        total_count: args.allOffenses.length,
+      });
+      return next;
+    });
+  }
+
+  function handleDefenseFilterToggle(args: {
+    allDefenses: readonly string[];
+    axis: "team_a" | "team_b";
+    defense: string;
+    setter: Dispatch<SetStateAction<string[]>>;
+  }) {
+    args.setter((current) => {
+      const next = toggleRequiredOption(current, args.defense, args.allDefenses);
+      if (areStringListsEqual(current, next)) {
+        return current;
+      }
+      captureAnalyticsEvent("game_prediction_defense_filter_changed", {
+        axis: args.axis,
+        defense: args.defense,
+        selected_count: next.length,
+        state: next.includes(args.defense) ? "enabled" : "disabled",
+        total_count: args.allDefenses.length,
+      });
+      return next;
+    });
+  }
+
+  function trackOverviewSelection(args: {
+    cell: PredictionMatrixOverviewCell;
+    source: "mobile_overview_picker" | "overview_heatmap";
+  }) {
+    const margin =
+      typeof args.cell.result?.cell.predictedPointDiff === "number"
+        ? args.cell.result.cell.predictedPointDiff
+        : null;
+    captureAnalyticsEvent("game_prediction_overview_cell_selected", {
+      is_recommended:
+        recommendedOverviewCell?.teamAOffense === args.cell.teamAOffense &&
+        recommendedOverviewCell.teamBOffense === args.cell.teamBOffense,
+      margin,
+      source: args.source,
+      team_a_offense: args.cell.teamAOffense,
+      team_b_offense: args.cell.teamBOffense,
+    });
+  }
 
   return (
     <div className="grid gap-4">
@@ -465,6 +686,10 @@ export function GamePredictionPanel({
                   setSelectedTeamAPairId(null);
                   setSelectedTeamBPairId(null);
                   setSelectedViewId(null);
+                  setShowAdvancedFilters(false);
+                  setShowAdvancedMatrix(false);
+                  setShowDefenseDrilldown(false);
+                  setShowExtremes(false);
                   matrixMutation.reset();
                 }}
                 size="sm"
@@ -474,7 +699,7 @@ export function GamePredictionPanel({
               </Button>
               <Button
                 loading={matrixMutation.isPending}
-                onClick={() => void matrixMutation.mutateAsync(draft)}
+                onClick={handleRunMatchupMatrix}
                 size="sm"
                 variant="secondary"
               >
@@ -486,7 +711,7 @@ export function GamePredictionPanel({
           title="Game prediction"
         />
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+        <div className="grid gap-4 lg:grid-cols-[12rem_minmax(0,1.15fr)_minmax(0,1fr)]">
           <StatCard
             detail="Explicit venue setting for the current matchup."
             label="Venue"
@@ -522,56 +747,42 @@ export function GamePredictionPanel({
             label="Inspected matchup"
             value={matrix ? formatCellMargin(selectedCell) : "Not run"}
           />
-          <StatCard
-            className={cn(bestResult && "border-success/20 bg-success/10")}
-            detail={renderMatrixResultDetail({
-              emptyDetail:
-                "Run the matrix to surface the strongest upside cell in the current visible view.",
-              note: "Exploration only. This ignores opponent adaptation.",
-              result: bestResult,
-              teamALabel: selectedTeamALabel,
-              teamBLabel: selectedTeamBLabel,
-            })}
-            label="Best visible upside"
-            value={bestResult ? formatCellMargin(bestResult.cell) : matrix ? "Unavailable" : "Not run"}
-          />
-          <StatCard
-            className={cn(worstResult && "border-danger-border bg-danger-bg")}
-            detail={renderMatrixResultDetail({
-              emptyDetail:
-                "Run the matrix to surface the harshest downside cell in the current visible view.",
-              note: "Exploration only. This ignores opponent adaptation.",
-              result: worstResult,
-              teamALabel: selectedTeamALabel,
-              teamBLabel: selectedTeamBLabel,
-            })}
-            label="Worst visible downside"
-            value={worstResult ? formatCellMargin(worstResult.cell) : matrix ? "Unavailable" : "Not run"}
-          />
         </div>
 
         {matrixMutation.error ? (
           <Alert>{String(matrixMutation.error)}</Alert>
         ) : null}
 
-        <Field label="Venue">
-          <Select
-            onChange={(event) => {
-              const venue = event.currentTarget.value as PredictionDraft["venue"];
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Venue">
+            <Select
+              onChange={(event) => {
+                const venue = event.currentTarget.value as PredictionDraft["venue"];
+                setDraft((current) => ({
+                  ...current,
+                  venue,
+                }));
+              }}
+              value={draft.venue}
+            >
+              {GAME_PREDICTION_VENUE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <PredictionModelPicker
+            onChange={(nextValue) =>
               setDraft((current) => ({
                 ...current,
-                venue,
-              }));
-            }}
-            value={draft.venue}
-          >
-            {GAME_PREDICTION_VENUE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
+                modelKey: nextValue,
+              }))
+            }
+            value={draft.modelKey}
+          />
+        </div>
 
         <div className="grid gap-4 xl:grid-cols-2">
           <PredictionSideCard
@@ -630,68 +841,130 @@ export function GamePredictionPanel({
           </p>
         ) : (
           <div className="grid gap-4">
-            <div className="grid gap-4 rounded-card border border-black/8 bg-white p-4 xl:grid-cols-2">
-              <MatrixToggleGroup
-                hint="Hide or reopen whole Team A offense families. These buttons mirror the disclosure rows in the matrix body."
-                label={`Rows · ${selectedTeamALabel} offense groups`}
-                onReset={() => setExpandedTeamAOffenses([...teamAOffenseOptions])}
-                onToggle={(offense) =>
-                  setExpandedTeamAOffenses((current) =>
-                    toggleExpandedOffense(current, offense, teamAOffenseOptions),
-                  )
-                }
-                options={teamAOffenseOptions}
-                selectedOptions={expandedTeamAOffenses}
-              />
-              <MatrixToggleGroup
-                hint="Keep only the Team A defenses you care about inside the visible offense groups."
-                label={`Rows · ${selectedTeamALabel} defenses`}
-                onReset={() => setEnabledTeamADefenses([...teamADefenseOptions])}
-                onToggle={(defense) =>
-                  setEnabledTeamADefenses((current) =>
-                    toggleRequiredOption(current, defense, teamADefenseOptions),
-                  )
-                }
-                options={teamADefenseOptions}
-                selectedOptions={enabledTeamADefenses}
-              />
-              <MatrixToggleGroup
-                hint="Hide or reopen whole Team B offense families. These buttons mirror the disclosure state in the matrix header."
-                label={`Columns · ${selectedTeamBLabel} offense groups`}
-                onReset={() => setExpandedTeamBOffenses([...teamBOffenseOptions])}
-                onToggle={(offense) =>
-                  setExpandedTeamBOffenses((current) =>
-                    toggleExpandedOffense(current, offense, teamBOffenseOptions),
-                  )
-                }
-                options={teamBOffenseOptions}
-                selectedOptions={expandedTeamBOffenses}
-              />
-              <MatrixToggleGroup
-                hint="Keep only the Team B defenses you care about inside the visible offense groups."
-                label={`Columns · ${selectedTeamBLabel} defenses`}
-                onReset={() => setEnabledTeamBDefenses([...teamBDefenseOptions])}
-                onToggle={(defense) =>
-                  setEnabledTeamBDefenses((current) =>
-                    toggleRequiredOption(current, defense, teamBDefenseOptions),
-                  )
-                }
-                options={teamBDefenseOptions}
-                selectedOptions={enabledTeamBDefenses}
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {matrix.views.map((view) => (
+            <PredictionModelMetadata value={matrix} />
+            <div className="grid gap-3 rounded-card border border-black/8 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {matrix.views.map((view) => (
+                    <Button
+                      key={view.viewId}
+                      onClick={() => handleMatrixViewSelection(view)}
+                      size="sm"
+                      variant={view.viewId === activeView?.viewId ? "secondary" : "ghost"}
+                    >
+                      {view.label}
+                    </Button>
+                  ))}
+                </div>
                 <Button
-                  key={view.viewId}
-                  onClick={() => setSelectedViewId(view.viewId)}
+                  onClick={() =>
+                    handleSurfaceToggle("advanced_filters", setShowAdvancedFilters)
+                  }
                   size="sm"
-                  variant={view.viewId === activeView?.viewId ? "secondary" : "ghost"}
+                  variant={showAdvancedFilters ? "secondary" : "ghost"}
                 >
-                  {view.label}
+                  {showAdvancedFilters ? "Hide advanced filters" : "Advanced filters"}
                 </Button>
-              ))}
+              </div>
+
+              <div className="grid gap-3 xl:grid-cols-2">
+                <CompactMatrixToggleGroup
+                  formatOptionLabel={abbreviateMatrixOffenseLabel}
+                  label={`Rows · ${selectedTeamALabel}`}
+                  onToggle={(offense) =>
+                    handleOffenseFilterToggle({
+                      allOffenses: teamAOffenseOptions,
+                      axis: "team_a",
+                      offense,
+                      setter: setExpandedTeamAOffenses,
+                    })
+                  }
+                  options={teamAOffenseOptions}
+                  selectedOptions={expandedTeamAOffenses}
+                />
+                <CompactMatrixToggleGroup
+                  formatOptionLabel={abbreviateMatrixOffenseLabel}
+                  label={`Columns · ${selectedTeamBLabel}`}
+                  onToggle={(offense) =>
+                    handleOffenseFilterToggle({
+                      allOffenses: teamBOffenseOptions,
+                      axis: "team_b",
+                      offense,
+                      setter: setExpandedTeamBOffenses,
+                    })
+                  }
+                  options={teamBOffenseOptions}
+                  selectedOptions={expandedTeamBOffenses}
+                />
+              </div>
+
+              {showAdvancedFilters ? (
+                <div className="grid gap-4 rounded-card border border-black/8 bg-[rgba(255,255,255,0.82)] p-4 xl:grid-cols-2">
+                  <div className="xl:col-span-2 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.08em] text-ink-muted">
+                      Advanced filters
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        onClick={() => {
+                          setExpandedTeamAOffenses([...teamAOffenseOptions]);
+                          setExpandedTeamBOffenses([...teamBOffenseOptions]);
+                        }}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Show all
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setExpandedTeamAOffenses([...teamAOffenseOptions]);
+                          setExpandedTeamBOffenses([...teamBOffenseOptions]);
+                          setEnabledTeamADefenses([...teamADefenseOptions]);
+                          setEnabledTeamBDefenses([...teamBDefenseOptions]);
+                        }}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Reset filters
+                      </Button>
+                    </div>
+                  </div>
+                  <MatrixToggleGroup
+                    formatOptionLabel={abbreviateMatrixDefenseLabel}
+                    hint="Only applies to the overview drill-down and advanced pair matrix."
+                    label={`Rows · ${selectedTeamALabel} defenses`}
+                    onReset={() => setEnabledTeamADefenses([...teamADefenseOptions])}
+                    onToggle={(defense) =>
+                      handleDefenseFilterToggle({
+                        allDefenses: teamADefenseOptions,
+                        axis: "team_a",
+                        defense,
+                        setter: setEnabledTeamADefenses,
+                      })
+                    }
+                    options={teamADefenseOptions}
+                    selectedOptions={enabledTeamADefenses}
+                    showReset={false}
+                  />
+                  <MatrixToggleGroup
+                    formatOptionLabel={abbreviateMatrixDefenseLabel}
+                    hint="Only applies to the overview drill-down and advanced pair matrix."
+                    label={`Columns · ${selectedTeamBLabel} defenses`}
+                    onReset={() => setEnabledTeamBDefenses([...teamBDefenseOptions])}
+                    onToggle={(defense) =>
+                      handleDefenseFilterToggle({
+                        allDefenses: teamBDefenseOptions,
+                        axis: "team_b",
+                        defense,
+                        setter: setEnabledTeamBDefenses,
+                      })
+                    }
+                    options={teamBDefenseOptions}
+                    selectedOptions={enabledTeamBDefenses}
+                    showReset={false}
+                  />
+                </div>
+              ) : null}
             </div>
 
             {activeView ? (
@@ -704,455 +977,285 @@ export function GamePredictionPanel({
                   </Alert>
                 ) : (
                   <>
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-black/8 bg-white px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                        <span>Overview</span>
+                        <span className="text-ink">Rows · {selectedTeamALabel}</span>
+                        <span className="text-ink">Columns · {selectedTeamBLabel}</span>
+                        <span>Positive margins favor {selectedTeamALabel}</span>
+                        <span>Cells assume opponent adaptation</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          onClick={() =>
+                            handleSurfaceToggle("explore_extremes", setShowExtremes)
+                          }
+                          size="sm"
+                          variant={showExtremes ? "secondary" : "ghost"}
+                        >
+                          {showExtremes ? "Hide extremes" : "Explore extremes"}
+                        </Button>
+                        <Button
+                          onClick={() =>
+                            handleSurfaceToggle("advanced_matrix", setShowAdvancedMatrix)
+                          }
+                          size="sm"
+                          variant={showAdvancedMatrix ? "secondary" : "ghost"}
+                        >
+                          {showAdvancedMatrix
+                            ? "Hide advanced matrix"
+                            : "Advanced matrix"}
+                        </Button>
+                      </div>
+                    </div>
+
                     <div className="hidden md:block">
-                      <div className="max-h-[72vh] overflow-auto rounded-card border border-black/8 bg-white">
+                      <div className="max-h-[34rem] overflow-auto rounded-card border border-black/8 bg-white">
                         <table className="w-max min-w-full border-collapse text-left">
                           <thead className="bg-white">
                             <tr>
-                              <th
-                                className={cn(
-                                  "sticky left-0 top-0 z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
-                                  MATRIX_ROW_HEADER_WIDTH_CLASS,
-                                )}
-                              >
+                              <th className="sticky left-0 top-0 z-50 w-28 min-w-28 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]">
                                 <div className="grid gap-1">
-                                  <span className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                  <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
                                     Rows
                                   </span>
                                   <span
                                     className="truncate text-sm font-semibold text-ink"
-                                    title={`${selectedTeamALabel} tactics`}
+                                    title={selectedTeamALabel}
                                   >
                                     {selectedTeamALabel}
                                   </span>
                                 </div>
                               </th>
                               <th
-                                className="sticky top-0 z-40 border-b border-black/10 bg-white px-4 py-3 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]"
-                                colSpan={renderedColumnCount}
+                                className="sticky top-0 z-40 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]"
+                                colSpan={visibleOverviewTeamBOffenses.length}
                               >
                                 <div className="grid gap-1">
-                                  <span className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                  <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
                                     Columns
                                   </span>
                                   <span className="text-sm font-semibold text-ink">
-                                    {selectedTeamBLabel} tactics
+                                    {selectedTeamBLabel}
                                   </span>
                                 </div>
                               </th>
                             </tr>
                             <tr>
-                              <th
-                                className={cn(
-                                  "sticky left-0 top-[4.35rem] z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
-                                  MATRIX_ROW_HEADER_WIDTH_CLASS,
-                                )}
-                              >
-                                <span
-                                  className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
-                                  title={`${selectedTeamALabel} offense groups`}
-                                >
+                              <th className="sticky left-0 top-[4.2rem] z-50 w-28 min-w-28 border-b border-black/10 bg-white px-3 py-2 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]">
+                                <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
                                   Off
                                 </span>
                               </th>
-                              {teamBColumnGroups.map((group) => {
-                                const highlightsSelectedOffense =
-                                  selectedTeamBPair?.offense === group.offense;
+                              {visibleOverviewTeamBOffenses.map((offense) => {
+                                const isRecommendedColumn =
+                                  recommendedOverviewCell?.teamBOffense === offense;
+                                const isSelectedColumn =
+                                  selectedOverviewTeamBOffense === offense;
 
                                 return (
                                   <th
-                                    className="sticky top-[4.35rem] z-40 border-b border-black/10 bg-white px-2 py-2 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]"
-                                    colSpan={group.expanded ? group.pairs.length : 1}
-                                    key={group.offense}
-                                    style={{
-                                      backgroundColor: highlightsSelectedOffense
-                                        ? "#fff4ea"
-                                        : "#ffffff",
-                                    }}
-                                  >
-                                    <button
-                                      className="grid w-full gap-1 rounded-[1rem] border border-black/8 bg-white px-3 py-2 text-left transition hover:border-accent/35 hover:bg-white"
-                                      onClick={() =>
-                                        setExpandedTeamBOffenses((current) =>
-                                          toggleExpandedOffense(
-                                            current,
-                                            group.offense,
-                                            teamBOffenseOptions,
-                                          ),
-                                        )
-                                      }
-                                      type="button"
-                                    >
-                                      <span className="flex items-center justify-between gap-3">
-                                        <span
-                                          className="whitespace-nowrap text-[0.75rem] font-bold tracking-[0.08em] text-ink-muted"
-                                          title={group.offense}
-                                        >
-                                          {abbreviateMatrixOffenseLabel(group.offense)}
-                                        </span>
-                                        <span
-                                          aria-hidden="true"
-                                          className="text-sm font-semibold text-ink"
-                                        >
-                                          {group.expanded ? "-" : "+"}
-                                        </span>
-                                      </span>
-                                      <span className="text-[0.7rem] leading-5 text-ink-muted">
-                                        {group.expanded
-                                          ? `${group.pairs.length} ${selectedTeamBLabel} defenses`
-                                          : "Hidden"}
-                                      </span>
-                                    </button>
-                                  </th>
-                                );
-                              })}
-                            </tr>
-                            <tr>
-                              <th
-                                className={cn(
-                                  "sticky left-0 top-[8.7rem] z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
-                                  MATRIX_ROW_HEADER_WIDTH_CLASS,
-                                )}
-                              >
-                                <span
-                                  className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
-                                  title={`${selectedTeamBLabel} defense`}
-                                >
-                                  Def
-                                </span>
-                              </th>
-                              {teamBColumnGroups.map((group) =>
-                                group.expanded ? (
-                                  group.pairs.map((pair) => (
-                                    <th
-                                      className={cn(
-                                        "sticky top-[8.7rem] z-30 border-b border-black/10 bg-white px-1.5 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
-                                        MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
-                                      )}
-                                      key={pair.pairId}
-                                      style={{
-                                        backgroundColor:
-                                          selectedTeamBPairId === pair.pairId
-                                            ? "#fff4ea"
-                                            : "#ffffff",
-                                      }}
-                                    >
-                                      <div className="grid gap-1">
-                                        <span
-                                          className="inline-flex items-center justify-center gap-1 whitespace-nowrap text-[0.78rem] font-semibold leading-5 text-ink"
-                                          title={pair.defense}
-                                        >
-                                          <span>{abbreviateMatrixDefenseLabel(pair.defense)}</span>
-                                          {pair.estimated ? <EstimatedMatrixMarker /> : null}
-                                        </span>
-                                      </div>
-                                    </th>
-                                  ))
-                                ) : (
-                                  <th
                                     className={cn(
-                                      "sticky top-[8.7rem] z-30 border-b border-black/10 bg-white px-1.5 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                      "sticky top-[4.2rem] z-40 border-b border-black/10 px-2 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
                                       MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
                                     )}
-                                    key={`${group.offense}-collapsed`}
-                                  >
-                                    <span className="text-[0.68rem] font-semibold text-ink-muted">
-                                      Hidden
-                                    </span>
-                                  </th>
-                                ),
-                              )}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {teamARowGroups.map((group) => (
-                              <Fragment key={group.offense}>
-                                <tr>
-                                  <th
-                                    className={cn(
-                                      "sticky left-0 z-20 border-y border-black/10 bg-white px-3 py-2.5 text-left shadow-[1px_0_0_rgba(15,23,42,0.06)]",
-                                      MATRIX_ROW_HEADER_WIDTH_CLASS,
-                                    )}
+                                    key={offense}
                                     style={{
                                       backgroundColor:
-                                        selectedTeamAPair?.offense === group.offense
+                                        isRecommendedColumn || isSelectedColumn
                                           ? "#fff4ea"
                                           : "#ffffff",
                                     }}
                                   >
-                                    <button
-                                      className="grid w-full gap-1 text-left"
-                                      onClick={() =>
-                                        setExpandedTeamAOffenses((current) =>
-                                          toggleExpandedOffense(
-                                            current,
-                                            group.offense,
-                                            teamAOffenseOptions,
-                                          ),
-                                        )
-                                      }
-                                      type="button"
+                                    <span
+                                      className="inline-flex items-center justify-center text-[0.82rem] font-semibold text-ink"
+                                      title={offense}
                                     >
-                                      <span className="flex items-center justify-between gap-3">
-                                        <span
-                                          className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
-                                          title={`${selectedTeamALabel} offense group`}
-                                        >
-                                          Off
-                                        </span>
-                                        <span
-                                          aria-hidden="true"
-                                          className="text-sm font-semibold text-ink"
-                                        >
-                                          {group.expanded ? "-" : "+"}
-                                        </span>
-                                      </span>
-                                      <span className="text-sm font-semibold text-ink">
-                                        <span title={group.offense}>
-                                          {abbreviateMatrixOffenseLabel(group.offense)}
-                                        </span>
-                                      </span>
-                                      <span
-                                        className="text-[0.68rem] leading-5 text-ink-muted"
-                                        title={
-                                          group.expanded
-                                            ? `${group.pairs.length} ${selectedTeamALabel} defenses`
-                                            : "Rows hidden"
-                                        }
-                                      >
-                                        {group.expanded
-                                          ? `${group.pairs.length} def`
-                                          : "Hidden"}
-                                      </span>
-                                    </button>
+                                      {abbreviateMatrixOffenseLabel(offense)}
+                                    </span>
                                   </th>
-                                  <td
-                                    className="border-y border-black/10 bg-white px-0 py-0"
-                                    colSpan={renderedColumnCount}
-                                  />
-                                </tr>
-                                {group.expanded
-                                  ? group.pairs.map((teamAPair) => {
-                                      const isSelectedRow =
-                                        selectedTeamAPairId === teamAPair.pairId;
+                                );
+                              })}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {offenseOverviewRows.map((row) => {
+                              const isRecommendedRow =
+                                recommendedOverviewCell?.teamAOffense === row.teamAOffense;
+                              const isSelectedRow =
+                                selectedOverviewTeamAOffense === row.teamAOffense;
 
-                                      return (
-                                        <tr key={teamAPair.pairId}>
-                                          <th
-                                            className={cn(
-                                              "sticky left-0 z-20 border-b border-black/10 bg-white px-3 py-2 text-left align-top shadow-[1px_0_0_rgba(15,23,42,0.06)]",
-                                              MATRIX_ROW_HEADER_WIDTH_CLASS,
-                                            )}
-                                            style={{
-                                              backgroundColor: isSelectedRow
-                                                ? "#fff4ea"
-                                                : "#ffffff",
-                                            }}
-                                          >
-                                            <div className="grid gap-1">
-                                              <span
-                                                className="text-[0.68rem] font-bold tracking-[0.08em] text-ink-muted"
-                                                title={teamAPair.offense}
-                                              >
-                                                {abbreviateMatrixOffenseLabel(teamAPair.offense)}
-                                              </span>
-                                              <span className="inline-flex items-center gap-1">
-                                                <strong
-                                                  className="text-[0.82rem] leading-5 text-ink"
-                                                  title={teamAPair.defense}
-                                                >
-                                                  {abbreviateMatrixDefenseLabel(teamAPair.defense)}
-                                                </strong>
-                                                {teamAPair.estimated ? (
-                                                  <EstimatedMatrixMarker className="mt-px" />
-                                                ) : null}
-                                              </span>
-                                            </div>
-                                          </th>
-                                          {teamBColumnGroups.map((teamBGroup) =>
-                                            teamBGroup.expanded ? (
-                                              teamBGroup.pairs.map((teamBPair) => {
-                                                const row =
-                                                  activeViewRowsByTeamBPairId.get(
-                                                    teamBPair.pairId,
-                                                  ) ?? null;
-                                                const cell =
-                                                  row?.cells.find(
-                                                    (candidate) =>
-                                                      candidate.teamAPairId ===
-                                                      teamAPair.pairId,
-                                                  ) ?? null;
-                                                const isSelected =
-                                                  isSelectedRow &&
-                                                  selectedTeamBPairId === teamBPair.pairId;
-                                                const isRecommended =
-                                                  matchesVisibleResult({
-                                                    result: recommendedResult,
-                                                    teamAPairId: teamAPair.pairId,
-                                                    teamBPairId: teamBPair.pairId,
-                                                  });
-                                                const isBest = matchesVisibleResult({
-                                                  result: bestResult,
-                                                  teamAPairId: teamAPair.pairId,
-                                                  teamBPairId: teamBPair.pairId,
-                                                });
-                                                const isWorst = matchesVisibleResult({
-                                                  result: worstResult,
-                                                  teamAPairId: teamAPair.pairId,
-                                                  teamBPairId: teamBPair.pairId,
-                                                });
+                              return (
+                                <tr key={row.teamAOffense}>
+                                  <th
+                                    className="sticky left-0 z-20 w-28 min-w-28 border-b border-black/10 px-3 py-2 text-left shadow-[1px_0_0_rgba(15,23,42,0.06)]"
+                                    style={{
+                                      backgroundColor:
+                                        isRecommendedRow || isSelectedRow
+                                          ? "#fff4ea"
+                                          : "#ffffff",
+                                    }}
+                                  >
+                                    <div className="grid gap-1">
+                                      <span
+                                        className="text-sm font-semibold text-ink"
+                                        title={row.teamAOffense}
+                                      >
+                                        {abbreviateMatrixOffenseLabel(row.teamAOffense)}
+                                      </span>
+                                      <span className="text-[0.68rem] text-ink-muted">
+                                        {row.teamAPairs.length} def
+                                      </span>
+                                    </div>
+                                  </th>
+                                  {row.cells.map((overviewCell) => {
+                                    const result = overviewCell.result;
+                                    const isRecommended =
+                                      recommendedOverviewCell?.teamAOffense ===
+                                        overviewCell.teamAOffense &&
+                                      recommendedOverviewCell.teamBOffense ===
+                                        overviewCell.teamBOffense;
+                                    const isSelected =
+                                      selectedOverviewCell?.teamAOffense ===
+                                        overviewCell.teamAOffense &&
+                                      selectedOverviewCell.teamBOffense ===
+                                        overviewCell.teamBOffense;
 
-                                                return (
-                                                  <td
-                                                    className={cn(
-                                                      "border-b border-black/10 p-1 align-top",
-                                                      MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
-                                                    )}
-                                                    key={`${teamBPair.pairId}-${teamAPair.pairId}`}
-                                                  >
-                                                    <button
-                                                      className={cn(
-                                                        "relative flex min-h-[3.35rem] w-full items-center justify-center rounded-[0.8rem] border px-2 py-2 text-center transition",
-                                                        isSelected &&
-                                                          "ring-2 ring-accent/35",
-                                                      )}
-                                                      onClick={() =>
-                                                        handleMatrixSelection({
-                                                          matrix,
-                                                          setDraft,
-                                                          setSelectedTeamAPairId,
-                                                          setSelectedTeamBPairId,
-                                                          teamAPairId:
-                                                            teamAPair.pairId,
-                                                          teamBPairId:
-                                                            teamBPair.pairId,
-                                                        })
-                                                      }
-                                                      style={getPredictionCellHeatmapStyle(
-                                                        cell,
-                                                      )}
-                                                      type="button"
-                                                    >
-                                                      {isRecommended ||
-                                                      isBest ||
-                                                      isWorst ? (
-                                                        <span className="pointer-events-none absolute inset-x-1 top-1 flex flex-wrap justify-center gap-1">
-                                                          {isRecommended ? (
-                                                            <span className="inline-flex rounded-full border border-note-border bg-note-bg px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-note">
-                                                              Rec
-                                                            </span>
-                                                          ) : null}
-                                                          {isBest ? (
-                                                            <span className="inline-flex rounded-full border border-success/20 bg-white/85 px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-success">
-                                                              Best
-                                                            </span>
-                                                          ) : null}
-                                                          {isWorst ? (
-                                                            <span className="inline-flex rounded-full border border-danger-border bg-white/85 px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-accent-strong">
-                                                              Worst
-                                                            </span>
-                                                          ) : null}
-                                                        </span>
-                                                      ) : null}
-                                                      <strong className="text-sm font-semibold text-ink">
-                                                        {formatCompactCellMargin(cell)}
-                                                      </strong>
-                                                    </button>
-                                                  </td>
-                                                );
-                                              })
-                                            ) : (
-                                              <td
-                                                className={cn(
-                                                  "border-b border-black/10 bg-white p-1 align-top",
-                                                  MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
-                                                )}
-                                                key={`${teamAPair.pairId}-${teamBGroup.offense}-collapsed`}
-                                              >
-                                                <button
-                                                  className="grid min-h-[3.35rem] w-full place-items-center rounded-[0.8rem] border border-dashed border-black/10 bg-white px-2 py-2 text-center transition hover:border-accent/35 hover:bg-white"
-                                                  onClick={() =>
-                                                    setExpandedTeamBOffenses(
-                                                      (current) =>
-                                                        toggleExpandedOffense(
-                                                          current,
-                                                          teamBGroup.offense,
-                                                          teamBOffenseOptions,
-                                                        ),
-                                                    )
-                                                  }
-                                                  type="button"
-                                                >
-                                                  <span className="text-[0.68rem] font-semibold text-ink">
-                                                    Show
-                                                  </span>
-                                                </button>
-                                              </td>
-                                            ),
+                                    return (
+                                      <td
+                                        className={cn(
+                                          "border-b border-black/10 p-1 align-top",
+                                          MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                        )}
+                                        key={`${overviewCell.teamAOffense}-${overviewCell.teamBOffense}`}
+                                      >
+                                        <button
+                                          className={cn(
+                                            "relative flex min-h-[3.35rem] w-full items-center justify-center rounded-[0.8rem] border px-2 py-2 text-center transition",
+                                            isSelected && "ring-2 ring-accent/35",
                                           )}
-                                        </tr>
-                                      );
-                                    })
-                                  : null}
-                              </Fragment>
-                            ))}
+                                          onClick={() => {
+                                            if (!result) {
+                                              return;
+                                            }
+                                            trackOverviewSelection({
+                                              cell: overviewCell,
+                                              source: "overview_heatmap",
+                                            });
+                                            handleMatrixSelection({
+                                              matrix,
+                                              setDraft,
+                                              setSelectedTeamAPairId,
+                                              setSelectedTeamBPairId,
+                                              teamAPairId: result.teamAPair.pairId,
+                                              teamBPairId: result.teamBPair.pairId,
+                                            });
+                                          }}
+                                          style={getPredictionCellHeatmapStyle(
+                                            result?.cell ?? null,
+                                          )}
+                                          type="button"
+                                        >
+                                          {isRecommended ? (
+                                            <span className="pointer-events-none absolute inset-x-1 top-1 flex justify-center">
+                                              <span className="inline-flex rounded-full border border-note-border bg-note-bg px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-note">
+                                                Rec
+                                              </span>
+                                            </span>
+                                          ) : null}
+                                          <strong className="text-sm font-semibold text-ink">
+                                            {formatCompactCellMargin(result?.cell ?? null)}
+                                          </strong>
+                                        </button>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
                     </div>
 
                     <div className="grid gap-4 md:hidden">
-                      <Alert tone="note">
-                        Rows are {selectedTeamALabel}. Columns are {selectedTeamBLabel}.
-                        Positive margins still favor {selectedTeamALabel}.
-                      </Alert>
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label={`${selectedTeamALabel} tactic pair`}>
+                        <Field label={`${selectedTeamALabel} offense`}>
                           <Select
                             onChange={(event) => {
-                              const nextTeamAPairId = event.currentTarget.value;
+                              const nextTeamAOffense = event.currentTarget.value;
+                              const nextCell =
+                                findOffenseOverviewCell({
+                                  rows: offenseOverviewRows,
+                                  teamAOffense: nextTeamAOffense,
+                                  teamBOffense: selectedOverviewTeamBOffense,
+                                }) ??
+                                offenseOverviewRows.find(
+                                  (candidate) =>
+                                    candidate.teamAOffense === nextTeamAOffense,
+                                )?.cells[0] ??
+                                null;
+                              if (!nextCell?.result) {
+                                return;
+                              }
+                              trackOverviewSelection({
+                                cell: nextCell,
+                                source: "mobile_overview_picker",
+                              });
                               handleMatrixSelection({
                                 matrix,
                                 setDraft,
                                 setSelectedTeamAPairId,
                                 setSelectedTeamBPairId,
-                                teamAPairId: nextTeamAPairId,
-                                teamBPairId:
-                                  selectedTeamBPairId ??
-                                  visibleTeamBPairs[0]?.pairId ??
-                                  "",
+                                teamAPairId: nextCell.result.teamAPair.pairId,
+                                teamBPairId: nextCell.result.teamBPair.pairId,
                               });
                             }}
-                            value={selectedTeamAPairId ?? ""}
+                            value={selectedOverviewTeamAOffense}
                           >
-                            {visibleTeamAPairs.map((pair) => (
-                              <option key={pair.pairId} value={pair.pairId}>
-                                {formatTacticPairLabel(pair)}
+                            {visibleOverviewTeamAOffenses.map((offense) => (
+                              <option key={offense} value={offense}>
+                                {offense}
                               </option>
                             ))}
                           </Select>
                         </Field>
-                        <Field label={`${selectedTeamBLabel} tactic pair`}>
+                        <Field label={`${selectedTeamBLabel} offense`}>
                           <Select
                             onChange={(event) => {
-                              const nextTeamBPairId = event.currentTarget.value;
+                              const nextTeamBOffense = event.currentTarget.value;
+                              const nextCell =
+                                findOffenseOverviewCell({
+                                  rows: offenseOverviewRows,
+                                  teamAOffense: selectedOverviewTeamAOffense,
+                                  teamBOffense: nextTeamBOffense,
+                                }) ??
+                                offenseOverviewRows[0]?.cells.find(
+                                  (candidate) =>
+                                    candidate.teamBOffense === nextTeamBOffense,
+                                ) ??
+                                null;
+                              if (!nextCell?.result) {
+                                return;
+                              }
+                              trackOverviewSelection({
+                                cell: nextCell,
+                                source: "mobile_overview_picker",
+                              });
                               handleMatrixSelection({
                                 matrix,
                                 setDraft,
                                 setSelectedTeamAPairId,
                                 setSelectedTeamBPairId,
-                                teamAPairId:
-                                  selectedTeamAPairId ??
-                                  visibleTeamAPairs[0]?.pairId ??
-                                  "",
-                                teamBPairId: nextTeamBPairId,
+                                teamAPairId: nextCell.result.teamAPair.pairId,
+                                teamBPairId: nextCell.result.teamBPair.pairId,
                               });
                             }}
-                            value={selectedTeamBPairId ?? ""}
+                            value={selectedOverviewTeamBOffense}
                           >
-                            {visibleTeamBPairs.map((pair) => (
-                              <option key={pair.pairId} value={pair.pairId}>
-                                {formatTacticPairLabel(pair)}
+                            {visibleOverviewTeamBOffenses.map((offense) => (
+                              <option key={offense} value={offense}>
+                                {offense}
                               </option>
                             ))}
                           </Select>
@@ -1160,100 +1263,734 @@ export function GamePredictionPanel({
                       </div>
                     </div>
 
-                    <div className="grid gap-4 xl:grid-cols-2">
-                      <Panel as="article" padding="sm" variant="solid">
-                        <SectionHeading
-                          title="Inspected tactic matchup"
-                          titleAs="h4"
-                        />
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="rounded-card border border-black/8 bg-white p-4">
-                            <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                              {selectedTeamALabel}
-                            </span>
-                            <p className="mt-2 text-sm font-semibold leading-6 text-ink">
-                              {selectedTeamAPair
-                                ? formatTacticPairLabel(selectedTeamAPair)
-                                : "No inspected tactic pair selected"}
-                            </p>
-                          </div>
-                          <div className="rounded-card border border-black/8 bg-white p-4">
-                            <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                              {selectedTeamBLabel}
-                            </span>
-                            <p className="mt-2 text-sm font-semibold leading-6 text-ink">
-                              {selectedTeamBPair
-                                ? formatTacticPairLabel(selectedTeamBPair)
-                                : "No inspected tactic pair selected"}
-                            </p>
-                          </div>
-                        </div>
-                        <StatCard
-                          detail={formatCellScoreline(
-                            selectedCell,
-                            selectedTeamALabel,
-                            selectedTeamBLabel,
-                          )}
-                          label="Predicted margin"
-                          value={formatCellMargin(selectedCell)}
-                        />
-                      </Panel>
+                    <Panel as="article" padding="sm" variant="solid">
+                      <SectionHeading
+                        actions={
+                          selectedOverviewCell ? (
+                            <Button
+                              onClick={() =>
+                                handleSurfaceToggle(
+                                  "defense_drilldown",
+                                  setShowDefenseDrilldown,
+                                )
+                              }
+                              size="sm"
+                              variant={showDefenseDrilldown ? "secondary" : "ghost"}
+                            >
+                              {showDefenseDrilldown
+                                ? "Hide defense drill-down"
+                                : "Show defense drill-down"}
+                            </Button>
+                          ) : undefined
+                        }
+                        title="Offense matchup detail"
+                        titleAs="h4"
+                      />
 
+                      {selectedOverviewCell && selectedOverviewResult ? (
+                        <div className="grid gap-4">
+                          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                            <div className="rounded-card border border-black/8 bg-white p-4">
+                              <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                {selectedTeamALabel} offense
+                              </span>
+                              <p className="mt-2 text-sm font-semibold leading-6 text-ink">
+                                {selectedOverviewCell.teamAOffense}
+                              </p>
+                            </div>
+                            <div className="rounded-card border border-black/8 bg-white p-4">
+                              <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                {selectedTeamBLabel} offense
+                              </span>
+                              <p className="mt-2 text-sm font-semibold leading-6 text-ink">
+                                {selectedOverviewCell.teamBOffense}
+                              </p>
+                            </div>
+                            <div className="rounded-card border border-black/8 bg-white p-4">
+                              <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                {selectedTeamALabel} defense
+                              </span>
+                              <p className="mt-2 text-sm font-semibold leading-6 text-ink">
+                                {selectedOverviewResult.teamAPair.defense}
+                              </p>
+                            </div>
+                            <div className="rounded-card border border-black/8 bg-white p-4">
+                              <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                {selectedTeamBLabel} best response
+                              </span>
+                              <p className="mt-2 text-sm font-semibold leading-6 text-ink">
+                                {selectedOverviewResult.teamBPair.defense}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-4 xl:grid-cols-[13rem_minmax(0,1fr)]">
+                            <StatCard
+                              detail={formatCellScoreline(
+                                selectedOverviewResult.cell,
+                                selectedTeamALabel,
+                                selectedTeamBLabel,
+                              )}
+                              label="Predicted margin"
+                              value={formatCellMargin(selectedOverviewResult.cell)}
+                            />
+                            <div className="rounded-card border border-black/8 bg-white p-4 text-sm leading-7 text-ink-muted">
+                              Within this offense matchup, {selectedTeamALabel} lands on{" "}
+                              {selectedOverviewResult.teamAPair.defense} as the
+                              best worst-case defense, and {selectedTeamBLabel} best
+                              responds with {selectedOverviewResult.teamBPair.defense}.
+                            </div>
+                          </div>
+
+                          {showDefenseDrilldown ? (
+                            <div className="grid gap-3">
+                              <div className="flex flex-wrap items-center gap-3 text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                <span>Defense drill-down</span>
+                                <span className="text-ink">
+                                  Rows · {selectedTeamALabel} defense
+                                </span>
+                                <span className="text-ink">
+                                  Columns · {selectedTeamBLabel} defense
+                                </span>
+                              </div>
+                              <div className="max-h-[28rem] overflow-auto rounded-card border border-black/8 bg-white">
+                                <table className="w-max min-w-full border-collapse text-left">
+                                  <thead className="bg-white">
+                                    <tr>
+                                      <th className="sticky left-0 top-0 z-30 w-24 min-w-24 border-b border-black/10 bg-white px-3 py-2 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]">
+                                        <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                          Def
+                                        </span>
+                                      </th>
+                                      {selectedOverviewTeamBPairs.map((teamBPair) => (
+                                        <th
+                                          className={cn(
+                                            "sticky top-0 z-20 border-b border-black/10 bg-white px-1.5 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                            MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                          )}
+                                          key={teamBPair.pairId}
+                                        >
+                                          <span
+                                            className="inline-flex items-center justify-center gap-1 text-[0.8rem] font-semibold text-ink"
+                                            title={teamBPair.defense}
+                                          >
+                                            <span>
+                                              {abbreviateMatrixDefenseLabel(
+                                                teamBPair.defense,
+                                              )}
+                                            </span>
+                                            {teamBPair.estimated ? (
+                                              <EstimatedMatrixMarker />
+                                            ) : null}
+                                          </span>
+                                        </th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {selectedOverviewTeamAPairs.map((teamAPair) => {
+                                      const isSelectedRow =
+                                        selectedTeamAPairId === teamAPair.pairId;
+
+                                      return (
+                                        <tr key={teamAPair.pairId}>
+                                          <th
+                                            className="sticky left-0 z-10 w-24 min-w-24 border-b border-black/10 bg-white px-3 py-2 text-left shadow-[1px_0_0_rgba(15,23,42,0.06)]"
+                                            style={{
+                                              backgroundColor: isSelectedRow
+                                                ? "#fff4ea"
+                                                : "#ffffff",
+                                            }}
+                                          >
+                                            <span
+                                              className="inline-flex items-center gap-1 text-[0.82rem] font-semibold text-ink"
+                                              title={teamAPair.defense}
+                                            >
+                                              <span>
+                                                {abbreviateMatrixDefenseLabel(
+                                                  teamAPair.defense,
+                                                )}
+                                              </span>
+                                              {teamAPair.estimated ? (
+                                                <EstimatedMatrixMarker />
+                                              ) : null}
+                                            </span>
+                                          </th>
+                                          {selectedOverviewTeamBPairs.map((teamBPair) => {
+                                            const row =
+                                              activeViewRowsByTeamBPairId.get(
+                                                teamBPair.pairId,
+                                              ) ?? null;
+                                            const cell =
+                                              row?.cells.find(
+                                                (candidate) =>
+                                                  candidate.teamAPairId ===
+                                                  teamAPair.pairId,
+                                              ) ?? null;
+                                            const isSelected =
+                                              isSelectedRow &&
+                                              selectedTeamBPairId === teamBPair.pairId;
+                                            const isRecommended =
+                                              matchesVisibleResult({
+                                                result: recommendedResult,
+                                                teamAPairId: teamAPair.pairId,
+                                                teamBPairId: teamBPair.pairId,
+                                              });
+
+                                            return (
+                                              <td
+                                                className={cn(
+                                                  "border-b border-black/10 p-1 align-top",
+                                                  MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                                )}
+                                                key={`${teamAPair.pairId}-${teamBPair.pairId}-drilldown`}
+                                              >
+                                                <button
+                                                  className={cn(
+                                                    "relative flex min-h-[3.35rem] w-full items-center justify-center rounded-[0.8rem] border px-2 py-2 text-center transition",
+                                                    isSelected &&
+                                                      "ring-2 ring-accent/35",
+                                                  )}
+                                                  onClick={() =>
+                                                    handleMatrixSelection({
+                                                      isRecommended,
+                                                      matrix,
+                                                      selectionSource:
+                                                        "defense_drilldown",
+                                                      view: activeView,
+                                                      setDraft,
+                                                      setSelectedTeamAPairId,
+                                                      setSelectedTeamBPairId,
+                                                      teamAPairId: teamAPair.pairId,
+                                                      teamBPairId: teamBPair.pairId,
+                                                    })
+                                                  }
+                                                  style={getPredictionCellHeatmapStyle(
+                                                    cell,
+                                                  )}
+                                                  type="button"
+                                                >
+                                                  {isRecommended ? (
+                                                    <span className="pointer-events-none absolute inset-x-1 top-1 flex justify-center">
+                                                      <span className="inline-flex rounded-full border border-note-border bg-note-bg px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-note">
+                                                        Rec
+                                                      </span>
+                                                    </span>
+                                                  ) : null}
+                                                  <strong className="text-sm font-semibold text-ink">
+                                                    {formatCompactCellMargin(cell)}
+                                                  </strong>
+                                                </button>
+                                              </td>
+                                            );
+                                          })}
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-sm leading-7 text-ink-muted">
+                          Pick an overview cell to inspect how the defenses resolve
+                          inside that offense matchup.
+                        </p>
+                      )}
+                    </Panel>
+
+                    {showExtremes ? (
+                      <Panel as="article" padding="sm" variant="solid">
+                        <SectionHeading title="Explore extremes" titleAs="h4" />
+                        <div className="grid gap-4 xl:grid-cols-2">
+                          <StatCard
+                            className={cn(
+                              bestResult && "border-success/20 bg-[rgba(34,197,94,0.08)]",
+                            )}
+                            detail={renderMatrixResultDetail({
+                              emptyDetail:
+                                "No visible upside is available for the current filters.",
+                              note:
+                                "Exploration only. This ignores opponent adaptation.",
+                              result: bestResult,
+                              teamALabel: selectedTeamALabel,
+                              teamBLabel: selectedTeamBLabel,
+                            })}
+                            label="Best visible upside"
+                            value={
+                              bestResult
+                                ? formatCellMargin(bestResult.cell)
+                                : "Unavailable"
+                            }
+                          />
+                          <StatCard
+                            className={cn(
+                              worstResult &&
+                                "border-danger-border bg-[rgba(239,68,68,0.08)]",
+                            )}
+                            detail={renderMatrixResultDetail({
+                              emptyDetail:
+                                "No visible downside is available for the current filters.",
+                              note:
+                                "Exploration only. This ignores opponent adaptation.",
+                              result: worstResult,
+                              teamALabel: selectedTeamALabel,
+                              teamBLabel: selectedTeamBLabel,
+                            })}
+                            label="Worst visible downside"
+                            value={
+                              worstResult
+                                ? formatCellMargin(worstResult.cell)
+                                : "Unavailable"
+                            }
+                          />
+                        </div>
+                      </Panel>
+                    ) : null}
+
+                    {showAdvancedMatrix ? (
                       <Panel as="article" padding="sm" variant="solid">
                         <SectionHeading
-                          title="Recommended tactic matchup"
+                          description="Full tactic-pair matrix for power users."
+                          title="Advanced pair matrix"
                           titleAs="h4"
                         />
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="rounded-card border border-black/8 bg-white p-4">
-                            <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                              {selectedTeamALabel}
-                            </span>
-                            <p className="mt-2 text-sm font-semibold leading-6 text-ink">
-                              {recommendedResult
-                                ? formatTacticPairLabel(recommendedResult.teamAPair)
-                                : "No recommended tactic pair available"}
-                            </p>
-                          </div>
-                          <div className="rounded-card border border-black/8 bg-white p-4">
-                            <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
-                              {selectedTeamBLabel} best response
-                            </span>
-                            <p className="mt-2 text-sm font-semibold leading-6 text-ink">
-                              {recommendedResult
-                                ? formatTacticPairLabel(recommendedResult.teamBPair)
-                                : "No visible counter available"}
-                            </p>
+                        <div className="hidden md:block">
+                          <div className="max-h-[72vh] overflow-auto rounded-card border border-black/8 bg-white">
+                            <table className="w-max min-w-full border-collapse text-left">
+                              <thead className="bg-white">
+                                <tr>
+                                  <th
+                                    className={cn(
+                                      "sticky left-0 top-0 z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                      MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                    )}
+                                  >
+                                    <div className="grid gap-1">
+                                      <span className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                        Rows
+                                      </span>
+                                      <span
+                                        className="truncate text-sm font-semibold text-ink"
+                                        title={`${selectedTeamALabel} tactics`}
+                                      >
+                                        {selectedTeamALabel}
+                                      </span>
+                                    </div>
+                                  </th>
+                                  <th
+                                    className="sticky top-0 z-40 border-b border-black/10 bg-white px-4 py-3 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]"
+                                    colSpan={renderedColumnCount}
+                                  >
+                                    <div className="grid gap-1">
+                                      <span className="text-[0.78rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                                        Columns
+                                      </span>
+                                      <span className="text-sm font-semibold text-ink">
+                                        {selectedTeamBLabel} tactics
+                                      </span>
+                                    </div>
+                                  </th>
+                                </tr>
+                                <tr>
+                                  <th
+                                    className={cn(
+                                      "sticky left-0 top-[4.35rem] z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                      MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                    )}
+                                  >
+                                    <span
+                                      className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
+                                      title={`${selectedTeamALabel} offense groups`}
+                                    >
+                                      Off
+                                    </span>
+                                  </th>
+                                  {teamBColumnGroups.map((group) => {
+                                    const highlightsSelectedOffense =
+                                      selectedTeamBPair?.offense === group.offense;
+
+                                    return (
+                                      <th
+                                        className="sticky top-[4.35rem] z-40 border-b border-black/10 bg-white px-2 py-2 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]"
+                                        colSpan={group.expanded ? group.pairs.length : 1}
+                                        key={group.offense}
+                                        style={{
+                                          backgroundColor: highlightsSelectedOffense
+                                            ? "#fff4ea"
+                                            : "#ffffff",
+                                        }}
+                                      >
+                                        <button
+                                          className="grid w-full gap-1 rounded-[1rem] border border-black/8 bg-white px-3 py-2 text-left transition hover:border-accent/35 hover:bg-white"
+                                          onClick={() =>
+                                            handleOffenseFilterToggle({
+                                              allOffenses: teamBOffenseOptions,
+                                              axis: "team_b",
+                                              offense: group.offense,
+                                              setter: setExpandedTeamBOffenses,
+                                            })
+                                          }
+                                          type="button"
+                                        >
+                                          <span className="flex items-center justify-between gap-3">
+                                            <span
+                                              className="whitespace-nowrap text-[0.75rem] font-bold tracking-[0.08em] text-ink-muted"
+                                              title={group.offense}
+                                            >
+                                              {abbreviateMatrixOffenseLabel(
+                                                group.offense,
+                                              )}
+                                            </span>
+                                            <span
+                                              aria-hidden="true"
+                                              className="text-sm font-semibold text-ink"
+                                            >
+                                              {group.expanded ? "-" : "+"}
+                                            </span>
+                                          </span>
+                                          <span className="text-[0.7rem] leading-5 text-ink-muted">
+                                            {group.expanded
+                                              ? `${group.pairs.length} ${selectedTeamBLabel} defenses`
+                                              : "Hidden"}
+                                          </span>
+                                        </button>
+                                      </th>
+                                    );
+                                  })}
+                                </tr>
+                                <tr>
+                                  <th
+                                    className={cn(
+                                      "sticky left-0 top-[8.7rem] z-50 border-b border-black/10 bg-white px-3 py-2.5 text-left shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                      MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                    )}
+                                  >
+                                    <span
+                                      className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
+                                      title={`${selectedTeamBLabel} defense`}
+                                    >
+                                      Def
+                                    </span>
+                                  </th>
+                                  {teamBColumnGroups.map((group) =>
+                                    group.expanded ? (
+                                      group.pairs.map((pair) => (
+                                        <th
+                                          className={cn(
+                                            "sticky top-[8.7rem] z-30 border-b border-black/10 bg-white px-1.5 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                            MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                          )}
+                                          key={pair.pairId}
+                                          style={{
+                                            backgroundColor:
+                                              selectedTeamBPairId === pair.pairId
+                                                ? "#fff4ea"
+                                                : "#ffffff",
+                                          }}
+                                        >
+                                          <div className="grid gap-1">
+                                            <span
+                                              className="inline-flex items-center justify-center gap-1 whitespace-nowrap text-[0.78rem] font-semibold leading-5 text-ink"
+                                              title={pair.defense}
+                                            >
+                                              <span>
+                                                {abbreviateMatrixDefenseLabel(
+                                                  pair.defense,
+                                                )}
+                                              </span>
+                                              {pair.estimated ? (
+                                                <EstimatedMatrixMarker />
+                                              ) : null}
+                                            </span>
+                                          </div>
+                                        </th>
+                                      ))
+                                    ) : (
+                                      <th
+                                        className={cn(
+                                          "sticky top-[8.7rem] z-30 border-b border-black/10 bg-white px-1.5 py-2 text-center shadow-[0_1px_0_rgba(15,23,42,0.08)]",
+                                          MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                        )}
+                                        key={`${group.offense}-collapsed`}
+                                      >
+                                        <span className="text-[0.68rem] font-semibold text-ink-muted">
+                                          Hidden
+                                        </span>
+                                      </th>
+                                    ),
+                                  )}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {teamARowGroups.map((group) => (
+                                  <Fragment key={group.offense}>
+                                    <tr>
+                                      <th
+                                        className={cn(
+                                          "sticky left-0 z-20 border-y border-black/10 bg-white px-3 py-2.5 text-left shadow-[1px_0_0_rgba(15,23,42,0.06)]",
+                                          MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                        )}
+                                        style={{
+                                          backgroundColor:
+                                            selectedTeamAPair?.offense === group.offense
+                                              ? "#fff4ea"
+                                              : "#ffffff",
+                                        }}
+                                      >
+                                        <button
+                                          className="grid w-full gap-1 text-left"
+                                          onClick={() =>
+                                            handleOffenseFilterToggle({
+                                              allOffenses: teamAOffenseOptions,
+                                              axis: "team_a",
+                                              offense: group.offense,
+                                              setter: setExpandedTeamAOffenses,
+                                            })
+                                          }
+                                          type="button"
+                                        >
+                                          <span className="flex items-center justify-between gap-3">
+                                            <span
+                                              className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted"
+                                              title={`${selectedTeamALabel} offense group`}
+                                            >
+                                              Off
+                                            </span>
+                                            <span
+                                              aria-hidden="true"
+                                              className="text-sm font-semibold text-ink"
+                                            >
+                                              {group.expanded ? "-" : "+"}
+                                            </span>
+                                          </span>
+                                          <span className="text-sm font-semibold text-ink">
+                                            <span title={group.offense}>
+                                              {abbreviateMatrixOffenseLabel(
+                                                group.offense,
+                                              )}
+                                            </span>
+                                          </span>
+                                          <span
+                                            className="text-[0.68rem] leading-5 text-ink-muted"
+                                            title={
+                                              group.expanded
+                                                ? `${group.pairs.length} ${selectedTeamALabel} defenses`
+                                                : "Rows hidden"
+                                            }
+                                          >
+                                            {group.expanded
+                                              ? `${group.pairs.length} def`
+                                              : "Hidden"}
+                                          </span>
+                                        </button>
+                                      </th>
+                                      <td
+                                        className="border-y border-black/10 bg-white px-0 py-0"
+                                        colSpan={renderedColumnCount}
+                                      />
+                                    </tr>
+                                    {group.expanded
+                                      ? group.pairs.map((teamAPair) => {
+                                          const isSelectedRow =
+                                            selectedTeamAPairId === teamAPair.pairId;
+
+                                          return (
+                                            <tr key={teamAPair.pairId}>
+                                              <th
+                                                className={cn(
+                                                  "sticky left-0 z-20 border-b border-black/10 bg-white px-3 py-2 text-left align-top shadow-[1px_0_0_rgba(15,23,42,0.06)]",
+                                                  MATRIX_ROW_HEADER_WIDTH_CLASS,
+                                                )}
+                                                style={{
+                                                  backgroundColor: isSelectedRow
+                                                    ? "#fff4ea"
+                                                    : "#ffffff",
+                                                }}
+                                              >
+                                                <div className="grid gap-1">
+                                                  <span
+                                                    className="text-[0.68rem] font-bold tracking-[0.08em] text-ink-muted"
+                                                    title={teamAPair.offense}
+                                                  >
+                                                    {abbreviateMatrixOffenseLabel(
+                                                      teamAPair.offense,
+                                                    )}
+                                                  </span>
+                                                  <span className="inline-flex items-center gap-1">
+                                                    <strong
+                                                      className="text-[0.82rem] leading-5 text-ink"
+                                                      title={teamAPair.defense}
+                                                    >
+                                                      {abbreviateMatrixDefenseLabel(
+                                                        teamAPair.defense,
+                                                      )}
+                                                    </strong>
+                                                    {teamAPair.estimated ? (
+                                                      <EstimatedMatrixMarker className="mt-px" />
+                                                    ) : null}
+                                                  </span>
+                                                </div>
+                                              </th>
+                                              {teamBColumnGroups.map((teamBGroup) =>
+                                                teamBGroup.expanded ? (
+                                                  teamBGroup.pairs.map((teamBPair) => {
+                                                    const row =
+                                                      activeViewRowsByTeamBPairId.get(
+                                                        teamBPair.pairId,
+                                                      ) ?? null;
+                                                    const cell =
+                                                      row?.cells.find(
+                                                        (candidate) =>
+                                                          candidate.teamAPairId ===
+                                                          teamAPair.pairId,
+                                                      ) ?? null;
+                                                    const isSelected =
+                                                      isSelectedRow &&
+                                                      selectedTeamBPairId ===
+                                                        teamBPair.pairId;
+                                                    const isRecommended =
+                                                      matchesVisibleResult({
+                                                        result: recommendedResult,
+                                                        teamAPairId:
+                                                          teamAPair.pairId,
+                                                        teamBPairId:
+                                                          teamBPair.pairId,
+                                                      });
+                                                    const isBest =
+                                                      matchesVisibleResult({
+                                                        result: bestResult,
+                                                        teamAPairId:
+                                                          teamAPair.pairId,
+                                                        teamBPairId:
+                                                          teamBPair.pairId,
+                                                      });
+                                                    const isWorst =
+                                                      matchesVisibleResult({
+                                                        result: worstResult,
+                                                        teamAPairId:
+                                                          teamAPair.pairId,
+                                                        teamBPairId:
+                                                          teamBPair.pairId,
+                                                      });
+
+                                                    return (
+                                                      <td
+                                                        className={cn(
+                                                          "border-b border-black/10 p-1 align-top",
+                                                          MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                                        )}
+                                                        key={`${teamBPair.pairId}-${teamAPair.pairId}`}
+                                                      >
+                                                        <button
+                                                          className={cn(
+                                                            "relative flex min-h-[3.35rem] w-full items-center justify-center rounded-[0.8rem] border px-2 py-2 text-center transition",
+                                                            isSelected &&
+                                                              "ring-2 ring-accent/35",
+                                                          )}
+                                                          onClick={() =>
+                                                            handleMatrixSelection(
+                                                              {
+                                                                isRecommended,
+                                                                matrix,
+                                                                selectionSource:
+                                                                  "advanced_matrix",
+                                                                view: activeView,
+                                                                setDraft,
+                                                                setSelectedTeamAPairId,
+                                                                setSelectedTeamBPairId,
+                                                                teamAPairId:
+                                                                  teamAPair.pairId,
+                                                                teamBPairId:
+                                                                  teamBPair.pairId,
+                                                              },
+                                                            )
+                                                          }
+                                                          style={getPredictionCellHeatmapStyle(
+                                                            cell,
+                                                          )}
+                                                          type="button"
+                                                        >
+                                                          {isRecommended ||
+                                                          isBest ||
+                                                          isWorst ? (
+                                                            <span className="pointer-events-none absolute inset-x-1 top-1 flex flex-wrap justify-center gap-1">
+                                                              {isRecommended ? (
+                                                                <span className="inline-flex rounded-full border border-note-border bg-note-bg px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-note">
+                                                                  Rec
+                                                                </span>
+                                                              ) : null}
+                                                              {isBest ? (
+                                                                <span className="inline-flex rounded-full border border-success/20 bg-white/85 px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-success">
+                                                                  Best
+                                                                </span>
+                                                              ) : null}
+                                                              {isWorst ? (
+                                                                <span className="inline-flex rounded-full border border-danger-border bg-white/85 px-1.5 py-0.5 text-[0.56rem] font-semibold uppercase tracking-[0.08em] text-accent-strong">
+                                                                  Worst
+                                                                </span>
+                                                              ) : null}
+                                                            </span>
+                                                          ) : null}
+                                                          <strong className="text-sm font-semibold text-ink">
+                                                            {formatCompactCellMargin(
+                                                              cell,
+                                                            )}
+                                                          </strong>
+                                                        </button>
+                                                      </td>
+                                                    );
+                                                  })
+                                                ) : (
+                                                  <td
+                                                    className={cn(
+                                                      "border-b border-black/10 bg-white p-1 align-top",
+                                                      MATRIX_MATCHUP_COLUMN_WIDTH_CLASS,
+                                                    )}
+                                                    key={`${teamAPair.pairId}-${teamBGroup.offense}-collapsed`}
+                                                  >
+                                                    <button
+                                                      className="grid min-h-[3.35rem] w-full place-items-center rounded-[0.8rem] border border-dashed border-black/10 bg-white px-2 py-2 text-center transition hover:border-accent/35 hover:bg-white"
+                                                      onClick={() =>
+                                                        handleOffenseFilterToggle({
+                                                          allOffenses:
+                                                            teamBOffenseOptions,
+                                                          axis: "team_b",
+                                                          offense:
+                                                            teamBGroup.offense,
+                                                          setter:
+                                                            setExpandedTeamBOffenses,
+                                                        })
+                                                      }
+                                                      type="button"
+                                                    >
+                                                      <span className="text-[0.68rem] font-semibold text-ink">
+                                                        Show
+                                                      </span>
+                                                    </button>
+                                                  </td>
+                                                ),
+                                              )}
+                                            </tr>
+                                          );
+                                        })
+                                      : null}
+                                  </Fragment>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
-                        <StatCard
-                          className={cn(
-                            recommendedResult && "border-note-border bg-note-bg",
-                          )}
-                          detail={renderMatrixResultDetail({
-                            emptyDetail:
-                              "Run the matrix to recommend the best worst-case tactic pairing.",
-                            note:
-                              "Assumes Team B chooses the visible counter that minimizes Team A's margin.",
-                            result: recommendedResult,
-                            teamALabel: selectedTeamALabel,
-                            teamBLabel: selectedTeamBLabel,
-                          })}
-                          label="Worst-case margin"
-                          value={
-                            recommendedResult
-                              ? formatCellMargin(recommendedResult.cell)
-                              : "Unavailable"
-                          }
-                        />
-                        <p className="text-sm leading-7 text-ink-muted">
-                          The row labels belong to {selectedTeamALabel}. The column
-                          headers belong to {selectedTeamBLabel}. Best and worst
-                          visible cards are exploration-only because they ignore
-                          opponent adaptation.
-                        </p>
+                        <div className="md:hidden">
+                          <Alert tone="note">
+                            The advanced pair matrix stays desktop-only. Use the
+                            overview and detail cards on mobile.
+                          </Alert>
+                        </div>
                       </Panel>
-                    </div>
+                    ) : null}
                   </>
                 )}
               </>
@@ -1541,12 +2278,15 @@ function importPredictionSide(args: {
 }
 
 function handleMatrixSelection(args: {
+  isRecommended?: boolean;
   matrix: PredictionMatrixResult;
+  selectionSource?: "advanced_matrix" | "defense_drilldown";
   setDraft: Dispatch<SetStateAction<PredictionDraft>>;
   setSelectedTeamAPairId: Dispatch<SetStateAction<string | null>>;
   setSelectedTeamBPairId: Dispatch<SetStateAction<string | null>>;
   teamAPairId: string;
   teamBPairId: string;
+  view?: PredictionMatrixView | null;
 }) {
   const teamAPair = args.matrix.teamAPairs.find(
     (pair) => pair.pairId === args.teamAPairId,
@@ -1556,6 +2296,26 @@ function handleMatrixSelection(args: {
   );
   if (!teamAPair || !teamBPair) {
     return;
+  }
+
+  if (args.selectionSource) {
+    const selectedCell = findSelectedCell({
+      teamAPairId: args.teamAPairId,
+      teamBPairId: args.teamBPairId,
+      view: args.view ?? null,
+    });
+    captureAnalyticsEvent("game_prediction_pair_selected", {
+      is_recommended: args.isRecommended ?? false,
+      margin:
+        typeof selectedCell?.predictedPointDiff === "number"
+          ? selectedCell.predictedPointDiff
+          : null,
+      source: args.selectionSource,
+      team_a_defense: teamAPair.defense,
+      team_a_offense: teamAPair.offense,
+      team_b_defense: teamBPair.defense,
+      team_b_offense: teamBPair.offense,
+    });
   }
 
   args.setSelectedTeamAPairId(args.teamAPairId);
@@ -1609,20 +2369,38 @@ type PredictionMatrixOffenseGroup = {
   expanded: boolean;
 };
 
+type PredictionMatrixOverviewCell = {
+  result: MatrixVisibleResult | null;
+  teamAOffense: string;
+  teamAPairs: PredictionMatrixTacticPair[];
+  teamBOffense: string;
+  teamBPairs: PredictionMatrixTacticPair[];
+};
+
+type PredictionMatrixOverviewRow = {
+  cells: PredictionMatrixOverviewCell[];
+  teamAOffense: string;
+  teamAPairs: PredictionMatrixTacticPair[];
+};
+
 function MatrixToggleGroup({
+  formatOptionLabel,
   hint,
   label,
   onReset,
   onToggle,
   options,
   selectedOptions,
+  showReset = true,
 }: {
+  formatOptionLabel?: (value: string) => string;
   hint?: string;
   label: string;
   onReset: () => void;
   onToggle: (value: string) => void;
   options: readonly string[];
   selectedOptions: readonly string[];
+  showReset?: boolean;
 }) {
   return (
     <div className="grid gap-2">
@@ -1630,9 +2408,11 @@ function MatrixToggleGroup({
         <span className="text-xs font-bold tracking-[0.08em] text-ink-muted uppercase">
           {label}
         </span>
-        <Button onClick={onReset} size="sm" variant="ghost">
-          Show all
-        </Button>
+        {showReset ? (
+          <Button onClick={onReset} size="sm" variant="ghost">
+            Show all
+          </Button>
+        ) : null}
       </div>
       {hint ? <p className="text-sm leading-6 text-ink-muted">{hint}</p> : null}
       <div className="flex flex-wrap gap-2">
@@ -1646,7 +2426,49 @@ function MatrixToggleGroup({
               size="sm"
               variant={active ? "secondary" : "ghost"}
             >
-              {option}
+              {formatOptionLabel ? formatOptionLabel(option) : option}
+            </Button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CompactMatrixToggleGroup({
+  formatOptionLabel,
+  label,
+  onToggle,
+  options,
+  selectedOptions,
+}: {
+  formatOptionLabel?: (value: string) => string;
+  label: string;
+  onToggle: (value: string) => void;
+  options: readonly string[];
+  selectedOptions: readonly string[];
+}) {
+  return (
+    <div className="grid gap-2">
+      <span className="text-[0.72rem] font-bold uppercase tracking-[0.08em] text-ink-muted">
+        {label}
+      </span>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => {
+          const active = selectedOptions.includes(option);
+          return (
+            <Button
+              className={cn(
+                "min-w-[3rem]",
+                active && "border-accent/35 bg-white text-ink",
+              )}
+              key={option}
+              onClick={() => onToggle(option)}
+              size="sm"
+              title={option}
+              variant={active ? "secondary" : "ghost"}
+            >
+              {formatOptionLabel ? formatOptionLabel(option) : option}
             </Button>
           );
         })}
@@ -1797,6 +2619,13 @@ function toggleExpandedOffense(
   return toggleRequiredOption(expandedOffenses, offense, allOffenses);
 }
 
+function areStringListsEqual(left: readonly string[], right: readonly string[]) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
 function buildOffenseGroups(args: {
   expandedOffenses: readonly string[];
   pairs: readonly PredictionMatrixTacticPair[];
@@ -1817,6 +2646,66 @@ function buildOffenseGroups(args: {
   }
 
   return Array.from(groups.values());
+}
+
+function buildOffenseOverviewRows(args: {
+  teamAPairs: readonly PredictionMatrixTacticPair[];
+  teamBPairs: readonly PredictionMatrixTacticPair[];
+  view: PredictionMatrixView | null;
+}): PredictionMatrixOverviewRow[] {
+  if (!args.view || !args.teamAPairs.length || !args.teamBPairs.length) {
+    return [];
+  }
+
+  const teamAPairsByOffense = new Map<string, PredictionMatrixTacticPair[]>();
+  const teamBPairsByOffense = new Map<string, PredictionMatrixTacticPair[]>();
+
+  for (const pair of sortPairs([...args.teamAPairs])) {
+    const pairsForOffense = teamAPairsByOffense.get(pair.offense);
+    if (pairsForOffense) {
+      pairsForOffense.push(pair);
+      continue;
+    }
+    teamAPairsByOffense.set(pair.offense, [pair]);
+  }
+
+  for (const pair of sortPairs([...args.teamBPairs])) {
+    const pairsForOffense = teamBPairsByOffense.get(pair.offense);
+    if (pairsForOffense) {
+      pairsForOffense.push(pair);
+      continue;
+    }
+    teamBPairsByOffense.set(pair.offense, [pair]);
+  }
+
+  return Array.from(teamAPairsByOffense.entries()).map(([teamAOffense, teamAPairs]) => ({
+    teamAOffense,
+    teamAPairs,
+    cells: Array.from(teamBPairsByOffense.entries()).map(([teamBOffense, teamBPairs]) => ({
+      teamAOffense,
+      teamAPairs,
+      teamBOffense,
+      teamBPairs,
+      result: findMinimaxVisibleResult({
+        teamAPairs,
+        teamBPairs,
+        view: args.view,
+      }),
+    })),
+  }));
+}
+
+function findOffenseOverviewCell(args: {
+  rows: readonly PredictionMatrixOverviewRow[];
+  teamAOffense: string | null;
+  teamBOffense: string | null;
+}): PredictionMatrixOverviewCell | null {
+  if (!args.teamAOffense || !args.teamBOffense) {
+    return null;
+  }
+
+  const row = args.rows.find((candidate) => candidate.teamAOffense === args.teamAOffense);
+  return row?.cells.find((candidate) => candidate.teamBOffense === args.teamBOffense) ?? null;
 }
 
 function findSelectedCell(args: {
@@ -2196,8 +3085,10 @@ export const __testing = {
   abbreviateMatrixDefenseLabel,
   abbreviateMatrixOffenseLabel,
   buildOffenseGroups,
+  buildOffenseOverviewRows,
   filterPairsByDefenses,
   findExtremeVisibleCell,
+  findOffenseOverviewCell,
   findMinimaxVisibleResult,
   findSelectedCell,
   formatCompactCellMargin,
