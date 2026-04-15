@@ -116,6 +116,74 @@ test("sortLeagueHistoryRows breaks team-name ties with the team ID", () => {
   );
 });
 
+test("sortLeagueHistoryRows orders playoff record by wins, losses, then titles", () => {
+  const rows = sortLeagueHistoryRows(
+    [
+      createRow({
+        championships: 0,
+        playoffLosses: 3,
+        playoffWins: 7,
+        teamId: "B",
+        teamName: "Beta",
+      }),
+      createRow({
+        championships: 2,
+        playoffLosses: 2,
+        playoffWins: 7,
+        teamId: "A",
+        teamName: "Alpha",
+      }),
+      createRow({
+        championships: 1,
+        playoffLosses: 2,
+        playoffWins: 9,
+        teamId: "C",
+        teamName: "Gamma",
+      }),
+    ],
+    {
+      direction: "desc",
+      key: "playoffRecord",
+    },
+  );
+
+  assert.deepStrictEqual(
+    rows.map((row) => row.teamId),
+    ["C", "A", "B"],
+  );
+});
+
+test("sortLeagueHistoryRows sorts championships numerically", () => {
+  const rows = sortLeagueHistoryRows(
+    [
+      createRow({
+        championships: 1,
+        teamId: "B",
+        teamName: "Beta",
+      }),
+      createRow({
+        championships: 3,
+        teamId: "A",
+        teamName: "Alpha",
+      }),
+      createRow({
+        championships: 2,
+        teamId: "C",
+        teamName: "Gamma",
+      }),
+    ],
+    {
+      direction: "desc",
+      key: "championships",
+    },
+  );
+
+  assert.deepStrictEqual(
+    rows.map((row) => row.teamId),
+    ["A", "C", "B"],
+  );
+});
+
 test("describeLeagueHistoryStatus stays user-facing during progress and failure states", () => {
   assert.match(
     describeLeagueHistoryStatus(
@@ -171,12 +239,21 @@ test("league history panel renders composite row keys and visible team IDs for n
   );
 
   assert.match(source, /buildLeagueHistoryRowKey/);
-  assert.match(
-    source,
-    /`\$\{row\.teamId\}::\$\{row\.teamName\}`/,
-  );
+  assert.match(source, /`\$\{row\.teamId\}::\$\{row\.teamName\}`/);
   assert.match(source, /#\{row\.teamId\}/);
   assert.match(source, /Rows are split by historical name era/i);
+});
+
+test("league history panel shows postseason columns with formatted records", () => {
+  const source = readFileSync(
+    join(currentDir, "..", "app", "league-history-panel.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /label="PO"/);
+  assert.match(source, /label="Titles"/);
+  assert.match(source, /formatRecord\(row\.playoffWins, row\.playoffLosses\)/);
+  assert.match(source, /key === "playoffRecord"/);
 });
 
 function createStatus(
@@ -225,10 +302,13 @@ function createRow(
 ): LeagueHistoryRow {
   return {
     averageMargin: 5,
+    championships: 1,
     games: 20,
     losses: 5,
     pa: 1500,
     pf: 1600,
+    playoffLosses: 2,
+    playoffWins: 3,
     pointMargin: 100,
     seasons: 2,
     teamId: "T1",

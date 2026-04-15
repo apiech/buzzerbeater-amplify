@@ -1354,6 +1354,7 @@ function WorkspaceDashboard({
             <GamePredictionPanel
               currentTeamId={home.team.teamId ?? null}
               currentTeamName={home.team.teamName ?? null}
+              recentMatches={home.recentMatches}
             />
           </PanelErrorBoundary>
         ) : (

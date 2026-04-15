@@ -5,8 +5,10 @@ import { QueryClient } from "@tanstack/react-query";
 
 import { client } from "../app/amplify-client";
 import {
+  boxscoreQueryOptions,
   fetchConnectionRecord,
   fetchManualSalaryEstimateQuery,
+  fetchMatchBoxscoreQuery,
   fetchSalaryCalculatorSeedQuery,
   fetchHomeWorkspaceQuery,
   repairOwnerRosterDataMutation,
@@ -236,6 +238,55 @@ test("team highlights parsing accepts string periods from the generated API cont
   });
 
   assert.equal(payload?.items[0]?.period, "Q4");
+});
+
+test("match boxscore queries forward preferLive when requested", async (t) => {
+  let receivedInput: Record<string, unknown> | undefined;
+
+  installQueryMock(t, "getMatchBoxscoreDetails", async (input?: unknown) => {
+    receivedInput = (input ?? undefined) as Record<string, unknown> | undefined;
+    return {
+      data: {
+        attendance: null,
+        awayTeam: null,
+        context: null,
+        endTime: null,
+        homeTeam: null,
+        matchId: "match-1",
+        matchType: "League",
+        source: "LIVE_BB_API",
+        startTime: "2026-04-14T20:00:00.000Z",
+      },
+      errors: null,
+    };
+  });
+
+  const payload = await fetchMatchBoxscoreQuery({
+    matchId: "match-1",
+    preferLive: true,
+  });
+
+  assert.equal(receivedInput?.matchId, "match-1");
+  assert.equal(receivedInput?.preferLive, true);
+  assert.equal(payload?.source, "LIVE_BB_API");
+});
+
+test("boxscore query keys separate prefer-live imports from cache-first reads", () => {
+  const cacheFirst = boxscoreQueryOptions({ matchId: "match-1" }).queryKey;
+  const preferLive = boxscoreQueryOptions({
+    matchId: "match-1",
+    preferLive: true,
+  }).queryKey;
+
+  assert.deepStrictEqual(
+    cacheFirst,
+    workspaceQueryKeys.boxscore("match-1", false),
+  );
+  assert.deepStrictEqual(
+    preferLive,
+    workspaceQueryKeys.boxscore("match-1", true),
+  );
+  assert.notDeepStrictEqual(cacheFirst, preferLive);
 });
 
 test("product feedback mutation parses the submit result and preserves notification state", async (t) => {

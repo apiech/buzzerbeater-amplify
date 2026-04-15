@@ -485,6 +485,9 @@ export type LeagueHistoryStandingCacheRecord = {
   teamName?: string | null;
   wins?: number | null;
   losses?: number | null;
+  playoffWins?: number | null;
+  playoffLosses?: number | null;
+  championships?: number | null;
   pf?: number | null;
   pa?: number | null;
   conferenceIndex?: number | null;
@@ -2124,7 +2127,9 @@ function assertModelInputShape<TRecord extends Record<string, unknown>>(
 
 function annotateBbConnectionMutationError(error: unknown): Error {
   const baseError =
-    error instanceof Error ? error : new Error(String(error ?? "Unknown error"));
+    error instanceof Error
+      ? error
+      : new Error(String(error ?? "Unknown error"));
   if (!baseError.message.includes("NamedReferenceInput")) {
     return baseError;
   }

@@ -7,6 +7,9 @@ import {
 } from "../app/game-prediction-state";
 import { __testing as gamePredictionTesting } from "../app/game-prediction-panel";
 import type {
+  MatchBoxscorePayload,
+  MatchSummary,
+  PredictionDraft,
   PredictionMatrixTacticPair,
   PredictionMatrixView,
 } from "../app/types";
@@ -368,6 +371,108 @@ const overviewViewFixture: PredictionMatrixView = {
   viewId: "overview",
 } as PredictionMatrixView;
 
+const connectedRecentMatches: MatchSummary[] = [
+  {
+    effortDelta: null,
+    hasBoxscore: false,
+    matchId: "missing-boxscore",
+    opponentScore: 80,
+    opponentTeamName: "Skipped",
+    outcome: "L",
+    startTime: "2026-04-09T20:00:00.000Z",
+    teamScore: 74,
+    type: "League",
+  },
+  {
+    effortDelta: null,
+    hasBoxscore: true,
+    matchId: "older-match",
+    opponentScore: 84,
+    opponentTeamName: "Older Club",
+    outcome: "W",
+    startTime: "2026-04-10T20:00:00.000Z",
+    teamScore: 91,
+    type: "League",
+  },
+  {
+    effortDelta: null,
+    hasBoxscore: true,
+    matchId: null,
+    opponentScore: 90,
+    opponentTeamName: "Missing ID",
+    outcome: "L",
+    startTime: "2026-04-11T20:00:00.000Z",
+    teamScore: 82,
+    type: "Cup",
+  },
+  {
+    effortDelta: null,
+    hasBoxscore: true,
+    matchId: "newer-match",
+    opponentScore: 79,
+    opponentTeamName: "Newer Club",
+    outcome: "L",
+    startTime: "2026-04-12T20:00:00.000Z",
+    teamScore: 77,
+    type: "Cup",
+  },
+] as MatchSummary[];
+
+const scoutRecentMatches: MatchSummary[] = [
+  {
+    effortDelta: null,
+    hasBoxscore: true,
+    matchId: "scout-match",
+    opponentScore: 75,
+    opponentTeamName: "Scout Opponent",
+    outcome: "W",
+    startTime: "2026-04-13T20:00:00.000Z",
+    teamScore: 88,
+    type: "League",
+  },
+] as MatchSummary[];
+
+const transientImportBoxscore = {
+  attendance: null,
+  awayTeam: {
+    defStrategy: "23Zone",
+    efficiency: [],
+    offStrategy: "Push",
+    partialScores: [],
+    players: [],
+    ratings: null,
+    score: 80,
+    shortName: "AWAY",
+    teamId: "away-1",
+    teamName: "Manual Away",
+    teamTotals: [],
+  },
+  context: {
+    awayTeamName: "Manual Away",
+    effortDelta: null,
+    homeTeamName: "Manual Home",
+    neutral: false,
+  },
+  endTime: null,
+  homeTeam: {
+    defStrategy: "ManToMan",
+    efficiency: [],
+    offStrategy: "Motion",
+    partialScores: [],
+    players: [],
+    ratings: null,
+    score: 88,
+    shortName: "HOME",
+    teamId: "home-1",
+    teamName: "Manual Home",
+    teamTotals: [],
+  },
+  matchId: "manual-77",
+  matchType: "League",
+  source: "LIVE_BB_API",
+  startTime: "2026-04-13T20:00:00.000Z",
+} as MatchBoxscorePayload;
+
 test("game prediction drafts default model selection to bundle default", () => {
   const draft = createDefaultPredictionDraft({
     teamAId: "team-a",
@@ -393,6 +498,146 @@ test("game prediction draft reconciliation normalizes modelKey", () => {
   );
 
   assert.equal(reconciled.modelKey, "catboost");
+});
+
+test("prediction imports default to the connected team's recent schedule when the side team ID matches", () => {
+  const matches = gamePredictionTesting.resolvePredictionSideRecentMatches({
+    currentTeamId: "our-team",
+    currentTeamRecentMatches: connectedRecentMatches,
+    scoutRecentMatches,
+    sideTeamId: "our-team",
+  });
+
+  assert.deepStrictEqual(matches, connectedRecentMatches);
+  assert.equal(
+    gamePredictionTesting.usesCurrentTeamSchedule({
+      currentTeamId: "our-team",
+      sideTeamId: "our-team",
+    }),
+    true,
+  );
+});
+
+test("prediction imports switch to scout recent games when the committed team ID changes", () => {
+  const matches = gamePredictionTesting.resolvePredictionSideRecentMatches({
+    currentTeamId: "our-team",
+    currentTeamRecentMatches: connectedRecentMatches,
+    scoutRecentMatches,
+    sideTeamId: "opp-team",
+  });
+
+  assert.deepStrictEqual(matches, scoutRecentMatches);
+});
+
+test("prediction import match options filter incomplete rows and sort newest first", () => {
+  assert.deepStrictEqual(
+    gamePredictionTesting.buildPredictionImportMatchOptions(
+      connectedRecentMatches,
+    ),
+    [
+      {
+        label: "Apr 12, 2026 • Newer Club • L 77-79",
+        matchId: "newer-match",
+      },
+      {
+        label: "Apr 10, 2026 • Older Club • W 91-84",
+        matchId: "older-match",
+      },
+    ],
+  );
+});
+
+test("prediction import team ID commits clear stale import provenance only on the edited side", () => {
+  const draft = {
+    ...createDefaultPredictionDraft({
+      teamAId: "our-team",
+      teamAName: "Team A",
+      teamBId: "other-team",
+      teamBName: "Team B",
+    }),
+    teamA: {
+      ...createDefaultPredictionDraft({
+        teamAId: "our-team",
+        teamAName: "Team A",
+      }).teamA,
+      sourceLabel: "Imported from a prior match",
+      sourceMatchId: "old-match",
+      teamId: "our-team",
+    },
+    teamB: {
+      ...createDefaultPredictionDraft({
+        teamBId: "other-team",
+        teamBName: "Team B",
+      }).teamB,
+      sourceLabel: "Keep this side",
+      sourceMatchId: "keep-match",
+      teamId: "other-team",
+    },
+  } as PredictionDraft;
+
+  const result = gamePredictionTesting.commitPredictionSideTeamIdChange({
+    currentImportMatchId: "old-match",
+    currentManualImportMatchId: "manual-old",
+    draft,
+    nextTeamIdInput: "new-team",
+    side: "teamA",
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.committedTeamIdInput, "new-team");
+  assert.equal(result.nextImportMatchId, "");
+  assert.equal(result.nextManualImportMatchId, "");
+  assert.equal(result.draft.teamA.teamId, "new-team");
+  assert.equal(result.draft.teamA.sourceMatchId, null);
+  assert.equal(result.draft.teamA.sourceLabel, null);
+  assert.equal(result.draft.teamB.teamId, "other-team");
+  assert.equal(result.draft.teamB.sourceMatchId, "keep-match");
+  assert.equal(result.draft.teamB.sourceLabel, "Keep this side");
+});
+
+test("prediction imports append a transient select option for a manually loaded game", () => {
+  const options = gamePredictionTesting.ensurePredictionImportMatchOption({
+    importMatch: transientImportBoxscore,
+    importMatchId: "manual-77",
+    options: gamePredictionTesting.buildPredictionImportMatchOptions(
+      connectedRecentMatches,
+    ),
+  });
+
+  assert.deepStrictEqual(options[options.length - 1], {
+    label: "Apr 13, 2026 • Manual Home vs Manual Away • 88-80",
+    matchId: "manual-77",
+  });
+});
+
+test("prediction import field descriptions explain blank team IDs and empty schedules", () => {
+  assert.deepStrictEqual(
+    gamePredictionTesting.describePredictionImportMatchField({
+      errorMessage: null,
+      isLoading: false,
+      options: [],
+      selectedMatchId: "",
+      teamId: null,
+    }),
+    {
+      error: null,
+      hint: "Enter a team ID, then leave the field to load recent boxscores.",
+    },
+  );
+
+  assert.deepStrictEqual(
+    gamePredictionTesting.describePredictionImportMatchField({
+      errorMessage: null,
+      isLoading: false,
+      options: [],
+      selectedMatchId: "",
+      teamId: "opp-team",
+    }),
+    {
+      error: null,
+      hint: "No recent boxscores are available for this team yet.",
+    },
+  );
 });
 
 test("prediction matrix pair sorting prioritizes offense before defense", () => {

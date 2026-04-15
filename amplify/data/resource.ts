@@ -854,6 +854,9 @@ const schema = a
       games: a.integer().required(),
       wins: a.integer().required(),
       losses: a.integer().required(),
+      playoffWins: a.integer().required(),
+      playoffLosses: a.integer().required(),
+      championships: a.integer().required(),
       winPct: a.float().required(),
       pf: a.integer().required(),
       pa: a.integer().required(),
@@ -2804,6 +2807,9 @@ const schema = a
         teamName: a.string(),
         wins: a.integer(),
         losses: a.integer(),
+        playoffWins: a.integer(),
+        playoffLosses: a.integer(),
+        championships: a.integer(),
         pf: a.integer(),
         pa: a.integer(),
         conferenceIndex: a.integer(),
@@ -3570,6 +3576,7 @@ const schema = a
       .query()
       .arguments({
         matchId: a.string().required(),
+        preferLive: a.boolean(),
       })
       .returns(a.ref("MatchBoxscoreDetails"))
       .authorization((allow) => [allow.authenticated()])

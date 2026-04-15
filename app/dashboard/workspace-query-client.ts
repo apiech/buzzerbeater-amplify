@@ -1013,10 +1013,13 @@ const paginatedRecapHistorySchema = z
 const leagueHistoryRowSchema = z
   .object({
     averageMargin: z.number(),
+    championships: z.number(),
     games: z.number(),
     losses: z.number(),
     pa: z.number(),
     pf: z.number(),
+    playoffLosses: z.number(),
+    playoffWins: z.number(),
     pointMargin: z.number(),
     seasons: z.number(),
     teamId: z.string(),
@@ -1672,7 +1675,13 @@ export const workspaceQueryKeys = {
       input?.limit ?? 20,
       input?.nextToken ?? null,
     ] as const,
-  boxscore: (matchId: string) => ["workspace", "boxscore", matchId] as const,
+  boxscore: (matchId: string, preferLive = false) =>
+    [
+      "workspace",
+      "boxscore",
+      matchId,
+      preferLive ? "prefer-live" : "cache-first",
+    ] as const,
   connection: ["workspace", "connection"] as const,
   currentPrediction: ["workspace", "prediction", "current"] as const,
   arena: ["workspace", "arena"] as const,
@@ -2302,7 +2311,9 @@ export async function fetchLeagueHistoryAuditQuery(args?: {
   const input =
     args && (args.leagueId || args.includeLiveComparison)
       ? {
-          ...(args.includeLiveComparison ? { includeLiveComparison: true } : {}),
+          ...(args.includeLiveComparison
+            ? { includeLiveComparison: true }
+            : {}),
           ...(args.leagueId ? { leagueId: args.leagueId } : {}),
         }
       : undefined;
@@ -2337,9 +2348,11 @@ export async function fetchTeamHighlightsQuery(args: {
 
 export async function fetchMatchBoxscoreQuery(args: {
   matchId: string;
+  preferLive?: boolean;
 }): Promise<MatchBoxscorePayload | null> {
   const response = await client.queries.getMatchBoxscoreDetails({
     matchId: args.matchId,
+    ...(args.preferLive ? { preferLive: true } : {}),
   });
 
   return readAmplifyNullableDataOrThrow(
@@ -2545,9 +2558,7 @@ export async function submitLeagueHistoryBackfillMutation(args?: {
           ...(args.refreshMode ? { refreshMode: args.refreshMode } : {}),
         }
       : undefined;
-  const response = await client.mutations.submitLeagueHistoryBackfill(
-    input,
-  );
+  const response = await client.mutations.submitLeagueHistoryBackfill(input);
   return readAmplifyDataOrThrow(
     response,
     z
@@ -2913,10 +2924,16 @@ export function teamHighlightsQueryOptions(args: {
   });
 }
 
-export function boxscoreQueryOptions(args: { matchId: string }) {
+export function boxscoreQueryOptions(args: {
+  matchId: string;
+  preferLive?: boolean;
+}) {
   return queryOptions({
     queryFn: () => fetchMatchBoxscoreQuery(args),
-    queryKey: workspaceQueryKeys.boxscore(args.matchId),
+    queryKey: workspaceQueryKeys.boxscore(
+      args.matchId,
+      args.preferLive ?? false,
+    ),
   });
 }
 

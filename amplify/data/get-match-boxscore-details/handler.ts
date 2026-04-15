@@ -10,5 +10,6 @@ export const handler: Handler = async (event) => {
     env,
     identity: event.identity,
     matchId: event.arguments.matchId,
+    preferLive: event.arguments.preferLive ?? false,
   });
 };

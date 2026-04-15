@@ -350,6 +350,7 @@ export async function getMatchBoxscoreDetails(
     env: GraphqlEnv;
     identity: unknown;
     matchId: string;
+    preferLive?: boolean | null;
   },
   dependencies: MatchStoreDependencies = defaultDependencies,
 ): Promise<MatchBoxscoreDetailsResult> {
@@ -366,6 +367,22 @@ export async function getMatchBoxscoreDetails(
   }
 
   const matchStoreEnv = resolveMatchStoreEnv(args.env);
+  const preferLive = args.preferLive ?? false;
+  let liveFetchError: unknown = null;
+
+  if (preferLive) {
+    try {
+      return await fetchLiveMatchBoxscoreDetails(
+        args.env,
+        userId,
+        matchId,
+        dependencies,
+      );
+    } catch (error) {
+      liveFetchError = error;
+    }
+  }
+
   const catalog = await dependencies.getCatalog(matchStoreEnv, matchId);
   let fallbackPayload: MatchBoxscoreDetailsResult | null = null;
   if (catalog?.canonicalKey) {
@@ -392,6 +409,13 @@ export async function getMatchBoxscoreDetails(
       }
       fallbackPayload = fallbackPayload ?? payload;
     }
+  }
+
+  if (preferLive) {
+    if (fallbackPayload) {
+      return fallbackPayload;
+    }
+    throw liveFetchError;
   }
 
   try {

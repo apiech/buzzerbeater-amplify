@@ -19,7 +19,10 @@ import type {
 test("aggregateLeagueHistoryRows keeps separate rows for same team ID across name eras", () => {
   const rows = __testing.aggregateLeagueHistoryRows([
     createStandingCache({
+      championships: 1,
       season: 70,
+      playoffLosses: 1,
+      playoffWins: 3,
       teamId: "A",
       teamName: "Alpha",
       wins: 10,
@@ -28,7 +31,10 @@ test("aggregateLeagueHistoryRows keeps separate rows for same team ID across nam
       pa: 900,
     }),
     createStandingCache({
+      championships: 0,
       season: 71,
+      playoffLosses: 2,
+      playoffWins: 1,
       teamId: "A",
       teamName: "Alpha",
       wins: 8,
@@ -37,7 +43,10 @@ test("aggregateLeagueHistoryRows keeps separate rows for same team ID across nam
       pa: 950,
     }),
     createStandingCache({
+      championships: 1,
       season: 72,
+      playoffLosses: 0,
+      playoffWins: 2,
       teamId: "A",
       teamName: "Apex",
       wins: 4,
@@ -46,7 +55,10 @@ test("aggregateLeagueHistoryRows keeps separate rows for same team ID across nam
       pa: 395,
     }),
     createStandingCache({
+      championships: 0,
       season: 71,
+      playoffLosses: 1,
+      playoffWins: 0,
       teamId: "B",
       teamName: "Beta",
       wins: 12,
@@ -68,6 +80,9 @@ test("aggregateLeagueHistoryRows keeps separate rows for same team ID across nam
   assert.equal(alpha.games, 26);
   assert.equal(alpha.wins, 18);
   assert.equal(alpha.losses, 8);
+  assert.equal(alpha.playoffWins, 4);
+  assert.equal(alpha.playoffLosses, 3);
+  assert.equal(alpha.championships, 1);
   assert.equal(alpha.pf, 1980);
   assert.equal(alpha.pa, 1850);
   assert.equal(alpha.pointMargin, 130);
@@ -76,6 +91,89 @@ test("aggregateLeagueHistoryRows keeps separate rows for same team ID across nam
   assert.equal(apex.games, 5);
   assert.equal(apex.wins, 4);
   assert.equal(apex.losses, 1);
+  assert.equal(apex.playoffWins, 2);
+  assert.equal(apex.playoffLosses, 0);
+  assert.equal(apex.championships, 1);
+});
+
+test("standingsToHistoryRecords derives playoff wins losses and championships", () => {
+  const rows = __testing.standingsToHistoryRecords(
+    {
+      brackets: [
+        {
+          matches: [
+            createPlayoffMatch({
+              awayId: "B",
+              awayName: "Beta",
+              awayScore: 80,
+              homeId: "A",
+              homeName: "Alpha",
+              homeScore: 95,
+              id: "qf-1",
+            }),
+          ],
+          name: "quarterfinals",
+        },
+        {
+          matches: [
+            createPlayoffMatch({
+              awayId: "C",
+              awayName: "Gamma",
+              awayScore: 87,
+              homeId: "A",
+              homeName: "Alpha",
+              homeScore: 92,
+              id: "sf-1",
+            }),
+          ],
+          name: "semifinals",
+        },
+        {
+          matches: [
+            createPlayoffMatch({
+              awayId: "D",
+              awayName: "Delta",
+              awayScore: 88,
+              homeId: "A",
+              homeName: "Alpha",
+              homeScore: 96,
+              id: "f-1",
+            }),
+          ],
+          name: "finals",
+        },
+      ],
+      conferences: [
+        {
+          index: 0,
+          teams: [
+            createConferenceTeam("A", "Alpha", 18, 4),
+            createConferenceTeam("B", "Beta", 12, 10),
+            createConferenceTeam("C", "Gamma", 14, 8),
+            createConferenceTeam("D", "Delta", 16, 6),
+          ],
+        },
+      ],
+      country: null,
+      league: { id: "L1", name: "League One" },
+      retrievedAt: "2026-03-19T12:00:00.000Z",
+      season: 71,
+      version: "1",
+    },
+    "L1",
+  );
+
+  const alpha = rows.find((row) => row.teamId === "A");
+  const delta = rows.find((row) => row.teamId === "D");
+
+  assert.ok(alpha);
+  assert.ok(delta);
+  assert.equal(alpha.playoffWins, 3);
+  assert.equal(alpha.playoffLosses, 0);
+  assert.equal(alpha.championships, 1);
+  assert.equal(delta.playoffWins, 0);
+  assert.equal(delta.playoffLosses, 1);
+  assert.equal(delta.championships, 0);
 });
 
 test("aggregateLeagueHistoryRows matches the Burlington split totals", () => {
@@ -124,6 +222,50 @@ test("aggregateLeagueHistoryRows matches the Burlington split totals", () => {
   assert.equal(streetlight.pa, 9715);
 });
 
+test("aggregateLeagueHistoryRows defaults legacy postseason fields to zero", () => {
+  const rows = __testing.aggregateLeagueHistoryRows([
+    createStandingCache({
+      championships: null,
+      losses: 2,
+      playoffLosses: null,
+      playoffWins: null,
+      season: 70,
+      teamId: "A",
+      teamName: "Alpha",
+      wins: 10,
+    }),
+    createStandingCache({
+      championships: 1,
+      losses: 6,
+      playoffLosses: 1,
+      playoffWins: 3,
+      season: 71,
+      teamId: "A",
+      teamName: "Alpha",
+      wins: 8,
+    }),
+  ]);
+
+  assert.deepStrictEqual(rows, [
+    {
+      averageMargin: 0,
+      championships: 1,
+      games: 26,
+      losses: 8,
+      pa: 0,
+      pf: 0,
+      playoffLosses: 1,
+      playoffWins: 3,
+      pointMargin: 0,
+      seasons: 2,
+      teamId: "A",
+      teamName: "Alpha",
+      winPct: 18 / 26,
+      wins: 18,
+    },
+  ]);
+});
+
 test("determineMissingHistoricalSeasons skips cached seasons and ignores current season", () => {
   assert.deepStrictEqual(
     __testing.determineMissingHistoricalSeasons({
@@ -137,6 +279,25 @@ test("determineMissingHistoricalSeasons skips cached seasons and ignores current
       seasons: [70, 71, 72],
     }),
     [71],
+  );
+});
+
+test("determineMissingHistoricalSeasons refetches cached legacy seasons without postseason fields", () => {
+  assert.deepStrictEqual(
+    __testing.determineMissingHistoricalSeasons({
+      cachedRows: [
+        createStandingCache({
+          championships: null,
+          playoffLosses: null,
+          playoffWins: null,
+          season: 70,
+          teamId: "A",
+        }),
+      ],
+      currentSeason: 72,
+      seasons: [70, 71, 72],
+    }),
+    [70, 71],
   );
 });
 
@@ -264,6 +425,22 @@ test("getLeagueHistory respects an explicit league override", async () => {
             seasons: [],
           }),
           getStandings: async (leagueId?: string) => ({
+            brackets: [
+              {
+                matches: [
+                  createPlayoffMatch({
+                    awayId: "B",
+                    awayName: "Beta",
+                    awayScore: 84,
+                    homeId: "A",
+                    homeName: "Apex",
+                    homeScore: 92,
+                    id: "live-final",
+                  }),
+                ],
+                name: "finals",
+              },
+            ],
             conferences: [
               {
                 index: 0,
@@ -304,7 +481,10 @@ test("getLeagueHistory respects an explicit league override", async () => {
         nextToken: null,
         records: [
           createStandingCache({
+            championships: 0,
             leagueId,
+            playoffLosses: 1,
+            playoffWins: 1,
             season: 71,
             teamId: "A",
             teamName: "Alpha",
@@ -324,10 +504,21 @@ test("getLeagueHistory respects an explicit league override", async () => {
   assert.equal(payload.summary.currentSeason, 72);
   assert.equal(payload.summary.historicalSeasonsStored, 1);
   assert.equal(payload.summary.totalTeams, 2);
-  assert.deepStrictEqual(
-    payload.rows.map((row) => `${row.teamId}:${row.teamName}:${row.wins}`),
-    ["A:Alpha:8", "A:Apex:4"],
+  const alpha = payload.rows.find(
+    (row) => row.teamId === "A" && row.teamName === "Alpha",
   );
+  const apex = payload.rows.find(
+    (row) => row.teamId === "A" && row.teamName === "Apex",
+  );
+
+  assert.ok(alpha);
+  assert.ok(apex);
+  assert.equal(alpha.playoffWins, 1);
+  assert.equal(alpha.playoffLosses, 1);
+  assert.equal(alpha.championships, 0);
+  assert.equal(apex.playoffWins, 1);
+  assert.equal(apex.playoffLosses, 0);
+  assert.equal(apex.championships, 1);
   assert.match(payload.warning ?? "", /split into separate rows/i);
 });
 
@@ -495,6 +686,79 @@ test("processLeagueHistoryBackfill skips stored seasons and only fetches missing
   );
 });
 
+test("processLeagueHistoryBackfill refetches cached legacy seasons missing postseason fields", async () => {
+  const getStandingsCalls: number[] = [];
+
+  await processLeagueHistoryBackfill(
+    {
+      env: {} as any,
+      messageBody: JSON.stringify({
+        leagueId: "L1",
+        requestedAt: "2026-03-19T12:00:00.000Z",
+        userId: "user-1",
+      }),
+    },
+    {
+      createBbClient: () =>
+        ({
+          getSeasons: async () => ({
+            seasons: [{ id: 70 }, { id: 71 }, { id: 72 }],
+          }),
+          getStandings: async (_leagueId?: string, season?: number) => {
+            getStandingsCalls.push(season ?? -1);
+            return {
+              brackets: [],
+              conferences: [
+                {
+                  index: 0,
+                  teams: [
+                    {
+                      id: "A",
+                      losses: 6,
+                      pa: 950,
+                      pf: 980,
+                      teamName: "Alpha",
+                      wins: 8,
+                    },
+                  ],
+                },
+              ],
+              league: { id: "L1", name: "League One" },
+              retrievedAt: "2026-03-19T12:00:00.000Z",
+              season: season ?? 72,
+            };
+          },
+        }) as any,
+      getBbConnection: async () =>
+        ({
+          bbLoginName: "coach",
+          leagueId: "L1",
+          leagueName: "League One",
+          userId: "user-1",
+        }) as any,
+      getLeagueHistoryBackfill: async () => null,
+      listLeagueHistoryStandingCachesByLeagueId: async () => ({
+        nextToken: null,
+        records: [
+          createStandingCache({
+            championships: null,
+            playoffLosses: null,
+            playoffWins: null,
+            season: 70,
+            teamId: "A",
+          }),
+        ],
+      }),
+      now: () => new Date("2026-03-19T12:00:00.000Z"),
+      resolveBbAccessKey: async () => "secret",
+      upsertLeagueHistoryBackfill: async () => {},
+      upsertLeagueHistoryStandingCache: async () => {},
+    },
+  );
+
+  assert.deepStrictEqual(getStandingsCalls, [70, 71]);
+});
+
 test("processLeagueHistoryBackfill refetches all historical seasons during a full refresh", async () => {
   const getStandingsCalls: number[] = [];
   const persistedRows: LeagueHistoryStandingCacheRecord[] = [];
@@ -634,6 +898,7 @@ function createStandingCache(
   overrides: Partial<LeagueHistoryStandingCacheRecord> = {},
 ): LeagueHistoryStandingCacheRecord {
   return {
+    championships: 0,
     conferenceIndex: 0,
     fetchedAt: "2026-03-19T12:00:00.000Z",
     isBot: false,
@@ -642,6 +907,8 @@ function createStandingCache(
     losses: 0,
     pa: 0,
     pf: 0,
+    playoffLosses: 0,
+    playoffWins: 0,
     season: 71,
     teamId: "T1",
     teamName: "Team One",
@@ -670,4 +937,49 @@ function createNameEraRows(args: {
       wins: index === 0 ? args.wins : 0,
     }),
   );
+}
+
+function createConferenceTeam(
+  id: string,
+  teamName: string,
+  wins: number,
+  losses: number,
+) {
+  return {
+    fields: {},
+    forfeits: 0,
+    id,
+    isBot: false,
+    losses,
+    pa: 0,
+    pf: 0,
+    teamName,
+    wins,
+  };
+}
+
+function createPlayoffMatch(args: {
+  awayId: string;
+  awayName: string;
+  awayScore: number | null;
+  homeId: string;
+  homeName: string;
+  homeScore: number | null;
+  id: string;
+}) {
+  return {
+    awayTeam: {
+      id: args.awayId,
+      score: args.awayScore,
+      teamName: args.awayName,
+    },
+    homeTeam: {
+      id: args.homeId,
+      score: args.homeScore,
+      teamName: args.homeName,
+    },
+    id: args.id,
+    startTime: "2026-03-19T19:00:00.000Z",
+    type: "league.playoff",
+  };
 }

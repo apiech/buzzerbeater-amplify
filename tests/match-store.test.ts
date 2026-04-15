@@ -228,6 +228,150 @@ test("getMatchBoxscoreDetails prefers canonical match-store payloads", async () 
   assert.equal(typedPayload.awayTeam?.teamName, "Away");
 });
 
+test("getMatchBoxscoreDetails preferLive bypasses complete cached payloads when BB API succeeds", async () => {
+  const payload = await getMatchBoxscoreDetails(
+    {
+      env: {
+        MATCH_STORE_BUCKET_NAME: "bucket",
+        MATCH_CATALOG_TABLE_NAME: "catalog",
+        TEAM_MATCH_PROJECTION_TABLE_NAME: "projection",
+        MATCH_INGEST_QUEUE_URL: "ingest",
+        MATCH_MATERIALIZE_QUEUE_URL: "materialize",
+      },
+      identity: { sub: "user-1" },
+      matchId: "m-live",
+      preferLive: true,
+    },
+    createDependencies({
+      getCatalog: async () => ({
+        matchId: "m-live",
+        homeTeamId: "T1",
+        awayTeamId: "T2",
+        ingestStatus: "SUCCEEDED",
+        canonicalKey: "canonical/m-live.json",
+      }),
+      getJsonObject: async () => ({
+        matchId: "m-live",
+        boxscore: {
+          homeTeam: {
+            id: "T1",
+            teamName: "Cached Home",
+            offStrategy: "Base",
+            defStrategy: "ManToMan",
+            ratings: createCompletePredictionRatings(9.2),
+          },
+          awayTeam: {
+            id: "T2",
+            teamName: "Cached Away",
+            offStrategy: "Push",
+            defStrategy: "23Zone",
+            ratings: createCompletePredictionRatings(8.6),
+          },
+        },
+      }),
+      getBbConnection: async () => ({
+        bbLoginName: "apiuser",
+        teamId: "T1",
+      }),
+      createBbClient: () => ({
+        getBoxScore: async () => ({
+          matchId: "m-live",
+          homeTeam: {
+            id: "T1",
+            teamName: "Live Home",
+            offStrategy: "Motion",
+            defStrategy: "ManToMan",
+            ratings: createCompletePredictionRatings(10.1),
+          },
+          awayTeam: {
+            id: "T2",
+            teamName: "Live Away",
+            offStrategy: "Push",
+            defStrategy: "23Zone",
+            ratings: createCompletePredictionRatings(9.2),
+          },
+        }),
+        getBoxScoreXml: async () => "<boxscore />",
+      }),
+      listTrackedTeamsForUser: async () => [{ teamId: "T1" }],
+    }),
+  );
+
+  const typedPayload = payload as {
+    awayTeam: { teamName: string | null } | null;
+    homeTeam: { teamName: string | null } | null;
+    source: string;
+  };
+  assert.equal(typedPayload.source, "LIVE_BB_API");
+  assert.equal(typedPayload.homeTeam?.teamName, "Live Home");
+  assert.equal(typedPayload.awayTeam?.teamName, "Live Away");
+});
+
+test("getMatchBoxscoreDetails preferLive falls back to cached payloads when BB API fails", async () => {
+  const payload = await getMatchBoxscoreDetails(
+    {
+      env: {
+        MATCH_STORE_BUCKET_NAME: "bucket",
+        MATCH_CATALOG_TABLE_NAME: "catalog",
+        TEAM_MATCH_PROJECTION_TABLE_NAME: "projection",
+        MATCH_INGEST_QUEUE_URL: "ingest",
+        MATCH_MATERIALIZE_QUEUE_URL: "materialize",
+      },
+      identity: { sub: "user-1" },
+      matchId: "m-fallback",
+      preferLive: true,
+    },
+    createDependencies({
+      getCatalog: async () => ({
+        matchId: "m-fallback",
+        homeTeamId: "T1",
+        awayTeamId: "T2",
+        ingestStatus: "SUCCEEDED",
+        canonicalKey: "canonical/m-fallback.json",
+      }),
+      getJsonObject: async () => ({
+        matchId: "m-fallback",
+        boxscore: {
+          homeTeam: {
+            id: "T1",
+            teamName: "Cached Home",
+            offStrategy: "Base",
+            defStrategy: "ManToMan",
+            ratings: createCompletePredictionRatings(9.3),
+          },
+          awayTeam: {
+            id: "T2",
+            teamName: "Cached Away",
+            offStrategy: "Push",
+            defStrategy: "23Zone",
+            ratings: createCompletePredictionRatings(8.7),
+          },
+        },
+      }),
+      getBbConnection: async () => ({
+        bbLoginName: "apiuser",
+        teamId: "T1",
+      }),
+      createBbClient: () => ({
+        getBoxScore: async () => {
+          throw new Error("bb api unavailable");
+        },
+        getBoxScoreXml: async () => "<boxscore />",
+      }),
+      listTrackedTeamsForUser: async () => [{ teamId: "T1" }],
+    }),
+  );
+
+  const typedPayload = payload as {
+    awayTeam: { teamName: string | null } | null;
+    homeTeam: { teamName: string | null } | null;
+    source: string;
+  };
+  assert.equal(typedPayload.source, "CANONICAL_MATCH_STORE");
+  assert.equal(typedPayload.homeTeam?.teamName, "Cached Home");
+  assert.equal(typedPayload.awayTeam?.teamName, "Cached Away");
+});
+
 test("getMatchBoxscoreDetails falls back to neutral per-user cache for unrelated matches", async () => {
   const payload = await getMatchBoxscoreDetails(
     {

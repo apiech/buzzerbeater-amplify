@@ -39,6 +39,25 @@ type CompetitionBreakdownRow = NonNullable<
 type SeasonBreakdownRow = NonNullable<
   NonNullable<RivalsWorkspacePayload["selectedRivalry"]>["seasonBreakdown"]
 >[number];
+type VisibleAggregateRow = Pick<
+  RivalryRowRecord,
+  | "averageMargin"
+  | "games"
+  | "homeLosses"
+  | "homeWins"
+  | "lastMatch"
+  | "leagueLosses"
+  | "leagueWins"
+  | "losses"
+  | "playoffLosses"
+  | "playoffWins"
+  | "roadLosses"
+  | "roadWins"
+  | "seasons"
+  | "tvGames"
+  | "winPct"
+  | "wins"
+>;
 
 type AggregateSortKey =
   | "averageMargin"
@@ -77,6 +96,8 @@ const subduedCopyClassName = "text-sm leading-7 text-ink-muted";
 const checkboxListClassName = "grid gap-2";
 const checkboxOptionClassName =
   "flex items-center gap-3 rounded-card border border-black/8 bg-white/70 px-3 py-2 text-sm text-ink";
+const aggregateRowCellClassName =
+  "border-t-2 border-black/12 bg-black/[0.03] font-semibold";
 
 const aggregateSortOptions: Array<{
   key: AggregateSortKey;
@@ -291,10 +312,8 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
 
   const activeTeamName =
     payload?.team.teamName ?? context.team.teamName ?? "Your club";
-  const filteredMatchCount = (payload?.rows ?? []).reduce(
-    (total, row) => total + row.games,
-    0,
-  );
+  const visibleAggregate = buildVisibleAggregate(rivalryRows);
+  const filteredMatchCount = visibleAggregate?.games ?? 0;
   const filterSummary = `Showing ${rivalryRows.length} rival${
     rivalryRows.length === 1 ? "" : "s"
   } across ${filteredMatchCount} meeting${
@@ -662,6 +681,70 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                 );
               })}
             </tbody>
+            {visibleAggregate ? (
+              <tfoot>
+                <tr>
+                  <TableCell
+                    className={cn(
+                      "min-w-[15rem] align-middle",
+                      aggregateRowCellClassName,
+                    )}
+                  >
+                    <div className="grid gap-1 text-left">
+                      <strong className="text-sm">Total</strong>
+                      <span className="text-ink-muted text-xs font-semibold tracking-[0.08em] uppercase">
+                        {activeTeamName}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {visibleAggregate.games}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatRecord(visibleAggregate.wins, visibleAggregate.losses)}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatWinPct(visibleAggregate.winPct)}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatRecord(
+                      visibleAggregate.homeWins,
+                      visibleAggregate.homeLosses,
+                    )}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatRecord(
+                      visibleAggregate.roadWins,
+                      visibleAggregate.roadLosses,
+                    )}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatRecord(
+                      visibleAggregate.leagueWins,
+                      visibleAggregate.leagueLosses,
+                    )}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatRecord(
+                      visibleAggregate.playoffWins,
+                      visibleAggregate.playoffLosses,
+                    )}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatMargin(visibleAggregate.averageMargin)}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {visibleAggregate.tvGames}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatSeasonList(visibleAggregate.seasons)}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {formatDate(visibleAggregate.lastMatch)}
+                  </TableCell>
+                </tr>
+              </tfoot>
+            ) : null}
           </TableShell>
         ) : (
           <p className={subduedCopyClassName}>
@@ -1053,6 +1136,75 @@ function toggleSelectedValue(
     : [...resolved, value];
 }
 
+function buildVisibleAggregate(
+  rows: readonly RivalryRowRecord[],
+): VisibleAggregateRow | null {
+  if (!rows.length) {
+    return null;
+  }
+
+  const seasons = new Set<number>();
+  let latestLastMatch: string | null = null;
+  let latestLastMatchValue = Number.NEGATIVE_INFINITY;
+  let totalMargin = 0;
+
+  const aggregate = rows.reduce<VisibleAggregateRow>(
+    (current, row) => {
+      current.games += row.games;
+      current.wins += row.wins;
+      current.losses += row.losses;
+      current.homeWins += row.homeWins;
+      current.homeLosses += row.homeLosses;
+      current.roadWins += row.roadWins;
+      current.roadLosses += row.roadLosses;
+      current.leagueWins += row.leagueWins;
+      current.leagueLosses += row.leagueLosses;
+      current.playoffWins += row.playoffWins;
+      current.playoffLosses += row.playoffLosses;
+      current.tvGames += row.tvGames;
+      totalMargin += row.averageMargin * row.games;
+
+      for (const season of row.seasons) {
+        seasons.add(season);
+      }
+
+      const lastMatchValue = parseTimestamp(row.lastMatch);
+      if (lastMatchValue > latestLastMatchValue) {
+        latestLastMatch = row.lastMatch ?? null;
+        latestLastMatchValue = lastMatchValue;
+      }
+
+      return current;
+    },
+    {
+      averageMargin: 0,
+      games: 0,
+      homeLosses: 0,
+      homeWins: 0,
+      lastMatch: null,
+      leagueLosses: 0,
+      leagueWins: 0,
+      losses: 0,
+      playoffLosses: 0,
+      playoffWins: 0,
+      roadLosses: 0,
+      roadWins: 0,
+      seasons: [],
+      tvGames: 0,
+      winPct: 0,
+      wins: 0,
+    },
+  );
+
+  return {
+    ...aggregate,
+    averageMargin: aggregate.games ? totalMargin / aggregate.games : 0,
+    lastMatch: latestLastMatch,
+    seasons: Array.from(seasons).sort((left, right) => left - right),
+    winPct: aggregate.games ? aggregate.wins / aggregate.games : 0,
+  };
+}
+
 function sortRivalryRows(
   rows: readonly RivalryRowRecord[],
   sortKey: AggregateSortKey,
@@ -1349,6 +1501,7 @@ function SortDirectionButton({
 }
 
 export const __testing = {
+  buildVisibleAggregate,
   buildDefaultSeasonRange,
   normalizeSeasonRange,
   toggleSelectedValue,

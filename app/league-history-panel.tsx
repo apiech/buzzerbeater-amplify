@@ -41,10 +41,12 @@ type LeagueHistoryPanelProps = {
 
 type SortKey =
   | "averageMargin"
+  | "championships"
   | "games"
   | "losses"
   | "pa"
   | "pf"
+  | "playoffRecord"
   | "pointMargin"
   | "seasons"
   | "teamName"
@@ -347,6 +349,18 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
                   onClick={() => handleSort("losses")}
                 />
                 <SortableHeadCell
+                  active={sortState.key === "playoffRecord"}
+                  direction={sortState.direction}
+                  label="PO"
+                  onClick={() => handleSort("playoffRecord")}
+                />
+                <SortableHeadCell
+                  active={sortState.key === "championships"}
+                  direction={sortState.direction}
+                  label="Titles"
+                  onClick={() => handleSort("championships")}
+                />
+                <SortableHeadCell
                   active={sortState.key === "winPct"}
                   direction={sortState.direction}
                   label="Win%"
@@ -393,6 +407,10 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
                   <TableCell>{row.games}</TableCell>
                   <TableCell>{row.wins}</TableCell>
                   <TableCell>{row.losses}</TableCell>
+                  <TableCell>
+                    {formatRecord(row.playoffWins, row.playoffLosses)}
+                  </TableCell>
+                  <TableCell>{row.championships}</TableCell>
                   <TableCell>{formatPercent(row.winPct)}</TableCell>
                   <TableCell>{row.pf}</TableCell>
                   <TableCell>{row.pa}</TableCell>
@@ -537,6 +555,14 @@ function compareBySortKey(
   right: LeagueHistoryRow,
   key: SortKey,
 ): number {
+  if (key === "playoffRecord") {
+    return (
+      left.playoffWins - right.playoffWins ||
+      right.playoffLosses - left.playoffLosses ||
+      left.championships - right.championships
+    );
+  }
+
   if (key === "teamName") {
     const teamNameComparison = left.teamName.localeCompare(right.teamName);
     if (teamNameComparison !== 0) {
@@ -575,4 +601,8 @@ function formatSignedNumber(value: number): string {
 
 function formatSignedFloat(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
+function formatRecord(wins: number, losses: number): string {
+  return `${wins}-${losses}`;
 }

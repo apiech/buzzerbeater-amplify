@@ -12,9 +12,9 @@ import {
 } from "react";
 
 import {
-  accessibleMatchesQueryOptions,
   boxscoreQueryOptions,
   predictionMatrixQueryOptions,
+  scoutTeamSummaryQueryOptions,
 } from "@/app/dashboard/workspace-query-client";
 import {
   GAME_PREDICTION_DEFENSE_OPTIONS,
@@ -33,8 +33,8 @@ import {
 } from "@/app/prediction-model-controls";
 import { useRuntimeEnvironment } from "@/app/runtime-environment";
 import type {
-  AccessibleMatchSummary,
   MatchBoxscorePayload,
+  MatchSummary,
   PredictionDraft,
   PredictionMatrixCell,
   PredictionMatrixResult,
@@ -55,9 +55,14 @@ import { isInternalPredictionModelPickerEnabled } from "@/lib/prediction/model-s
 type GamePredictionPanelProps = {
   currentTeamId: string | null;
   currentTeamName: string | null;
+  recentMatches: MatchSummary[];
 };
 
 type ImportSide = "teamA" | "teamB";
+type PredictionImportMatchOption = {
+  label: string;
+  matchId: string;
+};
 
 const ratingGridClassName = "grid gap-4 md:grid-cols-2 xl:grid-cols-3";
 const MATRIX_CELL_HEATMAP_MAX_ABS_MARGIN = 20;
@@ -115,6 +120,7 @@ const MATRIX_DEFENSE_CANONICAL_LABELS: Record<string, string> = {
 export function GamePredictionPanel({
   currentTeamId,
   currentTeamName,
+  recentMatches,
 }: GamePredictionPanelProps) {
   const queryClient = useQueryClient();
   const { environmentName } = useRuntimeEnvironment();
@@ -130,8 +136,24 @@ export function GamePredictionPanel({
   );
   const didRestoreDraftRef = useRef(false);
   const [draft, setDraft] = useState<PredictionDraft>(defaultDraft);
+  const [teamATeamIdInput, setTeamATeamIdInput] = useState(
+    () => defaultDraft.teamA.teamId ?? "",
+  );
+  const [teamBTeamIdInput, setTeamBTeamIdInput] = useState(
+    () => defaultDraft.teamB.teamId ?? "",
+  );
   const [teamAImportMatchId, setTeamAImportMatchId] = useState("");
   const [teamBImportMatchId, setTeamBImportMatchId] = useState("");
+  const [teamAManualImportMatchId, setTeamAManualImportMatchId] = useState("");
+  const [teamBManualImportMatchId, setTeamBManualImportMatchId] = useState("");
+  const [teamAManualImportError, setTeamAManualImportError] = useState<
+    string | null
+  >(null);
+  const [teamBManualImportError, setTeamBManualImportError] = useState<
+    string | null
+  >(null);
+  const [teamAManualImportLoading, setTeamAManualImportLoading] = useState(false);
+  const [teamBManualImportLoading, setTeamBManualImportLoading] = useState(false);
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
   const [selectedTeamAPairId, setSelectedTeamAPairId] = useState<string | null>(
     null,
@@ -164,12 +186,16 @@ export function GamePredictionPanel({
     );
     if (storedDraft) {
       setDraft(storedDraft);
+      setTeamATeamIdInput(storedDraft.teamA.teamId ?? "");
+      setTeamBTeamIdInput(storedDraft.teamB.teamId ?? "");
       setTeamAImportMatchId(storedDraft.teamA.sourceMatchId ?? "");
       setTeamBImportMatchId(storedDraft.teamB.sourceMatchId ?? "");
       return;
     }
 
     setDraft(defaultDraft);
+    setTeamATeamIdInput(defaultDraft.teamA.teamId ?? "");
+    setTeamBTeamIdInput(defaultDraft.teamB.teamId ?? "");
   }, [defaultDraft]);
 
   useEffect(() => {
@@ -194,19 +220,134 @@ export function GamePredictionPanel({
     );
   }, [modelPickerEnabled]);
 
-  const accessibleMatchesQuery = useQuery(accessibleMatchesQueryOptions());
-  const accessibleMatches = useMemo(
-    () => sortAccessibleMatches(accessibleMatchesQuery.data ?? []),
-    [accessibleMatchesQuery.data],
+  const teamAUsesCurrentTeamSchedule = usesCurrentTeamSchedule({
+    currentTeamId,
+    sideTeamId: draft.teamA.teamId,
+  });
+  const teamBUsesCurrentTeamSchedule = usesCurrentTeamSchedule({
+    currentTeamId,
+    sideTeamId: draft.teamB.teamId,
+  });
+  const teamAScheduleQuery = useQuery({
+    ...scoutTeamSummaryQueryOptions({ teamId: draft.teamA.teamId }),
+    enabled: Boolean(draft.teamA.teamId && !teamAUsesCurrentTeamSchedule),
+  });
+  const teamBScheduleQuery = useQuery({
+    ...scoutTeamSummaryQueryOptions({ teamId: draft.teamB.teamId }),
+    enabled: Boolean(draft.teamB.teamId && !teamBUsesCurrentTeamSchedule),
+  });
+  const teamAAutoImportMatches = useMemo(
+    () =>
+      buildPredictionImportMatchOptions(
+        resolvePredictionSideRecentMatches({
+          currentTeamId,
+          currentTeamRecentMatches: recentMatches,
+          scoutRecentMatches:
+            teamAScheduleQuery.data?.summary?.recentGames ?? [],
+          sideTeamId: draft.teamA.teamId,
+        }),
+      ),
+    [
+      currentTeamId,
+      draft.teamA.teamId,
+      recentMatches,
+      teamAScheduleQuery.data?.summary?.recentGames,
+    ],
+  );
+  const teamBAutoImportMatches = useMemo(
+    () =>
+      buildPredictionImportMatchOptions(
+        resolvePredictionSideRecentMatches({
+          currentTeamId,
+          currentTeamRecentMatches: recentMatches,
+          scoutRecentMatches:
+            teamBScheduleQuery.data?.summary?.recentGames ?? [],
+          sideTeamId: draft.teamB.teamId,
+        }),
+      ),
+    [
+      currentTeamId,
+      draft.teamB.teamId,
+      recentMatches,
+      teamBScheduleQuery.data?.summary?.recentGames,
+    ],
   );
   const teamAImportQuery = useQuery({
-    ...boxscoreQueryOptions({ matchId: teamAImportMatchId || "" }),
+    ...boxscoreQueryOptions({
+      matchId: teamAImportMatchId || "",
+      preferLive: true,
+    }),
     enabled: Boolean(teamAImportMatchId),
   });
   const teamBImportQuery = useQuery({
-    ...boxscoreQueryOptions({ matchId: teamBImportMatchId || "" }),
+    ...boxscoreQueryOptions({
+      matchId: teamBImportMatchId || "",
+      preferLive: true,
+    }),
     enabled: Boolean(teamBImportMatchId),
   });
+  const teamAImportMatchOptions = useMemo(
+    () =>
+      ensurePredictionImportMatchOption({
+        importMatch: teamAImportQuery.data ?? null,
+        importMatchId: teamAImportMatchId,
+        options: teamAAutoImportMatches,
+      }),
+    [teamAAutoImportMatches, teamAImportMatchId, teamAImportQuery.data],
+  );
+  const teamBImportMatchOptions = useMemo(
+    () =>
+      ensurePredictionImportMatchOption({
+        importMatch: teamBImportQuery.data ?? null,
+        importMatchId: teamBImportMatchId,
+        options: teamBAutoImportMatches,
+      }),
+    [teamBAutoImportMatches, teamBImportMatchId, teamBImportQuery.data],
+  );
+  const teamAImportMatchListState = useMemo(
+    () =>
+      describePredictionImportMatchField({
+        errorMessage: readClientSideErrorMessage(teamAScheduleQuery.error),
+        isLoading:
+          Boolean(draft.teamA.teamId) &&
+          !teamAUsesCurrentTeamSchedule &&
+          (teamAScheduleQuery.isPending || teamAScheduleQuery.isFetching),
+        options: teamAImportMatchOptions,
+        selectedMatchId: teamAImportMatchId,
+        teamId: draft.teamA.teamId,
+      }),
+    [
+      draft.teamA.teamId,
+      teamAImportMatchId,
+      teamAImportMatchOptions,
+      teamAScheduleQuery.error,
+      teamAScheduleQuery.isFetching,
+      teamAScheduleQuery.isPending,
+      teamAUsesCurrentTeamSchedule,
+    ],
+  );
+  const teamBImportMatchListState = useMemo(
+    () =>
+      describePredictionImportMatchField({
+        errorMessage: readClientSideErrorMessage(teamBScheduleQuery.error),
+        isLoading:
+          Boolean(draft.teamB.teamId) &&
+          !teamBUsesCurrentTeamSchedule &&
+          (teamBScheduleQuery.isPending || teamBScheduleQuery.isFetching),
+        options: teamBImportMatchOptions,
+        selectedMatchId: teamBImportMatchId,
+        teamId: draft.teamB.teamId,
+      }),
+    [
+      draft.teamB.teamId,
+      teamBImportMatchId,
+      teamBImportMatchOptions,
+      teamBScheduleQuery.error,
+      teamBScheduleQuery.isFetching,
+      teamBScheduleQuery.isPending,
+      teamBUsesCurrentTeamSchedule,
+    ],
+  );
 
   const matrixMutation = useMutation({
     mutationFn: async (request: PredictionDraft) =>
@@ -668,6 +809,130 @@ export function GamePredictionPanel({
     });
   }
 
+  function handleImportMatchSelection(side: ImportSide, value: string) {
+    if (side === "teamA") {
+      setTeamAImportMatchId(value);
+      setTeamAManualImportError(null);
+      return;
+    }
+
+    setTeamBImportMatchId(value);
+    setTeamBManualImportError(null);
+  }
+
+  function handleTeamIdCommit(side: ImportSide) {
+    const teamIdInput = side === "teamA" ? teamATeamIdInput : teamBTeamIdInput;
+    const currentImportMatchId =
+      side === "teamA" ? teamAImportMatchId : teamBImportMatchId;
+    const currentManualImportMatchId =
+      side === "teamA" ? teamAManualImportMatchId : teamBManualImportMatchId;
+    const result = commitPredictionSideTeamIdChange({
+      currentImportMatchId,
+      currentManualImportMatchId,
+      draft,
+      nextTeamIdInput: teamIdInput,
+      side,
+    });
+
+    if (side === "teamA") {
+      setTeamATeamIdInput(result.committedTeamIdInput);
+      if (result.changed) {
+        setTeamAImportMatchId(result.nextImportMatchId);
+        setTeamAManualImportMatchId(result.nextManualImportMatchId);
+        setTeamAManualImportError(null);
+      }
+    } else {
+      setTeamBTeamIdInput(result.committedTeamIdInput);
+      if (result.changed) {
+        setTeamBImportMatchId(result.nextImportMatchId);
+        setTeamBManualImportMatchId(result.nextManualImportMatchId);
+        setTeamBManualImportError(null);
+      }
+    }
+
+    if (result.draft !== draft) {
+      setDraft(result.draft);
+    }
+  }
+
+  async function handleManualImportSubmit(side: ImportSide) {
+    const rawMatchId =
+      side === "teamA" ? teamAManualImportMatchId : teamBManualImportMatchId;
+    const matchId = normalizeImportIdentifier(rawMatchId);
+    const setError =
+      side === "teamA" ? setTeamAManualImportError : setTeamBManualImportError;
+    const setLoading =
+      side === "teamA"
+        ? setTeamAManualImportLoading
+        : setTeamBManualImportLoading;
+
+    if (!matchId) {
+      setError("Enter a game ID first.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const boxscore = await queryClient.fetchQuery(
+        boxscoreQueryOptions({
+          matchId,
+          preferLive: true,
+        }),
+      );
+      if (!boxscore) {
+        throw new Error("That game could not be loaded.");
+      }
+
+      if (side === "teamA") {
+        setTeamAImportMatchId(matchId);
+        setTeamAManualImportMatchId(matchId);
+      } else {
+        setTeamBImportMatchId(matchId);
+        setTeamBManualImportMatchId(matchId);
+      }
+    } catch (error) {
+      setError(
+        readClientSideErrorMessage(error) ?? "That game could not be loaded.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleImportTeam(
+    side: ImportSide,
+    boxscore: MatchBoxscorePayload,
+    teamLocation: "HOME" | "AWAY",
+  ) {
+    const team =
+      teamLocation === "HOME" ? boxscore.homeTeam : boxscore.awayTeam;
+    if (!team) {
+      return;
+    }
+
+    const importedSide = createPredictionSideFromBoxscoreTeam({
+      match: boxscore,
+      team,
+      teamLocation,
+    });
+
+    setDraft((current) => ({
+      ...current,
+      [side]: importedSide,
+    }));
+
+    if (side === "teamA") {
+      setTeamATeamIdInput(importedSide.teamId ?? "");
+      setTeamAManualImportError(null);
+      return;
+    }
+
+    setTeamBTeamIdInput(importedSide.teamId ?? "");
+    setTeamBManualImportError(null);
+  }
+
   return (
     <div className="grid gap-4">
       <Panel>
@@ -681,8 +946,14 @@ export function GamePredictionPanel({
                     teamAName: currentTeamName ?? "Team A",
                   });
                   setDraft(blank);
+                  setTeamATeamIdInput(blank.teamA.teamId ?? "");
+                  setTeamBTeamIdInput(blank.teamB.teamId ?? "");
                   setTeamAImportMatchId("");
                   setTeamBImportMatchId("");
+                  setTeamAManualImportMatchId("");
+                  setTeamBManualImportMatchId("");
+                  setTeamAManualImportError(null);
+                  setTeamBManualImportError(null);
                   setSelectedTeamAPairId(null);
                   setSelectedTeamBPairId(null);
                   setSelectedViewId(null);
@@ -707,7 +978,7 @@ export function GamePredictionPanel({
               </Button>
             </div>
           }
-          description="Build any matchup with editable team sheets, import either team from any accessible match, and compare every tactic pair in one matrix."
+          description="Build any matchup with editable team sheets, import from recent team boxscores or a specific game ID, and compare every tactic pair in one matrix."
           title="Game prediction"
         />
 
@@ -786,47 +1057,61 @@ export function GamePredictionPanel({
 
         <div className="grid gap-4 xl:grid-cols-2">
           <PredictionSideCard
-            accessibleMatches={accessibleMatches}
             importMatch={teamAImportQuery.data ?? null}
+            importMatchError={readClientSideErrorMessage(teamAImportQuery.error)}
             importMatchId={teamAImportMatchId}
+            importMatchOptions={teamAImportMatchOptions}
             importMatchLoading={teamAImportQuery.isFetching}
-            importSide="teamA"
-            onImportMatchIdChange={setTeamAImportMatchId}
-            onImportTeam={(boxscore, teamLocation) =>
-              importPredictionSide({
-                boxscore,
-                setDraft,
-                side: "teamA",
-                teamLocation,
-              })
+            importMatchPickerError={teamAImportMatchListState.error}
+            importMatchPickerHint={teamAImportMatchListState.hint}
+            manualImportMatchId={teamAManualImportMatchId}
+            manualImportMatchError={teamAManualImportError}
+            manualImportMatchLoading={teamAManualImportLoading}
+            onImportMatchIdChange={(value) =>
+              handleImportMatchSelection("teamA", value)
             }
+            onImportTeam={(boxscore, teamLocation) =>
+              handleImportTeam("teamA", boxscore, teamLocation)
+            }
+            onManualImportMatchIdChange={setTeamAManualImportMatchId}
+            onManualImportSubmit={() => void handleManualImportSubmit("teamA")}
             onSideChange={(updater) =>
               setDraft((current) => ({ ...current, teamA: updater(current.teamA) }))
             }
+            onTeamIdCommit={() => handleTeamIdCommit("teamA")}
+            onTeamIdInputChange={setTeamATeamIdInput}
             side={draft.teamA}
             sideLabel="Team A"
+            teamIdInput={teamATeamIdInput}
           />
 
           <PredictionSideCard
-            accessibleMatches={accessibleMatches}
             importMatch={teamBImportQuery.data ?? null}
+            importMatchError={readClientSideErrorMessage(teamBImportQuery.error)}
             importMatchId={teamBImportMatchId}
+            importMatchOptions={teamBImportMatchOptions}
             importMatchLoading={teamBImportQuery.isFetching}
-            importSide="teamB"
-            onImportMatchIdChange={setTeamBImportMatchId}
-            onImportTeam={(boxscore, teamLocation) =>
-              importPredictionSide({
-                boxscore,
-                setDraft,
-                side: "teamB",
-                teamLocation,
-              })
+            importMatchPickerError={teamBImportMatchListState.error}
+            importMatchPickerHint={teamBImportMatchListState.hint}
+            manualImportMatchId={teamBManualImportMatchId}
+            manualImportMatchError={teamBManualImportError}
+            manualImportMatchLoading={teamBManualImportLoading}
+            onImportMatchIdChange={(value) =>
+              handleImportMatchSelection("teamB", value)
             }
+            onImportTeam={(boxscore, teamLocation) =>
+              handleImportTeam("teamB", boxscore, teamLocation)
+            }
+            onManualImportMatchIdChange={setTeamBManualImportMatchId}
+            onManualImportSubmit={() => void handleManualImportSubmit("teamB")}
             onSideChange={(updater) =>
               setDraft((current) => ({ ...current, teamB: updater(current.teamB) }))
             }
+            onTeamIdCommit={() => handleTeamIdCommit("teamB")}
+            onTeamIdInputChange={setTeamBTeamIdInput}
             side={draft.teamB}
             sideLabel="Team B"
+            teamIdInput={teamBTeamIdInput}
           />
         </div>
       </Panel>
@@ -2007,31 +2292,52 @@ export function GamePredictionPanel({
 }
 
 type PredictionSideCardProps = {
-  accessibleMatches: AccessibleMatchSummary[];
   importMatch: MatchBoxscorePayload | null;
+  importMatchError: string | null;
   importMatchId: string;
   importMatchLoading: boolean;
-  importSide: ImportSide;
+  importMatchOptions: PredictionImportMatchOption[];
+  importMatchPickerError: string | null;
+  importMatchPickerHint: string;
+  manualImportMatchError: string | null;
+  manualImportMatchId: string;
+  manualImportMatchLoading: boolean;
   onImportMatchIdChange: (value: string) => void;
   onImportTeam: (
     boxscore: MatchBoxscorePayload,
     teamLocation: "HOME" | "AWAY",
   ) => void;
+  onManualImportMatchIdChange: (value: string) => void;
+  onManualImportSubmit: () => void;
   onSideChange: (updater: (current: PredictionSideInput) => PredictionSideInput) => void;
+  onTeamIdCommit: () => void;
+  onTeamIdInputChange: (value: string) => void;
   side: PredictionSideInput;
   sideLabel: string;
+  teamIdInput: string;
 };
 
 function PredictionSideCard({
-  accessibleMatches,
   importMatch,
+  importMatchError,
   importMatchId,
   importMatchLoading,
+  importMatchOptions,
+  importMatchPickerError,
+  importMatchPickerHint,
+  manualImportMatchError,
+  manualImportMatchId,
+  manualImportMatchLoading,
   onImportMatchIdChange,
   onImportTeam,
+  onManualImportMatchIdChange,
+  onManualImportSubmit,
   onSideChange,
+  onTeamIdCommit,
+  onTeamIdInputChange,
   side,
   sideLabel,
+  teamIdInput,
 }: PredictionSideCardProps) {
   return (
     <Panel as="article" padding="sm" variant="solid">
@@ -2054,30 +2360,40 @@ function PredictionSideCard({
             value={side.teamName}
           />
         </Field>
-        <Field label={`${sideLabel} team ID`}>
+        <Field
+          hint="Commit on blur or Enter to refresh this side's recent boxscores."
+          label={`${sideLabel} team ID`}
+        >
           <Input
             onChange={(event) => {
-              const teamId = event.currentTarget.value.trim() || null;
-              onSideChange((current) => ({
-                ...current,
-                teamId,
-              }));
+              onTeamIdInputChange(event.currentTarget.value);
             }}
-            value={side.teamId ?? ""}
+            onBlur={onTeamIdCommit}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+
+              event.preventDefault();
+              onTeamIdCommit();
+            }}
+            value={teamIdInput}
           />
         </Field>
         <Field
-          hint="Choose any accessible match, then pick which club from that match should populate this side."
-          label="Import from match"
+          error={importMatchPickerError}
+          hint={importMatchPickerHint}
+          label="Import from recent boxscore"
         >
           <Select
             onChange={(event) => onImportMatchIdChange(event.currentTarget.value)}
+            disabled={!importMatchOptions.length}
             value={importMatchId}
           >
-            <option value="">No imported match</option>
-            {accessibleMatches.map((match) => (
+            <option value="">No imported boxscore</option>
+            {importMatchOptions.map((match) => (
               <option key={match.matchId} value={match.matchId}>
-                {formatAccessibleMatchLabel(match)}
+                {match.label}
               </option>
             ))}
           </Select>
@@ -2094,6 +2410,38 @@ function PredictionSideCard({
             value={side.sourceLabel ?? ""}
           />
         </Field>
+        <Field
+          className="md:col-span-2"
+          error={manualImportMatchError}
+          hint="Load a specific game ID when the recent boxscore list does not include it."
+          label="Import by game ID"
+        >
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              onChange={(event) =>
+                onManualImportMatchIdChange(event.currentTarget.value)
+              }
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") {
+                  return;
+                }
+
+                event.preventDefault();
+                onManualImportSubmit();
+              }}
+              placeholder="Enter a game ID"
+              value={manualImportMatchId}
+            />
+            <Button
+              loading={manualImportMatchLoading}
+              onClick={onManualImportSubmit}
+              size="sm"
+              variant="secondary"
+            >
+              Load
+            </Button>
+          </div>
+        </Field>
       </div>
 
       {importMatchId ? (
@@ -2101,6 +2449,8 @@ function PredictionSideCard({
           <strong className="text-sm text-ink">Use a team from the selected match</strong>
           {importMatchLoading ? (
             <p className="text-sm text-ink-muted">Loading the match details.</p>
+          ) : importMatchError ? (
+            <p className="text-sm text-accent-strong">{importMatchError}</p>
           ) : importMatch ? (
             <div className="flex flex-wrap gap-2">
               {importMatch.homeTeam ? (
@@ -2253,30 +2603,6 @@ function PredictionSideCard({
   );
 }
 
-function importPredictionSide(args: {
-  boxscore: MatchBoxscorePayload;
-  setDraft: Dispatch<SetStateAction<PredictionDraft>>;
-  side: ImportSide;
-  teamLocation: "HOME" | "AWAY";
-}) {
-  const team =
-    args.teamLocation === "HOME" ? args.boxscore.homeTeam : args.boxscore.awayTeam;
-  if (!team) {
-    return;
-  }
-
-  const importedSide = createPredictionSideFromBoxscoreTeam({
-    match: args.boxscore,
-    team,
-    teamLocation: args.teamLocation,
-  });
-
-  args.setDraft((current) => ({
-    ...current,
-    [args.side]: importedSide,
-  }));
-}
-
 function handleMatrixSelection(args: {
   isRecommended?: boolean;
   matrix: PredictionMatrixResult;
@@ -2351,10 +2677,224 @@ function renderRatingInput(
   );
 }
 
-function sortAccessibleMatches(matches: AccessibleMatchSummary[]) {
-  return [...matches].sort((left, right) =>
-    String(right.startTime ?? "").localeCompare(String(left.startTime ?? "")),
-  );
+type PredictionSideTeamIdCommitResult = {
+  changed: boolean;
+  committedTeamIdInput: string;
+  draft: PredictionDraft;
+  nextImportMatchId: string;
+  nextManualImportMatchId: string;
+};
+
+type PredictionImportMatchFieldState = {
+  error: string | null;
+  hint: string;
+};
+
+function commitPredictionSideTeamIdChange(args: {
+  currentImportMatchId: string;
+  currentManualImportMatchId: string;
+  draft: PredictionDraft;
+  nextTeamIdInput: string;
+  side: ImportSide;
+}): PredictionSideTeamIdCommitResult {
+  const currentSide = args.draft[args.side];
+  const nextTeamId = normalizeImportIdentifier(args.nextTeamIdInput);
+  const currentTeamId = normalizeImportIdentifier(currentSide.teamId);
+  const committedTeamIdInput = nextTeamId ?? "";
+
+  if (currentTeamId === nextTeamId) {
+    return {
+      changed: false,
+      committedTeamIdInput,
+      draft: args.draft,
+      nextImportMatchId: args.currentImportMatchId,
+      nextManualImportMatchId: args.currentManualImportMatchId,
+    };
+  }
+
+  return {
+    changed: true,
+    committedTeamIdInput,
+    draft: {
+      ...args.draft,
+      [args.side]: {
+        ...currentSide,
+        sourceLabel: null,
+        sourceMatchId: null,
+        teamId: nextTeamId,
+      },
+    },
+    nextImportMatchId: "",
+    nextManualImportMatchId: "",
+  };
+}
+
+function usesCurrentTeamSchedule(args: {
+  currentTeamId: string | null;
+  sideTeamId: string | null;
+}) {
+  const currentTeamId = normalizeImportIdentifier(args.currentTeamId);
+  const sideTeamId = normalizeImportIdentifier(args.sideTeamId);
+  return Boolean(currentTeamId && sideTeamId && currentTeamId === sideTeamId);
+}
+
+function resolvePredictionSideRecentMatches(args: {
+  currentTeamId: string | null;
+  currentTeamRecentMatches: readonly MatchSummary[];
+  scoutRecentMatches: readonly MatchSummary[];
+  sideTeamId: string | null;
+}): MatchSummary[] {
+  const sideTeamId = normalizeImportIdentifier(args.sideTeamId);
+  if (!sideTeamId) {
+    return [];
+  }
+
+  return usesCurrentTeamSchedule({
+    currentTeamId: args.currentTeamId,
+    sideTeamId,
+  })
+    ? [...args.currentTeamRecentMatches]
+    : [...args.scoutRecentMatches];
+}
+
+function buildPredictionImportMatchOptions(
+  matches: readonly MatchSummary[],
+): PredictionImportMatchOption[] {
+  const seenMatchIds = new Set<string>();
+
+  return [...matches]
+    .filter(
+      (match): match is MatchSummary & { matchId: string } =>
+        Boolean(match.hasBoxscore && normalizeImportIdentifier(match.matchId)),
+    )
+    .sort((left, right) =>
+      String(right.startTime ?? "").localeCompare(String(left.startTime ?? "")),
+    )
+    .flatMap((match) => {
+      const matchId = normalizeImportIdentifier(match.matchId);
+      if (!matchId || seenMatchIds.has(matchId)) {
+        return [];
+      }
+
+      seenMatchIds.add(matchId);
+      return [
+        {
+          label: formatPredictionImportMatchLabel(match),
+          matchId,
+        },
+      ];
+    });
+}
+
+function ensurePredictionImportMatchOption(args: {
+  importMatch: MatchBoxscorePayload | null;
+  importMatchId: string;
+  options: readonly PredictionImportMatchOption[];
+}): PredictionImportMatchOption[] {
+  const importMatchId = normalizeImportIdentifier(args.importMatchId);
+  if (!importMatchId) {
+    return [...args.options];
+  }
+
+  if (args.options.some((option) => option.matchId === importMatchId)) {
+    return [...args.options];
+  }
+
+  return [
+    ...args.options,
+    buildSelectedPredictionImportMatchOption({
+      importMatch: args.importMatch,
+      importMatchId,
+    }),
+  ];
+}
+
+function buildSelectedPredictionImportMatchOption(args: {
+  importMatch: MatchBoxscorePayload | null;
+  importMatchId: string;
+}): PredictionImportMatchOption {
+  return {
+    label: args.importMatch
+      ? formatPredictionImportBoxscoreLabel(args.importMatch)
+      : `Game ${args.importMatchId}`,
+    matchId: args.importMatchId,
+  };
+}
+
+function describePredictionImportMatchField(args: {
+  errorMessage: string | null;
+  isLoading: boolean;
+  options: readonly PredictionImportMatchOption[];
+  selectedMatchId: string;
+  teamId: string | null;
+}): PredictionImportMatchFieldState {
+  if (!normalizeImportIdentifier(args.teamId)) {
+    return {
+      error: args.errorMessage,
+      hint: normalizeImportIdentifier(args.selectedMatchId)
+        ? "A specific game is selected below. Enter a team ID to auto-populate recent boxscores."
+        : "Enter a team ID, then leave the field to load recent boxscores.",
+    };
+  }
+
+  if (args.isLoading) {
+    return {
+      error: args.errorMessage,
+      hint: "Loading recent boxscores for this team.",
+    };
+  }
+
+  if (!args.options.length) {
+    return {
+      error: args.errorMessage,
+      hint: "No recent boxscores are available for this team yet.",
+    };
+  }
+
+  return {
+    error: args.errorMessage,
+    hint: "Choose a recent boxscore, or load a specific game ID below.",
+  };
+}
+
+function formatPredictionImportMatchLabel(match: MatchSummary): string {
+  const prefix = match.startTime ? `${formatDate(match.startTime)} • ` : "";
+  const opponent = match.opponentTeamName ?? "Unknown opponent";
+  const outcome = match.outcome ? `${match.outcome} ` : "";
+  const score =
+    typeof match.teamScore === "number" && typeof match.opponentScore === "number"
+      ? `${match.teamScore}-${match.opponentScore}`
+      : null;
+
+  return `${prefix}${opponent}${score ? ` • ${outcome}${score}` : ""}`.trim();
+}
+
+function formatPredictionImportBoxscoreLabel(match: MatchBoxscorePayload): string {
+  const prefix = match.startTime ? `${formatDate(match.startTime)} • ` : "";
+  const homeTeam =
+    match.homeTeam?.teamName ?? match.context?.homeTeamName ?? "Home";
+  const awayTeam =
+    match.awayTeam?.teamName ?? match.context?.awayTeamName ?? "Away";
+  const score =
+    typeof match.homeTeam?.score === "number" &&
+    typeof match.awayTeam?.score === "number"
+      ? ` • ${match.homeTeam.score}-${match.awayTeam.score}`
+      : "";
+
+  return `${prefix}${homeTeam} vs ${awayTeam}${score}`;
+}
+
+function normalizeImportIdentifier(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function readClientSideErrorMessage(error: unknown): string | null {
+  if (!error) {
+    return null;
+  }
+
+  return error instanceof Error ? error.message : String(error);
 }
 
 type MatrixVisibleResult = {
@@ -2475,19 +3015,6 @@ function CompactMatrixToggleGroup({
       </div>
     </div>
   );
-}
-
-function formatAccessibleMatchLabel(match: AccessibleMatchSummary): string {
-  const teams = [
-    match.teamId ? `Team ${match.teamId}` : "Tracked team",
-    match.opponentTeamName ?? "Opponent",
-  ].join(" vs ");
-  const score =
-    typeof match.teamScore === "number" && typeof match.opponentScore === "number"
-      ? ` • ${match.teamScore}-${match.opponentScore}`
-      : "";
-  const startTime = match.startTime ? `${formatDate(match.startTime)} • ` : "";
-  return `${startTime}${teams}${score}`;
 }
 
 function sortPairs(pairs: PredictionMatrixTacticPair[]) {
@@ -3086,6 +3613,10 @@ export const __testing = {
   abbreviateMatrixOffenseLabel,
   buildOffenseGroups,
   buildOffenseOverviewRows,
+  buildPredictionImportMatchOptions,
+  commitPredictionSideTeamIdChange,
+  describePredictionImportMatchField,
+  ensurePredictionImportMatchOption,
   filterPairsByDefenses,
   findExtremeVisibleCell,
   findOffenseOverviewCell,
@@ -3097,8 +3628,10 @@ export const __testing = {
   listUniquePairDefenses,
   reconcileSelectedOptions,
   reconcileSelectedDefenseOptions,
+  resolvePredictionSideRecentMatches,
   resolveVisibleSelection,
   sortPairs,
   toggleExpandedOffense,
   toggleRequiredOption,
+  usesCurrentTeamSchedule,
 };

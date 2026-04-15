@@ -110,6 +110,18 @@ type HistoricalSeasonSummary = {
   storedHistoricalSeasons: number[];
 };
 
+type LeagueHistoryPostseasonSummary = {
+  championships: number;
+  playoffLosses: number;
+  playoffWins: number;
+};
+
+type LeagueHistoryFinalRoundSummary = {
+  hasIncompleteMatch: boolean;
+  losses: number;
+  wins: number;
+};
+
 const ACTIVE_BACKFILL_STATES = new Set([
   "FETCHING_STANDINGS",
   "QUEUED",
@@ -168,6 +180,7 @@ export const __testing = {
   normalizeLeagueHistoryTeamName,
   normalizeLeagueId,
   sortLeagueHistoryRows,
+  standingsToHistoryRecords,
 };
 
 export async function submitLeagueHistoryBackfill(
@@ -365,7 +378,10 @@ export async function getLeagueHistory(
   const rows = sortLeagueHistoryRows(
     aggregateLeagueHistoryRows([...cachedRows, ...liveRows]),
   );
-  const historicalSeasonsStored = countDistinctStoredSeasons(cachedRows);
+  const historicalSeasonsStored = collectStoredHistoricalSeasons({
+    cachedRows,
+    currentSeason: liveStandings?.season ?? null,
+  }).length;
   const leagueName =
     liveStandings?.league?.name ??
     status?.leagueName ??
@@ -550,9 +566,10 @@ export async function processLeagueHistoryBackfill(
     );
     const currentSeason = availableSeasons.at(-1) ?? null;
     const storedHistoricalSeasonSet = new Set(
-      cachedRows
-        .map((row) => row.season)
-        .filter((season) => currentSeason === null || season < currentSeason),
+      collectStoredHistoricalSeasons({
+        cachedRows,
+        currentSeason,
+      }),
     );
     const historicalSeasons = availableSeasons.filter(
       (season) => currentSeason === null || season < currentSeason,
@@ -564,7 +581,7 @@ export async function processLeagueHistoryBackfill(
       seasons: availableSeasons,
     });
     historicalSeasonsExpected = historicalSeasons.length;
-    historicalSeasonsStored = countDistinctStoredSeasons(cachedRows);
+    historicalSeasonsStored = storedHistoricalSeasonSet.size;
 
     if (!seasonsToFetch.length) {
       const completedAt = deps.now().toISOString();
@@ -691,9 +708,10 @@ async function summarizeHistoricalSeasons(
   return {
     currentSeason,
     historicalSeasons,
-    storedHistoricalSeasons: Array.from(
-      new Set(cachedRows.map((row) => row.season)),
-    ).sort((left, right) => left - right),
+    storedHistoricalSeasons: collectStoredHistoricalSeasons({
+      cachedRows,
+      currentSeason,
+    }),
   };
 }
 
@@ -800,14 +818,23 @@ function standingsToHistoryRecords(
   standings: BBApiStandings,
   fallbackLeagueId: string,
 ): LeagueHistoryStandingCacheRecord[] {
+  const postseasonByTeamId = summarizePlayoffResults(standings);
+
   return standings.conferences.flatMap((conference) =>
     conference.teams.flatMap((team) => {
       if (!team.id || standings.season === null) {
         return [];
       }
 
+      const postseason = postseasonByTeamId.get(team.id) ?? {
+        championships: 0,
+        playoffLosses: 0,
+        playoffWins: 0,
+      };
+
       return [
         {
+          championships: postseason.championships,
           conferenceIndex: conference.index,
           fetchedAt: standings.retrievedAt ?? null,
           isBot: team.isBot ?? null,
@@ -816,6 +843,8 @@ function standingsToHistoryRecords(
           losses: team.losses ?? null,
           pa: team.pa ?? null,
           pf: team.pf ?? null,
+          playoffLosses: postseason.playoffLosses,
+          playoffWins: postseason.playoffWins,
           season: standings.season,
           teamId: team.id,
           teamName: team.teamName ?? `Team ${team.id}`,
@@ -826,10 +855,160 @@ function standingsToHistoryRecords(
   );
 }
 
-function countDistinctStoredSeasons(
-  rows: readonly LeagueHistoryStandingCacheRecord[],
-): number {
-  return new Set(rows.map((row) => row.season)).size;
+function summarizePlayoffResults(
+  standings: Pick<BBApiStandings, "brackets">,
+): Map<string, LeagueHistoryPostseasonSummary> {
+  const summaries = new Map<string, LeagueHistoryPostseasonSummary>();
+  const finals = new Map<string, LeagueHistoryFinalRoundSummary>();
+
+  for (const round of standings.brackets ?? []) {
+    const championshipRound = isChampionshipRound(round.name);
+
+    for (const match of round.matches ?? []) {
+      const homeTeamId = match.homeTeam.id;
+      const awayTeamId = match.awayTeam.id;
+      const homeScore = match.homeTeam.score;
+      const awayScore = match.awayTeam.score;
+
+      if (
+        championshipRound &&
+        homeTeamId &&
+        awayTeamId &&
+        (homeScore === null ||
+          awayScore === null ||
+          homeScore === undefined ||
+          awayScore === undefined ||
+          homeScore === awayScore)
+      ) {
+        getOrCreateFinalRoundSummary(finals, homeTeamId).hasIncompleteMatch =
+          true;
+        getOrCreateFinalRoundSummary(finals, awayTeamId).hasIncompleteMatch =
+          true;
+      }
+
+      const result = resolvePlayoffMatchResult(match);
+      if (!result) {
+        continue;
+      }
+
+      getOrCreatePostseasonSummary(summaries, result.winnerId).playoffWins += 1;
+      getOrCreatePostseasonSummary(summaries, result.loserId).playoffLosses +=
+        1;
+
+      if (championshipRound) {
+        getOrCreateFinalRoundSummary(finals, result.winnerId).wins += 1;
+        getOrCreateFinalRoundSummary(finals, result.loserId).losses += 1;
+      }
+    }
+  }
+
+  for (const [teamId, finalsSummary] of finals.entries()) {
+    if (
+      !finalsSummary.hasIncompleteMatch &&
+      finalsSummary.wins > finalsSummary.losses
+    ) {
+      getOrCreatePostseasonSummary(summaries, teamId).championships = 1;
+    }
+  }
+
+  return summaries;
+}
+
+function resolvePlayoffMatchResult(
+  match: NonNullable<BBApiStandings["brackets"]>[number]["matches"][number],
+): { loserId: string; winnerId: string } | null {
+  const homeTeamId = match.homeTeam.id;
+  const awayTeamId = match.awayTeam.id;
+  const homeScore = match.homeTeam.score;
+  const awayScore = match.awayTeam.score;
+
+  if (
+    !homeTeamId ||
+    !awayTeamId ||
+    homeScore === null ||
+    awayScore === null ||
+    homeScore === undefined ||
+    awayScore === undefined ||
+    homeScore === awayScore
+  ) {
+    return null;
+  }
+
+  return homeScore > awayScore
+    ? { loserId: awayTeamId, winnerId: homeTeamId }
+    : { loserId: homeTeamId, winnerId: awayTeamId };
+}
+
+function getOrCreatePostseasonSummary(
+  summaries: Map<string, LeagueHistoryPostseasonSummary>,
+  teamId: string,
+): LeagueHistoryPostseasonSummary {
+  const current = summaries.get(teamId) ?? {
+    championships: 0,
+    playoffLosses: 0,
+    playoffWins: 0,
+  };
+  summaries.set(teamId, current);
+  return current;
+}
+
+function getOrCreateFinalRoundSummary(
+  summaries: Map<string, LeagueHistoryFinalRoundSummary>,
+  teamId: string,
+): LeagueHistoryFinalRoundSummary {
+  const current = summaries.get(teamId) ?? {
+    hasIncompleteMatch: false,
+    losses: 0,
+    wins: 0,
+  };
+  summaries.set(teamId, current);
+  return current;
+}
+
+function isChampionshipRound(roundName: string): boolean {
+  const normalized = roundName.toLowerCase();
+  return (
+    normalized.includes("final") &&
+    !normalized.includes("semi") &&
+    !normalized.includes("quarter")
+  );
+}
+
+function collectStoredHistoricalSeasons(args: {
+  cachedRows: readonly LeagueHistoryStandingCacheRecord[];
+  currentSeason: number | null;
+}): number[] {
+  const seasonCompleteness = new Map<number, boolean>();
+
+  for (const row of args.cachedRows) {
+    if (args.currentSeason !== null && row.season >= args.currentSeason) {
+      continue;
+    }
+
+    seasonCompleteness.set(
+      row.season,
+      (seasonCompleteness.get(row.season) ?? true) &&
+        hasStoredPostseasonMetrics(row),
+    );
+  }
+
+  return Array.from(seasonCompleteness.entries())
+    .filter(([, complete]) => complete)
+    .map(([season]) => season)
+    .sort((left, right) => left - right);
+}
+
+function hasStoredPostseasonMetrics(
+  row: Pick<
+    LeagueHistoryStandingCacheRecord,
+    "championships" | "playoffLosses" | "playoffWins"
+  >,
+): boolean {
+  return (
+    typeof row.playoffWins === "number" &&
+    typeof row.playoffLosses === "number" &&
+    typeof row.championships === "number"
+  );
 }
 
 export function determineMissingHistoricalSeasons(args: {
@@ -838,11 +1017,10 @@ export function determineMissingHistoricalSeasons(args: {
   seasons: readonly number[];
 }): number[] {
   const storedHistoricalSeasons = new Set(
-    args.cachedRows
-      .map((row) => row.season)
-      .filter(
-        (season) => args.currentSeason === null || season < args.currentSeason,
-      ),
+    collectStoredHistoricalSeasons({
+      cachedRows: args.cachedRows,
+      currentSeason: args.currentSeason,
+    }),
   );
 
   return args.seasons.filter(
@@ -873,6 +1051,9 @@ export function aggregateLeagueHistoryRows(
   const aggregated = new Map<
     string,
     {
+      championships: number;
+      playoffLosses: number;
+      playoffWins: number;
       teamId: string;
       teamName: string;
       seasons: Set<number>;
@@ -890,9 +1071,12 @@ export function aggregateLeagueHistoryRows(
 
     const identityKey = buildLeagueHistoryIdentityKey(row);
     const current = aggregated.get(identityKey) ?? {
+      championships: 0,
       losses: 0,
       pa: 0,
       pf: 0,
+      playoffLosses: 0,
+      playoffWins: 0,
       seasons: new Set<number>(),
       teamId: row.teamId,
       teamName: normalizeLeagueHistoryTeamName(row),
@@ -905,6 +1089,9 @@ export function aggregateLeagueHistoryRows(
     current.teamName = normalizeLeagueHistoryTeamName(row);
     current.wins += row.wins ?? 0;
     current.losses += row.losses ?? 0;
+    current.playoffWins += row.playoffWins ?? 0;
+    current.playoffLosses += row.playoffLosses ?? 0;
+    current.championships += row.championships ?? 0;
     current.pf += row.pf ?? 0;
     current.pa += row.pa ?? 0;
     aggregated.set(identityKey, current);
@@ -916,10 +1103,13 @@ export function aggregateLeagueHistoryRows(
 
     return {
       averageMargin: games > 0 ? pointMargin / games : 0,
+      championships: row.championships,
       games,
       losses: row.losses,
       pa: row.pa,
       pf: row.pf,
+      playoffLosses: row.playoffLosses,
+      playoffWins: row.playoffWins,
       pointMargin,
       seasons: row.seasons.size,
       teamId: row.teamId,
