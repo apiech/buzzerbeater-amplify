@@ -32,6 +32,7 @@ import {
   workspaceQueryKeys,
 } from "@/app/dashboard/workspace-query-client";
 import { GamePredictionPanel } from "@/app/game-prediction-panel";
+import { FeedbackPanel } from "@/app/feedback-panel";
 import {
   createPredictionDraftFromScout,
   writePredictionDraftToStorage,
@@ -237,6 +238,8 @@ function AuthenticatedWorkspace({
   const viewerLabelText = viewerLabel ?? "Signed in";
   const connectedConnection = connection as BbConnectionRecord;
   const hasWorkspace = Boolean(workspace);
+  const currentTeamName =
+    workspace?.home.team.teamName ?? connection?.teamName ?? null;
 
   useEffect(() => {
     const analyticsProfile = {
@@ -291,6 +294,17 @@ function AuthenticatedWorkspace({
               </p>
               <strong className="text-ink text-sm">{viewerLabelText}</strong>
             </div>
+            <Link
+              className="border-border-soft text-ink hover:border-accent/35 inline-flex min-h-11 items-center justify-center rounded-full border bg-white/70 px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px hover:bg-white/90"
+              href="/workspace/ops#feedback"
+              onClick={() => {
+                captureAnalyticsEvent("feedback_shortcut_clicked", {
+                  source: "workspace_account_actions",
+                });
+              }}
+            >
+              Share feedback
+            </Link>
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
             <a
               className="border-border-soft bg-surface-strong text-ink hover:border-accent/25 hover:text-accent inline-flex min-h-11 items-center justify-center rounded-full border px-4 text-sm font-semibold shadow-sm transition hover:-translate-y-px"
@@ -307,9 +321,7 @@ function AuthenticatedWorkspace({
           </>
         }
         activeSection={activeSection}
-        currentTeamName={
-          workspace?.home.team.teamName ?? connection?.teamName ?? null
-        }
+        currentTeamName={currentTeamName}
         currentTeamRecord={
           workspace
             ? `Record ${formatRecord(workspace.home.team.record)}`
@@ -455,6 +467,7 @@ function AuthenticatedWorkspace({
                 billingSummary={billingSummary}
                 isLoadingBilling={isLoadingBilling}
                 lineupHelperDependencyState={lineupHelperDependencyState}
+                viewerLabel={viewerLabel}
                 workspace={workspace}
               />
             ) : (
@@ -487,20 +500,31 @@ function ConnectionOnboarding({
     bbLoginName: connection?.bbLoginName ?? "",
     accessKey: "",
   });
-  const [submitError, setSubmitError] = useState<string | null>(
-    connection?.lastSyncError ?? null,
-  );
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const connectMutation = useMutation({
     mutationFn: connectBbAccountMutation,
   });
+  const savedConnectionError = connection?.lastSyncError ?? null;
+  const hasEditedCredentials =
+    formState.bbLoginName !== (connection?.bbLoginName ?? "") ||
+    formState.accessKey.trim().length > 0;
+  const visibleSavedConnectionError =
+    submitError == null && !hasEditedCredentials ? savedConnectionError : null;
 
   useEffect(() => {
     setFormState({
       bbLoginName: connection?.bbLoginName ?? "",
       accessKey: "",
     });
-    setSubmitError(connection?.lastSyncError ?? null);
+    setSubmitError(null);
   }, [connection?.bbLoginName, connection?.lastSyncError]);
+
+  function updateFormState(
+    updater: (current: ConnectionFormState) => ConnectionFormState,
+  ) {
+    setFormState((current) => updater(current));
+    setSubmitError(null);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -544,6 +568,8 @@ function ConnectionOnboarding({
 
   const isSubmitting = connectMutation.isPending;
 
+  console.log("[dashboard-app] show me a log at all.")
+
   return (
     <Panel>
       <SectionHeading
@@ -569,7 +595,7 @@ function ConnectionOnboarding({
         <Field label="BuzzerBeater login name">
           <Input
             onChange={(event) =>
-              setFormState((current) => ({
+              updateFormState((current) => ({
                 ...current,
                 bbLoginName: event.target.value,
               }))
@@ -582,7 +608,7 @@ function ConnectionOnboarding({
         <Field label="Access key">
           <Input
             onChange={(event) =>
-              setFormState((current) => ({
+              updateFormState((current) => ({
                 ...current,
                 accessKey: event.target.value,
               }))
@@ -595,6 +621,12 @@ function ConnectionOnboarding({
         </Field>
 
         {submitError ? <Alert>{submitError}</Alert> : null}
+        {visibleSavedConnectionError ? (
+          <Alert tone="note">
+            Saved connection issue from the last refresh attempt:{" "}
+            {visibleSavedConnectionError}
+          </Alert>
+        ) : null}
 
         <div className="flex flex-wrap gap-3">
           <Button loading={isSubmitting} type="submit">
@@ -617,6 +649,7 @@ function WorkspaceDashboard({
   billingSummary,
   isLoadingBilling,
   lineupHelperDependencyState,
+  viewerLabel,
   workspace,
 }: {
   activeSection: WorkspaceSection;
@@ -626,6 +659,7 @@ function WorkspaceDashboard({
   lineupHelperDependencyState: ReturnType<
     typeof useAuthenticatedWorkspace
   >["lineupHelperDependencyState"];
+  viewerLabel: string | null;
   workspace: DashboardShellData;
 }) {
   const queryClient = useQueryClient();
@@ -658,8 +692,10 @@ function WorkspaceDashboard({
   const [selectedSalaryPlayerId, setSelectedSalaryPlayerId] = useState<
     string | null
   >(null);
-  const [selectedSalaryCalculatorPlayerId, setSelectedSalaryCalculatorPlayerId] =
-    useState("");
+  const [
+    selectedSalaryCalculatorPlayerId,
+    setSelectedSalaryCalculatorPlayerId,
+  ] = useState("");
   const [salaryCalculatorForm, setSalaryCalculatorForm] =
     useState<SalaryCalculatorFormState>(() =>
       createEmptySalaryCalculatorFormState(),
@@ -1472,7 +1508,9 @@ function WorkspaceDashboard({
               title="Trend lines, salary movement, and roster calls"
             />
             {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
-            {salaryProjectionError ? <Alert>{salaryProjectionError}</Alert> : null}
+            {salaryProjectionError ? (
+              <Alert>{salaryProjectionError}</Alert>
+            ) : null}
 
             {workspace.playerLab ? (
               <TableShell>
@@ -1602,7 +1640,9 @@ function WorkspaceDashboard({
                       }
                       label="Flag fit"
                       value={
-                        salaryProjection.isFlagTarget ? "Aligned" : "Not aligned"
+                        salaryProjection.isFlagTarget
+                          ? "Aligned"
+                          : "Not aligned"
                       }
                     />
                   </div>
@@ -1771,32 +1811,30 @@ function WorkspaceDashboard({
                         <thead>
                           <tr>
                             <TableHeadCell>Position</TableHeadCell>
-                            <TableHeadCell className={numericTableHeadClassName}>
+                            <TableHeadCell
+                              className={numericTableHeadClassName}
+                            >
                               Estimated salary
                             </TableHeadCell>
                           </tr>
                         </thead>
                         <tbody>
-                          {(
-                            [
-                              "PG",
-                              "SG",
-                              "SF",
-                              "PF",
-                              "C",
-                            ] as const
-                          ).map((position) => (
-                            <tr key={position}>
-                              <TableCell>{position}</TableCell>
-                              <TableCell className={numericTableCellClassName}>
-                                {formatCurrency(
-                                  salaryCalculatorEstimate.salaryByPosition[
-                                    position
-                                  ],
-                                )}
-                              </TableCell>
-                            </tr>
-                          ))}
+                          {(["PG", "SG", "SF", "PF", "C"] as const).map(
+                            (position) => (
+                              <tr key={position}>
+                                <TableCell>{position}</TableCell>
+                                <TableCell
+                                  className={numericTableCellClassName}
+                                >
+                                  {formatCurrency(
+                                    salaryCalculatorEstimate.salaryByPosition[
+                                      position
+                                    ],
+                                  )}
+                                </TableCell>
+                              </tr>
+                            ),
+                          )}
                         </tbody>
                       </TableShell>
 
@@ -1850,6 +1888,10 @@ function WorkspaceDashboard({
               <ThemeSelect />
             </div>
           </Panel>
+          <FeedbackPanel
+            currentTeamName={home.team.teamName ?? null}
+            viewerLabel={viewerLabel ?? "Signed in"}
+          />
           <OperationsPanel />
         </>
       ) : null}
@@ -2567,9 +2609,7 @@ function createSalaryCalculatorFormState(
   };
 }
 
-function parseSalaryCalculatorFormState(
-  formState: SalaryCalculatorFormState,
-): {
+function parseSalaryCalculatorFormState(formState: SalaryCalculatorFormState): {
   errors: SalaryCalculatorFormErrors;
   skills: SalaryCalculatorSkillsInput | null;
 } {
@@ -2604,7 +2644,9 @@ function parseSalaryCalculatorFormState(
 }
 
 function toSalaryCalculatorFormValue(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : "";
 }
 
 function readPayload<T>(response: { payload: T | string }): T {

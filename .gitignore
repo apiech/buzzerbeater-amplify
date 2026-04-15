@@ -40,12 +40,12 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo*
-next-env.d.ts
+/next-env.d.ts
 
 # amplify
-.amplify
-amplify_outputs*
-amplifyconfiguration*
+/.amplify/
+/amplify_outputs*
+/amplifyconfiguration*
 
 # cdk
 cdk.out/

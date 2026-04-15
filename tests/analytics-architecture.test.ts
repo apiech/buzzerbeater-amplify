@@ -20,6 +20,7 @@ test("analytics wiring covers providers, auth, store, and key outcome flows", ()
   const loginActionsSource = readRepoFile("app", "login", "login-actions.tsx");
   const storefrontSource = readRepoFile("app", "store", "storefront.tsx");
   const dashboardSource = readRepoFile("app", "dashboard-app.tsx");
+  const feedbackSource = readRepoFile("app", "feedback-panel.tsx");
   const highlightsSource = readRepoFile("app", "highlights-panel.tsx");
   const operationsSource = readRepoFile("app", "operations-panel.tsx");
   const predictionSource = readRepoFile("app", "prediction-panel.tsx");
@@ -49,7 +50,10 @@ test("analytics wiring covers providers, auth, store, and key outcome flows", ()
   assert.match(storefrontSource, /trackBillingAccessTransition/);
   assert.match(dashboardSource, /bb_connection_submitted/);
   assert.match(dashboardSource, /auth_signed_out/);
+  assert.match(dashboardSource, /feedback_shortcut_clicked/);
   assert.match(dashboardSource, /setAnalyticsPersonProperties/);
+  assert.match(feedbackSource, /product_feedback_submitted/);
+  assert.match(feedbackSource, /product_feedback_submission_failed/);
   assert.match(highlightsSource, /highlights_filter_changed/);
   assert.match(highlightsSource, /highlights_scan_completed/);
   assert.match(operationsSource, /operations_refresh_requested/);

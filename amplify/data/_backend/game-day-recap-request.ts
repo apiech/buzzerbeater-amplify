@@ -1,19 +1,20 @@
+import type { Schema } from "../resource";
+
 type JsonRecord = Record<string, unknown>;
 
-export type GameDayRecapSubmissionRequest = {
-  gameDate: string;
-  leagueId: string;
-};
+export type GameDayRecapSubmissionRequest = NonNullable<
+  Schema["submitGameDayRecap"]["args"]
+>;
 
-export type LeagueGameDayRecapSubmissionRequest = {
-  gameDayNumber: number;
-  leagueId: string;
+export type LeagueGameDayRecapSubmissionRequest = NonNullable<
+  Schema["submitLeagueGameDayRecap"]["args"]
+> & {
   season: number | null;
 };
 
-export type SingleGameSummarySubmissionRequest = {
-  matchId: string;
-};
+export type SingleGameSummarySubmissionRequest = NonNullable<
+  Schema["submitSingleGameSummary"]["args"]
+>;
 
 export type RecapJobKind = "LEAGUE_DATE" | "LEAGUE_GAME_DAY" | "SINGLE_GAME";
 

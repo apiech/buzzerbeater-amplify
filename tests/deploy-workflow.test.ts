@@ -193,17 +193,10 @@ test("sandbox up runs deploy verification, secret sync, ML data infra, pinned pr
       spawnSync(command, args, options) {
         calls.push({ args, command, options });
 
-        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
-          return {
-            status: 0,
-            stderr: "",
-            stdout: "",
-          };
-        }
         if (
           command === "npm" &&
           args[0] === "run" &&
-          args[1] === "typecheck:amplify:sandbox"
+          args[1] === "verify:deploy:sandbox"
         ) {
           return {
             status: 0,
@@ -246,34 +239,33 @@ test("sandbox up runs deploy verification, secret sync, ML data infra, pinned pr
   );
 
   assert.equal(exitCode, 0);
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 5);
   assert.equal(calls[0].command, "npm");
-  assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
-  assert.deepEqual(calls[1]?.args, ["run", "typecheck:amplify:sandbox"]);
-  assert.deepEqual(calls[2]?.args.slice(0, 4), [
+  assert.deepEqual(calls[0].args, ["run", "verify:deploy:sandbox"]);
+  assert.deepEqual(calls[1]?.args.slice(0, 4), [
     "ampx",
     "sandbox",
     "secret",
     "list",
   ]);
-  assert.equal(calls[3].command, "npm");
-  assert.match(calls[3].args.join(" "), /deploy:ml-data-infra/);
-  const sandboxDataEnv = calls[3].options?.env as Record<string, string> | undefined;
+  assert.equal(calls[2].command, "npm");
+  assert.match(calls[2].args.join(" "), /deploy:ml-data-infra/);
+  const sandboxDataEnv = calls[2].options?.env as Record<string, string> | undefined;
   assert.match(
     sandboxDataEnv?.DOCKER_CONFIG ?? "",
     /bb-machine-learning\/dist\/.docker-cli$/,
   );
-  assert.equal(calls[4].command, "./scripts/matchup-predictor-release");
-  assert.deepEqual(calls[4].args, [
+  assert.equal(calls[3].command, "./scripts/matchup-predictor-release");
+  assert.deepEqual(calls[3].args, [
     "sandbox",
     "--identifier",
     "karey",
     "--use-pin",
     "sandbox",
   ]);
-  assert.equal(calls[5].command, process.execPath);
-  assert.deepEqual(calls[5].args.slice(1), ["sandbox", "--identifier", "karey"]);
-  const sandboxEnv = calls[5].options?.env as Record<string, string> | undefined;
+  assert.equal(calls[4].command, process.execPath);
+  assert.deepEqual(calls[4].args.slice(1), ["sandbox", "--identifier", "karey"]);
+  const sandboxEnv = calls[4].options?.env as Record<string, string> | undefined;
   assert.ok(sandboxEnv);
   assert.equal(
     sandboxEnv.BB_SKIP_SANDBOX_SHARED_INFRA_BOOTSTRAP,
@@ -322,17 +314,10 @@ test("sandbox up forwards raw sandbox flags to the underlying sandbox process", 
       spawnSync(command, args, options) {
         calls.push({ args, command, options });
 
-        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
-          return {
-            status: 0,
-            stderr: "",
-            stdout: "",
-          };
-        }
         if (
           command === "npm" &&
           args[0] === "run" &&
-          args[1] === "typecheck:amplify:sandbox"
+          args[1] === "verify:deploy:sandbox"
         ) {
           return {
             status: 0,
@@ -370,11 +355,10 @@ test("sandbox up forwards raw sandbox flags to the underlying sandbox process", 
   );
 
   assert.equal(exitCode, 0);
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 4);
   assert.equal(calls[0].command, "npm");
-  assert.deepEqual(calls[0].args, ["run", "verify:deploy"]);
-  assert.deepEqual(calls[1]?.args, ["run", "typecheck:amplify:sandbox"]);
-  assert.deepEqual(calls[4]?.args.slice(1), [
+  assert.deepEqual(calls[0].args, ["run", "verify:deploy:sandbox"]);
+  assert.deepEqual(calls[3]?.args.slice(1), [
     "sandbox",
     "--identifier",
     "karey",
@@ -429,17 +413,6 @@ test("sandbox up fast uses sandbox verification, skips shared infra deploy, and 
             stdout: "",
           };
         }
-        if (
-          command === "npm" &&
-          args[0] === "run" &&
-          args[1] === "typecheck:amplify:sandbox"
-        ) {
-          return {
-            status: 0,
-            stderr: "",
-            stdout: "",
-          };
-        }
         if (args.includes("list")) {
           return {
             status: 0,
@@ -462,11 +435,10 @@ test("sandbox up fast uses sandbox verification, skips shared infra deploy, and 
   );
 
   assert.equal(exitCode, 0);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 3);
   assert.equal(calls[0].command, "npm");
   assert.deepEqual(calls[0].args, ["run", "verify:deploy:sandbox"]);
-  assert.deepEqual(calls[1]?.args, ["run", "typecheck:amplify:sandbox"]);
-  const launchedSandboxArgs = calls[3].args;
+  const launchedSandboxArgs = calls[2].args;
   assert.deepEqual(launchedSandboxArgs.slice(1), [
     "sandbox",
     "--identifier",
@@ -540,17 +512,6 @@ test("sandbox up fast fails when the predictor endpoint is missing even if a san
                 stdout: "",
               };
             }
-            if (
-              command === "npm" &&
-              args[0] === "run" &&
-              args[1] === "typecheck:amplify:sandbox"
-            ) {
-              return {
-                status: 0,
-                stderr: "",
-                stdout: "",
-              };
-            }
             if (args.includes("list")) {
               return {
                 status: 0,
@@ -570,13 +531,12 @@ test("sandbox up fast fails when the predictor endpoint is missing even if a san
     calls.map((call) => [call.command, call.args[0], call.args[1]]),
     [
       ["npm", "run", "verify:deploy:sandbox"],
-      ["npm", "run", "typecheck:amplify:sandbox"],
       ["npx", "ampx", "sandbox"],
     ],
   );
 });
 
-test("sandbox up stops before side effects when deploy verification fails", () => {
+test("sandbox up stops before side effects when sandbox deploy verification fails", () => {
   const calls: Array<{
     args: string[];
     command: string;
@@ -597,7 +557,7 @@ test("sandbox up stops before side effects when deploy verification fails", () =
               status:
                 command === "npm" &&
                 args[0] === "run" &&
-                args[1] === "verify:deploy"
+                args[1] === "verify:deploy:sandbox"
                   ? 1
                   : 0,
               stderr: "",
@@ -606,13 +566,13 @@ test("sandbox up stops before side effects when deploy verification fails", () =
           },
         }),
       ),
-    /Deploy verification failed\./,
+    /Sandbox deploy verification failed\./,
   );
 
   assert.deepEqual(calls, [
     {
       command: "npm",
-      args: ["run", "verify:deploy"],
+      args: ["run", "verify:deploy:sandbox"],
       options: {
         cwd: projectRoot,
         env: {
@@ -624,7 +584,7 @@ test("sandbox up stops before side effects when deploy verification fails", () =
   ]);
 });
 
-test("sandbox up stops before side effects when the Amplify sandbox preflight fails", () => {
+test("sandbox up stops before side effects when sandbox deploy verification fails downstream checks", () => {
   const calls: Array<{
     args: string[];
     command: string;
@@ -645,7 +605,7 @@ test("sandbox up stops before side effects when the Amplify sandbox preflight fa
               status:
                 command === "npm" &&
                 args[0] === "run" &&
-                args[1] === "typecheck:amplify:sandbox"
+                args[1] === "verify:deploy:sandbox"
                   ? 1
                   : 0,
               stderr: "",
@@ -654,16 +614,10 @@ test("sandbox up stops before side effects when the Amplify sandbox preflight fa
           },
         }),
       ),
-    /Sandbox Amplify backend typecheck failed\./,
+    /Sandbox deploy verification failed\./,
   );
 
-  assert.deepEqual(
-    calls.map((call) => call.args),
-    [
-      ["run", "verify:deploy"],
-      ["run", "typecheck:amplify:sandbox"],
-    ],
-  );
+  assert.deepEqual(calls.map((call) => call.args), [["run", "verify:deploy:sandbox"]]);
 });
 
 test("sandbox up fails early when another sandbox process already holds the cdk.out lock", () => {
@@ -793,17 +747,10 @@ test("sandbox up removes stale sandbox lock files before continuing", () => {
           };
         }
 
-        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
-          return {
-            status: 0,
-            stderr: "",
-            stdout: "",
-          };
-        }
         if (
           command === "npm" &&
           args[0] === "run" &&
-          args[1] === "typecheck:amplify:sandbox"
+          args[1] === "verify:deploy:sandbox"
         ) {
           return {
             status: 0,
@@ -896,7 +843,11 @@ test("dev prepare runs deploy verification before shared infra deploy side effec
       spawnSync(command, args, options) {
         calls.push({ args, command, options });
 
-        if (command === "npm" && args[0] === "run" && args[1] === "verify:deploy") {
+        if (
+          command === "npm" &&
+          args[0] === "run" &&
+          args[1] === "verify:deploy"
+        ) {
           return {
             status: 0,
             stderr: "",

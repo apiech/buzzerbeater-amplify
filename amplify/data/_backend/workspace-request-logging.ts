@@ -10,12 +10,12 @@ function writeWorkspaceLog(
     event,
     level,
     loggedAt: new Date().toISOString(),
-  })}\n`;
-  if (level === "INFO") {
-    process.stdout.write(line);
+  })}`;
+  if (level === "ERROR") {
+    console.error(line);
     return;
   }
-  process.stderr.write(line);
+  console.log(line);
 }
 
 export function logWorkspaceInfo(

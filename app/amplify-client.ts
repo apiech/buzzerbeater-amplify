@@ -71,6 +71,7 @@ type MutationOperationName =
   | "repairOwnerRosterData"
   | "refreshWorkspace"
   | "setBbLeagueTimeZone"
+  | "submitProductFeedback"
   | "submitGameDayRecap"
   | "submitRivalsBackfill"
   | "submitLeagueHistoryBackfill"
@@ -246,52 +247,47 @@ export const client = {
       requestMutation("connectBbAccount", input),
     createBillingCheckoutSession: (
       input?: OperationInput<"createBillingCheckoutSession">,
-    ) =>
-      requestMutation("createBillingCheckoutSession", input),
+    ) => requestMutation("createBillingCheckoutSession", input),
     createBillingLifetimeCheckoutSession: (
       input?: OperationInput<"createBillingLifetimeCheckoutSession">,
-    ) =>
-      requestMutation("createBillingLifetimeCheckoutSession", input),
+    ) => requestMutation("createBillingLifetimeCheckoutSession", input),
     createBillingPortalSession: (
       input?: OperationInput<"createBillingPortalSession">,
-    ) =>
-      requestMutation("createBillingPortalSession", input),
+    ) => requestMutation("createBillingPortalSession", input),
     disconnectBbAccount: () => requestMutation("disconnectBbAccount"),
     repairOwnerRosterData: () => requestMutation("repairOwnerRosterData"),
     refreshWorkspace: () => requestMutation("refreshWorkspace"),
     setBbLeagueTimeZone: (input: OperationInput<"setBbLeagueTimeZone">) =>
       requestMutation("setBbLeagueTimeZone", input),
+    submitProductFeedback: (input: OperationInput<"submitProductFeedback">) =>
+      requestMutation("submitProductFeedback", input),
     submitGameDayRecap: (input: OperationInput<"submitGameDayRecap">) =>
       requestMutation("submitGameDayRecap", input),
     submitRivalsBackfill: () => requestMutation("submitRivalsBackfill"),
     submitLeagueHistoryBackfill: (
       input?: OperationInput<"submitLeagueHistoryBackfill">,
-    ) =>
-      requestMutation("submitLeagueHistoryBackfill", input),
+    ) => requestMutation("submitLeagueHistoryBackfill", input),
     submitLeagueGameDayRecap: (
       input: OperationInput<"submitLeagueGameDayRecap">,
-    ) =>
-      requestMutation("submitLeagueGameDayRecap", input),
+    ) => requestMutation("submitLeagueGameDayRecap", input),
     submitMyTeamHighlightsScan: () =>
       requestMutation("submitMyTeamHighlightsScan"),
     submitNextGameRecommendationJob: (
       input: OperationInput<"submitNextGameRecommendationJob">,
-    ) =>
-      requestMutation("submitNextGameRecommendationJob", input),
+    ) => requestMutation("submitNextGameRecommendationJob", input),
     submitOpponentForecastJob: (
       input: OperationInput<"submitOpponentForecastJob">,
-    ) =>
-      requestMutation("submitOpponentForecastJob", input),
+    ) => requestMutation("submitOpponentForecastJob", input),
     submitPredictionJob: (input: OperationInput<"submitPredictionJob">) =>
       requestMutation("submitPredictionJob", input),
-    submitSingleGameSummary: (input: OperationInput<"submitSingleGameSummary">) =>
-      requestMutation("submitSingleGameSummary", input),
+    submitSingleGameSummary: (
+      input: OperationInput<"submitSingleGameSummary">,
+    ) => requestMutation("submitSingleGameSummary", input),
   },
   queries: {
     evaluatePredictionMatrix: (
       input: OperationInput<"evaluatePredictionMatrix">,
-    ) =>
-      requestQuery("evaluatePredictionMatrix", input),
+    ) => requestQuery("evaluatePredictionMatrix", input),
     evaluateLineupHelper: (input: OperationInput<"evaluateLineupHelper">) =>
       requestQuery("evaluateLineupHelper", input),
     getArenaWorkspace: (input?: OperationInput<"getArenaWorkspace">) =>
@@ -305,24 +301,19 @@ export const client = {
       requestQuery("getLeagueIntel", input),
     getLatestNextGameRecommendation: (
       input: OperationInput<"getLatestNextGameRecommendation">,
-    ) =>
-      requestQuery("getLatestNextGameRecommendation", input),
+    ) => requestQuery("getLatestNextGameRecommendation", input),
     getNextGamePlannerDetail: (
       input: OperationInput<"getNextGamePlannerDetail">,
-    ) =>
-      requestQuery("getNextGamePlannerDetail", input),
+    ) => requestQuery("getNextGamePlannerDetail", input),
     getLatestOpponentForecast: (
       input: OperationInput<"getLatestOpponentForecast">,
-    ) =>
-      requestQuery("getLatestOpponentForecast", input),
+    ) => requestQuery("getLatestOpponentForecast", input),
     getLineupHelperWorkspace: (
       input?: OperationInput<"getLineupHelperWorkspace">,
-    ) =>
-      requestQuery("getLineupHelperWorkspace", input),
+    ) => requestQuery("getLineupHelperWorkspace", input),
     getMatchBoxscoreDetails: (
       input: OperationInput<"getMatchBoxscoreDetails">,
-    ) =>
-      requestQuery("getMatchBoxscoreDetails", input),
+    ) => requestQuery("getMatchBoxscoreDetails", input),
     getMyTeamHighlights: (input: OperationInput<"getMyTeamHighlights">) =>
       requestQuery("getMyTeamHighlights", input),
     getManualSalaryEstimate: (

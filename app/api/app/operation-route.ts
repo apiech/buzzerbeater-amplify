@@ -35,15 +35,28 @@ export function createAuthenticatedOperationRoute<TOperationName extends string>
     request: Request,
     context: OperationRouteContext,
   ) {
+    const startedAt = Date.now();
+    let body: OperationBody = undefined;
+    let operationName: string | null = null;
+    let currentUser: ServerCurrentUser | null = null;
+
     try {
       const maintenanceState = await getServerMaintenanceState();
       if (maintenanceState.active && maintenanceState.document) {
         return createMaintenanceApiResponse(maintenanceState.document);
       }
 
-      const currentUser = await requireServerCurrentUser();
+      currentUser = await requireServerCurrentUser();
       const { name } = await context.params;
+      operationName = name;
       if (!options.isOperationName(name)) {
+        logOperationRouteInfo("operationRoute.rejected", {
+          elapsedMs: Date.now() - startedAt,
+          label: options.label,
+          name,
+          userId: currentUser.userId,
+          username: currentUser.username,
+        });
         return NextResponse.json(
           {
             data: null,
@@ -53,14 +66,40 @@ export function createAuthenticatedOperationRoute<TOperationName extends string>
         );
       }
 
-      const body = await readOptionalBody(request);
+      body = await readOptionalBody(request);
+      const bodySummary = summarizeOperationBody(name, body);
+      logOperationRouteInfo("operationRoute.start", {
+        ...bodySummary,
+        label: options.label,
+        name,
+        userId: currentUser.userId,
+        username: currentUser.username,
+      });
       const result = await options.runOperation({
         body,
         currentUser,
         name,
       });
+      logOperationRouteInfo("operationRoute.completed", {
+        ...bodySummary,
+        elapsedMs: Date.now() - startedAt,
+        label: options.label,
+        name,
+        userId: currentUser.userId,
+        username: currentUser.username,
+      });
       return NextResponse.json(result);
     } catch (error) {
+      logOperationRouteError("operationRoute.failed", {
+        ...summarizeOperationBody(operationName, body),
+        elapsedMs: Date.now() - startedAt,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : null,
+        label: options.label,
+        name: operationName,
+        userId: currentUser?.userId ?? null,
+        username: currentUser?.username ?? null,
+      });
       return NextResponse.json(
         {
           data: null,
@@ -82,4 +121,61 @@ async function readOptionalBody(request: Request): Promise<OperationBody> {
 
   const parsed = parseJsonBody(jsonRecordSchema, text);
   return Object.keys(parsed).length ? parsed : undefined;
+}
+
+function summarizeOperationBody(
+  name: string | null,
+  body: OperationBody,
+): Record<string, unknown> {
+  const bodyKeys = Object.keys(body ?? {}).sort();
+
+  if (name === "connectBbAccount") {
+    return {
+      bbLoginName:
+        typeof body?.bbLoginName === "string" ? body.bbLoginName : null,
+      bodyKeys,
+      hasAccessKey:
+        typeof body?.accessKey === "string"
+          ? body.accessKey.trim().length > 0
+          : Boolean(body?.accessKey),
+    };
+  }
+
+  return {
+    bodyKeys,
+  };
+}
+
+function logOperationRouteInfo(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  writeOperationRouteLog("INFO", event, details);
+}
+
+function logOperationRouteError(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  writeOperationRouteLog("ERROR", event, details);
+}
+
+function writeOperationRouteLog(
+  level: "INFO" | "ERROR",
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  const line = `[app-route] ${JSON.stringify({
+    details,
+    event,
+    level,
+    loggedAt: new Date().toISOString(),
+  })}`;
+
+  if (level === "INFO") {
+    console.log(line);
+    return;
+  }
+
+  console.error(line);
 }

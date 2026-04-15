@@ -39,9 +39,9 @@ import {
 import type {
   LineupHelperAlgorithm,
   DecodedLineupHelperWorkspace,
-  LineupHelperAssignment,
-  LineupHelperContext,
-  LineupHelperEvaluation,
+  DecodedLineupHelperAssignment,
+  DecodedLineupHelperContext,
+  DecodedLineupHelperEvaluation,
   LineupHelperEvaluationRecord,
   LineupHelperRankingEntry,
   LineupHelperRosterPlayer,
@@ -66,7 +66,7 @@ import {
 import { allScaleValues } from "@/lib/buzzerbeater/rating-scale";
 
 const ratingLabels: Array<{
-  key: keyof LineupHelperEvaluation["rawRatings"];
+  key: keyof DecodedLineupHelperEvaluation["rawRatings"];
   label: string;
 }> = [
   { key: "outsideScoring", label: "Outside scoring" },
@@ -105,7 +105,7 @@ export function LineupHelper({
         : null,
     [workspaceQuery.data],
   );
-  const [evaluation, setEvaluation] = useState<LineupHelperEvaluation | null>(
+  const [evaluation, setEvaluation] = useState<DecodedLineupHelperEvaluation | null>(
     () =>
       initialWorkspace
         ? decodeLineupHelperWorkspace(initialWorkspace).evaluation
@@ -118,7 +118,7 @@ export function LineupHelper({
         )
       : emptyLineupLayout(),
   );
-  const [context, setContext] = useState<LineupHelperContext>(() =>
+  const [context, setContext] = useState<DecodedLineupHelperContext>(() =>
     initialWorkspace
       ? decodeLineupHelperWorkspace(initialWorkspace).defaultContext
       : normalizeHelperContext({}),
@@ -993,7 +993,7 @@ export function LineupHelper({
                                   {selectedPlayer ? (
                                     <span className="text-ink">
                                       {selectedPlayer.bestPosition ?? "Flex"} •{" "}
-                                      {formatCurrency(selectedPlayer.salary)} •{" "}
+                                      {formatCurrency(selectedPlayer.salary ?? null)} •{" "}
                                       <BuzzerBeaterRatingText scale="game_shape">
                                         {selectedPlayer.gameShape ??
                                           "unknown shape"}
@@ -1250,7 +1250,7 @@ export const __testing = {
 
 function decodeLineupHelperEvaluation(
   record: LineupHelperEvaluationRecord,
-): LineupHelperEvaluation | null {
+): DecodedLineupHelperEvaluation | null {
   return {
     context: decodeLineupHelperContext(record.context),
     normalizedLineup: record.normalizedLineup.map(decodeLineupHelperAssignment),
@@ -1298,7 +1298,7 @@ function decodeLineupHelperEvaluation(
 
 function decodeLineupHelperContext(
   record: LineupHelperWorkspaceRecord["defaultContext"],
-): LineupHelperContext {
+): DecodedLineupHelperContext {
   return normalizeHelperContext({
     defense: record.defense,
     defensiveSwitch: {
@@ -1315,7 +1315,7 @@ function decodeLineupHelperContext(
 }
 
 function encodeLineupHelperContext(
-  context: LineupHelperContext,
+  context: DecodedLineupHelperContext,
 ): LineupHelperWorkspaceRecord["defaultContext"] {
   return {
     offense: context.offense,
@@ -1394,7 +1394,7 @@ function encodeLineupHelperRosterPlayer(
 
 function decodeLineupHelperAssignment(
   assignment: LineupHelperWorkspaceRecord["defaultAssignments"][number],
-): LineupHelperAssignment {
+): DecodedLineupHelperAssignment {
   return {
     playerId: assignment.playerId,
     position: assignment.position as PositionCode,

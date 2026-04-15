@@ -4,6 +4,7 @@ import { configureAuthControls } from "./_backend/auth-controls.js";
 import { configureBbConnectionSecretAccess } from "./_backend/bb-connection-secret-access.js";
 import { configureBillingIntegration } from "./_backend/billing-integration.js";
 import { configureCostVisibility } from "./_backend/cost-visibility.js";
+import { configureFeedbackNotifications } from "./_backend/feedback-notifications.js";
 import { configureGameDayRecapJobs } from "./_backend/game-day-recap-jobs.js";
 import { configureHostedComputeRole } from "./_backend/hosted-compute-role.js";
 import { configureLeagueHistoryJobs } from "./_backend/league-history-jobs.js";
@@ -18,6 +19,7 @@ import {
   resolveAppResourceRemovalPolicy,
   resolveBillingConfig,
   resolveCostVisibilityConfig,
+  resolveFeedbackNotificationConfig,
   resolveGameDayRecapConfig,
   resolveOperationalRetentionConfig,
   resolveSharedInfraBindings,
@@ -60,6 +62,7 @@ import {
   rivalsWorker,
   revokeSharedPlayerCard,
   setBbLeagueTimeZone,
+  submitProductFeedback,
   submitRivalsBackfill,
   submitLeagueHistoryBackfill,
   submitLeagueGameDayRecap,
@@ -122,6 +125,7 @@ const backend = defineBackend({
   nextGameRecommendationWorker,
   pruneOperationalData,
   setBbLeagueTimeZone,
+  submitProductFeedback,
   getAccessibleMatch,
   getAccessiblePlayByPlay,
   getMatchBoxscoreDetails,
@@ -213,6 +217,7 @@ configureMaintenanceControlPlane(backend, [
   backend.submitLeagueGameDayRecap,
   backend.submitSingleGameSummary,
   backend.setBbLeagueTimeZone,
+  backend.submitProductFeedback,
   backend.listAccessibleMatches,
   backend.getAccessibleMatch,
   backend.getAccessiblePlayByPlay,
@@ -234,6 +239,11 @@ configureMaintenanceControlPlane(backend, [
   backend.predictionWorker,
 ]);
 configureHostedComputeRole(backend);
+configureFeedbackNotifications(
+  backend,
+  resolveFeedbackNotificationConfig(),
+  appResourceRemovalPolicy,
+);
 configureCostVisibility(
   backend,
   resolveCostVisibilityConfig(),

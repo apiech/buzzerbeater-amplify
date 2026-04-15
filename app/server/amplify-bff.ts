@@ -47,6 +47,7 @@ type MutationName =
   | "refreshWorkspace"
   | "submitRivalsBackfill"
   | "setBbLeagueTimeZone"
+  | "submitProductFeedback"
   | "submitGameDayRecap"
   | "submitLeagueHistoryBackfill"
   | "submitLeagueGameDayRecap"
@@ -55,23 +56,32 @@ type MutationName =
   | "submitOpponentForecastJob"
   | "submitPredictionJob"
   | "submitSingleGameSummary";
-type QueryInput<TName extends QueryName | MutationName> = Schema[TName] extends {
-  args: infer TArgs;
-}
-  ? TArgs
-  : never;
-type QueryOutput<TName extends QueryName | MutationName> = Schema[TName] extends {
-  returnType: infer TReturn;
-}
-  ? TReturn
-  : never;
+type QueryInput<TName extends QueryName | MutationName> =
+  Schema[TName] extends {
+    args: infer TArgs;
+  }
+    ? TArgs
+    : never;
+type QueryOutput<TName extends QueryName | MutationName> =
+  Schema[TName] extends {
+    returnType: infer TReturn;
+  }
+    ? TReturn
+    : never;
 type OperationInput = Record<string, unknown>;
 
 const runtime = {
   getServerDataClient,
 };
+const logger = {
+  error: (event: string, details: Record<string, unknown>) =>
+    writeAppBffLog("ERROR", event, details),
+  info: (event: string, details: Record<string, unknown>) =>
+    writeAppBffLog("INFO", event, details),
+};
 
 export const __testing = {
+  logger,
   runtime,
 };
 
@@ -82,9 +92,7 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.evaluatePredictionMatrix(
       requiredInput(input),
     ),
-  evaluateLineupHelper: async (
-    input: QueryInput<"evaluateLineupHelper">,
-  ) =>
+  evaluateLineupHelper: async (input: QueryInput<"evaluateLineupHelper">) =>
     (await runtime.getServerDataClient()).queries.evaluateLineupHelper(
       requiredInput(input),
     ),
@@ -193,9 +201,7 @@ const queryOperations = {
     (await runtime.getServerDataClient()).queries.listMyBillingPayments(
       optionalInput(input),
     ),
-  optimizeLineupHelper: async (
-    input: QueryInput<"optimizeLineupHelper">,
-  ) =>
+  optimizeLineupHelper: async (input: QueryInput<"optimizeLineupHelper">) =>
     (await runtime.getServerDataClient()).queries.optimizeLineupHelper(
       requiredInput(input),
     ),
@@ -219,9 +225,7 @@ const mutationOperations = {
   ) =>
     (
       await runtime.getServerDataClient()
-    ).mutations.createBillingLifetimeCheckoutSession(
-      optionalInput(input),
-    ),
+    ).mutations.createBillingLifetimeCheckoutSession(optionalInput(input)),
   createBillingPortalSession: async (
     input?: QueryInput<"createBillingPortalSession">,
   ) =>
@@ -238,6 +242,10 @@ const mutationOperations = {
     (await runtime.getServerDataClient()).mutations.submitRivalsBackfill(),
   setBbLeagueTimeZone: async (input: QueryInput<"setBbLeagueTimeZone">) =>
     (await runtime.getServerDataClient()).mutations.setBbLeagueTimeZone(
+      requiredInput(input),
+    ),
+  submitProductFeedback: async (input: QueryInput<"submitProductFeedback">) =>
+    (await runtime.getServerDataClient()).mutations.submitProductFeedback(
       requiredInput(input),
     ),
   submitGameDayRecap: async (input: QueryInput<"submitGameDayRecap">) =>
@@ -296,18 +304,26 @@ export async function runQueryOperation(
   name: QueryName,
   input?: OperationInput,
 ): Promise<OperationResult<unknown>> {
-  return (queryOperations[name] as (queryInput?: OperationInput) => Promise<
-    OperationResult<unknown>
-  >)(input);
+  return runLoggedOperation("query", name, input, () =>
+    (
+      queryOperations[name] as (
+        queryInput?: OperationInput,
+      ) => Promise<OperationResult<unknown>>
+    )(input),
+  );
 }
 
 export async function runMutationOperation(
   name: MutationName,
   input?: OperationInput,
 ): Promise<OperationResult<unknown>> {
-  return (mutationOperations[name] as (
-    mutationInput?: OperationInput,
-  ) => Promise<OperationResult<unknown>>)(input);
+  return runLoggedOperation("mutation", name, input, () =>
+    (
+      mutationOperations[name] as (
+        mutationInput?: OperationInput,
+      ) => Promise<OperationResult<unknown>>
+    )(input),
+  );
 }
 
 function optionalInput<TInput extends OperationInput | undefined>(
@@ -316,12 +332,98 @@ function optionalInput<TInput extends OperationInput | undefined>(
   return (input ?? {}) as Exclude<TInput, undefined> | {};
 }
 
-function requiredInput<TInput extends OperationInput>(
-  input?: TInput,
-): TInput {
+function requiredInput<TInput extends OperationInput>(input?: TInput): TInput {
   if (!input || Array.isArray(input)) {
     throw new Error("Request body must be an object.");
   }
 
   return input;
+}
+
+async function runLoggedOperation(
+  kind: "mutation" | "query",
+  name: QueryName | MutationName,
+  input: OperationInput | undefined,
+  run: () => Promise<OperationResult<unknown>>,
+): Promise<OperationResult<unknown>> {
+  const startedAt = Date.now();
+  const inputSummary = summarizeOperationInput(name, input);
+
+  logger.info("appBff.operation.start", {
+    kind,
+    name,
+    ...inputSummary,
+  });
+
+  try {
+    const result = await run();
+    const errorMessages = (result.errors ?? [])
+      .map((error) => error.message)
+      .filter((message): message is string => Boolean(message));
+
+    logger.info("appBff.operation.completed", {
+      dataPresent: result.data != null,
+      elapsedMs: Date.now() - startedAt,
+      errorCount: errorMessages.length,
+      errorMessages,
+      kind,
+      name,
+      ...inputSummary,
+    });
+
+    return result;
+  } catch (error) {
+    logger.error("appBff.operation.failed", {
+      elapsedMs: Date.now() - startedAt,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorName: error instanceof Error ? error.name : null,
+      kind,
+      name,
+      ...inputSummary,
+    });
+    throw error;
+  }
+}
+
+function summarizeOperationInput(
+  name: QueryName | MutationName,
+  input: OperationInput | undefined,
+): Record<string, unknown> {
+  const inputKeys = Object.keys(input ?? {}).sort();
+
+  if (name === "connectBbAccount") {
+    return {
+      bbLoginName:
+        typeof input?.bbLoginName === "string" ? input.bbLoginName : null,
+      hasAccessKey:
+        typeof input?.accessKey === "string"
+          ? input.accessKey.trim().length > 0
+          : Boolean(input?.accessKey),
+      inputKeys,
+    };
+  }
+
+  return {
+    inputKeys,
+  };
+}
+
+function writeAppBffLog(
+  level: "INFO" | "ERROR",
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  const line = `[app-bff] ${JSON.stringify({
+    details,
+    event,
+    level,
+    loggedAt: new Date().toISOString(),
+  })}`;
+
+  if (level === "INFO") {
+    console.log(line);
+    return;
+  }
+
+  console.error(line);
 }

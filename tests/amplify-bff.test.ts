@@ -20,6 +20,32 @@ function installServerDataClient(
   });
 }
 
+function installLoggerSpies(t: TestContext) {
+  const infoCalls: Array<{ event: string; details: Record<string, unknown> }> =
+    [];
+  const errorCalls: Array<{ event: string; details: Record<string, unknown> }> =
+    [];
+  const originalInfo = bffTesting.logger.info;
+  const originalError = bffTesting.logger.error;
+
+  bffTesting.logger.info = (event, details) => {
+    infoCalls.push({ event, details });
+  };
+  bffTesting.logger.error = (event, details) => {
+    errorCalls.push({ event, details });
+  };
+
+  t.after(() => {
+    bffTesting.logger.info = originalInfo;
+    bffTesting.logger.error = originalError;
+  });
+
+  return {
+    errorCalls,
+    infoCalls,
+  };
+}
+
 test("clearMyTeamHighlightsData is routed through the mutation BFF", async (t) => {
   let calls = 0;
 
@@ -50,6 +76,113 @@ test("clearMyTeamHighlightsData is routed through the mutation BFF", async (t) =
     teamId: "163730",
     teamName: "Visionaries",
   });
+});
+
+test("connectBbAccount BFF logs redact the access key while preserving useful metadata", async (t) => {
+  const logs = installLoggerSpies(t);
+
+  installServerDataClient(t, {
+    mutations: {
+      connectBbAccount: async (value: Record<string, unknown>) => ({
+        data: {
+          bbLoginName: value.bbLoginName,
+          status: "CONNECTED",
+        },
+      }),
+    },
+  });
+
+  await runMutationOperation("connectBbAccount", {
+    accessKey: "super-secret",
+    bbLoginName: "apiech",
+  });
+
+  const startLog = logs.infoCalls[0];
+  const completedLog = logs.infoCalls[1];
+  assert.equal(logs.infoCalls.length, 2);
+  assert.equal(startLog.event, "appBff.operation.start");
+  assert.equal(completedLog.event, "appBff.operation.completed");
+  assert.equal(startLog.details.bbLoginName, "apiech");
+  assert.equal(startLog.details.hasAccessKey, true);
+  assert.deepStrictEqual(startLog.details.inputKeys, [
+    "accessKey",
+    "bbLoginName",
+  ]);
+  assert.equal("accessKey" in startLog.details, false);
+});
+
+test("connectBbAccount BFF failures log the operation name without leaking secrets", async (t) => {
+  const logs = installLoggerSpies(t);
+
+  installServerDataClient(t, {
+    mutations: {
+      connectBbAccount: async () => {
+        throw new Error("named reference exploded");
+      },
+    },
+  });
+
+  await assert.rejects(
+    runMutationOperation("connectBbAccount", {
+      accessKey: "super-secret",
+      bbLoginName: "apiech",
+    }),
+    /named reference exploded/,
+  );
+
+  const failedLog = logs.errorCalls[0];
+  assert.equal(logs.errorCalls.length, 1);
+  assert.equal(failedLog.event, "appBff.operation.failed");
+  assert.equal(failedLog.details.name, "connectBbAccount");
+  assert.equal(failedLog.details.kind, "mutation");
+  assert.equal(failedLog.details.bbLoginName, "apiech");
+  assert.equal(failedLog.details.hasAccessKey, true);
+  assert.equal("accessKey" in failedLog.details, false);
+});
+
+test("submitProductFeedback BFF logs only input keys and not freeform submission text", async (t) => {
+  const logs = installLoggerSpies(t);
+
+  installServerDataClient(t, {
+    mutations: {
+      submitProductFeedback: async () => ({
+        data: {
+          id: "feedback-1",
+          notified: true,
+          submittedAt: "2026-04-14T19:30:00.000Z",
+        },
+      }),
+    },
+  });
+
+  await runMutationOperation("submitProductFeedback", {
+    kind: "FEATURE_REQUEST",
+    message: "Please add a lineup import shortcut.",
+    subject: "Lineup imports",
+  });
+
+  const startLog = logs.infoCalls[0];
+  const completedLog = logs.infoCalls[1];
+
+  assert.equal(startLog.event, "appBff.operation.start");
+  assert.equal(completedLog.event, "appBff.operation.completed");
+  assert.deepStrictEqual(startLog.details.inputKeys, [
+    "kind",
+    "message",
+    "subject",
+  ]);
+  assert.equal("message" in startLog.details, false);
+  assert.equal("subject" in startLog.details, false);
+  assert.equal(
+    JSON.stringify(startLog.details).includes(
+      "Please add a lineup import shortcut.",
+    ),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(completedLog.details).includes("Lineup imports"),
+    false,
+  );
 });
 
 test("getLatestNextGameRecommendation is routed through the query BFF", async (t) => {

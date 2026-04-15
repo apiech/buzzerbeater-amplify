@@ -97,6 +97,13 @@ export const envContract = {
         templateValue: "+15555555555",
       },
       {
+        name: "FEEDBACK_ALERT_EMAILS",
+        purpose:
+          "Comma-separated email recipients for logged-in feedback and feature-request notifications.",
+        defaultValue: "unset",
+        templateValue: "you@example.com",
+      },
+      {
         name: "SYNC_RUN_RETENTION_DAYS",
         purpose: "Retention window for operational sync-run records.",
         defaultValue: "14",
@@ -260,6 +267,11 @@ export const envContract = {
       name: "RIVALS_BACKFILL_STATE_MACHINE_ARN",
       purpose:
         "Backend-injected Step Functions state machine ARN wired during synth for rivals backfill submit lambdas.",
+    },
+    {
+      name: "FEEDBACK_ALERTS_TOPIC_ARN",
+      purpose:
+        "Backend-injected SNS topic ARN wired during synth for product feedback alert publishing.",
     },
     {
       name: "BB_CONNECTION_ENCRYPTION_SECRET_PARAMETER_NAME",

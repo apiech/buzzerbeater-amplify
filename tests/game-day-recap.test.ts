@@ -3295,6 +3295,63 @@ test("buildGameDayRecapPromptPayload logs parse error details separately from fe
   });
 });
 
+test("game day recap info logging keeps only coarse milestones with compact coverage", () => {
+  assert.equal(
+    __testing.buildGameDayRecapInfoLogEntry("resolveSeasonForDate.evaluate", {
+      gameDate: "2026-03-15",
+      seasons: [{ id: 64 }],
+      userId: "user-1",
+    }),
+    null,
+  );
+
+  assert.deepStrictEqual(
+    __testing.buildGameDayRecapInfoLogEntry("process.completed", {
+      coverage: {
+        availableGames: 1,
+        missingGames: [{ matchId: "m-2" }],
+        partial: true,
+        requestedGames: 2,
+      },
+      finalStatus: "SUCCEEDED",
+      season: 64,
+      targetKey: "100#2026-03-15",
+      userId: "user-1",
+    }),
+    {
+      details: {
+        coverage: {
+          availableGames: 1,
+          missingGameCount: 1,
+          partial: true,
+          requestedGames: 2,
+        },
+        finalStatus: "SUCCEEDED",
+        season: 64,
+        targetKey: "100#2026-03-15",
+        userId: "user-1",
+      },
+      event: "process.completed",
+    },
+  );
+
+  assert.equal(
+    __testing.buildGameDayRecapInfoLogEntry("process.completed", {
+      coverage: {
+        availableGames: 1,
+        missingGames: [],
+        partial: false,
+        requestedGames: 1,
+      },
+      finalStatus: "SUCCEEDED",
+      season: 64,
+      targetKey: "100#2026-03-15",
+      userId: "user-1",
+    }),
+    null,
+  );
+});
+
 test("processGameDayRecap resolves the current open season before fetching seasons", async () => {
   const recapRecord = {
     gameDate: "2026-03-10",

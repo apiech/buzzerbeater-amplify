@@ -40,6 +40,10 @@ const refreshWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "refresh-workspace", "handler.ts"),
   "utf8",
 );
+const connectAccountHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "connect-bb-account", "handler.ts"),
+  "utf8",
+);
 const homeWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "get-home-workspace", "handler.ts"),
   "utf8",
@@ -831,6 +835,9 @@ test("scout schedule remains the only owner of heavy schedule hydration and timi
 });
 
 test("home/core handlers emit request lifecycle logs without reintroducing scout schedule work", () => {
+  assert.match(connectAccountHandlerSource, /connectBbAccount\.start/);
+  assert.match(connectAccountHandlerSource, /connectBbAccount\.completed/);
+  assert.match(connectAccountHandlerSource, /connectBbAccount\.failed/);
   assert.match(homeWorkspaceHandlerSource, /getHomeWorkspace\.start/);
   assert.match(homeWorkspaceHandlerSource, /getHomeWorkspace\.completed/);
   assert.match(homeWorkspaceHandlerSource, /getHomeWorkspace\.failed/);
@@ -839,9 +846,9 @@ test("home/core handlers emit request lifecycle logs without reintroducing scout
   assert.match(refreshWorkspaceHandlerSource, /refreshWorkspace\.failed/);
 });
 
-test("workspace request logging writes explicit CloudWatch-safe log lines", () => {
-  assert.match(workspaceLoggingSource, /process\.stdout\.write/);
-  assert.match(workspaceLoggingSource, /process\.stderr\.write/);
+test("workspace request logging writes explicit console-based structured log lines", () => {
+  assert.match(workspaceLoggingSource, /console\.log/);
+  assert.match(workspaceLoggingSource, /console\.error/);
   assert.match(workspaceLoggingSource, /JSON\.stringify/);
   assert.match(workspaceLoggingSource, /\[workspace\]/);
 });

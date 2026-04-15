@@ -10,17 +10,13 @@ import { partitionLegacyWorkspaceCacheCoercionErrors } from "./workspace-cache";
 import type { PredictionInputShape } from "../../../lib/prediction/normalization";
 import type { Schema } from "../resource";
 
-type StoredTeamInfo = NonNullable<Schema["BbConnection"]["type"]["profileJson"]>;
-type RepositoryModel<TRecord extends { createdAt: string; updatedAt: string }> = Omit<
-  TRecord,
-  "createdAt" | "updatedAt"
-> & {
-  createdAt?: string;
-  updatedAt?: string;
-};
-type WorkspaceCachePayload = NonNullable<
-  Schema["BbConnection"]["type"]["workspaceCacheJson"]
->;
+type StoredTeamInfo = Schema["StoredTeamInfo"]["type"];
+type RepositoryModel<TRecord extends { createdAt: string; updatedAt: string }> =
+  Omit<TRecord, "createdAt" | "updatedAt"> & {
+    createdAt?: string;
+    updatedAt?: string;
+  };
+type WorkspaceCachePayload = Schema["WorkspaceCachePayload"]["type"];
 type SharedPlayerCardPayload = NonNullable<
   Schema["SharedPlayerCard"]["type"]["payloadJson"]
 >;
@@ -63,7 +59,9 @@ type SingleGameSummaryStoredRequest = NonNullable<
 type GameDayRecapCoverage = NonNullable<
   Schema["GameDayRecap"]["type"]["coverageJson"]
 >;
-type GameDayRecapResult = NonNullable<Schema["GameDayRecap"]["type"]["resultJson"]>;
+type GameDayRecapResult = NonNullable<
+  Schema["GameDayRecap"]["type"]["resultJson"]
+>;
 type RivalsWorkspaceSummary = NonNullable<
   Schema["RivalsWorkspaceCache"]["type"]["summaryJson"]
 >;
@@ -205,6 +203,10 @@ export type UserPreferenceRecord = {
   updatedAt?: string;
 };
 
+export type FeedbackSubmissionRecord = RepositoryModel<
+  Schema["FeedbackSubmission"]["type"]
+>;
+
 export type BbCredentialRecord = {
   userId: string;
   cipherText: string;
@@ -230,11 +232,17 @@ export type TrackedTeamRecord = {
   fetchedAt?: string | null;
 };
 
-export type TrackedPlayerRecord = RepositoryModel<Schema["TrackedPlayer"]["type"]>;
+export type TrackedPlayerRecord = RepositoryModel<
+  Schema["TrackedPlayer"]["type"]
+>;
 
-export type TrackedMatchRecord = RepositoryModel<Schema["TrackedMatch"]["type"]>;
+export type TrackedMatchRecord = RepositoryModel<
+  Schema["TrackedMatch"]["type"]
+>;
 
-export type MatchBoxscoreRecord = RepositoryModel<Schema["MatchBoxscore"]["type"]>;
+export type MatchBoxscoreRecord = RepositoryModel<
+  Schema["MatchBoxscore"]["type"]
+>;
 export type ArenaPricingSnapshotRecord = RepositoryModel<
   Schema["ArenaPricingSnapshot"]["type"]
 >;
@@ -251,7 +259,9 @@ export type MatchBoxscoreCacheReadResult =
       errorMessage: string;
     };
 
-export type LeagueStandingRecord = RepositoryModel<Schema["LeagueStanding"]["type"]>;
+export type LeagueStandingRecord = RepositoryModel<
+  Schema["LeagueStanding"]["type"]
+>;
 
 export type SyncRunRecord = {
   id: string;
@@ -593,14 +603,56 @@ export type PagedRecords<TRecord> = {
   records: TRecord[];
 };
 
+type PreparedModelInput<TRecord> = {
+  payload: TRecord;
+  removedPaths: string[];
+  sanitizedFields: string[];
+  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
+};
+
+type NamedReferenceFieldDiagnostic = {
+  originalKeys: string[];
+  path: string;
+  removedKeys: string[];
+  sanitizedPreview: {
+    id: string | null;
+    name: string | null;
+  };
+};
+
+type NamedReferenceFieldViolation = {
+  extraKeys: string[];
+  keys: string[];
+  path: string;
+};
+
 const runtime = {
   getClient: getDataClient,
 };
 
 export const __testing = {
+  describeBbConnectionNamedReferenceViolations,
   prepareModelInput,
+  prepareModelInputWithDiagnostics,
   runtime,
 };
+
+const REPOSITORY_LOG_PREFIX = "[repository]";
+const NAMED_REFERENCE_INPUT_KEYS = new Set(["id", "name"]);
+const BB_CONNECTION_NAMED_REFERENCE_PATHS = [
+  "profileJson.country",
+  "profileJson.league",
+  "profileJson.rival",
+  "workspaceCacheJson.home.connection.profileJson.country",
+  "workspaceCacheJson.home.connection.profileJson.league",
+  "workspaceCacheJson.home.connection.profileJson.rival",
+  "workspaceCacheJson.home.league.league",
+  "workspaceCacheJson.leagueIntel.league",
+  "workspaceCacheJson.teamHub.team.country",
+  "workspaceCacheJson.teamHub.team.league",
+  "workspaceCacheJson.teamHub.team.rival",
+] as const;
+const UNSUPPORTED_CUSTOM_TYPE_KEYS = new Set(["attributes", "__typename"]);
 
 export async function getBbConnection(
   env: RepositoryEnv,
@@ -627,7 +679,9 @@ export async function getBbConnection(
 
   const errorsToReport =
     result.data && legacyErrors.length > 0 ? otherErrors : result.errors;
-  throw new Error(`load BB connection failed: ${formatClientErrors(errorsToReport)}`);
+  throw new Error(
+    `load BB connection failed: ${formatClientErrors(errorsToReport)}`,
+  );
 }
 
 export async function getBillingAccount(
@@ -711,23 +765,136 @@ export async function upsertUserPreference(
   await upsertModelRecord(env, "UserPreference", ["userId"], record);
 }
 
+export async function createFeedbackSubmission(
+  env: RepositoryEnv,
+  record: FeedbackSubmissionRecord,
+): Promise<FeedbackSubmissionRecord> {
+  const model = await getModel<FeedbackSubmissionRecord>(
+    env,
+    "FeedbackSubmission",
+  );
+  return assertPresent(
+    await assertSuccessful(
+      model.create(prepareModelInput("FeedbackSubmission", record)),
+      "create feedback submission",
+    ),
+    "create feedback submission",
+  );
+}
+
+export async function updateFeedbackSubmission(
+  env: RepositoryEnv,
+  input: Partial<FeedbackSubmissionRecord> &
+    Pick<FeedbackSubmissionRecord, "id">,
+): Promise<void> {
+  const model = await getModel<FeedbackSubmissionRecord>(
+    env,
+    "FeedbackSubmission",
+  );
+  await assertSuccessful(
+    model.update(prepareModelInput("FeedbackSubmission", input)),
+    "update feedback submission",
+  );
+}
+
 export async function upsertBbConnection(
   env: RepositoryEnv,
   record: BbConnectionRecord,
 ): Promise<void> {
+  console.log("[upsertBbConnection] A");
   const model = await getModel<BbConnectionRecord>(env, "BbConnection");
+  console.log("[upsertBbConnection] B");
   const currentRecord = await assertSuccessful(
     model.get({ userId: record.userId }),
     "load BbConnection record",
   );
-  const payload = prepareModelInput("BbConnection", record);
+  console.log("[upsertBbConnection] C");
+  const prepared = prepareModelInputWithDiagnostics("BbConnection", record);
+  console.log("prepared", prepared);
+  const mode = currentRecord ? "update" : "create";
+  console.log("[upsertBbConnection] D");
+  const namedReferenceViolations = describeBbConnectionNamedReferenceViolations(
+    prepared.payload,
+  );
+  console.log("[upsertBbConnection] E");
+  const payloadKeys = Object.keys(prepared.payload).sort();
+  console.log("[upsertBbConnection] F");
+  logRepositoryInfo("upsertBbConnection.prepare", {
+    hasProfileJson: prepared.payload.profileJson != null,
+    hasWorkspaceCacheJson: prepared.payload.workspaceCacheJson != null,
+    mode,
+    namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
+    namedReferenceDiagnostics: prepared.namedReferenceDiagnostics,
+    namedReferenceViolationCount: namedReferenceViolations.length,
+    namedReferenceViolations,
+    payloadKeys,
+    removedPaths: prepared.removedPaths,
+    sanitizedFields: prepared.sanitizedFields,
+    userId: record.userId,
+  });
 
-  if (currentRecord) {
-    await assertSuccessful(model.update(payload), "update BbConnection record");
-    return;
+  try {
+    console.log("[upsertBbConnection] F2");
+    logRepositoryInfo("upsertBbConnection.mutation", {
+      mode,
+      namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
+      namedReferenceDiagnostics: prepared.namedReferenceDiagnostics,
+      namedReferenceViolationCount: namedReferenceViolations.length,
+      namedReferenceViolations,
+      payloadKeys,
+      userId: record.userId,
+    });
+    console.log("[upsertBbConnection] G");
+    if (currentRecord) {
+      await assertSuccessful(
+        model.update(prepared.payload),
+        "update BbConnection record",
+      );
+      console.log("[upsertBbConnection] H");
+    } else {
+      await assertSuccessful(
+        model.create(prepared.payload),
+        "create BbConnection record",
+      );
+      console.log("[upsertBbConnection] I");
+    }
+  } catch (error) {
+    console.log("[upsertBbConnection] J");
+    const detailedError = annotateBbConnectionMutationError(
+      error,
+      prepared.namedReferenceDiagnostics,
+      namedReferenceViolations,
+    );
+    console.log("[upsertBbConnection] K");
+    logRepositoryError("upsertBbConnection.failed", {
+      hasProfileJson: prepared.payload.profileJson != null,
+      hasWorkspaceCacheJson: prepared.payload.workspaceCacheJson != null,
+      mode,
+      namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
+      namedReferenceDiagnostics: prepared.namedReferenceDiagnostics,
+      namedReferenceViolationCount: namedReferenceViolations.length,
+      namedReferenceViolations,
+      payloadKeys,
+      removedPaths: prepared.removedPaths,
+      sanitizedFields: prepared.sanitizedFields,
+      userId: record.userId,
+      ...toLoggableError(detailedError),
+    });
+    throw detailedError;
   }
 
-  await assertSuccessful(model.create(payload), "create BbConnection record");
+  console.log("[upsertBbConnection] L");
+  logRepositoryInfo("upsertBbConnection.completed", {
+    hasProfileJson: prepared.payload.profileJson != null,
+    hasWorkspaceCacheJson: prepared.payload.workspaceCacheJson != null,
+    mode,
+    namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
+    namedReferenceViolationCount: namedReferenceViolations.length,
+    payloadKeys,
+    removedPaths: prepared.removedPaths,
+    sanitizedFields: prepared.sanitizedFields,
+    userId: record.userId,
+  });
 }
 
 export async function getBbCredential(
@@ -848,7 +1015,10 @@ export async function upsertPredictionJob(
   const payload = omitUndefinedValues(input);
 
   if (currentRecord) {
-    await assertSuccessful(model.update(payload), "update PredictionJob record");
+    await assertSuccessful(
+      model.update(payload),
+      "update PredictionJob record",
+    );
     return;
   }
 
@@ -906,7 +1076,10 @@ async function upsertPredictionGridCell(
   env: RepositoryEnv,
   record: PredictionGridCellRecord,
 ): Promise<void> {
-  const model = await getModel<PredictionGridCellRecord>(env, "PredictionGridCell");
+  const model = await getModel<PredictionGridCellRecord>(
+    env,
+    "PredictionGridCell",
+  );
   const currentRecord = await assertSuccessful(
     model.get({
       awayDefense: record.awayDefense,
@@ -926,7 +1099,10 @@ async function upsertPredictionGridCell(
     return;
   }
 
-  await assertSuccessful(model.create(payload), "create PredictionGridCell record");
+  await assertSuccessful(
+    model.create(payload),
+    "create PredictionGridCell record",
+  );
 }
 
 export async function listPredictionGridCellsByUserAndRequestId(
@@ -940,17 +1116,17 @@ export async function listPredictionGridCellsByUserAndRequestId(
   do {
     const page: PagedRecords<PredictionGridCellRecord> =
       await queryModelIndexPage<PredictionGridCellRecord>(
-      env,
-      "PredictionGridCell",
-      "listPredictionGridCellsByUserIdAndRequestId",
-      { requestId: { eq: requestId }, userId },
-      {
-        limit: 100,
-        nextToken,
-        sortDirection: "ASC",
-      },
-      "list prediction grid cells",
-    );
+        env,
+        "PredictionGridCell",
+        "listPredictionGridCellsByUserIdAndRequestId",
+        { requestId: { eq: requestId }, userId },
+        {
+          limit: 100,
+          nextToken,
+          sortDirection: "ASC",
+        },
+        "list prediction grid cells",
+      );
     records.push(...page.records);
     nextToken = page.nextToken;
   } while (nextToken);
@@ -963,7 +1139,10 @@ export async function deletePredictionGridCellsByUserAndRequestId(
   userId: string,
   requestId: string,
 ): Promise<void> {
-  const model = await getModel<PredictionGridCellRecord>(env, "PredictionGridCell");
+  const model = await getModel<PredictionGridCellRecord>(
+    env,
+    "PredictionGridCell",
+  );
   const records = await listPredictionGridCellsByUserAndRequestId(
     env,
     userId,
@@ -1562,21 +1741,18 @@ export async function listTrackedTeamsForUser(
   do {
     const page: PagedRecords<TrackedTeamRecord> =
       await queryModelIndexPage<TrackedTeamRecord>(
-      env,
-      "TrackedTeam",
-      "listTrackedTeamsByUserIdAndTeamId",
-      { userId },
-      {
-        limit: 100,
-        nextToken,
-        sortDirection: "ASC",
-      },
-      "list tracked teams",
-    );
-    const decodedPageRecords = decodeAwsJsonList(
-      "TrackedTeam",
-      page.records,
-    );
+        env,
+        "TrackedTeam",
+        "listTrackedTeamsByUserIdAndTeamId",
+        { userId },
+        {
+          limit: 100,
+          nextToken,
+          sortDirection: "ASC",
+        },
+        "list tracked teams",
+      );
+    const decodedPageRecords = decodeAwsJsonList("TrackedTeam", page.records);
     records.push(...decodedPageRecords);
     nextToken = page.nextToken;
   } while (nextToken);
@@ -1715,9 +1891,7 @@ export async function listArenaPricingSnapshotsByUserId(
         },
         "list arena pricing snapshots",
       );
-    records.push(
-      ...decodeAwsJsonList("ArenaPricingSnapshot", page.records),
-    );
+    records.push(...decodeAwsJsonList("ArenaPricingSnapshot", page.records));
     nextToken = page.nextToken;
   } while (nextToken && records.length < limit);
 
@@ -1832,17 +2006,17 @@ export async function listRivalryMatchFactsByUserAndTeamId(
   do {
     const page: PagedRecords<RivalryMatchFactRecord> =
       await queryModelIndexPage<RivalryMatchFactRecord>(
-      env,
-      "RivalryMatchFact",
-      "listRivalryMatchFactsByUserIdAndTeamIdAndStartTime",
-      { teamId: { eq: teamId }, userId },
-      {
-        limit: 200,
-        nextToken,
-        sortDirection: "DESC",
-      },
-      "list rivalry match facts",
-    );
+        env,
+        "RivalryMatchFact",
+        "listRivalryMatchFactsByUserIdAndTeamIdAndStartTime",
+        { teamId: { eq: teamId }, userId },
+        {
+          limit: 200,
+          nextToken,
+          sortDirection: "DESC",
+        },
+        "list rivalry match facts",
+      );
     records.push(...page.records);
     nextToken = page.nextToken;
   } while (nextToken);
@@ -1989,15 +2163,33 @@ function prepareModelInput<TRecord extends Record<string, unknown>>(
   modelName: string,
   input: TRecord,
 ): TRecord {
-  return omitUndefinedValues(
-    encodeAwsJsonFields(modelName, sanitizeModelInput(modelName, input)),
-  );
+  return prepareModelInputWithDiagnostics(modelName, input).payload;
+}
+
+function prepareModelInputWithDiagnostics<
+  TRecord extends Record<string, unknown>,
+>(modelName: string, input: TRecord): PreparedModelInput<TRecord> {
+  const sanitized = sanitizeModelInput(modelName, input);
+
+  return {
+    payload: omitUndefinedValues(
+      encodeAwsJsonFields(modelName, sanitized.input),
+    ),
+    namedReferenceDiagnostics: sanitized.namedReferenceDiagnostics,
+    removedPaths: sanitized.removedPaths,
+    sanitizedFields: sanitized.sanitizedFields,
+  };
 }
 
 function sanitizeModelInput<TRecord extends Record<string, unknown>>(
   modelName: string,
   input: TRecord,
-): TRecord {
+): {
+  input: TRecord;
+  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
+  removedPaths: string[];
+  sanitizedFields: string[];
+} {
   if (modelName === "BbConnection") {
     return sanitizeBbConnectionInput(input);
   }
@@ -2008,32 +2200,77 @@ function sanitizeModelInput<TRecord extends Record<string, unknown>>(
     return sanitizeTrackedPlayerInput(input);
   }
 
-  return input;
+  return {
+    input,
+    namedReferenceDiagnostics: [],
+    removedPaths: [],
+    sanitizedFields: [],
+  };
 }
 
 function sanitizeBbConnectionInput<TRecord extends Record<string, unknown>>(
   input: TRecord,
-): TRecord {
-  return sanitizeNestedAttributes(input, ["profileJson", "workspaceCacheJson"]);
+): {
+  input: TRecord;
+  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
+  removedPaths: string[];
+  sanitizedFields: string[];
+} {
+  const sanitized = sanitizeNestedAttributes(input, [
+    "profileJson",
+    "workspaceCacheJson",
+  ]);
+
+  return sanitizeBbConnectionNamedReferencePaths(
+    sanitized.input,
+    sanitized.removedPaths,
+    sanitized.sanitizedFields,
+  );
 }
 
 function sanitizeTrackedTeamInput<TRecord extends Record<string, unknown>>(
   input: TRecord,
-): TRecord {
-  return sanitizeNestedAttributes(input, ["summaryJson"]);
+): {
+  input: TRecord;
+  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
+  removedPaths: string[];
+  sanitizedFields: string[];
+} {
+  const sanitized = sanitizeNestedAttributes(input, ["summaryJson"]);
+
+  return {
+    ...sanitized,
+    namedReferenceDiagnostics: [],
+  };
 }
 
 function sanitizeTrackedPlayerInput<TRecord extends Record<string, unknown>>(
   input: TRecord,
-): TRecord {
-  return sanitizeNestedAttributes(input, ["profileJson"]);
+): {
+  input: TRecord;
+  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
+  removedPaths: string[];
+  sanitizedFields: string[];
+} {
+  const sanitized = sanitizeNestedAttributes(input, ["profileJson"]);
+
+  return {
+    ...sanitized,
+    namedReferenceDiagnostics: [],
+  };
 }
 
 function sanitizeNestedAttributes<TRecord extends Record<string, unknown>>(
   input: TRecord,
   fieldNames: readonly string[],
-): TRecord {
+): {
+  input: TRecord;
+  removedPaths: string[];
+  sanitizedFields: string[];
+} {
   let updated: Record<string, unknown> | null = null;
+  const removedPaths: string[] = [];
+  const sanitizedFields: string[] = [];
 
   for (const fieldName of fieldNames) {
     if (!(fieldName in input)) {
@@ -2041,7 +2278,11 @@ function sanitizeNestedAttributes<TRecord extends Record<string, unknown>>(
     }
 
     const currentValue = input[fieldName];
-    const nextValue = stripAttributesDeep(currentValue);
+    const nextValue = stripAttributesDeep(
+      currentValue,
+      fieldName,
+      removedPaths,
+    );
 
     if (nextValue === currentValue) {
       continue;
@@ -2049,18 +2290,31 @@ function sanitizeNestedAttributes<TRecord extends Record<string, unknown>>(
 
     updated ??= { ...input };
     updated[fieldName] = nextValue;
+    sanitizedFields.push(fieldName);
   }
 
-  return (updated ?? input) as TRecord;
+  return {
+    input: (updated ?? input) as TRecord,
+    removedPaths,
+    sanitizedFields,
+  };
 }
 
-function stripAttributesDeep(value: unknown): unknown {
+function stripAttributesDeep(
+  value: unknown,
+  path: string,
+  removedPaths: string[],
+): unknown {
   if (Array.isArray(value)) {
     let updated: unknown[] | null = null;
 
     for (let index = 0; index < value.length; index += 1) {
       const entry = value[index];
-      const nextEntry = stripAttributesDeep(entry);
+      const nextEntry = stripAttributesDeep(
+        entry,
+        `${path}[${index}]`,
+        removedPaths,
+      );
       if (nextEntry === entry) {
         continue;
       }
@@ -2080,13 +2334,18 @@ function stripAttributesDeep(value: unknown): unknown {
   let updated: Record<string, unknown> | null = null;
 
   for (const [key, entry] of Object.entries(source)) {
-    if (key === "attributes") {
+    if (UNSUPPORTED_CUSTOM_TYPE_KEYS.has(key)) {
       updated ??= { ...source };
       delete updated[key];
+      removedPaths.push(`${path}.${key}`);
       continue;
     }
 
-    const nextEntry = stripAttributesDeep(entry);
+    const nextEntry = stripAttributesDeep(
+      entry,
+      `${path}.${key}`,
+      removedPaths,
+    );
     if (nextEntry === entry) {
       continue;
     }
@@ -2096,6 +2355,264 @@ function stripAttributesDeep(value: unknown): unknown {
   }
 
   return updated ?? value;
+}
+
+function describeBbConnectionNamedReferenceViolations(
+  payload: Record<string, unknown>,
+): NamedReferenceFieldViolation[] {
+  const violations: NamedReferenceFieldViolation[] = [];
+
+  for (const path of BB_CONNECTION_NAMED_REFERENCE_PATHS) {
+    const value = readNestedValue(payload, path);
+    if (!isRecord(value)) {
+      continue;
+    }
+
+    const keys = Object.keys(value).sort();
+    const extraKeys = keys.filter((key) => !NAMED_REFERENCE_INPUT_KEYS.has(key));
+    if (!extraKeys.length) {
+      continue;
+    }
+
+    violations.push({
+      extraKeys,
+      keys,
+      path,
+    });
+  }
+
+  return violations;
+}
+
+function annotateBbConnectionMutationError(
+  error: unknown,
+  diagnostics: readonly NamedReferenceFieldDiagnostic[],
+  violations: readonly NamedReferenceFieldViolation[],
+): Error {
+  const baseError =
+    error instanceof Error ? error : new Error(String(error ?? "Unknown error"));
+  if (
+    !baseError.message.includes("NamedReferenceInput") ||
+    (diagnostics.length === 0 && violations.length === 0)
+  ) {
+    return baseError;
+  }
+
+  const detailParts: string[] = [];
+  if (diagnostics.length > 0) {
+    detailParts.push(
+      diagnostics
+        .map(
+          ({ originalKeys, path, removedKeys, sanitizedPreview }) =>
+            `${path} removed unsupported key(s) [${removedKeys.join(", ")}] (keys: ${originalKeys.join(", ")}, sanitized preview: ${JSON.stringify(sanitizedPreview)})`,
+        )
+        .join("; "),
+    );
+  }
+  if (violations.length > 0) {
+    detailParts.push(
+      violations
+        .map(
+          ({ extraKeys, keys, path }) =>
+            `${path} still has unsupported key(s) [${extraKeys.join(", ")}] (keys: ${keys.join(", ")})`,
+        )
+        .join("; "),
+    );
+  }
+  const details = detailParts.join("; ");
+  if (!details || baseError.message.includes(details)) {
+    return baseError;
+  }
+
+  const annotated = new Error(`${baseError.message} Likely paths: ${details}`);
+  if (baseError.stack) {
+    annotated.stack = `${annotated.name}: ${annotated.message}\n${baseError.stack
+      .split("\n")
+      .slice(1)
+      .join("\n")}`;
+  }
+  return annotated;
+}
+
+function sanitizeBbConnectionNamedReferencePaths<
+  TRecord extends Record<string, unknown>,
+>(
+  input: TRecord,
+  removedPaths: readonly string[],
+  sanitizedFields: readonly string[],
+): {
+  input: TRecord;
+  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
+  removedPaths: string[];
+  sanitizedFields: string[];
+} {
+  let updated: Record<string, unknown> | null = null;
+  const nextRemovedPaths = [...removedPaths];
+  const nextSanitizedFields = [...sanitizedFields];
+  const namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[] = [];
+
+  for (const path of BB_CONNECTION_NAMED_REFERENCE_PATHS) {
+    const currentValue = readNestedValue(updated ?? input, path);
+    if (!isRecord(currentValue)) {
+      continue;
+    }
+
+    const originalKeys = Object.keys(currentValue).sort();
+    const removedKeys = originalKeys.filter(
+      (key) => !NAMED_REFERENCE_INPUT_KEYS.has(key),
+    );
+    if (!removedKeys.length) {
+      continue;
+    }
+
+    namedReferenceDiagnostics.push({
+      originalKeys,
+      path,
+      removedKeys,
+      sanitizedPreview: buildNamedReferencePreview(currentValue),
+    });
+
+    for (const key of removedKeys) {
+      nextRemovedPaths.push(`${path}.${key}`);
+    }
+    pushUnique(nextSanitizedFields, path.split(".")[0] ?? path);
+    updated = replaceNestedValue(
+      updated ?? input,
+      path,
+      buildNamedReferencePreview(currentValue),
+    );
+  }
+
+  return {
+    input: (updated ?? input) as TRecord,
+    namedReferenceDiagnostics,
+    removedPaths: nextRemovedPaths,
+    sanitizedFields: nextSanitizedFields,
+  };
+}
+
+function buildNamedReferencePreview(value: Record<string, unknown>): {
+  id: string | null;
+  name: string | null;
+} {
+  return {
+    id: typeof value.id === "string" ? value.id : null,
+    name: typeof value.name === "string" ? value.name : null,
+  };
+}
+
+function replaceNestedValue<TValue>(
+  value: TValue,
+  path: string,
+  replacement: unknown,
+): TValue {
+  return replaceNestedValueAtSegments(
+    value,
+    path.split("."),
+    replacement,
+  ) as TValue;
+}
+
+function replaceNestedValueAtSegments(
+  value: unknown,
+  segments: readonly string[],
+  replacement: unknown,
+): unknown {
+  if (segments.length === 0) {
+    return replacement;
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+
+  const [segment, ...rest] = segments;
+  if (segment === undefined) {
+    return value;
+  }
+  const currentValue = value[segment];
+  const nextValue =
+    rest.length === 0
+      ? replacement
+      : replaceNestedValueAtSegments(currentValue, rest, replacement);
+  if (nextValue === currentValue) {
+    return value;
+  }
+
+  return {
+    ...value,
+    [segment]: nextValue,
+  };
+}
+
+function pushUnique(values: string[], value: string): void {
+  if (!values.includes(value)) {
+    values.push(value);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readNestedValue(value: unknown, path: string): unknown {
+  let current = value;
+
+  for (const segment of path.split(".")) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+
+  return current;
+}
+
+function logRepositoryInfo(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  writeRepositoryLog("INFO", event, details);
+}
+
+function logRepositoryError(
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  writeRepositoryLog("ERROR", event, details);
+}
+
+function writeRepositoryLog(
+  level: "INFO" | "ERROR",
+  event: string,
+  details: Record<string, unknown>,
+): void {
+  const line = `${REPOSITORY_LOG_PREFIX} ${JSON.stringify({
+    details,
+    event,
+    level,
+    loggedAt: new Date().toISOString(),
+  })}`;
+
+  if (level === "INFO") {
+    console.log(line);
+    return;
+  }
+
+  console.error(line);
+}
+
+function toLoggableError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return {
+      error: String(error),
+    };
+  }
+
+  return {
+    errorMessage: error.message,
+    errorName: error.name,
+    ...(error.stack ? { errorStack: error.stack } : {}),
+  };
 }
 
 async function getModelRecord<TRecord>(
@@ -2183,7 +2700,9 @@ async function assertSuccessful<TData>(
   throw new Error(`${context} failed: ${formatClientErrors(result.errors)}`);
 }
 
-function formatClientErrors(errors: ReadonlyArray<ClientError> | null | undefined): string {
+function formatClientErrors(
+  errors: ReadonlyArray<ClientError> | null | undefined,
+): string {
   return (errors ?? [])
     .map((error) => error.message ?? "Unknown Amplify data client error")
     .join("; ");

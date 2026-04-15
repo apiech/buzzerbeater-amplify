@@ -63,8 +63,8 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    npm run sandbox
    ```
 
-   `npm run sandbox` is the primary local workflow. It runs `npm run verify:deploy`
-   before any mutating deploy steps, loads
+   `npm run sandbox` is the primary local workflow. It runs
+   `npm run verify:deploy:sandbox` before any mutating deploy steps, loads
    `/Users/karey/projects/bb/.env.deploy.local`, syncs the Amplify sandbox
    encryption secret when needed, deploys ML Data Infra, ensures predictor
    readiness, and then starts the existing Amplify sandbox wrapper. By default,
@@ -90,11 +90,16 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    npm run verify:deploy
    ```
 
+   `npm run verify:deploy` remains the strict full verification gate for manual
+   and CI-style checks. Use `npm run verify:deploy:sandbox` when you need the
+   sandbox-bootstrap-safe version of that gate locally.
+
 ## Backend Requirements
 
 This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/karey/projects/bb/bb-amplify/amplify).
 
 <!-- ENV-CONTRACT:START -->
+
 ### Required Plain Env
 
 - `APP_BASE_URL`
@@ -138,6 +143,9 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - Default or recommended value: `unset`.
 - `COST_ALERT_SMS_NUMBERS`
   - Comma-separated SMS recipients for cost guardrail notifications.
+  - Default or recommended value: `unset`.
+- `FEEDBACK_ALERT_EMAILS`
+  - Comma-separated email recipients for logged-in feedback and feature-request notifications.
   - Default or recommended value: `unset`.
 - `SYNC_RUN_RETENTION_DAYS`
   - Retention window for operational sync-run records.

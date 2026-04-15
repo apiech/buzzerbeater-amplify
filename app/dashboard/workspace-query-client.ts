@@ -51,6 +51,8 @@ import type {
   SubmitNextGameRecommendationJobResult,
   SubmitOpponentForecastJobResult,
   SubmitPredictionJobResult,
+  SubmitProductFeedbackInput,
+  SubmitProductFeedbackResult,
   SubmitRivalsBackfillResult,
   SubmitSingleGameSummaryResult,
   TeamHighlightsPayload,
@@ -2609,6 +2611,23 @@ export async function setBbLeagueTimeZoneMutation(input: {
     connectionResultSchema,
     "Unable to update the league time zone.",
   ) as SetBbLeagueTimeZoneResult;
+}
+
+export async function submitProductFeedbackMutation(
+  input: SubmitProductFeedbackInput,
+): Promise<SubmitProductFeedbackResult> {
+  const response = await client.mutations.submitProductFeedback(input);
+  return readAmplifyDataOrThrow(
+    response,
+    z
+      .object({
+        id: z.string(),
+        notified: z.boolean(),
+        submittedAt: z.string(),
+      })
+      .passthrough(),
+    "Unable to send your feedback.",
+  ) as SubmitProductFeedbackResult;
 }
 
 export async function submitOpponentForecastJobMutation(input: {

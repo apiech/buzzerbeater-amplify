@@ -24,6 +24,8 @@ export type BillingSessionResult = NonNullable<
 >;
 export type BbConnectionRecord = Schema["BbConnection"]["type"];
 export type ConnectionStatus = BbConnectionRecord["status"];
+export type FeedbackSubmissionRecord = Schema["FeedbackSubmission"]["type"];
+export type FeedbackSubmissionKind = FeedbackSubmissionRecord["kind"];
 export type GameDayRecapRecord = Schema["GameDayRecap"]["type"];
 export type GameDayRecapStatus = GameDayRecapRecord["status"];
 export type LeagueGameDayRecapRecord = Schema["LeagueGameDayRecap"]["type"];
@@ -53,6 +55,44 @@ export type RecapHistoryKind =
   | "LEAGUE_GAME_DAY"
   | "SINGLE_GAME";
 
+export type GameDayRecapCoveragePayload = NonNullable<
+  GameDayRecapRecord["coverageJson"]
+>;
+export type GameDayRecapResultPayload = NonNullable<
+  GameDayRecapRecord["resultJson"]
+>;
+export type ConnectBbAccountInput = NonNullable<
+  Schema["connectBbAccount"]["args"]
+>;
+export type PositionCode = "PG" | "SG" | "SF" | "PF" | "C";
+export type LineupHelperAlgorithm = "EXACT" | "LEGACY_HEURISTIC";
+export type LineupHelperContextRecord = Schema["LineupHelperContext"]["type"];
+export type LineupHelperAssignmentRecord =
+  Schema["LineupHelperAssignment"]["type"];
+export type LineupHelperRankingEntry =
+  Schema["LineupHelperRankingEntry"]["type"];
+export type LineupHelperSkillRatings =
+  Schema["LineupHelperRosterSkills"]["type"];
+export type LineupHelperRosterPlayer =
+  Schema["LineupHelperRosterPlayer"]["type"];
+export type PredictionInput = Schema["PredictionManualInput"]["type"];
+export type PredictionForecastContext =
+  Schema["PredictionForecastContext"]["type"];
+export type PredictionSubmissionRequest =
+  Schema["PredictionSubmissionRequestInput"]["type"];
+export type DecodedLineupHelperContext = {
+  offense: string;
+  defense: string;
+  enthusiasm: number;
+  homeCourt: string;
+  defensiveSwitch: Record<PositionCode, PositionCode>;
+};
+export type DecodedLineupHelperAssignment = {
+  playerId: string;
+  position: PositionCode;
+  minutes: number;
+};
+
 type RecapHistoryBase = {
   completedAt: string | null;
   error: string | null;
@@ -67,33 +107,6 @@ type RecapHistoryBase = {
   status: string | null;
   targetKey: string;
   updatedAt: string;
-};
-
-export type GameDayRecapCoveragePayload = {
-  availableGames: number;
-  missingGames: Array<{
-    awayTeamName: string;
-    homeTeamName: string;
-    matchId: string;
-    reason: string;
-  }>;
-  partial: boolean;
-  requestedGames: number;
-};
-export type GameDayRecapResultPayload = {
-  games: Array<{
-    evidenceTags: string[];
-    headline: string;
-    matchId: string;
-    surpriseFactor?: number | null;
-    writeup: string;
-  }>;
-  summary: {
-    gameOfTheDayMatchId?: string | null;
-    gameOfTheDaySurpriseFactor?: number | null;
-    headline: string;
-    lede: string;
-  };
 };
 export type LeagueDateRecapHistoryRecord = RecapHistoryBase & {
   kind: "LEAGUE_DATE";
@@ -125,13 +138,14 @@ export type RecapHistoryRecord =
   | LeagueGameDayRecapHistoryRecord
   | SingleGameRecapHistoryRecord;
 
-export type ConnectBbAccountInput = {
-  bbLoginName: string;
-  accessKey: string;
-};
-
 export type ConnectBbAccountResult = NonNullable<
   Schema["connectBbAccount"]["returnType"]
+>;
+export type SubmitProductFeedbackInput = NonNullable<
+  Schema["submitProductFeedback"]["args"]
+>;
+export type SubmitProductFeedbackResult = NonNullable<
+  Schema["submitProductFeedback"]["returnType"]
 >;
 
 export type DisconnectBbAccountResult = NonNullable<
@@ -258,66 +272,9 @@ export type TrendCountEntry = NonNullable<
 export type TendenciesSummary = NonNullable<
   NonNullable<HomeWorkspacePayload["nextOpponent"]>["tendencies"]
 >;
-
-export type PositionCode = "PG" | "SG" | "SF" | "PF" | "C";
-export type LineupHelperAlgorithm = "EXACT" | "LEGACY_HEURISTIC";
-
-export type LineupHelperContext = {
-  offense: string;
-  defense: string;
-  enthusiasm: number;
-  homeCourt: string;
-  defensiveSwitch: Record<PositionCode, PositionCode>;
-};
-
-export type LineupHelperAssignment = {
-  playerId: string;
-  position: PositionCode;
-  minutes: number;
-};
-
-export type LineupHelperRankingEntry = {
-  playerId: string;
-  name: string;
-  output: number;
-};
-
-export type LineupHelperSkillRatings = {
-  js: number;
-  jr: number;
-  od: number;
-  ha: number;
-  dr: number;
-  pa: number;
-  is: number;
-  id: number;
-  rb: number;
-  sb: number;
-  st: number;
-  ft: number;
-  ex: number;
-  gs: number;
-};
-
-export type LineupHelperRosterPlayer = {
-  playerId: string;
-  fullName: string;
-  bestPosition: string | null;
-  salary: number | null;
-  age: number | null;
-  gameShape: string | null;
-  dmi: number | null;
-  injuryWeeks: number | null;
-  snapshotWeekKey: string | null;
-  snapshotCapturedAt: string | null;
-  available: boolean;
-  snapshotWarning: string | null;
-  skills: LineupHelperSkillRatings;
-};
-
-export type LineupHelperEvaluation = {
-  context: LineupHelperContext;
-  normalizedLineup: LineupHelperAssignment[];
+export type DecodedLineupHelperEvaluation = {
+  context: DecodedLineupHelperContext;
+  normalizedLineup: DecodedLineupHelperAssignment[];
   rawRatings: Record<string, number>;
   roundedRatings: Record<string, number>;
   ratingLabels: Record<string, string>;
@@ -333,9 +290,9 @@ export type DecodedLineupHelperWorkspace = {
   generatedAt: string;
   syncedAt: string | null;
   roster: LineupHelperRosterPlayer[];
-  defaultContext: LineupHelperContext;
-  defaultAssignments: LineupHelperAssignment[];
-  evaluation: LineupHelperEvaluation | null;
+  defaultContext: DecodedLineupHelperContext;
+  defaultAssignments: DecodedLineupHelperAssignment[];
+  evaluation: DecodedLineupHelperEvaluation | null;
   snapshotWarnings: Array<{
     playerId: string;
     fullName: string;
@@ -518,39 +475,6 @@ export type RivalsPanelContext = {
   team: Pick<HomeWorkspacePayload["team"], "teamId" | "teamName">;
 };
 
-export type PredictionInput = {
-  home_outsideScoring: number;
-  home_insideScoring: number;
-  home_outsideDefense: number;
-  home_insideDefense: number;
-  home_rebounding: number;
-  home_offensiveFlow: number;
-  away_outsideScoring: number;
-  away_insideScoring: number;
-  away_outsideDefense: number;
-  away_insideDefense: number;
-  away_rebounding: number;
-  away_offensiveFlow: number;
-  home_gdp_focus: string;
-  home_gdp_pace: string;
-  away_gdp_focus: string;
-  away_gdp_pace: string;
-  neutral: string;
-  effortDelta: number;
-};
-
-export type PredictionForecastContext = {
-  forecastJobId: string;
-  forecastModelVersion: string;
-  forecastGeneratedAt: string;
-  scenarioId: string;
-  scenarioLabel: string;
-  scenarioProbability: number;
-  enthusiasmBand?: string | null;
-  evidence: string[];
-  sourceTeamId: string;
-};
-
 export type PredictionSourceSelection = {
   homeSourceMatchId: string;
   awaySourceMatchId: string;
@@ -558,12 +482,6 @@ export type PredictionSourceSelection = {
 
 export type PredictionForecastAppliedValues = {
   effortDelta: number;
-};
-
-export type PredictionSubmissionRequest = {
-  input: PredictionInput;
-  forecastContext?: PredictionForecastContext;
-  modelKey?: string | null;
 };
 
 export type PredictionForecastPrefill = {

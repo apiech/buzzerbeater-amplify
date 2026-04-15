@@ -4,6 +4,7 @@ import type { AnalyticsPageCategory } from "@/lib/analytics/config";
 
 export type AnalyticsAuthFlow = "sign_in" | "sign_up";
 export type AnalyticsBillingOfferType = "lifetime" | "subscription";
+export type AnalyticsFeedbackSubmissionKind = "FEEDBACK" | "FEATURE_REQUEST";
 export type AnalyticsHighlightsPerspective = "against" | "both" | "for";
 export type AnalyticsNavigationSurface = "desktop_sidebar" | "mobile_drawer";
 export type AnalyticsThemeSource = "theme_select";
@@ -65,6 +66,9 @@ export type AnalyticsEventMap = {
   billing_portal_opened: {
     source: "account_panel" | "store";
   };
+  feedback_shortcut_clicked: {
+    source: "workspace_account_actions";
+  };
   highlights_clear_failed: {
     source: "highlights_panel";
   };
@@ -99,6 +103,15 @@ export type AnalyticsEventMap = {
   };
   operations_refresh_requested: {
     source: "operations_panel";
+  };
+  product_feedback_submission_failed: {
+    kind: AnalyticsFeedbackSubmissionKind;
+    source: "account_panel";
+  };
+  product_feedback_submitted: {
+    kind: AnalyticsFeedbackSubmissionKind;
+    notified: boolean;
+    source: "account_panel";
   };
   prediction_completed: {
     has_forecast_context: boolean;

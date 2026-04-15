@@ -12,16 +12,15 @@ import {
   repairOwnerRosterDataMutation,
   refreshLineupHelperAfterOwnerRosterRepair,
   fetchScoutTeamSummaryQuery,
+  submitProductFeedbackMutation,
   fetchTeamHighlightsQuery,
   workspaceQueryKeys,
 } from "../app/dashboard/workspace-query-client";
 
-function installQueryMock<
-  TName extends keyof typeof client.queries,
->(
+function installQueryMock<TName extends keyof typeof client.queries>(
   t: TestContext,
   name: TName,
-  handler: typeof client.queries[TName],
+  handler: (typeof client.queries)[TName],
 ) {
   const original = client.queries[name];
   client.queries[name] = handler;
@@ -30,12 +29,10 @@ function installQueryMock<
   });
 }
 
-function installMutationMock<
-  TName extends keyof typeof client.mutations,
->(
+function installMutationMock<TName extends keyof typeof client.mutations>(
   t: TestContext,
   name: TName,
-  handler: typeof client.mutations[TName],
+  handler: (typeof client.mutations)[TName],
 ) {
   const original = client.mutations[name];
   client.mutations[name] = handler;
@@ -44,12 +41,10 @@ function installMutationMock<
   });
 }
 
-function installReadMock<
-  TName extends keyof typeof client.reads,
->(
+function installReadMock<TName extends keyof typeof client.reads>(
   t: TestContext,
   name: TName,
-  handler: typeof client.reads[TName],
+  handler: (typeof client.reads)[TName],
 ) {
   const original = client.reads[name];
   client.reads[name] = handler;
@@ -220,6 +215,29 @@ test("team highlights parsing accepts string periods from the generated API cont
   assert.equal(payload?.items[0]?.period, "Q4");
 });
 
+test("product feedback mutation parses the submit result and preserves notification state", async (t) => {
+  installMutationMock(t, "submitProductFeedback", async () => ({
+    data: {
+      id: "feedback-1",
+      notified: false,
+      submittedAt: "2026-04-14T20:14:00.000Z",
+    },
+    errors: null,
+  }));
+
+  const result = await submitProductFeedbackMutation({
+    kind: "FEATURE_REQUEST",
+    message: "Please add a feedback shortcut.",
+    subject: "Feedback shortcut",
+  });
+
+  assert.deepStrictEqual(result, {
+    id: "feedback-1",
+    notified: false,
+    submittedAt: "2026-04-14T20:14:00.000Z",
+  });
+});
+
 test("salary calculator seed parsing accepts synced skill values above 20", async (t) => {
   installQueryMock(t, "getSalaryCalculatorSeed", async () => ({
     data: {
@@ -343,7 +361,8 @@ test("owner roster repair refresh only replaces the lineup-helper cache", async 
     team: { teamName: "Visionaries" },
   });
 
-  const refreshed = await refreshLineupHelperAfterOwnerRosterRepair(queryClient);
+  const refreshed =
+    await refreshLineupHelperAfterOwnerRosterRepair(queryClient);
 
   assert.equal(
     queryClient.getQueryData(workspaceQueryKeys.lineupHelper),

@@ -93,6 +93,10 @@ function countMatches(source: string, pattern: RegExp): number {
   return [...source.matchAll(pattern)].length;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test("lambda data access uses the Amplify runtime client", () => {
   const clientSource = readFileSync(
     join(repoRoot, "amplify", "data", "_backend", "data-client.ts"),
@@ -246,6 +250,27 @@ test("server BFF dispatch avoids generated client meta-types", () => {
   assert.doesNotMatch(bffSource, /DeepReadOnlyObject/);
 });
 
+test("structured Next and repository loggers use console logging instead of raw process streams", () => {
+  const bffSource = readFileSync(
+    join(repoRoot, "app", "server", "amplify-bff.ts"),
+    "utf8",
+  );
+  const operationRouteSource = readFileSync(
+    join(repoRoot, "app", "api", "app", "operation-route.ts"),
+    "utf8",
+  );
+  const repositorySource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "repository.ts"),
+    "utf8",
+  );
+
+  for (const source of [bffSource, operationRouteSource, repositorySource]) {
+    assert.match(source, /console\.log/);
+    assert.match(source, /console\.error/);
+    assert.doesNotMatch(source, /process\.(stdout|stderr)\.write/);
+  }
+});
+
 test("production source avoids wrapper-derived meta-types", () => {
   const bannedPatterns = [
     /Awaited<ReturnType<typeof /,
@@ -258,6 +283,65 @@ test("production source avoids wrapper-derived meta-types", () => {
     const source = readFileSync(sourceFile, "utf8");
     for (const pattern of bannedPatterns) {
       assert.doesNotMatch(source, pattern, relative(repoRoot, sourceFile));
+    }
+  }
+});
+
+test("production source does not hand-write Amplify contract object types that already exist in Schema", () => {
+  const contractNames = [
+    "BillingPaymentsPage",
+    "BillingSummary",
+    "ConnectBbAccountInput",
+    "GameDayRecapCoveragePayload",
+    "GameDayRecapResultPayload",
+    "LineupHelperAssignment",
+    "LineupHelperContext",
+    "LineupHelperRankingEntry",
+    "LineupHelperRosterPlayer",
+    "LineupHelperSkillRatings",
+    "PredictionForecastContext",
+    "PredictionInput",
+    "PredictionSubmissionRequest",
+    "TeamInfoSummary",
+  ];
+  const resourceSource = join(repoRoot, "amplify", "data", "resource.ts");
+
+  for (const sourceFile of listProductionSourceFiles()) {
+    if (sourceFile === resourceSource) {
+      continue;
+    }
+
+    const source = readFileSync(sourceFile, "utf8");
+    const relativePath = relative(repoRoot, sourceFile);
+
+    for (const contractName of contractNames) {
+      const pattern = new RegExp(
+        String.raw`(?:^|\n)\s*(?:export\s+)?(?:type|interface)\s+${escapeRegex(contractName)}\s*(?:=\s*\{|\{)`,
+      );
+      assert.doesNotMatch(source, pattern, `${relativePath} redefines ${contractName}.`);
+    }
+  }
+});
+
+test("production source avoids casting cached data into schema-backed workspace contract types", () => {
+  const contractNames = [
+    "ArenaWorkspaceResult",
+    "HomeWorkspaceResult",
+    "LeagueIntelWorkspaceResult",
+    "PlayerLabWorkspaceResult",
+    "ScoutWorkspaceResult",
+    "TeamHubWorkspaceResult",
+  ];
+
+  for (const sourceFile of listProductionSourceFiles()) {
+    const source = readFileSync(sourceFile, "utf8");
+    const relativePath = relative(repoRoot, sourceFile);
+
+    for (const contractName of contractNames) {
+      const pattern = new RegExp(
+        String.raw`as unknown as\s+${escapeRegex(contractName)}\b`,
+      );
+      assert.doesNotMatch(source, pattern, `${relativePath} casts into ${contractName}.`);
     }
   }
 });
@@ -296,6 +380,11 @@ test("deploy verification uses a cold app typecheck", () => {
   assert.match(
     packageJson.scripts?.["typecheck:app"] ?? "",
     /--incremental false/,
+  );
+  assert.match(packageJson.scripts?.["verify:deploy"] ?? "", /typecheck:amplify/);
+  assert.match(
+    packageJson.scripts?.["verify:deploy:sandbox"] ?? "",
+    /typecheck:amplify:sandbox/,
   );
 });
 

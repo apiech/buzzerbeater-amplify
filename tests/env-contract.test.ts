@@ -13,3 +13,7 @@ test("env-template stays synchronized with the env contract renderer", () => {
   const source = readFileSync(join(repoRoot, "env-template"), "utf8");
   assert.equal(source, renderEnvTemplate());
 });
+
+test("feedback alert recipients stay documented in the generated env template", () => {
+  assert.match(renderEnvTemplate(), /FEEDBACK_ALERT_EMAILS/);
+});

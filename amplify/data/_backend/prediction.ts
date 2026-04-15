@@ -32,6 +32,7 @@ import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
 } from "./maintenance";
+import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -42,22 +43,12 @@ type Identity = {
 
 type JsonRecord = Record<string, unknown>;
 
-type PredictionForecastContext = {
-  enthusiasmBand?: string | null;
-  evidence: string[];
-  forecastGeneratedAt: string;
-  forecastJobId: string;
-  forecastModelVersion: string;
-  scenarioId: string;
-  scenarioLabel: string;
-  scenarioProbability: number;
-  sourceTeamId: string;
-};
-
-type PredictionSubmissionRequest = {
-  forecastContext?: PredictionForecastContext;
+type PredictionForecastContext = Schema["PredictionForecastContext"]["type"];
+type PredictionSubmissionRequest = Omit<
+  Schema["PredictionSubmissionRequestInput"]["type"],
+  "input"
+> & {
   input: PredictionInputShape;
-  modelKey?: string | null;
 };
 
 type SubmitPredictionDependencies = {
@@ -170,7 +161,7 @@ export async function submitPredictionJob(
 
   await runtimeDependencies.upsertPredictionJob(args.env, {
     ...normalizedRequest.input,
-    ...toForecastMetadata(normalizedRequest.forecastContext),
+    ...toForecastMetadata(normalizedRequest.forecastContext ?? undefined),
     userId,
     requestId,
     status: "QUEUED",

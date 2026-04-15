@@ -63,6 +63,7 @@ import {
 } from "./maintenance";
 import { classifyCompetition } from "./match-importance";
 import type { PlanId } from "../../../lib/billing/plans";
+import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -95,35 +96,13 @@ type TeamSeasonContext = {
 
 type TeamSeasonContextPromptField = string | null;
 
-type CoverageIssue = {
-  awayTeamName: string;
-  homeTeamName: string;
-  matchId: string;
-  reason: string;
-};
-
-export type GameDayRecapCoveragePayload = {
-  availableGames: number;
-  missingGames: CoverageIssue[];
-  partial: boolean;
-  requestedGames: number;
-};
-
-export type GameDayRecapResultPayload = {
-  games: Array<{
-    evidenceTags: GameDayRecapEvidenceTag[];
-    headline: string;
-    matchId: string;
-    surpriseFactor: number | null;
-    writeup: string;
-  }>;
-  summary: {
-    gameOfTheDayMatchId: string | null;
-    gameOfTheDaySurpriseFactor: number | null;
-    headline: string;
-    lede: string;
-  };
-};
+export type GameDayRecapCoveragePayload = NonNullable<
+  Schema["GameDayRecap"]["type"]["coverageJson"]
+>;
+export type GameDayRecapResultPayload = NonNullable<
+  Schema["GameDayRecap"]["type"]["resultJson"]
+>;
+type CoverageIssue = GameDayRecapCoveragePayload["missingGames"][number];
 
 type GameDayRecapResultGame = GameDayRecapResultPayload["games"][number];
 type GameDayRecapResultSummary = GameDayRecapResultPayload["summary"];
@@ -513,6 +492,12 @@ const GAME_DAY_RECAP_RESULT_SCHEMA = {
   type: "object",
 } as const;
 const GAME_DAY_RECAP_LOG_PREFIX = "[game-day-recap]";
+const GAME_DAY_RECAP_INFO_EVENTS = new Set([
+  "submit.skipped_active_job",
+  "submit.execution.start",
+  "submit.execution.succeeded",
+  "process.completed",
+]);
 
 type GameDayRecapEvidenceTag = (typeof GAME_DAY_RECAP_EVIDENCE_TAGS)[number];
 
@@ -3701,7 +3686,12 @@ function logGameDayRecapInfo(
   event: string,
   details: Record<string, unknown>,
 ): void {
-  console.info(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
+  const entry = buildGameDayRecapInfoLogEntry(event, details);
+  if (!entry) {
+    return;
+  }
+
+  console.info(`${GAME_DAY_RECAP_LOG_PREFIX} ${entry.event}`, entry.details);
 }
 
 function logGameDayRecapWarn(
@@ -3716,6 +3706,116 @@ function logGameDayRecapError(
   details: Record<string, unknown>,
 ): void {
   console.error(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
+}
+
+function buildGameDayRecapInfoLogEntry(
+  event: string,
+  details: Record<string, unknown>,
+): { details: Record<string, unknown>; event: string } | null {
+  if (!GAME_DAY_RECAP_INFO_EVENTS.has(event)) {
+    return null;
+  }
+
+  if (event === "process.completed") {
+    const coverage = summarizeCoverageForGameDayRecapLog(details.coverage);
+    if (!shouldLogGameDayRecapCompletionInfo(coverage)) {
+      return null;
+    }
+
+    return {
+      details: {
+        ...pickGameDayRecapLogFields(details, [
+          "finalStatus",
+          "season",
+          "targetKey",
+          "userId",
+        ]),
+        coverage,
+      },
+      event,
+    };
+  }
+
+  return {
+    details: pickGameDayRecapLogFields(details, [
+      "executionArn",
+      "existingRequestedAt",
+      "existingStatus",
+      "gameDate",
+      "leagueId",
+      "requestedAt",
+      "targetKey",
+      "userId",
+    ]),
+    event,
+  };
+}
+
+function pickGameDayRecapLogFields(
+  details: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+
+  for (const field of fields) {
+    if (field in details && details[field] !== undefined) {
+      picked[field] = details[field];
+    }
+  }
+
+  return picked;
+}
+
+function summarizeCoverageForGameDayRecapLog(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const coverage = value as {
+    availableGames?: unknown;
+    missingGames?: unknown;
+    partial?: unknown;
+    requestedGames?: unknown;
+  };
+  const partial =
+    typeof coverage.partial === "boolean" ? coverage.partial : null;
+
+  return {
+    availableGames: toFiniteNumberOrNull(
+      typeof coverage.availableGames === "number" ? coverage.availableGames : NaN,
+    ),
+    missingGameCount: Array.isArray(coverage.missingGames)
+      ? coverage.missingGames.length
+      : 0,
+    partial,
+    requestedGames: toFiniteNumberOrNull(
+      typeof coverage.requestedGames === "number" ? coverage.requestedGames : NaN,
+    ),
+  };
+}
+
+function shouldLogGameDayRecapCompletionInfo(
+  coverage: Record<string, unknown> | null,
+): boolean {
+  if (!coverage) {
+    return true;
+  }
+
+  const requestedGames =
+    typeof coverage.requestedGames === "number" ? coverage.requestedGames : null;
+  const partial = coverage.partial === true;
+  const missingGameCount =
+    typeof coverage.missingGameCount === "number"
+      ? coverage.missingGameCount
+      : null;
+
+  return (
+    partial ||
+    (missingGameCount !== null && missingGameCount > 0) ||
+    (requestedGames !== null && requestedGames > 1)
+  );
 }
 
 function isRetryableCompletedSlateCoverageError(
@@ -5101,6 +5201,7 @@ export const __testing = {
   GAME_DAY_RECAP_PROMPT_VERSION,
   GAME_DAY_RECAP_RESULT_SCHEMA,
   SUPPORTED_STRUCTURED_OUTPUT_MODEL_PATTERNS,
+  buildGameDayRecapInfoLogEntry,
   computeSurpriseFactorForGame,
   buildQuarterFacts,
   buildEvidenceSignals,

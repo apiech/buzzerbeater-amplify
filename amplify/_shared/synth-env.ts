@@ -57,6 +57,10 @@ export type CostVisibilitySynthConfig = {
   enabled: boolean;
 };
 
+export type FeedbackNotificationsSynthConfig = {
+  alertEmails?: string;
+};
+
 export type MaintenanceControlPlaneSynthConfig = {
   environmentName: string;
   parameterName: string;
@@ -164,6 +168,15 @@ export function resolveCostVisibilityConfig(): CostVisibilitySynthConfig {
     alertSmsNumbers:
       normalizeOptionalString(process.env.COST_ALERT_SMS_NUMBERS) ?? undefined,
     enabled: parseBooleanEnv(process.env.ENABLE_COST_VISIBILITY),
+  };
+}
+
+export function resolveFeedbackNotificationConfig(): FeedbackNotificationsSynthConfig {
+  loadLocalSynthEnv();
+
+  return {
+    alertEmails:
+      normalizeOptionalString(process.env.FEEDBACK_ALERT_EMAILS) ?? undefined,
   };
 }
 

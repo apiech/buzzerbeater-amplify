@@ -40,7 +40,7 @@ test("sandbox scripts expose the happy path and raw escape hatch", () => {
   );
   assert.equal(
     scripts["verify:deploy:sandbox"],
-    "npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox",
+    "npm test && npm run test:privacy && npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox && npm run typecheck:amplify:sandbox",
   );
   assert.equal(
     scripts["hosted:sync-compute-role"],

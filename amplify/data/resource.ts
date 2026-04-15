@@ -391,6 +391,14 @@ export const setBbLeagueTimeZone = defineFunction({
   memoryMB: 512,
 });
 
+export const submitProductFeedback = defineFunction({
+  resourceGroupName: "data",
+  name: "submit-product-feedback",
+  entry: "./submit-product-feedback/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
 export const generateSharedPlayerCard = defineFunction({
   resourceGroupName: "data",
   name: "generate-shared-player-card",
@@ -462,6 +470,7 @@ export const maintenanceProtectedFunctions = [
   submitLeagueGameDayRecap,
   submitSingleGameSummary,
   setBbLeagueTimeZone,
+  submitProductFeedback,
   listAccessibleMatches,
   getAccessibleMatch,
   getAccessiblePlayByPlay,
@@ -558,6 +567,7 @@ const schema = a
     MatchIngestStatus: a.enum(["PENDING", "PARTIAL", "SUCCEEDED", "FAILED"]),
 
     ThemeId: a.enum(["clubhouse", "arena", "nightfall"]),
+    FeedbackSubmissionKind: a.enum(["FEEDBACK", "FEATURE_REQUEST"]),
 
     PositionCode: a.enum(Object.values(PositionCode)),
     LineupHelperAlgorithm: a.enum(Object.values(LineupHelperAlgorithm)),
@@ -651,6 +661,12 @@ const schema = a
       lastSyncError: a.string(),
       profileJson: a.ref("StoredTeamInfo"),
       workspaceCacheJson: a.ref("WorkspaceCachePayload"),
+    }),
+
+    ProductFeedbackSubmitResult: a.customType({
+      id: a.string().required(),
+      submittedAt: a.datetime().required(),
+      notified: a.boolean().required(),
     }),
 
     NamedReference: a.customType({
@@ -1072,11 +1088,7 @@ const schema = a
 
     ArenaExpansionSummary: a.customType({
       daysLeft: a.integer(),
-      sections: a
-        .ref("ArenaExpansionSection")
-        .required()
-        .array()
-        .required(),
+      sections: a.ref("ArenaExpansionSection").required().array().required(),
     }),
 
     ArenaEconomyTransaction: a.customType({
@@ -1168,7 +1180,11 @@ const schema = a
       nextHomeMatch: a.ref("HomeNextMatch"),
       arena: a.ref("ArenaOverview"),
       economy: a.ref("ArenaEconomySummary"),
-      recentHomeGames: a.ref("ArenaHomeGameSample").required().array().required(),
+      recentHomeGames: a
+        .ref("ArenaHomeGameSample")
+        .required()
+        .array()
+        .required(),
       recommendation: a.ref("ArenaPriceRecommendation"),
       diagnostics: a.ref("ArenaWorkspaceDiagnostics").required(),
     }),
@@ -2478,6 +2494,29 @@ const schema = a
       .identifier(["userId"])
       .authorization((allow) => [allow.ownerDefinedIn("userId")]),
 
+    FeedbackSubmission: a
+      .model({
+        id: a.string().required(),
+        userId: a
+          .string()
+          .required()
+          .authorization((allow) => [
+            allow.ownerDefinedIn("userId").to(["read"]),
+          ]),
+        kind: a.ref("FeedbackSubmissionKind").required(),
+        subject: a.string().required(),
+        message: a.string().required(),
+        email: a.string(),
+        username: a.string(),
+        teamId: a.string(),
+        teamName: a.string(),
+        submittedAt: a.datetime().required(),
+        notifiedAt: a.datetime(),
+        notificationError: a.string(),
+      })
+      .identifier(["id"])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
     BbConnection: a
       .model({
         userId: a
@@ -3608,6 +3647,17 @@ const schema = a
       .returns(a.ref("ConnectionResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(setBbLeagueTimeZone)),
+
+    submitProductFeedback: a
+      .mutation()
+      .arguments({
+        kind: a.ref("FeedbackSubmissionKind").required(),
+        subject: a.string().required(),
+        message: a.string().required(),
+      })
+      .returns(a.ref("ProductFeedbackSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(submitProductFeedback)),
 
     submitMyTeamHighlightsScan: a
       .mutation()

@@ -1,6 +1,6 @@
 import type {
-  LineupHelperAssignment,
-  LineupHelperContext,
+  DecodedLineupHelperAssignment,
+  DecodedLineupHelperContext,
   LineupHelperRosterPlayer,
   PositionCode,
 } from "@/app/types";
@@ -52,7 +52,7 @@ export type LineupSlotLayout = Record<
 >;
 
 export type LineupValidation = {
-  assignments: LineupHelperAssignment[];
+  assignments: DecodedLineupHelperAssignment[];
   playerTotals: Record<string, number>;
   positionTotals: Record<PositionCode, number>;
   roleAssignments: Record<
@@ -134,7 +134,7 @@ export function emptyLineupLayout(): LineupSlotLayout {
 }
 
 export function lineupLayoutFromAssignments(
-  assignments: LineupHelperAssignment[],
+  assignments: DecodedLineupHelperAssignment[],
 ): LineupSlotLayout {
   const layout = emptyLineupLayout();
 
@@ -164,7 +164,7 @@ export function lineupLayoutFromAssignments(
 
 export function assignmentsFromLineupLayout(
   layout: LineupSlotLayout,
-): LineupHelperAssignment[] {
+): DecodedLineupHelperAssignment[] {
   return LINEUP_POSITIONS.flatMap((position) => {
     const positionLayout = layout[position];
     const pattern = PATTERN_BY_KEY[positionLayout.patternKey];
@@ -297,8 +297,8 @@ export function lineupRuleSummary(): string {
 }
 
 export function normalizeHelperContext(
-  context: Partial<LineupHelperContext>,
-): LineupHelperContext {
+  context: Partial<DecodedLineupHelperContext>,
+): DecodedLineupHelperContext {
   return {
     offense: context.offense ?? "Base Offense",
     defense: context.defense ?? "Man to man",

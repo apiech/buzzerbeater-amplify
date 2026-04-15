@@ -144,7 +144,7 @@ test("workspace requests are routed through server-authenticated Next entry poin
   assert.match(dashboardSource, /<a[\s\S]*?href="\/api\/auth\/sign-out"/);
   assert.doesNotMatch(
     dashboardSource,
-    /<Link[\s\S]*?href="\/api\/auth\/sign-out"/,
+    /<Link[^>]*href="\/api\/auth\/sign-out"/,
   );
 });
 

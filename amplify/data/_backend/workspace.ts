@@ -115,27 +115,17 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
 
 type HomeWorkspaceResult = ResolverResult<"getHomeWorkspace">;
 type ScoutTeamSummaryResult = ResolverResult<"getScoutTeamSummary">;
+type NamedReference = Schema["NamedReference"]["type"];
 type PlayerSummaryRecord = ResolverResult<"getPlayerLab">["players"][number];
-type TeamInfoSummary = {
-  country: { id: string | null; name: string | null } | null;
-  isBot: boolean;
-  league: { id: string | null; name: string | null } | null;
-  ownerName: string | null;
-  rival: { id: string | null; name: string | null } | null;
-  shortName: string | null;
-  teamId: string | null;
-  teamName: string | null;
-};
-type TeamHubWorkspaceResult = {
-  roster: PlayerSummaryRecord[];
-  syncedAt: string | null;
-  team: TeamInfoSummary;
-};
+type StoredOwnedRosterPlayer = Schema["StoredOwnedRosterPlayer"]["type"];
+type StoredTeamInfo = Schema["StoredTeamInfo"]["type"];
+type TeamInfoSummary = Schema["TeamInfoSummary"]["type"];
+type TeamHubWorkspaceResult = Schema["TeamHubWorkspace"]["type"];
 type ScoutWorkspaceResult = ScoutTeamSummaryResult;
 type ScoutScheduleResult = NonNullable<ScoutWorkspaceResult["schedule"]>;
-type LeagueIntelWorkspaceResult = ResolverResult<"getLeagueIntel">;
-type PlayerLabWorkspaceResult = ResolverResult<"getPlayerLab">;
-type ArenaWorkspaceResult = ResolverResult<"getArenaWorkspace">;
+type LeagueIntelWorkspaceResult = Schema["LeagueIntelWorkspace"]["type"];
+type PlayerLabWorkspaceResult = Schema["PlayerLabWorkspace"]["type"];
+type ArenaWorkspaceResult = Schema["ArenaWorkspace"]["type"];
 type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
 type SharedPlayerCardResult = ResolverResult<"generateSharedPlayerCard">;
 type SalaryProjectionResult = ResolverResult<"getSalaryProjection">;
@@ -151,6 +141,12 @@ type SharedPlayerCardPayload = NonNullable<SharedPlayerCardResult["payload"]>;
 type SalaryProjectionSource = PlayerSummaryRecord & {
   profileJson?: unknown;
 };
+type CachedHomeWorkspace = NonNullable<WorkspaceCachePayload["home"]>;
+type CachedTeamHubWorkspace = NonNullable<WorkspaceCachePayload["teamHub"]>;
+type CachedScoutWorkspace = NonNullable<WorkspaceCachePayload["scout"]>;
+type CachedLeagueIntelWorkspace = NonNullable<WorkspaceCachePayload["leagueIntel"]>;
+type CachedPlayerLabWorkspace = NonNullable<WorkspaceCachePayload["playerLab"]>;
+type CachedArenaWorkspace = NonNullable<WorkspaceCachePayload["arena"]>;
 
 export type WorkspaceBundle = {
   connection: BbConnectionRecord;
@@ -331,6 +327,7 @@ export async function connectAccount(args: {
         "Both the BuzzerBeater login name and access key are required.",
       workspaceCacheJson: null,
     });
+    console.log("[connectAccount] (upsertBbConnection 1) invalidRecord", invalidRecord);
     await upsertBbConnection(args.env, invalidRecord);
     return invalidRecord;
   }
@@ -377,6 +374,7 @@ export async function connectAccount(args: {
       lastSyncError: toErrorMessage(error),
       workspaceCacheJson: null,
     });
+    console.log("[connectAccount] (upsertBbConnection 2) record", record);
     await upsertBbConnection(args.env, record);
     return record;
   }
@@ -410,6 +408,7 @@ export async function disconnectAccount(args: {
     lastSyncError: null,
     workspaceCacheJson: null,
   });
+  console.log("[disconnectAccount] (upsertBbConnection 3) updated", updated);
   await upsertBbConnection(args.env, updated);
   return updated;
 }
@@ -441,6 +440,7 @@ export async function setLeagueTimeZone(args: {
   const updatedConnection = buildConnectionRecord(userId, existingConnection, {
     leagueTimeZone,
   });
+  console.log("[setLeagueTimeZone] (upsertBbConnection 4) updatedConnection", updatedConnection);
   await upsertBbConnection(args.env, updatedConnection);
   return updatedConnection;
 }
@@ -541,6 +541,7 @@ export async function repairOwnerRosterData(
       ),
     ),
   });
+  console.log("[repairOwnerRosterData] (upsertBbConnection 5) updatedConnection", updatedConnection);
   await dependencies.upsertBbConnection(args.env, updatedConnection);
 
   return {
@@ -1560,6 +1561,7 @@ async function syncWorkspace(args: {
         }),
       },
     );
+    console.log("[syncWorkspace] (upsertBbConnection 6) updatedConnection", updatedConnection);
     await upsertBbConnection(args.env, updatedConnection);
     const persistWorkspaceStartedAt = Date.now();
     const persistedWorkspace = await persistWorkspace(
@@ -1711,6 +1713,7 @@ async function syncWorkspace(args: {
           cachedWorkspace.connection.teamName ?? connection.teamName ?? null,
         workspaceCacheJson: connection.workspaceCacheJson,
       });
+      console.log("[syncWorkspace] (upsertBbConnection 7) fallbackConnection", fallbackConnection);
       await upsertBbConnection(args.env, fallbackConnection);
       await updateSyncRun(args.env, {
         id: syncRun.id,
@@ -1751,6 +1754,7 @@ async function syncWorkspace(args: {
       lastSyncError: toErrorMessage(error),
       lastValidatedAt: connection.lastValidatedAt ?? null,
     });
+    console.log("[syncWorkspace] (upsertBbConnection 8) failedConnection", failedConnection);
     await upsertBbConnection(args.env, failedConnection);
     await updateSyncRun(args.env, {
       id: syncRun.id,
@@ -3090,6 +3094,24 @@ function playerToTrackedPlayerRecord(
     throw new Error("Tracked player records require both a player id and team id.");
   }
 
+  const profileJson = {
+    id: player.id,
+    firstName: player.firstName,
+    lastName: player.lastName,
+    fullName: player.fullName,
+    salary: player.salary,
+    bestPosition: player.bestPosition,
+    age: player.age,
+    height: player.height,
+    dmi: player.dmi,
+    injuryWeeks: player.injuryWeeks,
+    nationality: {
+      id: player.nationality?.id ?? "unknown",
+      name: player.nationality?.name ?? "Unknown",
+    },
+    skills: { ...player.skills },
+  } satisfies StoredOwnedRosterPlayer;
+
   return {
     userId,
     playerId: player.id,
@@ -3106,23 +3128,7 @@ function playerToTrackedPlayerRecord(
     gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
-    profileJson: {
-      id: player.id,
-      firstName: player.firstName,
-      lastName: player.lastName,
-      fullName: player.fullName,
-      salary: player.salary,
-      bestPosition: player.bestPosition,
-      age: player.age,
-      height: player.height,
-      dmi: player.dmi,
-      injuryWeeks: player.injuryWeeks,
-      nationality: {
-        id: player.nationality?.id ?? "unknown",
-        name: player.nationality?.name ?? "Unknown",
-      },
-      skills: { ...player.skills },
-    },
+    profileJson,
     fetchedAt,
   };
 }
@@ -3256,8 +3262,10 @@ function toTrendEntries(values: Map<string, number>): TrendCountEntry[] {
     .sort((left, right) => String(left.key).localeCompare(String(right.key)));
 }
 
-function projectTeamInfo(teamInfo: BBApiTeamInfo): TeamInfoSummary {
-  return {
+function projectTeamInfo(
+  teamInfo: BBApiTeamInfo,
+): TeamInfoSummary & StoredTeamInfo {
+  const projected = {
     teamId: teamInfo.teamId,
     teamName: teamInfo.teamName,
     shortName: teamInfo.shortName,
@@ -3266,12 +3274,14 @@ function projectTeamInfo(teamInfo: BBApiTeamInfo): TeamInfoSummary {
     league: projectNamedReference(teamInfo.league),
     country: projectNamedReference(teamInfo.country),
     rival: projectNamedReference(teamInfo.rival),
-  };
+  } satisfies TeamInfoSummary & StoredTeamInfo;
+
+  return projected;
 }
 
 function projectNamedReference(
   reference: BBApiNamedReference | null,
-): { id: string | null; name: string | null } | null {
+): NamedReference | null {
   if (!reference) {
     return null;
   }
@@ -3279,7 +3289,7 @@ function projectNamedReference(
   return {
     id: reference.id ?? null,
     name: reference.name ?? null,
-  };
+  } satisfies NamedReference;
 }
 
 function projectPlayerSummary(
@@ -3942,29 +3952,91 @@ function readCachedWorkspace(
 
   return {
     connection,
-    home: {
-      ...home,
-      connection,
-      syncedAt: asString(home.syncedAt) ?? syncedAt,
-    } as unknown as HomeWorkspaceResult,
-    teamHub: {
-      ...teamHub,
-      syncedAt: asString(teamHub.syncedAt) ?? syncedAt,
-    } as unknown as TeamHubWorkspaceResult,
-    scout: {
-      ...scout,
-      syncedAt: asString(scout.syncedAt) ?? syncedAt,
-    } as unknown as ScoutWorkspaceResult,
-    leagueIntel: leagueIntel as unknown as LeagueIntelWorkspaceResult,
-    playerLab: {
-      ...playerLab,
-      syncedAt: asString(playerLab.syncedAt) ?? syncedAt,
-    } as unknown as PlayerLabWorkspaceResult,
-    arena: {
-      ...arena,
-      syncedAt: asString(arena.syncedAt) ?? syncedAt,
-    } as unknown as ArenaWorkspaceResult,
+    home: rehydrateHomeWorkspace(home, connection, syncedAt),
+    teamHub: rehydrateTeamHubWorkspace(teamHub, syncedAt),
+    scout: rehydrateScoutWorkspace(scout, syncedAt),
+    leagueIntel: rehydrateLeagueIntelWorkspace(leagueIntel),
+    playerLab: rehydratePlayerLabWorkspace(playerLab, syncedAt),
+    arena: rehydrateArenaWorkspace(arena, syncedAt),
   };
+}
+
+function rehydrateHomeWorkspace(
+  home: CachedHomeWorkspace,
+  connection: BbConnectionRecord,
+  syncedAt: string | null,
+): HomeWorkspaceResult {
+  return {
+    syncedAt: asString(home.syncedAt) ?? syncedAt,
+    connection,
+    team: home.team,
+    nextMatch: home.nextMatch ?? null,
+    nextScoutMatch: home.nextScoutMatch ?? null,
+    nextOpponent: home.nextOpponent ?? null,
+    recentMatches: home.recentMatches,
+    league: home.league,
+  } satisfies HomeWorkspaceResult;
+}
+
+function rehydrateTeamHubWorkspace(
+  teamHub: CachedTeamHubWorkspace,
+  syncedAt: string | null,
+): TeamHubWorkspaceResult {
+  return {
+    syncedAt: asString(teamHub.syncedAt) ?? syncedAt,
+    team: teamHub.team,
+    roster: teamHub.roster,
+  } satisfies TeamHubWorkspaceResult;
+}
+
+function rehydrateScoutWorkspace(
+  scout: CachedScoutWorkspace,
+  syncedAt: string | null,
+): ScoutWorkspaceResult {
+  return {
+    syncedAt: asString(scout.syncedAt) ?? syncedAt,
+    teamId: scout.teamId ?? null,
+    availableOpponents: scout.availableOpponents,
+    recentMatchups: scout.recentMatchups,
+    schedule: scout.schedule ?? null,
+    summary: scout.summary ?? null,
+    requestedTeamId: scout.requestedTeamId ?? null,
+    message: scout.message ?? null,
+  } satisfies ScoutWorkspaceResult;
+}
+
+function rehydrateLeagueIntelWorkspace(
+  leagueIntel: CachedLeagueIntelWorkspace,
+): LeagueIntelWorkspaceResult {
+  return {
+    league: leagueIntel.league ?? null,
+    standings: leagueIntel.standings,
+  } satisfies LeagueIntelWorkspaceResult;
+}
+
+function rehydratePlayerLabWorkspace(
+  playerLab: CachedPlayerLabWorkspace,
+  syncedAt: string | null,
+): PlayerLabWorkspaceResult {
+  return {
+    syncedAt: asString(playerLab.syncedAt) ?? syncedAt,
+    players: playerLab.players,
+  } satisfies PlayerLabWorkspaceResult;
+}
+
+function rehydrateArenaWorkspace(
+  arena: CachedArenaWorkspace,
+  syncedAt: string | null,
+): ArenaWorkspaceResult {
+  return {
+    syncedAt: asString(arena.syncedAt) ?? syncedAt,
+    nextHomeMatch: arena.nextHomeMatch ?? null,
+    arena: arena.arena,
+    economy: arena.economy,
+    recentHomeGames: arena.recentHomeGames,
+    recommendation: arena.recommendation,
+    diagnostics: arena.diagnostics,
+  } satisfies ArenaWorkspaceResult;
 }
 
 async function getCachedWorkspacePlayer(

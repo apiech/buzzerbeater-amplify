@@ -6,18 +6,17 @@ import {
   upsertBillingAccount,
   upsertBillingPayment,
   type BillingAccountRecord,
-  type BillingPaymentRecord,
 } from "./repository";
 import {
   hasFeature,
   isPlanId,
   resolvePlan,
-  type BillingAccessSource,
   type FeatureKey,
   type PlanId,
 } from "../../../lib/billing/plans";
 import { resolveCommercialModeEnabled } from "../../../lib/billing/commercial-mode";
 import { assertMaintenanceInactive } from "./maintenance";
+import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -31,23 +30,10 @@ type BillingOfferFlags = {
   premiumSubscriptionOfferEnabled: boolean;
 };
 
-type BillingSummary = {
-  accessSource: BillingAccessSource;
-  cancelAtPeriodEnd: boolean;
-  currentPeriodEndAt: string | null;
-  hasBillingCustomer: boolean;
-  hasLifetimeAccess: boolean;
-  lifetimeGrantedAt: string | null;
-  lifetimePurchaseOfferEnabled: boolean;
-  planId: PlanId;
-  premiumSubscriptionOfferEnabled: boolean;
-  subscriptionStatus: string | null;
-};
-
-type BillingPaymentsPage = {
-  items: BillingPaymentRecord[];
-  nextToken: string | null;
-};
+type BillingSummary = NonNullable<Schema["getBillingSummary"]["returnType"]>;
+type BillingPaymentsPage = NonNullable<
+  Schema["listMyBillingPayments"]["returnType"]
+>;
 
 type CheckoutSession = {
   amount_total?: number | null;
