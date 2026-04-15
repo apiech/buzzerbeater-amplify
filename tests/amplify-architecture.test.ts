@@ -329,6 +329,36 @@ test("workspace home connection paths project raw connection records into explic
   assert.match(readBffSource, /projectCurrentConnectionResult/);
 });
 
+test("tracked-player storage contracts keep potential and use explicit stored-roster projection", () => {
+  const workspaceSource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "workspace.ts"),
+    "utf8",
+  );
+  const resourceSource = readFileSync(
+    join(repoRoot, "amplify", "data", "resource.ts"),
+    "utf8",
+  );
+  const storedRosterSkillsSection =
+    resourceSource.match(
+      /StoredOwnedRosterPlayerSkills: a\.customType\(\{[\s\S]*?\n    \}\),/,
+    )?.[0] ?? "";
+  const trackedPlayerProjectionSection =
+    workspaceSource.match(
+      /function projectStoredOwnedRosterPlayer[\s\S]*?function selectNextMatch/,
+    )?.[0] ?? "";
+
+  assert.match(
+    storedRosterSkillsSection,
+    /potential: a\.integer\(\)\.required\(\),/,
+  );
+  assert.match(workspaceSource, /function projectStoredOwnedRosterPlayer/);
+  assert.match(trackedPlayerProjectionSection, /potential: player\.skills\.potential,/);
+  assert.doesNotMatch(
+    trackedPlayerProjectionSection,
+    /skills:\s*\{\s*\.\.\.player\.skills\s*\}/s,
+  );
+});
+
 test("dashboard connection and cache parsers reuse the shared strict owned-data contracts", () => {
   const queryClientSource = readFileSync(
     join(repoRoot, "app", "dashboard", "workspace-query-client.ts"),

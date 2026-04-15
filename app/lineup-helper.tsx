@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
   lineupHelperEvaluationQueryOptions,
@@ -30,10 +30,14 @@ import {
 } from "@/app/lineup-helper-state";
 import {
   applyLineupAvailabilityOverride,
+  countPendingLineupAvailabilityChanges,
   readTeamLineupAvailabilityOverride,
+  resolvePendingLineupAvailabilityChange,
+  teamLineupAvailabilityOverridesEqual,
   toggleExcludedPlayerId,
   writeTeamLineupAvailabilityOverride,
   type EffectiveLineupHelperRosterPlayer,
+  type PendingLineupAvailabilityChange,
   type TeamLineupAvailabilityOverride,
 } from "@/app/lineup-availability-state";
 import type {
@@ -82,8 +86,12 @@ const twoColumnGridClassName =
   "grid gap-4 2xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,1fr)]";
 const rankingsGridClassName = "grid gap-4 lg:grid-cols-2 xl:grid-cols-3";
 const EMPTY_ROSTER: LineupHelperRosterPlayer[] = [];
+const EMPTY_AVAILABILITY_OVERRIDE: TeamLineupAvailabilityOverride = {
+  excludedPlayerIds: [],
+};
 const ENTHUSIASM_OPTIONS = [...allScaleValues("enthusiasm")].reverse();
 const minuteSummaryGridClassName = "grid gap-3 md:grid-cols-3 xl:grid-cols-6";
+type LineupAvailabilityRebuildReason = "APPLY" | "HYDRATE";
 
 export function LineupHelper({
   initialWorkspace,
@@ -125,10 +133,14 @@ export function LineupHelper({
   );
   const [algorithm, setAlgorithm] = useState<LineupHelperAlgorithm>("EXACT");
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
-  const [availabilityOverride, setAvailabilityOverride] =
-    useState<TeamLineupAvailabilityOverride>({
-      excludedPlayerIds: [],
-    });
+  const [appliedAvailabilityOverride, setAppliedAvailabilityOverride] =
+    useState<TeamLineupAvailabilityOverride>(EMPTY_AVAILABILITY_OVERRIDE);
+  const [draftAvailabilityOverride, setDraftAvailabilityOverride] =
+    useState<TeamLineupAvailabilityOverride>(EMPTY_AVAILABILITY_OVERRIDE);
+  const [initialAvailabilityRepairPending, setInitialAvailabilityRepairPending] =
+    useState(false);
+  const [availabilityRebuildReason, setAvailabilityRebuildReason] =
+    useState<LineupAvailabilityRebuildReason | null>(null);
   const [ownerRosterRepairExhausted, setOwnerRosterRepairExhausted] =
     useState(false);
   const [loadedAvailabilityTeamId, setLoadedAvailabilityTeamId] = useState<
@@ -139,6 +151,7 @@ export function LineupHelper({
     context: ReturnType<typeof encodeLineupHelperContext>;
     roster: ReturnType<typeof encodeLineupHelperRosterPlayer>[];
   } | null>(null);
+  const latestOptimizeRequestIdRef = useRef(0);
   const suppressNextEvaluationRef = useRef(false);
   const optimizeMutation = useMutation({
     mutationFn: (input: {
@@ -161,14 +174,29 @@ export function LineupHelper({
 
   const roster = workspace?.roster ?? EMPTY_ROSTER;
   const effectiveRoster = useMemo<EffectiveLineupHelperRosterPlayer[]>(
-    () => applyLineupAvailabilityOverride(roster, availabilityOverride),
-    [availabilityOverride, roster],
+    () => applyLineupAvailabilityOverride(roster, appliedAvailabilityOverride),
+    [appliedAvailabilityOverride, roster],
+  );
+  const draftRoster = useMemo<EffectiveLineupHelperRosterPlayer[]>(
+    () => applyLineupAvailabilityOverride(roster, draftAvailabilityOverride),
+    [draftAvailabilityOverride, roster],
   );
   const validation = validateLineupLayout(
     effectiveRoster,
     lineupLayout,
     context.defensiveSwitch,
   );
+  const pendingAvailabilityChangeCount = countPendingLineupAvailabilityChanges(
+    appliedAvailabilityOverride,
+    draftAvailabilityOverride,
+  );
+  const hasPendingAvailabilityChanges = pendingAvailabilityChangeCount > 0;
+  const isAvailabilityHydrating = loadedAvailabilityTeamId !== (teamId ?? null);
+  const isRebuildingAvailabilityLineup = availabilityRebuildReason !== null;
+  const shouldHideActiveLineup =
+    isAvailabilityHydrating || initialAvailabilityRepairPending;
+  const shouldSuppressLineupValidation =
+    shouldHideActiveLineup || isRebuildingAvailabilityLineup;
   const availableRosterCount = effectiveRoster.filter(
     (player) => player.available,
   ).length;
@@ -191,8 +219,12 @@ export function LineupHelper({
   const canEvaluate =
     Boolean(workspace) &&
     availableRosterCount > 0 &&
-    validation.errors.length === 0;
+    validation.errors.length === 0 &&
+    !shouldSuppressLineupValidation;
   const visibleEvaluation = canEvaluate ? evaluation : null;
+  const visibleValidationErrors = shouldSuppressLineupValidation
+    ? []
+    : validation.errors;
   const repairOwnerRosterMutation = useMutation({
     mutationFn: repairOwnerRosterDataMutation,
     onSuccess: async () => {
@@ -206,25 +238,133 @@ export function LineupHelper({
     },
   });
 
+  async function performOptimizeForRoster(args?: {
+    availabilityOverride?: TeamLineupAvailabilityOverride;
+    rebuildReason?: LineupAvailabilityRebuildReason;
+  }) {
+    if (!workspace) {
+      return;
+    }
+
+    const nextAvailabilityOverride =
+      args?.availabilityOverride ?? appliedAvailabilityOverride;
+    const nextRoster = applyLineupAvailabilityOverride(
+      roster,
+      nextAvailabilityOverride,
+    );
+    const requestId = latestOptimizeRequestIdRef.current + 1;
+    latestOptimizeRequestIdRef.current = requestId;
+
+    if (args?.rebuildReason) {
+      setAvailabilityRebuildReason(args.rebuildReason);
+      setEvaluation(null);
+      suppressNextEvaluationRef.current = true;
+      setLineupLayout((current) =>
+        removeUnavailablePlayersFromLineupLayout(current, nextRoster),
+      );
+    }
+
+    setEvaluationError(null);
+    setDebouncedEvaluationInput(null);
+
+    try {
+      const nextEvaluationRecord = await optimizeMutation.mutateAsync({
+        algorithm,
+        roster: nextRoster.map(encodeLineupHelperRosterPlayer),
+        context: encodeLineupHelperContext(context),
+      });
+
+      if (requestId !== latestOptimizeRequestIdRef.current) {
+        return;
+      }
+
+      const nextEvaluation = decodeLineupHelperEvaluation(nextEvaluationRecord);
+      if (!nextEvaluation) {
+        setEvaluation(null);
+        setEvaluationError("The optimizer did not return a usable lineup.");
+        return;
+      }
+
+      suppressNextEvaluationRef.current = true;
+      setEvaluation(nextEvaluation);
+      setContext(nextEvaluation.context);
+      setLineupLayout(
+        lineupLayoutFromAssignments(nextEvaluation.normalizedLineup),
+      );
+      setEvaluationError(null);
+    } catch (error) {
+      if (requestId !== latestOptimizeRequestIdRef.current) {
+        return;
+      }
+
+      setEvaluation(null);
+      setEvaluationError(readQueryError(error));
+    } finally {
+      if (requestId !== latestOptimizeRequestIdRef.current) {
+        return;
+      }
+
+      if (args?.rebuildReason === "HYDRATE") {
+        setInitialAvailabilityRepairPending(false);
+      }
+      if (args?.rebuildReason) {
+        setAvailabilityRebuildReason(null);
+      }
+    }
+  }
+
+  const runOptimizeForRosterEffect = useEffectEvent(
+    async (args?: {
+      availabilityOverride?: TeamLineupAvailabilityOverride;
+      rebuildReason?: LineupAvailabilityRebuildReason;
+    }) => {
+      await performOptimizeForRoster(args);
+    },
+  );
+
+  const syncWorkspaceDefaults = useEffectEvent(
+    (nextWorkspace: DecodedLineupHelperWorkspace) => {
+      const hasAppliedExclusions =
+        loadedAvailabilityTeamId === (teamId ?? null) &&
+        appliedAvailabilityOverride.excludedPlayerIds.length > 0;
+      const defaultLayout = lineupLayoutFromAssignments(
+        nextWorkspace.defaultAssignments,
+      );
+
+      setEvaluation(hasAppliedExclusions ? null : nextWorkspace.evaluation);
+      setContext(nextWorkspace.defaultContext);
+      suppressNextEvaluationRef.current = true;
+      setLineupLayout(
+        hasAppliedExclusions
+          ? removeUnavailablePlayersFromLineupLayout(defaultLayout, effectiveRoster)
+          : defaultLayout,
+      );
+      setEvaluationError(null);
+      if (hasAppliedExclusions) {
+        setInitialAvailabilityRepairPending(true);
+      }
+    },
+  );
+
   useEffect(() => {
     if (!workspace) {
       return;
     }
 
-    setEvaluation(workspace.evaluation);
-    setContext(workspace.defaultContext);
-    suppressNextEvaluationRef.current = true;
-    setLineupLayout(lineupLayoutFromAssignments(workspace.defaultAssignments));
-    setEvaluationError(null);
+    syncWorkspaceDefaults(workspace);
   }, [workspace]);
 
   useEffect(() => {
-    setAvailabilityOverride(
-      readTeamLineupAvailabilityOverride(
-        typeof window === "undefined" ? null : window.localStorage,
-        teamId ?? null,
-      ),
+    const nextAvailabilityOverride = readTeamLineupAvailabilityOverride(
+      typeof window === "undefined" ? null : window.localStorage,
+      teamId ?? null,
     );
+    setAppliedAvailabilityOverride(nextAvailabilityOverride);
+    setDraftAvailabilityOverride(nextAvailabilityOverride);
+    setInitialAvailabilityRepairPending(
+      nextAvailabilityOverride.excludedPlayerIds.length > 0,
+    );
+    setAvailabilityRebuildReason(null);
     setLoadedAvailabilityTeamId(teamId ?? null);
   }, [teamId]);
 
@@ -245,9 +385,9 @@ export function LineupHelper({
     writeTeamLineupAvailabilityOverride(
       typeof window === "undefined" ? null : window.localStorage,
       teamId ?? null,
-      availabilityOverride,
+      appliedAvailabilityOverride,
     );
-  }, [availabilityOverride, loadedAvailabilityTeamId, teamId]);
+  }, [appliedAvailabilityOverride, loadedAvailabilityTeamId, teamId]);
 
   useEffect(() => {
     if (
@@ -260,6 +400,11 @@ export function LineupHelper({
 
   useEffect(() => {
     if (!workspace) {
+      setDebouncedEvaluationInput(null);
+      return;
+    }
+
+    if (shouldSuppressLineupValidation) {
       setDebouncedEvaluationInput(null);
       return;
     }
@@ -303,17 +448,35 @@ export function LineupHelper({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [context, effectiveRoster, lineupLayout, workspace]);
+  }, [
+    context,
+    effectiveRoster,
+    lineupLayout,
+    shouldSuppressLineupValidation,
+    workspace,
+  ]);
 
   useEffect(() => {
-    if (!workspace) {
+    if (
+      !workspace ||
+      !initialAvailabilityRepairPending ||
+      isAvailabilityHydrating ||
+      isRebuildingAvailabilityLineup
+    ) {
       return;
     }
 
-    setLineupLayout((current) =>
-      removeUnavailablePlayersFromLineupLayout(current, effectiveRoster),
-    );
-  }, [effectiveRoster, workspace]);
+    void runOptimizeForRosterEffect({
+      availabilityOverride: appliedAvailabilityOverride,
+      rebuildReason: "HYDRATE",
+    });
+  }, [
+    appliedAvailabilityOverride,
+    initialAvailabilityRepairPending,
+    isAvailabilityHydrating,
+    isRebuildingAvailabilityLineup,
+    workspace,
+  ]);
 
   useEffect(() => {
     if (!evaluationQuery.data) {
@@ -393,59 +556,87 @@ export function LineupHelper({
   }
 
   function handleRestoreDefaultLineup() {
-    if (!workspace) {
+    if (!workspace || showLineupRebuildState) {
       return;
     }
-    suppressNextEvaluationRef.current = true;
+    const defaultLayout = removeUnavailablePlayersFromLineupLayout(
+      lineupLayoutFromAssignments(workspace.defaultAssignments),
+      effectiveRoster,
+    );
+    const canReuseDefaultEvaluation =
+      appliedAvailabilityOverride.excludedPlayerIds.length === 0;
+
+    suppressNextEvaluationRef.current = canReuseDefaultEvaluation;
     setContext(workspace.defaultContext);
-    setEvaluation(workspace.evaluation);
-    setLineupLayout(lineupLayoutFromAssignments(workspace.defaultAssignments));
+    setEvaluation(canReuseDefaultEvaluation ? workspace.evaluation : null);
+    setLineupLayout(defaultLayout);
+    setDebouncedEvaluationInput(null);
     setEvaluationError(null);
   }
 
   async function handleOptimize() {
-    if (!workspace) {
+    if (!workspace || hasPendingAvailabilityChanges || showLineupRebuildState) {
       return;
     }
 
-    setEvaluationError(null);
-    try {
-      const nextEvaluationRecord = await optimizeMutation.mutateAsync({
-        algorithm,
-        roster: effectiveRoster.map(encodeLineupHelperRosterPlayer),
-        context: encodeLineupHelperContext(context),
-      });
-      const nextEvaluation = decodeLineupHelperEvaluation(nextEvaluationRecord);
-
-      if (!nextEvaluation) {
-        setEvaluationError("The optimizer did not return a usable lineup.");
-        return;
-      }
-
-      suppressNextEvaluationRef.current = true;
-      setEvaluation(nextEvaluation);
-      setContext(nextEvaluation.context);
-      setLineupLayout(
-        lineupLayoutFromAssignments(nextEvaluation.normalizedLineup),
-      );
-    } catch (error) {
-      setEvaluationError(readQueryError(error));
-    }
+    await performOptimizeForRoster();
   }
 
   function handleTogglePlayerExclusion(playerId: string) {
-    setAvailabilityOverride((current) =>
+    setDraftAvailabilityOverride((current) =>
       toggleExcludedPlayerId(current, playerId),
     );
   }
 
-  function handleClearExcludedPlayers() {
-    setAvailabilityOverride({ excludedPlayerIds: [] });
+  function handleDiscardAvailabilityChanges() {
+    setDraftAvailabilityOverride(appliedAvailabilityOverride);
+  }
+
+  function handleClearDraftExcludedPlayers() {
+    setDraftAvailabilityOverride({ excludedPlayerIds: [] });
+  }
+
+  async function handleApplyAvailabilityChanges() {
+    if (
+      !workspace ||
+      !hasPendingAvailabilityChanges ||
+      isRebuildingAvailabilityLineup ||
+      teamLineupAvailabilityOverridesEqual(
+        appliedAvailabilityOverride,
+        draftAvailabilityOverride,
+      )
+    ) {
+      return;
+    }
+
+    const nextAvailabilityOverride = draftAvailabilityOverride;
+    setAppliedAvailabilityOverride(nextAvailabilityOverride);
+    setInitialAvailabilityRepairPending(false);
+    await performOptimizeForRoster({
+      availabilityOverride: nextAvailabilityOverride,
+      rebuildReason: "APPLY",
+    });
   }
 
   const legacyAlgorithmDisabled = !isIdentityDefensiveSwitch(
     context.defensiveSwitch,
   );
+  const availabilityControlsDisabled =
+    shouldHideActiveLineup || isRebuildingAvailabilityLineup;
+  const contextControlsDisabled =
+    availableRosterCount === 0 ||
+    shouldHideActiveLineup ||
+    isRebuildingAvailabilityLineup;
+  const lineupPlanControlsDisabled =
+    isOptimizing || isRebuildingAvailabilityLineup || hasPendingAvailabilityChanges;
+  const showLineupRebuildState =
+    shouldHideActiveLineup || isRebuildingAvailabilityLineup;
+  const pendingAvailabilitySummary = hasPendingAvailabilityChanges
+    ? buildPendingAvailabilitySummary(pendingAvailabilityChangeCount)
+    : null;
+  const pendingAvailabilityDetail = hasPendingAvailabilityChanges
+    ? "Current lineup and ratings still reflect the last applied roster."
+    : null;
 
   return (
     <div className="grid gap-4">
@@ -454,7 +645,7 @@ export function LineupHelper({
           <div className="flex flex-wrap items-end gap-3">
             <Field className="min-w-44" label="Algorithm">
               <Select
-                disabled={isOptimizing}
+                disabled={isOptimizing || showLineupRebuildState}
                 onChange={(event) =>
                   setAlgorithm(event.target.value as LineupHelperAlgorithm)
                 }
@@ -477,7 +668,7 @@ export function LineupHelper({
               Refresh roster data
             </Button>
             <Button
-              disabled={!workspace || !hasGeneratedLineup}
+              disabled={!workspace || !hasGeneratedLineup || showLineupRebuildState}
               onClick={handleRestoreDefaultLineup}
               variant="secondary"
             >
@@ -488,8 +679,11 @@ export function LineupHelper({
             <Button
               disabled={
                 ownerRosterRepairState.shouldOfferRepair
-                  ? false
-                  : !workspace || availableRosterCount === 0
+                  ? showLineupRebuildState
+                  : !workspace ||
+                    availableRosterCount === 0 ||
+                    hasPendingAvailabilityChanges ||
+                    showLineupRebuildState
               }
               loading={
                 ownerRosterRepairState.shouldOfferRepair
@@ -543,13 +737,14 @@ export function LineupHelper({
           ) : null}
           {coachExcludedCount > 0 ? (
             <Alert tone="note">
-              Coach exclusions are active for {coachExcludedCount} player
-              {coachExcludedCount === 1 ? "" : "s"}. Excluded players are
-              removed from active lineup slots and skipped during optimization.
+              Applied coach exclusions are active for {coachExcludedCount}{" "}
+              player{coachExcludedCount === 1 ? "" : "s"}. Excluded players
+              are removed from active lineup slots and skipped during
+              optimization.
             </Alert>
           ) : null}
-          {validation.errors.length
-            ? validation.errors.map((error) => (
+          {visibleValidationErrors.length
+            ? visibleValidationErrors.map((error) => (
                 <Alert key={error}>{error}</Alert>
               ))
             : null}
@@ -566,9 +761,13 @@ export function LineupHelper({
               value={roster.length}
             />
             <StatCard
-              detail={`${validation.teamTotal}/240 minutes`}
+              detail={
+                showLineupRebuildState
+                  ? "Rebuilding active lineup"
+                  : `${validation.teamTotal}/240 minutes`
+              }
               label="Team total"
-              value={validation.teamTotal}
+              value={showLineupRebuildState ? "--" : validation.teamTotal}
             />
             <StatCard
               detail={
@@ -580,14 +779,22 @@ export function LineupHelper({
               value={workspace.snapshotWarnings.length}
             />
             <StatCard
-              detail={isEvaluating ? "Refreshing analysis" : "Latest analysis"}
+              detail={
+                showLineupRebuildState
+                  ? "Applying coach exclusions"
+                  : isEvaluating
+                    ? "Refreshing analysis"
+                    : "Latest analysis"
+              }
               label="Analysis status"
               value={
-                isEvaluating
-                  ? "Updating"
-                  : visibleEvaluation
-                    ? "Ready"
-                    : "Unavailable"
+                showLineupRebuildState
+                  ? "Rebuilding"
+                  : isEvaluating
+                    ? "Updating"
+                    : visibleEvaluation
+                      ? "Ready"
+                      : "Unavailable"
               }
             />
           </div>
@@ -599,7 +806,7 @@ export function LineupHelper({
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <Field label="Offense">
                     <Select
-                      disabled={availableRosterCount === 0}
+                      disabled={contextControlsDisabled}
                       onChange={(event) =>
                         setContext((current) => ({
                           ...current,
@@ -617,7 +824,7 @@ export function LineupHelper({
                   </Field>
                   <Field label="Defense">
                     <Select
-                      disabled={availableRosterCount === 0}
+                      disabled={contextControlsDisabled}
                       onChange={(event) =>
                         setContext((current) => ({
                           ...current,
@@ -635,7 +842,7 @@ export function LineupHelper({
                   </Field>
                   <Field label="Location">
                     <Select
-                      disabled={availableRosterCount === 0}
+                      disabled={contextControlsDisabled}
                       onChange={(event) =>
                         setContext((current) => ({
                           ...current,
@@ -653,7 +860,7 @@ export function LineupHelper({
                   </Field>
                   <Field label="Enthusiasm">
                     <Select
-                      disabled={availableRosterCount === 0}
+                      disabled={contextControlsDisabled}
                       onChange={(event) =>
                         setContext((current) => ({
                           ...current,
@@ -680,73 +887,127 @@ export function LineupHelper({
 
               <Panel as="article" padding="sm" variant="solid">
                 <SectionHeading
-                  description="Exclude players you know will not dress, then clear them when they are back in the rotation."
+                  description="Stage roster availability changes here, then apply them once to rebuild the active lineup."
                   title="Availability overrides"
                   titleAs="h5"
                 />
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className={statusCopyClassName}>
-                    These overrides are saved in this browser for your current
-                    team.
+                    Applied exclusions are saved in this browser for your
+                    current team. Draft changes stay local until you apply
+                    them.
                   </p>
-                  <Button
-                    disabled={coachExcludedCount === 0}
-                    onClick={handleClearExcludedPlayers}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    Clear exclusions
-                  </Button>
-                </div>
-                <div className="grid gap-3">
-                  {effectiveRoster.map((player) => (
-                    <div
-                      className="rounded-card flex flex-wrap items-center justify-between gap-3 border border-black/8 bg-white/70 p-3"
-                      key={`availability-${player.playerId}`}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      disabled={
+                        !hasPendingAvailabilityChanges ||
+                        availabilityControlsDisabled
+                      }
+                      loading={isRebuildingAvailabilityLineup}
+                      onClick={() => void handleApplyAvailabilityChanges()}
+                      size="sm"
+                      variant="secondary"
                     >
-                      <div className="grid gap-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <strong className="text-ink text-sm">
-                            {player.fullName}
-                          </strong>
-                          <StatusBadge
-                            tone={
-                              player.availabilityStatus === "AVAILABLE"
-                                ? "success"
-                                : player.availabilityStatus === "COACH_EXCLUDED"
-                                  ? "note"
-                                  : "neutral"
-                            }
-                          >
-                            {player.availabilityStatus === "AVAILABLE"
-                              ? "Available"
-                              : player.availabilityStatus === "COACH_EXCLUDED"
-                                ? "Coach excluded"
-                                : "System unavailable"}
-                          </StatusBadge>
-                        </div>
-                        <span className="text-ink-muted text-xs">
-                          {player.bestPosition ?? "Flex"} •{" "}
-                          <BuzzerBeaterRatingText scale="game_shape">
-                            {player.gameShape ?? "unknown shape"}
-                          </BuzzerBeaterRatingText>
-                          {player.snapshotWarning
-                            ? ` • ${player.snapshotWarning}`
-                            : ""}
-                        </span>
-                      </div>
-                      <Button
-                        disabled={!player.isSystemAvailable}
-                        onClick={() =>
-                          handleTogglePlayerExclusion(player.playerId)
-                        }
-                        size="sm"
-                        variant={player.isCoachExcluded ? "secondary" : "ghost"}
+                      Apply changes
+                    </Button>
+                    <Button
+                      disabled={
+                        !hasPendingAvailabilityChanges ||
+                        availabilityControlsDisabled
+                      }
+                      onClick={handleDiscardAvailabilityChanges}
+                      size="sm"
+                      variant="secondary"
+                    >
+                      Discard
+                    </Button>
+                    <Button
+                      disabled={
+                        draftAvailabilityOverride.excludedPlayerIds.length === 0 ||
+                        availabilityControlsDisabled
+                      }
+                      onClick={handleClearDraftExcludedPlayers}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Clear all
+                    </Button>
+                  </div>
+                </div>
+                {pendingAvailabilitySummary ? (
+                  <Alert tone="note">
+                    {pendingAvailabilitySummary} {pendingAvailabilityDetail}
+                  </Alert>
+                ) : null}
+                <div className="grid gap-3">
+                  {draftRoster.map((player) => {
+                    const pendingChange = resolvePendingLineupAvailabilityChange(
+                      appliedAvailabilityOverride,
+                      draftAvailabilityOverride,
+                      player.playerId,
+                    );
+
+                    return (
+                      <div
+                        className="rounded-card flex flex-wrap items-center justify-between gap-3 border border-black/8 bg-white/70 p-3"
+                        key={`availability-${player.playerId}`}
                       >
-                        {player.isCoachExcluded ? "Include" : "Exclude"}
-                      </Button>
-                    </div>
-                  ))}
+                        <div className="grid gap-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="text-ink text-sm">
+                              {player.fullName}
+                            </strong>
+                            <StatusBadge
+                              tone={
+                                player.availabilityStatus === "AVAILABLE"
+                                  ? "success"
+                                  : player.availabilityStatus ===
+                                      "COACH_EXCLUDED"
+                                    ? "note"
+                                    : "neutral"
+                              }
+                            >
+                              {player.availabilityStatus === "AVAILABLE"
+                                ? "Available"
+                                : player.availabilityStatus ===
+                                      "COACH_EXCLUDED"
+                                  ? "Coach excluded"
+                                  : "System unavailable"}
+                            </StatusBadge>
+                            {pendingChange ? (
+                              <StatusBadge tone="note">
+                                {formatPendingAvailabilityChange(pendingChange)}
+                              </StatusBadge>
+                            ) : null}
+                          </div>
+                          <span className="text-ink-muted text-xs">
+                            {player.bestPosition ?? "Flex"} •{" "}
+                            <BuzzerBeaterRatingText scale="game_shape">
+                              {player.gameShape ?? "unknown shape"}
+                            </BuzzerBeaterRatingText>
+                            {player.snapshotWarning
+                              ? ` • ${player.snapshotWarning}`
+                              : ""}
+                          </span>
+                        </div>
+                        <Button
+                          disabled={
+                            !player.isSystemAvailable ||
+                            availabilityControlsDisabled
+                          }
+                          onClick={() =>
+                            handleTogglePlayerExclusion(player.playerId)
+                          }
+                          size="sm"
+                          variant={
+                            player.isCoachExcluded ? "secondary" : "ghost"
+                          }
+                        >
+                          {player.isCoachExcluded ? "Include" : "Exclude"}
+                        </Button>
+                      </div>
+                    );
+                  })}
                 </div>
               </Panel>
 
@@ -756,300 +1017,331 @@ export function LineupHelper({
                   title="Lineup plan"
                   titleAs="h5"
                 />
-                <div className={minuteSummaryGridClassName}>
-                  {LINEUP_POSITIONS.map((position) => (
-                    <MinuteSummaryTile
-                      current={validation.positionTotals[position]}
-                      key={`summary-${position}`}
-                      label={position}
-                      target={48}
-                    />
-                  ))}
-                  <MinuteSummaryTile
-                    current={validation.teamTotal}
-                    label="Team"
-                    target={240}
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {effectiveRoster
-                    .filter((player) => player.available)
-                    .sort(
-                      (left, right) =>
-                        (validation.playerTotals[right.playerId] ?? 0) -
-                          (validation.playerTotals[left.playerId] ?? 0) ||
-                        left.fullName.localeCompare(right.fullName),
-                    )
-                    .map((player) => {
-                      const totalMinutes =
-                        validation.playerTotals[player.playerId] ?? 0;
-                      return (
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold",
-                            totalMinutes > 42
-                              ? "border-danger-border bg-danger-bg text-accent-strong"
-                              : totalMinutes === 42
-                                ? "border-note-border bg-note-bg text-note"
-                                : "text-ink border-black/10 bg-black/5",
-                          )}
-                          key={`player-total-${player.playerId}`}
-                        >
-                          {player.fullName}
-                          <span className="text-ink-muted">
-                            {totalMinutes} min
-                          </span>
-                        </span>
-                      );
-                    })}
-                </div>
-                <div className="grid gap-3">
-                  {LINEUP_POSITIONS.map((position) => {
-                    const positionLayout = lineupLayout[position];
-                    const positionAssignments =
-                      validation.roleAssignments[position];
-                    const positionOutputRankings =
-                      visibleEvaluation?.rankings[position] ?? [];
+                {showLineupRebuildState ? (
+                  <div className="grid gap-3">
+                    <Alert tone="note">
+                      {availabilityRebuildReason === "HYDRATE"
+                        ? "Rebuilding lineup to match your saved coach exclusions."
+                        : availabilityRebuildReason === "APPLY"
+                          ? "Rebuilding lineup to match your applied coach exclusions."
+                          : "Loading your applied coach exclusions before showing the lineup plan."}
+                    </Alert>
+                    <p className={statusCopyClassName}>
+                      The lineup editor will unlock again after the active
+                      roster finishes rebuilding.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className={minuteSummaryGridClassName}>
+                      {LINEUP_POSITIONS.map((position) => (
+                        <MinuteSummaryTile
+                          current={validation.positionTotals[position]}
+                          key={`summary-${position}`}
+                          label={position}
+                          target={48}
+                        />
+                      ))}
+                      <MinuteSummaryTile
+                        current={validation.teamTotal}
+                        label="Team"
+                        target={240}
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {effectiveRoster
+                        .filter((player) => player.available)
+                        .sort(
+                          (left, right) =>
+                            (validation.playerTotals[right.playerId] ?? 0) -
+                              (validation.playerTotals[left.playerId] ?? 0) ||
+                            left.fullName.localeCompare(right.fullName),
+                        )
+                        .map((player) => {
+                          const totalMinutes =
+                            validation.playerTotals[player.playerId] ?? 0;
+                          return (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold",
+                                totalMinutes > 42
+                                  ? "border-danger-border bg-danger-bg text-accent-strong"
+                                  : totalMinutes === 42
+                                    ? "border-note-border bg-note-bg text-note"
+                                    : "text-ink border-black/10 bg-black/5",
+                              )}
+                              key={`player-total-${player.playerId}`}
+                            >
+                              {player.fullName}
+                              <span className="text-ink-muted">
+                                {totalMinutes} min
+                              </span>
+                            </span>
+                          );
+                        })}
+                    </div>
+                    <div className="grid gap-3">
+                      {LINEUP_POSITIONS.map((position) => {
+                        const positionLayout = lineupLayout[position];
+                        const positionAssignments =
+                          validation.roleAssignments[position];
+                        const positionOutputRankings =
+                          visibleEvaluation?.rankings[position] ?? [];
 
-                    return (
-                      <article
-                        className="rounded-card grid gap-4 border border-black/8 bg-white/65 p-4 shadow-sm"
-                        key={`position-${position}`}
-                      >
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                          <div className="grid gap-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <strong className="text-ink text-base">
-                                {position} offense
-                              </strong>
-                              <StatusBadge tone="note">
-                                {LINEUP_POSITION_LABELS[position]}
-                              </StatusBadge>
-                              <StatusBadge
-                                tone={
-                                  validation.positionTotals[position] === 48
-                                    ? "success"
-                                    : "danger"
-                                }
-                              >
-                                {validation.positionTotals[position]}/48 min
-                              </StatusBadge>
-                            </div>
-                            <p className={statusCopyClassName}>
-                              Defends as {context.defensiveSwitch[position]}.
-                              Choose a legal split, then assign starter, backup,
-                              and reserve.
-                            </p>
-                          </div>
-
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <Field label="Defends as">
-                              <Select
-                                disabled={isOptimizing}
-                                onChange={(event) =>
-                                  updateDefensiveSwitch(
-                                    position,
-                                    event.target.value as PositionCode,
-                                  )
-                                }
-                                value={context.defensiveSwitch[position]}
-                              >
-                                {LINEUP_POSITIONS.map((option) => (
-                                  <option
-                                    key={`${position}-switch-${option}`}
-                                    value={option}
+                        return (
+                          <article
+                            className="rounded-card grid gap-4 border border-black/8 bg-white/65 p-4 shadow-sm"
+                            key={`position-${position}`}
+                          >
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                              <div className="grid gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <strong className="text-ink text-base">
+                                    {position} offense
+                                  </strong>
+                                  <StatusBadge tone="note">
+                                    {LINEUP_POSITION_LABELS[position]}
+                                  </StatusBadge>
+                                  <StatusBadge
+                                    tone={
+                                      validation.positionTotals[position] === 48
+                                        ? "success"
+                                        : "danger"
+                                    }
                                   >
-                                    {option}
-                                  </option>
-                                ))}
-                              </Select>
-                            </Field>
-                            <Field label="Split pattern">
-                              <Select
-                                disabled={isOptimizing}
-                                onChange={(event) =>
-                                  updatePattern(position, event.target.value)
-                                }
-                                value={positionLayout.patternKey}
-                              >
-                                {LINEUP_SPLIT_PATTERNS.map((pattern) => (
-                                  <option
-                                    key={`${position}-${pattern.key}`}
-                                    value={pattern.key}
-                                  >
-                                    {pattern.label}
-                                  </option>
-                                ))}
-                              </Select>
-                            </Field>
-                          </div>
-                        </div>
-
-                        <div className="grid gap-3 lg:grid-cols-3">
-                          {LINEUP_ROLE_SEQUENCE.map((role) => {
-                            const enabled = roleIsEnabled(
-                              positionLayout.patternKey,
-                              role,
-                            );
-                            const playerId =
-                              role === "starter"
-                                ? positionLayout.starterPlayerId
-                                : role === "backup"
-                                  ? positionLayout.backupPlayerId
-                                  : positionLayout.reservePlayerId;
-                            const selectedPlayer = effectiveRoster.find(
-                              (player) => player.playerId === playerId,
-                            );
-                            const selectedOtherPlayers = new Set(
-                              [
-                                positionLayout.starterPlayerId,
-                                positionLayout.backupPlayerId,
-                                positionLayout.reservePlayerId,
-                              ].filter(
-                                (candidateId) =>
-                                  candidateId && candidateId !== playerId,
-                              ),
-                            );
-                            const options = effectiveRoster.filter(
-                              (player) =>
-                                player.available &&
-                                (!selectedOtherPlayers.has(player.playerId) ||
-                                  player.playerId === playerId),
-                            );
-
-                            return (
-                              <div
-                                className={cn(
-                                  "rounded-card grid gap-3 border p-4",
-                                  enabled
-                                    ? "border-black/8 bg-white/70"
-                                    : "border-black/6 bg-black/5 opacity-70",
-                                )}
-                                key={`${position}-${role}`}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="grid gap-1">
-                                    <span className="text-ink text-sm font-semibold">
-                                      {formatRoleLabel(role)}
-                                    </span>
-                                    <span className="text-ink-muted text-xs">
-                                      {enabled
-                                        ? `${minutesForRole(positionLayout.patternKey, role)} minutes`
-                                        : "Unused in this split"}
-                                    </span>
-                                  </div>
-                                  {enabled ? (
-                                    <MinuteRolePill
-                                      label={formatRoleLabel(role)}
-                                      role={role}
-                                    />
-                                  ) : null}
+                                    {validation.positionTotals[position]}/48 min
+                                  </StatusBadge>
                                 </div>
+                                <p className={statusCopyClassName}>
+                                  Defends as {context.defensiveSwitch[position]}.
+                                  Choose a legal split, then assign starter,
+                                  backup, and reserve.
+                                </p>
+                              </div>
 
-                                <Field label="Player">
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <Field label="Defends as">
                                   <Select
-                                    disabled={!enabled || isOptimizing}
+                                    disabled={
+                                      isOptimizing ||
+                                      isRebuildingAvailabilityLineup
+                                    }
                                     onChange={(event) =>
-                                      updatePlayerSlot(
+                                      updateDefensiveSwitch(
                                         position,
-                                        role,
-                                        event.target.value,
+                                        event.target.value as PositionCode,
                                       )
                                     }
-                                    value={playerId}
+                                    value={context.defensiveSwitch[position]}
                                   >
-                                    <option value="">
-                                      {enabled ? "Choose player" : "Unused"}
-                                    </option>
-                                    {options.map((player) => (
+                                    {LINEUP_POSITIONS.map((option) => (
                                       <option
-                                        key={`${position}-${role}-${player.playerId}`}
-                                        value={player.playerId}
+                                        key={`${position}-switch-${option}`}
+                                        value={option}
                                       >
-                                        {player.fullName}
+                                        {option}
                                       </option>
                                     ))}
                                   </Select>
                                 </Field>
-
-                                <div className="grid gap-1 text-xs">
-                                  <span className="text-ink-muted">
-                                    Output{" "}
-                                    {formatDecimal(
-                                      selectedPlayer
-                                        ? (visibleEvaluation
-                                            ?.playerPositionOutputs[
-                                            selectedPlayer.playerId
-                                          ]?.[position] ?? null)
-                                        : null,
-                                    )}
-                                  </span>
-                                  <span className="text-ink-muted">
-                                    Player total{" "}
-                                    {selectedPlayer
-                                      ? `${validation.playerTotals[selectedPlayer.playerId] ?? 0} min`
-                                      : "0 min"}
-                                  </span>
-                                  {selectedPlayer ? (
-                                    <span className="text-ink">
-                                      {selectedPlayer.bestPosition ?? "Flex"} •{" "}
-                                      {formatCurrency(selectedPlayer.salary ?? null)} •{" "}
-                                      <BuzzerBeaterRatingText scale="game_shape">
-                                        {selectedPlayer.gameShape ??
-                                          "unknown shape"}
-                                      </BuzzerBeaterRatingText>{" "}
-                                      • {skillHeadline(selectedPlayer)}
-                                    </span>
-                                  ) : (
-                                    <span className="text-ink-muted">
-                                      Choose from your available roster.
-                                    </span>
-                                  )}
-                                </div>
+                                <Field label="Split pattern">
+                                  <Select
+                                    disabled={lineupPlanControlsDisabled}
+                                    onChange={(event) =>
+                                      updatePattern(position, event.target.value)
+                                    }
+                                    value={positionLayout.patternKey}
+                                  >
+                                    {LINEUP_SPLIT_PATTERNS.map((pattern) => (
+                                      <option
+                                        key={`${position}-${pattern.key}`}
+                                        value={pattern.key}
+                                      >
+                                        {pattern.label}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                </Field>
                               </div>
-                            );
-                          })}
-                        </div>
+                            </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
-                          {positionAssignments.map((assignment) => (
-                            <MinuteRolePill
-                              key={`${position}-${assignment.playerId}-${assignment.role}`}
-                              label={`${resolvePlayerName(
-                                effectiveRoster,
-                                assignment.playerId,
-                              )} ${assignment.minutes}m`}
-                              role={assignment.role}
-                            />
-                          ))}
-                          {!positionAssignments.length ? (
-                            <span className="text-ink-muted text-xs">
-                              No legal role assignment yet.
-                            </span>
-                          ) : null}
-                        </div>
+                            <div className="grid gap-3 lg:grid-cols-3">
+                              {LINEUP_ROLE_SEQUENCE.map((role) => {
+                                const enabled = roleIsEnabled(
+                                  positionLayout.patternKey,
+                                  role,
+                                );
+                                const playerId =
+                                  role === "starter"
+                                    ? positionLayout.starterPlayerId
+                                    : role === "backup"
+                                      ? positionLayout.backupPlayerId
+                                      : positionLayout.reservePlayerId;
+                                const selectedPlayer = effectiveRoster.find(
+                                  (player) => player.playerId === playerId,
+                                );
+                                const selectedOtherPlayers = new Set(
+                                  [
+                                    positionLayout.starterPlayerId,
+                                    positionLayout.backupPlayerId,
+                                    positionLayout.reservePlayerId,
+                                  ].filter(
+                                    (candidateId) =>
+                                      candidateId && candidateId !== playerId,
+                                  ),
+                                );
+                                const options = effectiveRoster.filter(
+                                  (player) =>
+                                    player.available &&
+                                    (!selectedOtherPlayers.has(player.playerId) ||
+                                      player.playerId === playerId),
+                                );
 
-                        <div className="grid gap-2">
-                          <span className="text-ink-muted text-[0.72rem] font-bold tracking-[0.16em] uppercase">
-                            Top fits for {position}
-                          </span>
-                          <ol className="grid list-decimal gap-1 pl-5 text-sm">
-                            {positionOutputRankings.slice(0, 5).map((entry) => (
-                              <li key={`${position}-rank-${entry.playerId}`}>
-                                <span className="text-ink font-semibold">
-                                  {entry.name}
-                                </span>{" "}
-                                <span className="text-ink-muted">
-                                  ({formatDecimal(entry.output)})
+                                return (
+                                  <div
+                                    className={cn(
+                                      "rounded-card grid gap-3 border p-4",
+                                      enabled
+                                        ? "border-black/8 bg-white/70"
+                                        : "border-black/6 bg-black/5 opacity-70",
+                                    )}
+                                    key={`${position}-${role}`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="grid gap-1">
+                                        <span className="text-ink text-sm font-semibold">
+                                          {formatRoleLabel(role)}
+                                        </span>
+                                        <span className="text-ink-muted text-xs">
+                                          {enabled
+                                            ? `${minutesForRole(positionLayout.patternKey, role)} minutes`
+                                            : "Unused in this split"}
+                                        </span>
+                                      </div>
+                                      {enabled ? (
+                                        <MinuteRolePill
+                                          label={formatRoleLabel(role)}
+                                          role={role}
+                                        />
+                                      ) : null}
+                                    </div>
+
+                                    <Field label="Player">
+                                      <Select
+                                        disabled={
+                                          !enabled || lineupPlanControlsDisabled
+                                        }
+                                        onChange={(event) =>
+                                          updatePlayerSlot(
+                                            position,
+                                            role,
+                                            event.target.value,
+                                          )
+                                        }
+                                        value={playerId}
+                                      >
+                                        <option value="">
+                                          {enabled ? "Choose player" : "Unused"}
+                                        </option>
+                                        {options.map((player) => (
+                                          <option
+                                            key={`${position}-${role}-${player.playerId}`}
+                                            value={player.playerId}
+                                          >
+                                            {player.fullName}
+                                          </option>
+                                        ))}
+                                      </Select>
+                                    </Field>
+
+                                    <div className="grid gap-1 text-xs">
+                                      <span className="text-ink-muted">
+                                        Output{" "}
+                                        {formatDecimal(
+                                          selectedPlayer
+                                            ? (visibleEvaluation
+                                                ?.playerPositionOutputs[
+                                                selectedPlayer.playerId
+                                              ]?.[position] ?? null)
+                                            : null,
+                                        )}
+                                      </span>
+                                      <span className="text-ink-muted">
+                                        Player total{" "}
+                                        {selectedPlayer
+                                          ? `${validation.playerTotals[selectedPlayer.playerId] ?? 0} min`
+                                          : "0 min"}
+                                      </span>
+                                      {selectedPlayer ? (
+                                        <span className="text-ink">
+                                          {selectedPlayer.bestPosition ?? "Flex"}{" "}
+                                          •{" "}
+                                          {formatCurrency(
+                                            selectedPlayer.salary ?? null,
+                                          )}{" "}
+                                          •{" "}
+                                          <BuzzerBeaterRatingText scale="game_shape">
+                                            {selectedPlayer.gameShape ??
+                                              "unknown shape"}
+                                          </BuzzerBeaterRatingText>{" "}
+                                          • {skillHeadline(selectedPlayer)}
+                                        </span>
+                                      ) : (
+                                        <span className="text-ink-muted">
+                                          Choose from your available roster.
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {positionAssignments.map((assignment) => (
+                                <MinuteRolePill
+                                  key={`${position}-${assignment.playerId}-${assignment.role}`}
+                                  label={`${resolvePlayerName(
+                                    effectiveRoster,
+                                    assignment.playerId,
+                                  )} ${assignment.minutes}m`}
+                                  role={assignment.role}
+                                />
+                              ))}
+                              {!positionAssignments.length ? (
+                                <span className="text-ink-muted text-xs">
+                                  No legal role assignment yet.
                                 </span>
-                              </li>
-                            ))}
-                          </ol>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
+                              ) : null}
+                            </div>
+
+                            <div className="grid gap-2">
+                              <span className="text-ink-muted text-[0.72rem] font-bold tracking-[0.16em] uppercase">
+                                Top fits for {position}
+                              </span>
+                              <ol className="grid list-decimal gap-1 pl-5 text-sm">
+                                {positionOutputRankings
+                                  .slice(0, 5)
+                                  .map((entry) => (
+                                    <li
+                                      key={`${position}-rank-${entry.playerId}`}
+                                    >
+                                      <span className="text-ink font-semibold">
+                                        {entry.name}
+                                      </span>{" "}
+                                      <span className="text-ink-muted">
+                                        ({formatDecimal(entry.output)})
+                                      </span>
+                                    </li>
+                                  ))}
+                              </ol>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </Panel>
             </div>
 
@@ -1093,7 +1385,9 @@ export function LineupHelper({
                         <StatCard
                           key={rating.key}
                           detail={
-                            availableRosterCount === 0
+                            showLineupRebuildState
+                              ? "Rebuilding around applied coach exclusions"
+                              : availableRosterCount === 0
                               ? "Player data is required before ratings can be generated"
                               : "Waiting for a valid lineup"
                           }
@@ -1244,7 +1538,23 @@ function resolveOwnerRosterRepairState(args: {
   };
 }
 
+function buildPendingAvailabilitySummary(pendingChangeCount: number): string {
+  const label =
+    pendingChangeCount === 1 ? "1 roster change" : `${pendingChangeCount} roster changes`;
+  return `${label} pending. Apply changes to rebuild the lineup and refresh ratings.`;
+}
+
+function formatPendingAvailabilityChange(
+  change: PendingLineupAvailabilityChange,
+): string {
+  return change === "PENDING_EXCLUSION"
+    ? "Pending exclusion"
+    : "Pending inclusion";
+}
+
 export const __testing = {
+  buildPendingAvailabilitySummary,
+  formatPendingAvailabilityChange,
   resolveOwnerRosterRepairState,
 };
 

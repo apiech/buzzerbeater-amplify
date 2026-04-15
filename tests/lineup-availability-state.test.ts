@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   applyLineupAvailabilityOverride,
+  countPendingLineupAvailabilityChanges,
   normalizeExcludedPlayerIds,
   readTeamLineupAvailabilityOverride,
+  resolvePendingLineupAvailabilityChange,
+  teamLineupAvailabilityOverridesEqual,
   toggleExcludedPlayerId,
   writeTeamLineupAvailabilityOverride,
 } from "../app/lineup-availability-state";
@@ -67,6 +70,74 @@ test("toggleExcludedPlayerId adds and removes player ids", () => {
 
   const removed = toggleExcludedPlayerId(added, "p4");
   assert.deepEqual(removed, { excludedPlayerIds: [] });
+});
+
+test("availability override equality ignores ordering", () => {
+  assert.equal(
+    teamLineupAvailabilityOverridesEqual(
+      { excludedPlayerIds: ["p2", "p1"] },
+      { excludedPlayerIds: ["p1", "p2"] },
+    ),
+    true,
+  );
+  assert.equal(
+    teamLineupAvailabilityOverridesEqual(
+      { excludedPlayerIds: ["p1"] },
+      { excludedPlayerIds: ["p1", "p2"] },
+    ),
+    false,
+  );
+});
+
+test("pending availability changes count the symmetric difference", () => {
+  assert.equal(
+    countPendingLineupAvailabilityChanges(
+      { excludedPlayerIds: ["p1", "p2"] },
+      { excludedPlayerIds: ["p2", "p3"] },
+    ),
+    2,
+  );
+  assert.equal(
+    countPendingLineupAvailabilityChanges(
+      { excludedPlayerIds: ["p2", "p1"] },
+      { excludedPlayerIds: ["p1", "p2"] },
+    ),
+    0,
+  );
+  assert.equal(
+    countPendingLineupAvailabilityChanges(
+      { excludedPlayerIds: ["p1"] },
+      { excludedPlayerIds: [] },
+    ),
+    1,
+  );
+});
+
+test("pending availability changes classify exclusions and inclusions per player", () => {
+  assert.equal(
+    resolvePendingLineupAvailabilityChange(
+      { excludedPlayerIds: ["p1"] },
+      { excludedPlayerIds: ["p1", "p2"] },
+      "p2",
+    ),
+    "PENDING_EXCLUSION",
+  );
+  assert.equal(
+    resolvePendingLineupAvailabilityChange(
+      { excludedPlayerIds: ["p1", "p2"] },
+      { excludedPlayerIds: ["p2"] },
+      "p1",
+    ),
+    "PENDING_INCLUSION",
+  );
+  assert.equal(
+    resolvePendingLineupAvailabilityChange(
+      { excludedPlayerIds: ["p1"] },
+      { excludedPlayerIds: ["p1"] },
+      "p1",
+    ),
+    null,
+  );
 });
 
 test("applyLineupAvailabilityOverride keeps system-unavailable players locked out", () => {

@@ -24,7 +24,10 @@ test("hasActiveLeagueHistoryBackfill recognizes active worker states", () => {
     hasActiveLeagueHistoryBackfill(createStatus("FETCHING_STANDINGS")),
     true,
   );
-  assert.equal(hasActiveLeagueHistoryBackfill(createStatus("SUCCEEDED")), false);
+  assert.equal(
+    hasActiveLeagueHistoryBackfill(createStatus("SUCCEEDED")),
+    false,
+  );
 });
 
 test("league history rows stay hidden until the backfill succeeds", () => {
@@ -83,25 +86,61 @@ test("sortLeagueHistoryRows defaults to wins, then win percentage, then margin",
   );
 });
 
+test("sortLeagueHistoryRows breaks team-name ties with the team ID", () => {
+  const rows = sortLeagueHistoryRows(
+    [
+      createRow({
+        pointMargin: 100,
+        teamId: "B",
+        teamName: "Alpha",
+        winPct: 0.75,
+        wins: 18,
+      }),
+      createRow({
+        pointMargin: 100,
+        teamId: "A",
+        teamName: "Alpha",
+        winPct: 0.75,
+        wins: 18,
+      }),
+    ],
+    {
+      direction: "asc",
+      key: "teamName",
+    },
+  );
+
+  assert.deepStrictEqual(
+    rows.map((row) => row.teamId),
+    ["A", "B"],
+  );
+});
+
 test("describeLeagueHistoryStatus stays user-facing during progress and failure states", () => {
   assert.match(
-    describeLeagueHistoryStatus(createStatus("FETCHING_STANDINGS", {
-      historicalSeasonsExpected: 10,
-      historicalSeasonsStored: 4,
-    }), {
-      isLoading: false,
-      leagueId: "L1",
-    }),
+    describeLeagueHistoryStatus(
+      createStatus("FETCHING_STANDINGS", {
+        historicalSeasonsExpected: 10,
+        historicalSeasonsStored: 4,
+      }),
+      {
+        isLoading: false,
+        leagueId: "L1",
+      },
+    ),
     /stored 4 of 10 completed seasons/i,
   );
 
   assert.match(
-    describeLeagueHistoryStatus(createStatus("FAILED", {
-      error: "League could not be loaded.",
-    }), {
-      isLoading: false,
-      leagueId: "L1",
-    }),
+    describeLeagueHistoryStatus(
+      createStatus("FAILED", {
+        error: "League could not be loaded.",
+      }),
+      {
+        isLoading: false,
+        leagueId: "L1",
+      },
+    ),
     /failed/i,
   );
 });
@@ -123,6 +162,21 @@ test("league history silently polls active backfills without browser realtime su
   assert.doesNotMatch(source, /amplify-realtime/);
   assert.doesNotMatch(source, /getRealtimeClient/);
   assert.doesNotMatch(source, /\.subscribe\(/);
+});
+
+test("league history panel renders composite row keys and visible team IDs for name-era rows", () => {
+  const source = readFileSync(
+    join(currentDir, "..", "app", "league-history-panel.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /buildLeagueHistoryRowKey/);
+  assert.match(
+    source,
+    /`\$\{row\.teamId\}::\$\{row\.teamName\}`/,
+  );
+  assert.match(source, /#\{row\.teamId\}/);
+  assert.match(source, /Rows are split by historical name era/i);
 });
 
 function createStatus(
@@ -166,7 +220,9 @@ function createPayload(
   };
 }
 
-function createRow(overrides: Partial<LeagueHistoryRow> = {}): LeagueHistoryRow {
+function createRow(
+  overrides: Partial<LeagueHistoryRow> = {},
+): LeagueHistoryRow {
   return {
     averageMargin: 5,
     games: 20,

@@ -11,6 +11,7 @@ import {
   TableHeadCell,
   TableShell,
 } from "@/app/ui/primitives/table-shell";
+import { WorkInProgressNotice } from "@/app/ui/primitives/work-in-progress-notice";
 
 const summaryGridClassName = "grid gap-4 sm:grid-cols-2 xl:grid-cols-4";
 const twoColumnGridClassName = "grid gap-4 xl:grid-cols-[1.4fr_1fr]";
@@ -53,6 +54,7 @@ export function ArenaPanel({
     return (
       <Panel>
         <SectionHeading eyebrow="Arena" title="Loading arena pricing advisor" />
+        <WorkInProgressNotice subject="This arena pricing page" />
         <p className={statusCopyClassName}>
           Pulling your arena, economy, and recent home attendance context.
         </p>
@@ -69,6 +71,7 @@ export function ArenaPanel({
     return (
       <Panel>
         <SectionHeading eyebrow="Arena" title="Arena pricing advisor" />
+        <WorkInProgressNotice subject="This arena pricing page" />
         <p className={statusCopyClassName}>
           Arena and economy details are not available in this sync yet. Refresh the
           workspace to rebuild this section.
@@ -87,6 +90,7 @@ export function ArenaPanel({
           title={arenaOverview.name ?? "Arena pricing advisor"}
           description="Read-only ticket pricing guidance for your next home game. Projections are heuristic and meant to support pricing decisions, not mirror the hidden BB attendance model."
         />
+        <WorkInProgressNotice subject="This arena pricing page" />
 
         <div className={summaryGridClassName}>
           <StatCard

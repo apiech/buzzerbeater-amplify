@@ -13,6 +13,10 @@ export type TeamLineupAvailabilityOverride = {
   excludedPlayerIds: string[];
 };
 
+export type PendingLineupAvailabilityChange =
+  | "PENDING_EXCLUSION"
+  | "PENDING_INCLUSION";
+
 export type EffectiveLineupHelperRosterPlayer = LineupHelperRosterPlayer & {
   availabilityStatus: "AVAILABLE" | "COACH_EXCLUDED" | "SYSTEM_UNAVAILABLE";
   isCoachExcluded: boolean;
@@ -121,6 +125,69 @@ export function toggleExcludedPlayerId(
           normalizedPlayerId,
         ]),
       };
+}
+
+export function teamLineupAvailabilityOverridesEqual(
+  left: TeamLineupAvailabilityOverride,
+  right: TeamLineupAvailabilityOverride,
+): boolean {
+  const leftIds = normalizeExcludedPlayerIds(left.excludedPlayerIds);
+  const rightIds = normalizeExcludedPlayerIds(right.excludedPlayerIds);
+
+  return (
+    leftIds.length === rightIds.length &&
+    leftIds.every((playerId, index) => playerId === rightIds[index])
+  );
+}
+
+export function countPendingLineupAvailabilityChanges(
+  applied: TeamLineupAvailabilityOverride,
+  draft: TeamLineupAvailabilityOverride,
+): number {
+  const appliedIds = new Set(
+    normalizeExcludedPlayerIds(applied.excludedPlayerIds),
+  );
+  const draftIds = new Set(normalizeExcludedPlayerIds(draft.excludedPlayerIds));
+  let count = 0;
+
+  for (const playerId of Array.from(appliedIds)) {
+    if (!draftIds.has(playerId)) {
+      count += 1;
+    }
+  }
+  for (const playerId of Array.from(draftIds)) {
+    if (!appliedIds.has(playerId)) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+export function resolvePendingLineupAvailabilityChange(
+  applied: TeamLineupAvailabilityOverride,
+  draft: TeamLineupAvailabilityOverride,
+  playerId: string,
+): PendingLineupAvailabilityChange | null {
+  const normalizedPlayerId = playerId.trim();
+  if (!normalizedPlayerId) {
+    return null;
+  }
+
+  const appliedIds = new Set(
+    normalizeExcludedPlayerIds(applied.excludedPlayerIds),
+  );
+  const draftIds = new Set(normalizeExcludedPlayerIds(draft.excludedPlayerIds));
+  const appliedHasPlayer = appliedIds.has(normalizedPlayerId);
+  const draftHasPlayer = draftIds.has(normalizedPlayerId);
+
+  if (!appliedHasPlayer && draftHasPlayer) {
+    return "PENDING_EXCLUSION";
+  }
+  if (appliedHasPlayer && !draftHasPlayer) {
+    return "PENDING_INCLUSION";
+  }
+  return null;
 }
 
 export function applyLineupAvailabilityOverride(

@@ -900,7 +900,7 @@ test("dashboard onboarding refreshes the workspace immediately after a successfu
 
   assert.match(
     source,
-    /onConnected=\{async \(status\) => \{[\s\S]*if \(status === "CONNECTED"\) \{[\s\S]*await handleRefresh\(\);/,
+    /onConnected=\{async \(status\) => \{[\s\S]*if \(status === "CONNECTED"\) \{[\s\S]*if \(activeSection === "next-game"\) \{[\s\S]*await refreshNextGameAfterConnectionUpdate\(queryClient\);[\s\S]*return;[\s\S]*\}[\s\S]*await handleRefresh\(\);/,
   );
 });
 

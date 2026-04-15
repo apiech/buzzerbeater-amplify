@@ -18,6 +18,7 @@ import type {
   CurrentPredictionPreview,
   DisconnectBbAccountResult,
   HomeWorkspacePayload,
+  LeagueHistoryAuditPayload,
   LeagueHistoryPayload,
   LeagueIntelPayload,
   LineupHelperEvaluationRecord,
@@ -1061,6 +1062,41 @@ const leagueHistorySchema = z
   .nullable()
   .optional();
 
+const leagueHistoryAuditCollisionSchema = z
+  .object({
+    firstSeason: nullableNumberSchema,
+    lastSeason: nullableNumberSchema,
+    rowCount: z.number(),
+    seasonCount: z.number(),
+    teamId: z.string(),
+    teamNames: z.array(z.string()),
+  })
+  .passthrough();
+
+const leagueHistoryAuditMismatchSchema = z
+  .object({
+    cachedTeamName: z.string(),
+    liveTeamName: z.string(),
+    season: z.number(),
+    teamId: z.string(),
+  })
+  .passthrough();
+
+const leagueHistoryAuditSchema = z
+  .object({
+    cachedRows: z.array(leagueHistoryRowSchema),
+    league: namedReferenceSchema,
+    liveComparisonIncluded: z.boolean(),
+    liveRows: z.array(leagueHistoryRowSchema),
+    mixedNameTeams: z.array(leagueHistoryAuditCollisionSchema),
+    nameMismatches: z.array(leagueHistoryAuditMismatchSchema),
+    requestedLeagueId: nullableStringSchema,
+    warning: nullableStringSchema,
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
 const teamHighlightsBrokenMatchSchema = z
   .object({
     awayTeamName: nullableStringSchema,
@@ -1648,6 +1684,16 @@ export const workspaceQueryKeys = {
       input.onlyOutcomeChange ? "outcome-only" : "all",
     ] as const,
   home: ["workspace", "home"] as const,
+  leagueHistoryAudit: (input?: {
+    includeLiveComparison?: boolean | null;
+    leagueId?: string | null;
+  }) =>
+    [
+      "workspace",
+      "leagueHistoryAudit",
+      input?.leagueId ?? "default",
+      input?.includeLiveComparison ? "live" : "cached",
+    ] as const,
   leagueHistory: (leagueId: string | null | undefined) =>
     ["workspace", "leagueHistory", leagueId ?? "default"] as const,
   leagueIntel: ["workspace", "leagueIntel"] as const,
@@ -1805,10 +1851,7 @@ async function readInternalRouteDataOrThrow<T>(
   return parseSchemaOrThrow(schema, payload.data);
 }
 
-function parseSchemaOrThrow<T>(
-  schema: z.ZodType<T>,
-  value: unknown,
-): T {
+function parseSchemaOrThrow<T>(schema: z.ZodType<T>, value: unknown): T {
   try {
     return schema.parse(value);
   } catch (error) {
@@ -2252,6 +2295,29 @@ export async function fetchLeagueHistoryQuery(args?: {
   ) as LeagueHistoryPayload | null;
 }
 
+export async function fetchLeagueHistoryAuditQuery(args?: {
+  includeLiveComparison?: boolean | null;
+  leagueId?: string | null;
+}): Promise<LeagueHistoryAuditPayload | null> {
+  const input =
+    args && (args.leagueId || args.includeLiveComparison)
+      ? {
+          ...(args.includeLiveComparison ? { includeLiveComparison: true } : {}),
+          ...(args.leagueId ? { leagueId: args.leagueId } : {}),
+        }
+      : undefined;
+  const response = await (
+    client.queries as typeof client.queries & {
+      getLeagueHistoryAudit: typeof client.queries.getLeagueHistory;
+    }
+  ).getLeagueHistoryAudit(input);
+
+  return readAmplifyNullableDataOrThrow(
+    response,
+    leagueHistoryAuditSchema,
+  ) as LeagueHistoryAuditPayload | null;
+}
+
 export async function fetchTeamHighlightsQuery(args: {
   cursor?: string | null;
   onlyOutcomeChange: boolean;
@@ -2470,9 +2536,17 @@ export async function clearMyTeamHighlightsDataMutation(): Promise<void> {
 
 export async function submitLeagueHistoryBackfillMutation(args?: {
   leagueId?: string | null;
+  refreshMode?: "MISSING_ONLY" | "REFRESH_ALL_HISTORICAL" | null;
 }): Promise<SubmitLeagueHistoryBackfillResult> {
+  const input =
+    args && (args.leagueId || args.refreshMode)
+      ? {
+          ...(args.leagueId ? { leagueId: args.leagueId } : {}),
+          ...(args.refreshMode ? { refreshMode: args.refreshMode } : {}),
+        }
+      : undefined;
   const response = await client.mutations.submitLeagueHistoryBackfill(
-    args?.leagueId ? { leagueId: args.leagueId } : undefined,
+    input,
   );
   return readAmplifyDataOrThrow(
     response,
@@ -2815,6 +2889,16 @@ export function leagueHistoryQueryOptions(args?: { leagueId?: string | null }) {
   });
 }
 
+export function leagueHistoryAuditQueryOptions(args?: {
+  includeLiveComparison?: boolean | null;
+  leagueId?: string | null;
+}) {
+  return queryOptions({
+    queryFn: () => fetchLeagueHistoryAuditQuery(args),
+    queryKey: workspaceQueryKeys.leagueHistoryAudit(args),
+  });
+}
+
 export function teamHighlightsQueryOptions(args: {
   onlyOutcomeChange: boolean;
   perspective: string;
@@ -2890,12 +2974,55 @@ export async function refreshSharedWorkspaceSection(
   return data;
 }
 
+export async function refreshNextGameAfterConnectionUpdate(
+  queryClient: QueryClient,
+) {
+  const home = await refreshHomeWorkspace(queryClient);
+  const lineupHelper = await refreshSharedWorkspaceSection(
+    queryClient,
+    "lineupHelper",
+  );
+  const nextOpponentTeamId = home.nextMatch?.opponentTeamId ?? null;
+
+  if (nextOpponentTeamId) {
+    queryClient.removeQueries({
+      exact: true,
+      queryKey: workspaceQueryKeys.scoutSummary(nextOpponentTeamId),
+    });
+    queryClient.removeQueries({
+      exact: true,
+      queryKey: workspaceQueryKeys.opponentForecast(nextOpponentTeamId),
+    });
+  }
+
+  queryClient.removeQueries({
+    queryKey: ["workspace", "recommendation"],
+  });
+
+  return {
+    home,
+    lineupHelper,
+  };
+}
+
 export async function refreshLeagueHistory(
   queryClient: QueryClient,
   leagueId?: string | null,
 ) {
   const data = await fetchLeagueHistoryQuery({ leagueId });
   queryClient.setQueryData(workspaceQueryKeys.leagueHistory(leagueId), data);
+  return data;
+}
+
+export async function refreshLeagueHistoryAudit(
+  queryClient: QueryClient,
+  args?: {
+    includeLiveComparison?: boolean | null;
+    leagueId?: string | null;
+  },
+) {
+  const data = await fetchLeagueHistoryAuditQuery(args);
+  queryClient.setQueryData(workspaceQueryKeys.leagueHistoryAudit(args), data);
   return data;
 }
 

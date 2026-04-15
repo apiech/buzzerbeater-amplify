@@ -224,6 +224,9 @@ export type ScoutWorkspacePayload = ScoutTeamSummaryPayload & {
 export type LeagueIntelPayload = NonNullable<
   Schema["getLeagueIntel"]["returnType"]
 >;
+export type LeagueHistoryAuditPayload = NonNullable<
+  Schema["getLeagueHistoryAudit"]["returnType"]
+>;
 export type LeagueHistoryPayload = NonNullable<
   Schema["getLeagueHistory"]["returnType"]
 >;

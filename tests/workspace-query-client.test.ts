@@ -10,6 +10,7 @@ import {
   fetchSalaryCalculatorSeedQuery,
   fetchHomeWorkspaceQuery,
   repairOwnerRosterDataMutation,
+  refreshNextGameAfterConnectionUpdate,
   refreshLineupHelperAfterOwnerRosterRepair,
   fetchScoutTeamSummaryQuery,
   submitProductFeedbackMutation,
@@ -393,4 +394,140 @@ test("owner roster repair refresh only replaces the lineup-helper cache", async 
   assert.deepStrictEqual(queryClient.getQueryData(workspaceQueryKeys.home), {
     team: { teamName: "Visionaries" },
   });
+});
+
+test("next-game reconnect refresh clears wizard caches and reloads the current next-opponent context", async (t) => {
+  installMutationMock(t, "refreshWorkspace", async () => ({
+    data: {
+      connection: {
+        bbLoginName: "apiech",
+        status: "CONNECTED",
+        teamName: "Visionaries",
+      },
+      league: {
+        league: {
+          id: "nbba",
+          name: "NBBA",
+        },
+        standings: [],
+      },
+      nextMatch: {
+        isHome: true,
+        matchId: "match-1",
+        opponentTeamId: "opp-1",
+        opponentTeamName: "Rivals",
+        startTime: "2026-04-15T23:00:00.000Z",
+        type: "League",
+      },
+      nextOpponent: null,
+      nextScoutMatch: null,
+      recentMatches: [],
+      syncedAt: "2026-04-15T02:35:00.000Z",
+      team: {
+        injuries: [],
+        record: null,
+        shortName: "Visionaries",
+        teamId: "our-1",
+        teamName: "Visionaries",
+        topPlayers: [],
+      },
+    },
+    errors: null,
+  }));
+  installQueryMock(t, "getLineupHelperWorkspace", async () => ({
+    data: {
+      availableDefenses: ["Man to man"],
+      availableLocations: ["Home Court"],
+      availableOffenses: ["Base Offense"],
+      defaultAssignments: [],
+      defaultContext: {
+        defense: "Man to man",
+        defensiveSwitch: {
+          c: "C",
+          pf: "PF",
+          pg: "PG",
+          sf: "SF",
+          sg: "SG",
+        },
+        enthusiasm: 5,
+        homeCourt: "Home Court",
+        offense: "Base Offense",
+      },
+      evaluation: null,
+      generatedAt: "2026-04-15T02:35:00.000Z",
+      roster: [],
+      snapshotWarnings: [],
+      syncedAt: "2026-04-15T02:35:00.000Z",
+    },
+    errors: null,
+  }));
+
+  const queryClient = new QueryClient();
+  const recommendationKey = workspaceQueryKeys.nextGameRecommendation({
+    forecastJobId: "job-1",
+    input: {
+      defensiveSwitch: {
+        c: "C",
+        pf: "PF",
+        pg: "PG",
+        sf: "SF",
+        sg: "SG",
+      },
+      enthusiasm: 5,
+      excludedPlayerIds: [],
+    },
+    matchId: "match-1",
+    opponentTeamId: "opp-1",
+  });
+
+  queryClient.setQueryData(workspaceQueryKeys.scoutSummary("opp-1"), {
+    teamId: "opp-1",
+  });
+  queryClient.setQueryData(workspaceQueryKeys.opponentForecast("opp-1"), {
+    jobId: "job-1",
+    status: "FAILED",
+  });
+  queryClient.setQueryData(recommendationKey, {
+    status: "FAILED",
+  });
+  queryClient.setQueryData(
+    workspaceQueryKeys.nextGamePlannerDetail("artifact-1"),
+    {
+      artifactKey: "artifact-1",
+    },
+  );
+
+  const refreshed = await refreshNextGameAfterConnectionUpdate(queryClient);
+
+  assert.equal(
+    refreshed.home.nextMatch?.opponentTeamId,
+    "opp-1",
+  );
+  assert.equal(
+    refreshed.lineupHelper.generatedAt,
+    "2026-04-15T02:35:00.000Z",
+  );
+  assert.equal(
+    queryClient.getQueryData(workspaceQueryKeys.home),
+    refreshed.home,
+  );
+  assert.equal(
+    queryClient.getQueryData(workspaceQueryKeys.lineupHelper),
+    refreshed.lineupHelper,
+  );
+  assert.equal(
+    queryClient.getQueryData(workspaceQueryKeys.scoutSummary("opp-1")),
+    undefined,
+  );
+  assert.equal(
+    queryClient.getQueryData(workspaceQueryKeys.opponentForecast("opp-1")),
+    undefined,
+  );
+  assert.equal(queryClient.getQueryData(recommendationKey), undefined);
+  assert.equal(
+    queryClient.getQueryData(
+      workspaceQueryKeys.nextGamePlannerDetail("artifact-1"),
+    ),
+    undefined,
+  );
 });

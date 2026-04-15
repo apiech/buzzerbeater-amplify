@@ -4,6 +4,7 @@ import { processLeagueHistoryBackfill } from "../_backend/league-history";
 
 type LeagueHistoryMessage = {
   leagueId: string;
+  refreshMode?: "MISSING_ONLY" | "REFRESH_ALL_HISTORICAL" | null;
   requestedAt: string;
   userId: string;
 };

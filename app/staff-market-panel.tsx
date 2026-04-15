@@ -29,6 +29,7 @@ import {
   TableHeadCell,
   TableShell,
 } from "@/app/ui/primitives/table-shell";
+import { WorkInProgressNotice } from "@/app/ui/primitives/work-in-progress-notice";
 
 const numericTableCellClassName = "text-right tabular-nums";
 
@@ -58,6 +59,7 @@ export function StaffMarketPanel() {
         eyebrow="Staff Market"
         title="Bid optimizer for staff auctions"
       />
+      <WorkInProgressNotice subject="This staff market page" />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
         <div className="grid gap-4">

@@ -75,7 +75,9 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
   const submitBackfillMutation = useMutation({
     mutationFn: (leagueId: string | null) =>
       submitLeagueHistoryBackfillMutation(
-        leagueId && leagueId !== defaultLeagueId ? { leagueId } : undefined,
+        leagueId && leagueId !== defaultLeagueId
+          ? { leagueId, refreshMode: "MISSING_ONLY" }
+          : { refreshMode: "MISSING_ONLY" },
       ),
   });
   const historyQuery = useQuery({
@@ -106,25 +108,28 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
     }
   }, [defaultLeagueId, requestedLeagueId]);
 
-  const handleHistoryRefresh = useCallback(async (args: {
-    ensureBackfill: boolean;
-    leagueId: string | null;
-  }): Promise<void> => {
-    if (!args.leagueId) {
-      return;
-    }
-
-    setPanelError(null);
-
-    try {
-      if (args.ensureBackfill) {
-        await submitBackfill(args.leagueId);
+  const handleHistoryRefresh = useCallback(
+    async (args: {
+      ensureBackfill: boolean;
+      leagueId: string | null;
+    }): Promise<void> => {
+      if (!args.leagueId) {
+        return;
       }
-      await refetchHistory();
-    } catch (error) {
-      setPanelError(readQueryError(error));
-    }
-  }, [refetchHistory, submitBackfill]);
+
+      setPanelError(null);
+
+      try {
+        if (args.ensureBackfill) {
+          await submitBackfill(args.leagueId);
+        }
+        await refetchHistory();
+      } catch (error) {
+        setPanelError(readQueryError(error));
+      }
+    },
+    [refetchHistory, submitBackfill],
+  );
 
   useEffect(() => {
     if (!requestedLeagueId) {
@@ -151,7 +156,8 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalizedLeagueId = normalizeLeagueId(leagueIdInput) ?? defaultLeagueId;
+    const normalizedLeagueId =
+      normalizeLeagueId(leagueIdInput) ?? defaultLeagueId;
     setRequestedLeagueId(normalizedLeagueId);
     if (normalizedLeagueId) {
       setLeagueIdInput(normalizedLeagueId);
@@ -218,7 +224,7 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
             </Button>
           </>
         }
-        description="Totals include stored completed seasons plus the live current standings. Conference history is intentionally ignored in this first version."
+        description="Totals include stored completed seasons plus the live current standings. Rows are split by historical name era for the same team ID, and conference history is still intentionally ignored."
         eyebrow="League History"
         title={effectiveLeagueName}
       />
@@ -264,8 +270,8 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
           value={payload?.summary.historicalSeasonsStored ?? 0}
         />
         <StatCard
-          detail="All teams included in the current aggregate."
-          label="Teams"
+          detail="Historical team/name eras included in the current aggregate."
+          label="Name eras"
           value={payload?.summary.totalTeams ?? 0}
         />
         <StatCard
@@ -303,7 +309,7 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
       {canDisplayLeagueHistoryRows(payload) ? (
         <Panel as="article" padding="sm" variant="solid">
           <SectionHeading
-            description="Click a column heading to sort the all-time league table."
+            description="Click a column heading to sort the all-time league table. Team IDs stay visible so same-ID name eras remain distinct."
             title="All-time standings"
             titleAs="h4"
           />
@@ -374,8 +380,15 @@ export function LeagueHistoryPanel({ context }: LeagueHistoryPanelProps) {
             </thead>
             <tbody>
               {displayRows.map((row) => (
-                <tr key={row.teamId}>
-                  <TableCell>{row.teamName}</TableCell>
+                <tr key={buildLeagueHistoryRowKey(row)}>
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <span>{row.teamName}</span>
+                      <span className="text-ink-muted text-[0.72rem] font-semibold tracking-[0.08em] uppercase">
+                        #{row.teamId}
+                      </span>
+                    </div>
+                  </TableCell>
                   <TableCell>{row.seasons}</TableCell>
                   <TableCell>{row.games}</TableCell>
                   <TableCell>{row.wins}</TableCell>
@@ -420,7 +433,9 @@ function SortableHeadCell({
         type="button"
       >
         <span>{label}</span>
-        {active ? <span aria-hidden="true">{direction === "asc" ? "↑" : "↓"}</span> : null}
+        {active ? (
+          <span aria-hidden="true">{direction === "asc" ? "↑" : "↓"}</span>
+        ) : null}
       </button>
     </TableHeadCell>
   );
@@ -523,10 +538,20 @@ function compareBySortKey(
   key: SortKey,
 ): number {
   if (key === "teamName") {
-    return left.teamName.localeCompare(right.teamName);
+    const teamNameComparison = left.teamName.localeCompare(right.teamName);
+    if (teamNameComparison !== 0) {
+      return teamNameComparison;
+    }
+    return left.teamId.localeCompare(right.teamId);
   }
 
   return left[key] - right[key];
+}
+
+function buildLeagueHistoryRowKey(
+  row: Pick<LeagueHistoryRow, "teamId" | "teamName">,
+): string {
+  return `${row.teamId}::${row.teamName}`;
 }
 
 function normalizeLeagueId(value: string): string | null {

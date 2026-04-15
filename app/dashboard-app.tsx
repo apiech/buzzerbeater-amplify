@@ -24,6 +24,7 @@ import {
   manualSalaryEstimateQueryOptions,
   opponentForecastQueryOptions,
   playerTrendQueryOptions,
+  refreshNextGameAfterConnectionUpdate,
   salaryCalculatorSeedQueryOptions,
   salaryProjectionQueryOptions,
   scoutScheduleQueryOptions,
@@ -86,6 +87,7 @@ import {
   TableHeadCell,
   TableShell,
 } from "@/app/ui/primitives/table-shell";
+import { WorkInProgressNotice } from "@/app/ui/primitives/work-in-progress-notice";
 import { PlayerTrendChart } from "@/app/ui/workspace/player-trend-chart";
 import { ThemeSelect } from "@/app/ui/theme/theme-select";
 import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
@@ -216,6 +218,7 @@ function AuthenticatedWorkspace({
   commercialModeEnabled: boolean;
   viewerLabel: string | null;
 }) {
+  const queryClient = useQueryClient();
   const {
     billingError,
     billingSummary,
@@ -353,6 +356,11 @@ function AuthenticatedWorkspace({
             onConnected={async (status) => {
               await loadConnection();
               if (status === "CONNECTED") {
+                if (activeSection === "next-game") {
+                  await refreshNextGameAfterConnectionUpdate(queryClient);
+                  setShowCredentialForm(false);
+                  return;
+                }
                 setShowCredentialForm(false);
                 await handleRefresh();
               }
@@ -1659,6 +1667,7 @@ function WorkspaceDashboard({
                 title="Salary calculator"
                 titleAs="h4"
               />
+              <WorkInProgressNotice subject="This salary calculator section" />
               {salaryCalculatorSeedError ? (
                 <Alert>{salaryCalculatorSeedError}</Alert>
               ) : null}

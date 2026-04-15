@@ -3107,23 +3107,7 @@ function playerToTrackedPlayerRecord(
     throw new Error("Tracked player records require both a player id and team id.");
   }
 
-  const profileJson = {
-    id: player.id,
-    firstName: player.firstName,
-    lastName: player.lastName,
-    fullName: player.fullName,
-    salary: player.salary,
-    bestPosition: player.bestPosition,
-    age: player.age,
-    height: player.height,
-    dmi: player.dmi,
-    injuryWeeks: player.injuryWeeks,
-    nationality: {
-      id: player.nationality?.id ?? "unknown",
-      name: player.nationality?.name ?? "Unknown",
-    },
-    skills: { ...player.skills },
-  } satisfies StoredOwnedRosterPlayer;
+  const profileJson = projectStoredOwnedRosterPlayer(player);
 
   return {
     userId,
@@ -3144,6 +3128,44 @@ function playerToTrackedPlayerRecord(
     profileJson,
     fetchedAt,
   };
+}
+
+function projectStoredOwnedRosterPlayer(
+  player: BBApiOwnedRosterPlayer,
+): StoredOwnedRosterPlayer {
+  return {
+    id: player.id,
+    firstName: player.firstName,
+    lastName: player.lastName,
+    fullName: player.fullName,
+    salary: player.salary,
+    bestPosition: player.bestPosition,
+    age: player.age,
+    height: player.height,
+    dmi: player.dmi,
+    injuryWeeks: player.injuryWeeks,
+    nationality: {
+      id: player.nationality?.id ?? "unknown",
+      name: player.nationality?.name ?? "Unknown",
+    },
+    skills: {
+      block: player.skills.block,
+      driving: player.skills.driving,
+      experience: player.skills.experience,
+      freeThrow: player.skills.freeThrow,
+      gameShape: player.skills.gameShape,
+      handling: player.skills.handling,
+      insideDef: player.skills.insideDef,
+      insideShot: player.skills.insideShot,
+      jumpShot: player.skills.jumpShot,
+      outsideDef: player.skills.outsideDef,
+      passing: player.skills.passing,
+      potential: player.skills.potential,
+      range: player.skills.range,
+      rebound: player.skills.rebound,
+      stamina: player.skills.stamina,
+    },
+  } satisfies StoredOwnedRosterPlayer;
 }
 
 function selectNextMatch(

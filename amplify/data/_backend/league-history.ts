@@ -35,14 +35,19 @@ type ResolverResult<TKey extends keyof Schema> = NonNullable<
   Schema[TKey] extends { returnType: infer TReturn } ? TReturn : never
 >;
 
+type LeagueHistoryAuditResult = ResolverResult<"getLeagueHistoryAudit">;
 type LeagueHistoryResult = ResolverResult<"getLeagueHistory">;
 type LeagueHistoryRow = LeagueHistoryResult["rows"][number];
 type LeagueHistoryStatus = NonNullable<LeagueHistoryResult["status"]>;
+type LeagueHistoryBackfillRefreshMode = NonNullable<
+  NonNullable<Schema["submitLeagueHistoryBackfill"]["args"]>["refreshMode"]
+>;
 type SubmitLeagueHistoryBackfillResult =
   ResolverResult<"submitLeagueHistoryBackfill">;
 
 type LeagueHistoryMessage = {
   leagueId: string;
+  refreshMode?: LeagueHistoryBackfillRefreshMode | null;
   requestedAt: string;
   userId: string;
 };
@@ -110,6 +115,8 @@ const ACTIVE_BACKFILL_STATES = new Set([
   "QUEUED",
   "RESOLVING_SEASONS",
 ]);
+const DEFAULT_LEAGUE_HISTORY_BACKFILL_REFRESH_MODE: LeagueHistoryBackfillRefreshMode =
+  "MISSING_ONLY";
 
 const defaultSubmitDependencies: SubmitDependencies = {
   assertMaintenanceInactive,
@@ -152,8 +159,13 @@ const defaultProcessDependencies: ProcessDependencies = {
 
 export const __testing = {
   aggregateLeagueHistoryRows,
+  collectLeagueHistoryNameCollisions,
   determineMissingHistoricalSeasons,
+  determineHistoricalSeasonsToFetch,
+  findLeagueHistoryNameMismatches,
   hasActiveLeagueHistoryBackfill,
+  normalizeLeagueHistoryBackfillRefreshMode,
+  normalizeLeagueHistoryTeamName,
   normalizeLeagueId,
   sortLeagueHistoryRows,
 };
@@ -163,6 +175,7 @@ export async function submitLeagueHistoryBackfill(
     env: GraphqlEnv;
     identity: unknown;
     leagueId?: string | null;
+    refreshMode?: LeagueHistoryBackfillRefreshMode | null;
     stateMachineArn: string;
   },
   dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
@@ -172,6 +185,9 @@ export async function submitLeagueHistoryBackfill(
     ...dependencies,
   };
   await deps.assertMaintenanceInactive();
+  const refreshMode = normalizeLeagueHistoryBackfillRefreshMode(
+    args.refreshMode,
+  );
 
   const request = await resolveLeagueRequest(
     args.env,
@@ -204,7 +220,10 @@ export async function submitLeagueHistoryBackfill(
   const historicalSeasonsStored =
     historicalSeasonSummary.storedHistoricalSeasons.length;
 
-  if (historicalSeasonsExpected === historicalSeasonsStored) {
+  if (
+    refreshMode === "MISSING_ONLY" &&
+    historicalSeasonsExpected === historicalSeasonsStored
+  ) {
     const completedAt = deps.now().toISOString();
     const completedStatus: LeagueHistoryBackfillRecord = {
       completedAt,
@@ -262,6 +281,7 @@ export async function submitLeagueHistoryBackfill(
       ),
       {
         leagueId: request.leagueId,
+        refreshMode,
         requestedAt,
         userId: request.userId,
       },
@@ -338,6 +358,10 @@ export async function getLeagueHistory(
     liveStandings === null
       ? []
       : standingsToHistoryRecords(liveStandings, request.leagueId);
+  const mixedNameTeams = collectLeagueHistoryNameCollisions([
+    ...cachedRows,
+    ...liveRows,
+  ]);
   const rows = sortLeagueHistoryRows(
     aggregateLeagueHistoryRows([...cachedRows, ...liveRows]),
   );
@@ -363,7 +387,90 @@ export async function getLeagueHistory(
       historicalSeasonsStored,
       totalTeams: rows.length,
     },
-    warning,
+    warning: joinWarnings([
+      warning,
+      buildMixedNameLeagueHistoryWarning(mixedNameTeams),
+    ]),
+  };
+}
+
+export async function getLeagueHistoryAudit(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+    includeLiveComparison?: boolean | null;
+    leagueId?: string | null;
+  },
+  dependencies: GetDependencyOverrides = defaultGetDependencies,
+): Promise<LeagueHistoryAuditResult> {
+  const deps: GetDependencies = {
+    ...defaultGetDependencies,
+    ...dependencies,
+  };
+  await deps.assertMaintenanceInactive();
+
+  const request = await resolveLeagueRequest(
+    args.env,
+    args.identity,
+    args.leagueId,
+    {
+      getBbConnection: deps.getBbConnection,
+    },
+  );
+  const cachedRows = await listAllLeagueHistoryStandingCaches(
+    args.env,
+    request.leagueId,
+    deps.listLeagueHistoryStandingCachesByLeagueId,
+  );
+
+  const includeLiveComparison = Boolean(args.includeLiveComparison);
+  const mixedNameTeams = collectLeagueHistoryNameCollisions(cachedRows);
+  let liveRows: LeagueHistoryStandingCacheRecord[] = [];
+  let liveComparisonIncluded = false;
+  let warning: string | null = null;
+  let leagueName =
+    cachedRows.find((row) => row.leagueName)?.leagueName ??
+    (request.leagueId === request.connection.leagueId
+      ? request.connection.leagueName
+      : null);
+
+  if (includeLiveComparison) {
+    try {
+      const bb = await createLeagueHistoryBbClient(
+        args.env,
+        request.connection,
+        request.userId,
+        {
+          createBbClient: deps.createBbClient,
+          resolveBbAccessKey: deps.resolveBbAccessKey,
+        },
+      );
+      const liveHistory = await loadAllLeagueHistoryRows(request.leagueId, bb);
+      leagueName = liveHistory.leagueName ?? leagueName;
+      liveRows = liveHistory.rows;
+      liveComparisonIncluded = true;
+    } catch (error) {
+      warning = toErrorMessage(error);
+    }
+  }
+
+  return {
+    cachedRows: sortLeagueHistoryRows(aggregateLeagueHistoryRows(cachedRows)),
+    league: {
+      id: request.leagueId,
+      name: leagueName,
+    },
+    liveComparisonIncluded,
+    liveRows: sortLeagueHistoryRows(aggregateLeagueHistoryRows(liveRows)),
+    mixedNameTeams,
+    nameMismatches: liveComparisonIncluded
+      ? findLeagueHistoryNameMismatches(cachedRows, liveRows)
+      : [],
+    requestedLeagueId: request.requestedLeagueId,
+    warning: joinWarnings([
+      warning,
+      buildMixedNameLeagueHistoryWarning(mixedNameTeams),
+    ]),
   };
 }
 
@@ -380,10 +487,10 @@ export async function processLeagueHistoryBackfill(
     ...dependencies,
   };
   const message = resolveLeagueHistoryMessage(args);
-  const connection = await deps.getBbConnection(
-    args.env,
-    message.userId,
+  const refreshMode = normalizeLeagueHistoryBackfillRefreshMode(
+    message.refreshMode,
   );
+  const connection = await deps.getBbConnection(args.env, message.userId);
   if (!connection) {
     throw new Error(
       "A connected BuzzerBeater account is required for league history backfill.",
@@ -442,18 +549,24 @@ export async function processLeagueHistoryBackfill(
       deps.listLeagueHistoryStandingCachesByLeagueId,
     );
     const currentSeason = availableSeasons.at(-1) ?? null;
+    const storedHistoricalSeasonSet = new Set(
+      cachedRows
+        .map((row) => row.season)
+        .filter((season) => currentSeason === null || season < currentSeason),
+    );
     const historicalSeasons = availableSeasons.filter(
       (season) => currentSeason === null || season < currentSeason,
     );
-    const missingSeasons = determineMissingHistoricalSeasons({
+    const seasonsToFetch = determineHistoricalSeasonsToFetch({
       cachedRows,
       currentSeason,
+      refreshMode,
       seasons: availableSeasons,
     });
     historicalSeasonsExpected = historicalSeasons.length;
     historicalSeasonsStored = countDistinctStoredSeasons(cachedRows);
 
-    if (!missingSeasons.length) {
+    if (!seasonsToFetch.length) {
       const completedAt = deps.now().toISOString();
       await deps.upsertLeagueHistoryBackfill(args.env, {
         completedAt,
@@ -474,7 +587,7 @@ export async function processLeagueHistoryBackfill(
       return;
     }
 
-    for (const season of missingSeasons) {
+    for (const season of seasonsToFetch) {
       await deps.assertMaintenanceInactive();
       const standings = await bb.getStandings(message.leagueId, season);
       const seasonRows = standingsToHistoryRecords(standings, message.leagueId);
@@ -484,7 +597,8 @@ export async function processLeagueHistoryBackfill(
         await deps.upsertLeagueHistoryStandingCache(args.env, row);
       }
 
-      historicalSeasonsStored = (historicalSeasonsStored ?? 0) + 1;
+      storedHistoricalSeasonSet.add(season);
+      historicalSeasonsStored = storedHistoricalSeasonSet.size;
       lastCompletedSeason = season;
       const updatedAt = deps.now().toISOString();
       await deps.upsertLeagueHistoryBackfill(args.env, {
@@ -738,6 +852,21 @@ export function determineMissingHistoricalSeasons(args: {
   );
 }
 
+export function determineHistoricalSeasonsToFetch(args: {
+  cachedRows: readonly LeagueHistoryStandingCacheRecord[];
+  currentSeason: number | null;
+  refreshMode: LeagueHistoryBackfillRefreshMode;
+  seasons: readonly number[];
+}): number[] {
+  if (args.refreshMode === "REFRESH_ALL_HISTORICAL") {
+    return args.seasons.filter(
+      (season) => args.currentSeason === null || season < args.currentSeason,
+    );
+  }
+
+  return determineMissingHistoricalSeasons(args);
+}
+
 export function aggregateLeagueHistoryRows(
   rows: readonly LeagueHistoryStandingCacheRecord[],
 ): LeagueHistoryRow[] {
@@ -759,25 +888,26 @@ export function aggregateLeagueHistoryRows(
       continue;
     }
 
-    const current = aggregated.get(row.teamId) ?? {
+    const identityKey = buildLeagueHistoryIdentityKey(row);
+    const current = aggregated.get(identityKey) ?? {
       losses: 0,
       pa: 0,
       pf: 0,
       seasons: new Set<number>(),
       teamId: row.teamId,
-      teamName: row.teamName ?? `Team ${row.teamId}`,
+      teamName: normalizeLeagueHistoryTeamName(row),
       wins: 0,
     };
 
     if (typeof row.season === "number") {
       current.seasons.add(row.season);
     }
-    current.teamName = row.teamName ?? current.teamName;
+    current.teamName = normalizeLeagueHistoryTeamName(row);
     current.wins += row.wins ?? 0;
     current.losses += row.losses ?? 0;
     current.pf += row.pf ?? 0;
     current.pa += row.pa ?? 0;
-    aggregated.set(row.teamId, current);
+    aggregated.set(identityKey, current);
   }
 
   return Array.from(aggregated.values()).map((row) => {
@@ -813,7 +943,11 @@ export function sortLeagueHistoryRows(
     if (right.pointMargin !== left.pointMargin) {
       return right.pointMargin - left.pointMargin;
     }
-    return left.teamName.localeCompare(right.teamName);
+    const teamNameComparison = left.teamName.localeCompare(right.teamName);
+    if (teamNameComparison !== 0) {
+      return teamNameComparison;
+    }
+    return left.teamId.localeCompare(right.teamId);
   });
 }
 
@@ -826,6 +960,9 @@ export function hasActiveLeagueHistoryBackfill(
 function parseQueueMessage(body: string): LeagueHistoryMessage {
   const parsed = JSON.parse(body) as Record<string, unknown>;
   const leagueId = normalizeLeagueId(parsed.leagueId);
+  const refreshMode = normalizeLeagueHistoryBackfillRefreshMode(
+    parsed.refreshMode,
+  );
   const requestedAt = asOptionalString(parsed.requestedAt);
   const userId = asOptionalString(parsed.userId);
 
@@ -837,6 +974,7 @@ function parseQueueMessage(body: string): LeagueHistoryMessage {
 
   return {
     leagueId,
+    refreshMode,
     requestedAt,
     userId,
   };
@@ -874,6 +1012,210 @@ function resolveUserId(identity: unknown): string | null {
 
 function asOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function normalizeLeagueHistoryBackfillRefreshMode(
+  value: unknown,
+): LeagueHistoryBackfillRefreshMode {
+  return value === "REFRESH_ALL_HISTORICAL"
+    ? value
+    : DEFAULT_LEAGUE_HISTORY_BACKFILL_REFRESH_MODE;
+}
+
+export function normalizeLeagueHistoryTeamName(
+  row: Pick<LeagueHistoryStandingCacheRecord, "teamId" | "teamName">,
+): string {
+  const normalizedTeamName =
+    typeof row.teamName === "string" ? row.teamName.trim() : "";
+  return normalizedTeamName.length > 0
+    ? normalizedTeamName
+    : `Team ${row.teamId}`;
+}
+
+export function collectLeagueHistoryNameCollisions(
+  rows: readonly Pick<
+    LeagueHistoryStandingCacheRecord,
+    "season" | "teamId" | "teamName"
+  >[],
+): LeagueHistoryAuditResult["mixedNameTeams"] {
+  const grouped = new Map<
+    string,
+    {
+      firstSeason: number | null;
+      lastSeason: number | null;
+      rowCount: number;
+      seasons: Set<number>;
+      teamId: string;
+      teamNames: Set<string>;
+    }
+  >();
+
+  for (const row of rows) {
+    if (!row.teamId) {
+      continue;
+    }
+
+    const current = grouped.get(row.teamId) ?? {
+      firstSeason: null,
+      lastSeason: null,
+      rowCount: 0,
+      seasons: new Set<number>(),
+      teamId: row.teamId,
+      teamNames: new Set<string>(),
+    };
+
+    current.rowCount += 1;
+    current.teamNames.add(normalizeLeagueHistoryTeamName(row));
+    if (typeof row.season === "number") {
+      current.seasons.add(row.season);
+      current.firstSeason =
+        current.firstSeason === null
+          ? row.season
+          : Math.min(current.firstSeason, row.season);
+      current.lastSeason =
+        current.lastSeason === null
+          ? row.season
+          : Math.max(current.lastSeason, row.season);
+    }
+
+    grouped.set(row.teamId, current);
+  }
+
+  return Array.from(grouped.values())
+    .filter((row) => row.teamNames.size > 1)
+    .map((row) => ({
+      firstSeason: row.firstSeason,
+      lastSeason: row.lastSeason,
+      rowCount: row.rowCount,
+      seasonCount: row.seasons.size,
+      teamId: row.teamId,
+      teamNames: Array.from(row.teamNames).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    }))
+    .sort((left, right) => {
+      if (right.seasonCount !== left.seasonCount) {
+        return right.seasonCount - left.seasonCount;
+      }
+      return left.teamId.localeCompare(right.teamId);
+    });
+}
+
+export function findLeagueHistoryNameMismatches(
+  cachedRows: readonly LeagueHistoryStandingCacheRecord[],
+  liveRows: readonly LeagueHistoryStandingCacheRecord[],
+): LeagueHistoryAuditResult["nameMismatches"] {
+  const liveNamesBySeasonTeam = new Map<string, string>();
+  const mismatches = new Map<
+    string,
+    LeagueHistoryAuditResult["nameMismatches"][number]
+  >();
+
+  for (const row of liveRows) {
+    const seasonTeamKey = buildLeagueHistorySeasonTeamKey(row);
+    if (!seasonTeamKey) {
+      continue;
+    }
+    liveNamesBySeasonTeam.set(
+      seasonTeamKey,
+      normalizeLeagueHistoryTeamName(row),
+    );
+  }
+
+  for (const row of cachedRows) {
+    const seasonTeamKey = buildLeagueHistorySeasonTeamKey(row);
+    if (!seasonTeamKey) {
+      continue;
+    }
+
+    const liveTeamName = liveNamesBySeasonTeam.get(seasonTeamKey);
+    if (!liveTeamName) {
+      continue;
+    }
+
+    const cachedTeamName = normalizeLeagueHistoryTeamName(row);
+    if (cachedTeamName === liveTeamName) {
+      continue;
+    }
+
+    mismatches.set(seasonTeamKey, {
+      cachedTeamName,
+      liveTeamName,
+      season: row.season,
+      teamId: row.teamId,
+    });
+  }
+
+  return Array.from(mismatches.values()).sort((left, right) => {
+    if (left.season !== right.season) {
+      return left.season - right.season;
+    }
+    return left.teamId.localeCompare(right.teamId);
+  });
+}
+
+async function loadAllLeagueHistoryRows(
+  leagueId: string,
+  bb: Pick<BBXmlApiClient, "getSeasons" | "getStandings">,
+): Promise<{
+  leagueName: string | null;
+  rows: LeagueHistoryStandingCacheRecord[];
+}> {
+  const seasonsResponse = await bb.getSeasons();
+  const seasons = seasonsResponse.seasons
+    .map((season) => season.id)
+    .filter((season): season is number => season !== null)
+    .sort((left, right) => left - right);
+  const rows: LeagueHistoryStandingCacheRecord[] = [];
+  let leagueName: string | null = null;
+
+  for (const season of seasons) {
+    const standings = await bb.getStandings(leagueId, season);
+    leagueName = standings.league?.name ?? leagueName;
+    rows.push(...standingsToHistoryRecords(standings, leagueId));
+  }
+
+  return {
+    leagueName,
+    rows,
+  };
+}
+
+function buildLeagueHistoryIdentityKey(
+  row: Pick<LeagueHistoryStandingCacheRecord, "teamId" | "teamName">,
+): string {
+  return `${row.teamId}::${normalizeLeagueHistoryTeamName(row)}`;
+}
+
+function buildLeagueHistorySeasonTeamKey(
+  row: Pick<LeagueHistoryStandingCacheRecord, "season" | "teamId">,
+): string | null {
+  return typeof row.season === "number" && row.teamId
+    ? `${row.season}::${row.teamId}`
+    : null;
+}
+
+function buildMixedNameLeagueHistoryWarning(
+  mixedNameTeams: readonly LeagueHistoryAuditResult["mixedNameTeams"][number][],
+): string | null {
+  if (!mixedNameTeams.length) {
+    return null;
+  }
+
+  const affectedTeamCount = mixedNameTeams.length;
+  return affectedTeamCount === 1
+    ? "Historical rows for 1 team ID include multiple name eras and are split into separate rows in this table."
+    : `Historical rows for ${affectedTeamCount} team IDs include multiple name eras and are split into separate rows in this table.`;
+}
+
+function joinWarnings(
+  warnings: readonly (string | null | undefined)[],
+): string | null {
+  const normalized = warnings
+    .map((warning) => warning?.trim())
+    .filter((warning): warning is string => Boolean(warning));
+
+  return normalized.length > 0 ? normalized.join(" ") : null;
 }
 
 function toErrorMessage(error: unknown): string {

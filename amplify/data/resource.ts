@@ -165,6 +165,15 @@ export const getLeagueHistory = defineFunction({
   environment: secureFunctionEnvironment,
 });
 
+export const getLeagueHistoryAudit = defineFunction({
+  resourceGroupName: "data",
+  name: "get-league-history-audit",
+  entry: "./get-league-history-audit/handler.ts",
+  timeoutSeconds: 300,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
 export const getPlayerLab = defineFunction({
   resourceGroupName: "data",
   name: "get-player-lab",
@@ -447,6 +456,7 @@ export const maintenanceProtectedFunctions = [
   getNextGamePlannerDetail,
   getLeagueIntel,
   getLeagueHistory,
+  getLeagueHistoryAudit,
   getPlayerLab,
   getArenaWorkspace,
   getRivalsWorkspace,
@@ -589,6 +599,10 @@ const schema = a
       "FETCHING_STANDINGS",
       "SUCCEEDED",
       "FAILED",
+    ]),
+    LeagueHistoryBackfillRefreshMode: a.enum([
+      "MISSING_ONLY",
+      "REFRESH_ALL_HISTORICAL",
     ]),
 
     RivalsBackfillState: a.enum([
@@ -847,6 +861,22 @@ const schema = a
       averageMargin: a.float().required(),
     }),
 
+    LeagueHistoryAuditCollision: a.customType({
+      teamId: a.string().required(),
+      teamNames: a.string().required().array().required(),
+      firstSeason: a.integer(),
+      lastSeason: a.integer(),
+      rowCount: a.integer().required(),
+      seasonCount: a.integer().required(),
+    }),
+
+    LeagueHistoryAuditMismatch: a.customType({
+      season: a.integer().required(),
+      teamId: a.string().required(),
+      cachedTeamName: a.string().required(),
+      liveTeamName: a.string().required(),
+    }),
+
     LeagueHistoryBackfillStatus: a.customType({
       leagueId: a.string().required(),
       leagueName: a.string(),
@@ -911,6 +941,25 @@ const schema = a
       warning: a.string(),
     }),
 
+    LeagueHistoryAudit: a.customType({
+      league: a.ref("NamedReference").required(),
+      requestedLeagueId: a.string(),
+      cachedRows: a.ref("LeagueHistoryRow").required().array().required(),
+      liveRows: a.ref("LeagueHistoryRow").required().array().required(),
+      mixedNameTeams: a
+        .ref("LeagueHistoryAuditCollision")
+        .required()
+        .array()
+        .required(),
+      nameMismatches: a
+        .ref("LeagueHistoryAuditMismatch")
+        .required()
+        .array()
+        .required(),
+      liveComparisonIncluded: a.boolean().required(),
+      warning: a.string(),
+    }),
+
     HomeWorkspace: a.customType({
       syncedAt: a.datetime(),
       connection: a.ref("ConnectionResult").required(),
@@ -964,6 +1013,7 @@ const schema = a
       freeThrow: a.integer().required(),
       experience: a.integer().required(),
       gameShape: a.integer().required(),
+      potential: a.integer().required(),
     }),
 
     StoredOwnedRosterPlayer: a.customType({
@@ -3327,6 +3377,16 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLeagueHistory)),
 
+    getLeagueHistoryAudit: a
+      .query()
+      .arguments({
+        includeLiveComparison: a.boolean(),
+        leagueId: a.string(),
+      })
+      .returns(a.ref("LeagueHistoryAudit"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getLeagueHistoryAudit)),
+
     getPlayerLab: a
       .query()
       .arguments({
@@ -3669,6 +3729,7 @@ const schema = a
       .mutation()
       .arguments({
         leagueId: a.string(),
+        refreshMode: a.ref("LeagueHistoryBackfillRefreshMode"),
       })
       .returns(a.ref("LeagueHistoryBackfillSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
