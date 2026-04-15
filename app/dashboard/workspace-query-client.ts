@@ -57,6 +57,16 @@ import type {
   SubmitSingleGameSummaryResult,
   TeamHighlightsPayload,
 } from "@/app/types";
+import {
+  connectionResultSchema,
+  homeNextMatchSchema,
+  homeWorkspaceSchema,
+  matchSummarySchema,
+  namedReferenceSchema,
+  playerSummarySchema,
+  teamRecordSummarySchema,
+  tendenciesSummarySchema,
+} from "@/lib/owned-data/contracts";
 import { currentPredictionPreviewSchema } from "@/lib/prediction/contracts";
 
 const nullableStringSchema = z.string().nullable().optional();
@@ -65,192 +75,6 @@ const nullableBooleanSchema = z.boolean().nullable().optional();
 const themeIdSchema = z
   .string()
   .refine((value): value is ThemeId => isThemeId(value));
-
-const namedReferenceSchema = z
-  .object({
-    id: nullableStringSchema,
-    name: nullableStringSchema,
-  })
-  .nullable()
-  .optional();
-
-const storedTeamInfoSchema = z
-  .object({
-    country: namedReferenceSchema,
-    isBot: z.boolean(),
-    league: namedReferenceSchema,
-    ownerName: nullableStringSchema,
-    rival: namedReferenceSchema,
-    shortName: nullableStringSchema,
-    teamId: nullableStringSchema,
-    teamName: nullableStringSchema,
-  })
-  .passthrough();
-
-const teamRecordSummarySchema = z
-  .object({
-    losses: nullableNumberSchema,
-    pointMargin: nullableNumberSchema,
-    teamId: nullableStringSchema,
-    teamName: nullableStringSchema,
-    wins: nullableNumberSchema,
-  })
-  .passthrough()
-  .nullable()
-  .optional();
-
-const playerSummarySchema = z
-  .object({
-    age: nullableNumberSchema,
-    bestPosition: nullableStringSchema,
-    dmi: nullableNumberSchema,
-    fullName: z.string(),
-    gameShape: nullableStringSchema,
-    injuryWeeks: nullableNumberSchema,
-    nationalityName: nullableStringSchema,
-    playerId: nullableStringSchema,
-    ppg: nullableNumberSchema,
-    projectedStarterCount: nullableNumberSchema,
-    recentAvgMinutes: nullableNumberSchema,
-    recentStartCount: nullableNumberSchema,
-    salary: nullableNumberSchema,
-  })
-  .passthrough();
-
-const teamHubWorkspaceSchema = z
-  .object({
-    roster: z.array(playerSummarySchema),
-    syncedAt: nullableStringSchema,
-    team: storedTeamInfoSchema,
-  })
-  .passthrough();
-
-const injurySummarySchema = z
-  .object({
-    fullName: z.string(),
-    injuryWeeks: nullableNumberSchema,
-    playerId: nullableStringSchema,
-  })
-  .passthrough();
-
-const matchSummarySchema = z
-  .object({
-    effortDelta: nullableNumberSchema,
-    hasBoxscore: z.boolean(),
-    matchId: nullableStringSchema,
-    opponentScore: nullableNumberSchema,
-    opponentTeamName: nullableStringSchema,
-    outcome: nullableStringSchema,
-    startTime: nullableStringSchema,
-    teamScore: nullableNumberSchema,
-    type: nullableStringSchema,
-  })
-  .passthrough();
-
-const trendCountEntrySchema = z
-  .object({
-    count: z.number(),
-    key: z.string(),
-  })
-  .passthrough();
-
-const tendenciesSummarySchema = z
-  .object({
-    defense: z.array(trendCountEntrySchema),
-    offense: z.array(trendCountEntrySchema),
-  })
-  .passthrough();
-
-const homeNextMatchSchema = z
-  .object({
-    isHome: z.boolean(),
-    matchId: nullableStringSchema,
-    opponentTeamId: nullableStringSchema,
-    opponentTeamName: nullableStringSchema,
-    startTime: nullableStringSchema,
-    type: nullableStringSchema,
-  })
-  .passthrough()
-  .nullable()
-  .optional();
-
-const homeWorkspaceSchema = z
-  .object({
-    connection: z.lazy(() => connectionResultSchema),
-    league: z
-      .object({
-        league: namedReferenceSchema,
-        standings: z.array(
-          z
-            .object({
-              index: z.number(),
-              teams: z.array(
-                z
-                  .object({
-                    losses: nullableNumberSchema,
-                    pointMargin: nullableNumberSchema,
-                    teamId: nullableStringSchema,
-                    teamName: nullableStringSchema,
-                    wins: nullableNumberSchema,
-                  })
-                  .passthrough(),
-              ),
-            })
-            .passthrough(),
-        ),
-      })
-      .passthrough(),
-    nextMatch: homeNextMatchSchema,
-    nextOpponent: z
-      .object({
-        injuries: z.array(injurySummarySchema),
-        record: teamRecordSummarySchema,
-        teamId: nullableStringSchema,
-        teamName: nullableStringSchema,
-        tendencies: tendenciesSummarySchema,
-      })
-      .passthrough()
-      .nullable()
-      .optional(),
-    nextScoutMatch: homeNextMatchSchema,
-    recentMatches: z.array(matchSummarySchema),
-    syncedAt: nullableStringSchema,
-    team: z
-      .object({
-        injuries: z.array(injurySummarySchema),
-        record: teamRecordSummarySchema,
-        shortName: nullableStringSchema,
-        teamId: nullableStringSchema,
-        teamName: nullableStringSchema,
-        topPlayers: z.array(playerSummarySchema),
-      })
-      .passthrough(),
-  })
-  .passthrough();
-
-const connectionResultSchema = z
-  .object({
-    accessKeyLast4: nullableStringSchema,
-    bbLoginName: z.string(),
-    connectedAt: nullableStringSchema,
-    countryId: nullableStringSchema,
-    countryName: nullableStringSchema,
-    lastSyncAt: nullableStringSchema,
-    lastSyncError: nullableStringSchema,
-    lastValidatedAt: nullableStringSchema,
-    leagueId: nullableStringSchema,
-    leagueName: nullableStringSchema,
-    leagueTimeZone: nullableStringSchema,
-    profileJson: storedTeamInfoSchema.nullable().optional(),
-    status: z.string(),
-    teamId: nullableStringSchema,
-    teamName: nullableStringSchema,
-    workspaceCacheJson: z
-      .lazy(() => workspaceCachePayloadSchema)
-      .nullable()
-      .optional(),
-  })
-  .passthrough();
 
 const lineupHelperDefensiveSwitchSchema = z
   .object({
@@ -682,92 +506,6 @@ const scoutWorkspaceSchema = z
   .passthrough()
   .nullable()
   .optional();
-
-const workspaceCacheConnectionSchema = z
-  .object({
-    accessKeyLast4: nullableStringSchema,
-    bbLoginName: z.string(),
-    connectedAt: nullableStringSchema,
-    countryId: nullableStringSchema,
-    countryName: nullableStringSchema,
-    lastSyncAt: nullableStringSchema,
-    lastSyncError: nullableStringSchema,
-    lastValidatedAt: nullableStringSchema,
-    leagueId: nullableStringSchema,
-    leagueName: nullableStringSchema,
-    leagueTimeZone: nullableStringSchema,
-    profileJson: storedTeamInfoSchema.nullable().optional(),
-    status: z.string(),
-    teamId: nullableStringSchema,
-    teamName: nullableStringSchema,
-  })
-  .passthrough();
-
-const cachedHomeWorkspaceSchema = z
-  .object({
-    connection: workspaceCacheConnectionSchema,
-    league: z
-      .object({
-        league: namedReferenceSchema,
-        standings: z.array(
-          z
-            .object({
-              index: z.number(),
-              teams: z.array(
-                z
-                  .object({
-                    losses: nullableNumberSchema,
-                    pointMargin: nullableNumberSchema,
-                    teamId: nullableStringSchema,
-                    teamName: nullableStringSchema,
-                    wins: nullableNumberSchema,
-                  })
-                  .passthrough(),
-              ),
-            })
-            .passthrough(),
-        ),
-      })
-      .passthrough(),
-    nextMatch: homeNextMatchSchema,
-    nextOpponent: z
-      .object({
-        injuries: z.array(injurySummarySchema),
-        record: teamRecordSummarySchema,
-        teamId: nullableStringSchema,
-        teamName: nullableStringSchema,
-        tendencies: tendenciesSummarySchema,
-      })
-      .passthrough()
-      .nullable()
-      .optional(),
-    nextScoutMatch: homeNextMatchSchema,
-    recentMatches: z.array(matchSummarySchema),
-    syncedAt: nullableStringSchema,
-    team: z
-      .object({
-        injuries: z.array(injurySummarySchema),
-        record: teamRecordSummarySchema,
-        shortName: nullableStringSchema,
-        teamId: nullableStringSchema,
-        teamName: nullableStringSchema,
-        topPlayers: z.array(playerSummarySchema),
-      })
-      .passthrough(),
-  })
-  .passthrough();
-
-const workspaceCachePayloadSchema = z
-  .object({
-    version: z.number(),
-    home: cachedHomeWorkspaceSchema,
-    teamHub: teamHubWorkspaceSchema,
-    scout: scoutWorkspaceSchema,
-    leagueIntel: leagueIntelSchema,
-    playerLab: playerLabSchema,
-    arena: arenaWorkspaceSchema,
-  })
-  .passthrough();
 
 const opponentForecastPlayerProjectionSchema = z
   .object({
@@ -2027,7 +1765,7 @@ function readAmplifyDataOrThrow<T>(
     throw new Error(emptyMessage);
   }
 
-  return schema.parse(response.data);
+  return parseSchemaOrThrow(schema, response.data);
 }
 
 function readAmplifyNullableDataOrThrow<T>(
@@ -2044,7 +1782,7 @@ function readAmplifyNullableDataOrThrow<T>(
     return null;
   }
 
-  return schema.parse(response.data);
+  return parseSchemaOrThrow(schema, response.data);
 }
 
 async function readInternalRouteDataOrThrow<T>(
@@ -2064,7 +1802,32 @@ async function readInternalRouteDataOrThrow<T>(
     throw new Error(emptyMessage);
   }
 
-  return schema.parse(payload.data);
+  return parseSchemaOrThrow(schema, payload.data);
+}
+
+function parseSchemaOrThrow<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+): T {
+  try {
+    return schema.parse(value);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const details = error.issues
+        .map((issue) => {
+          const path = issue.path.join(".");
+          if (issue.code === "unrecognized_keys") {
+            const label = path || "value";
+            return `${label} contains unsupported key(s): ${issue.keys.join(", ")}`;
+          }
+          return `${path || "value"}: ${issue.message}`;
+        })
+        .join("; ");
+      throw new Error(details);
+    }
+
+    throw error;
+  }
 }
 
 function toRecommendationInputArg(

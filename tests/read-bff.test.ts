@@ -6,6 +6,7 @@ import {
   isReadName,
   runReadOperation,
 } from "../app/server/read-bff";
+import { createStoredTeamInfo } from "./fixtures/owned-data";
 
 function installServerDataClient(t: TestContext, client: Record<string, unknown>) {
   const originalGetServerDataClient = readTesting.runtime.getServerDataClient;
@@ -27,7 +28,12 @@ test("getCurrentBbConnection reads the current owner record via get", async (t) 
             data: {
               userId: "user-1",
               bbLoginName: "coach",
-              profileJson: '{"teamId":"123","teamName":"Buzzer Squad"}',
+              profileJson: JSON.stringify(
+                createStoredTeamInfo({
+                  teamId: "123",
+                  teamName: "Buzzer Squad",
+                }),
+              ),
               status: "CONNECTED",
               workspaceCacheJson:
                 '{"version":1,"home":{},"teamHub":{},"scout":{},"leagueIntel":{},"playerLab":{}}',
@@ -45,13 +51,24 @@ test("getCurrentBbConnection reads the current owner record via get", async (t) 
 
   assert.deepStrictEqual(getCalls, [{ userId: "user-1" }]);
   assert.deepStrictEqual(result.data, {
-    userId: "user-1",
+    accessKeyLast4: null,
     bbLoginName: "coach",
-    profileJson: {
+    connectedAt: null,
+    countryId: null,
+    countryName: null,
+    lastSyncAt: null,
+    lastSyncError: null,
+    lastValidatedAt: null,
+    leagueId: null,
+    leagueName: null,
+    leagueTimeZone: null,
+    profileJson: createStoredTeamInfo({
       teamId: "123",
       teamName: "Buzzer Squad",
-    },
+    }),
     status: "CONNECTED",
+    teamId: null,
+    teamName: null,
     workspaceCacheJson: null,
   });
 });
@@ -82,10 +99,21 @@ test("getCurrentBbConnection suppresses legacy workspace cache coercion errors w
 
   assert.equal(result.errors, null);
   assert.deepStrictEqual(result.data, {
-    userId: "user-1",
+    accessKeyLast4: null,
     bbLoginName: "coach",
+    connectedAt: null,
+    countryId: null,
+    countryName: null,
+    lastSyncAt: null,
+    lastSyncError: null,
+    lastValidatedAt: null,
+    leagueId: null,
+    leagueName: null,
+    leagueTimeZone: null,
     status: "CONNECTED",
     profileJson: null,
+    teamId: null,
+    teamName: null,
     workspaceCacheJson: null,
   });
 });

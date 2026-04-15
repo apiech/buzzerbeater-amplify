@@ -1,8 +1,6 @@
 import { decodeAwsJsonFields } from "@/amplify/data/_backend/awsjson";
-import {
-  partitionLegacyWorkspaceCacheCoercionErrors,
-  readWorkspaceCachePayload,
-} from "@/amplify/data/_backend/workspace-cache";
+import { projectCurrentConnectionResult } from "@/amplify/data/_backend/connection-projection";
+import { partitionLegacyWorkspaceCacheCoercionErrors } from "@/amplify/data/_backend/workspace-cache";
 import { getServerDataClient } from "@/app/server/amplify-server";
 import {
   adaptLeagueDateRecap,
@@ -417,20 +415,11 @@ function toArray<TItem>(value: ReadonlyArray<TItem> | null | undefined): TItem[]
 
 function normalizeCurrentBbConnectionRecord(
   record: Record<string, unknown>,
-): Record<string, unknown> {
-  const decoded = decodeAwsJsonFields("BbConnection", record);
-
-  return {
-    ...decoded,
-    profileJson: toRecord(decoded.profileJson) ?? null,
-    workspaceCacheJson: readWorkspaceCachePayload(decoded.workspaceCacheJson),
-  };
-}
-
-function toRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+) {
+  return projectCurrentConnectionResult(
+    decodeAwsJsonFields("BbConnection", record),
+    "current BbConnection record",
+  );
 }
 
 function assembleCurrentPredictionPreview(

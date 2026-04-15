@@ -271,6 +271,82 @@ test("structured Next and repository loggers use console logging instead of raw 
   }
 });
 
+test("repository owned-data writes validate payload contracts instead of sanitizing nested blobs", () => {
+  const repositorySource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "repository.ts"),
+    "utf8",
+  );
+
+  assert.match(repositorySource, /assertModelInputShape/);
+  assert.doesNotMatch(repositorySource, /prepareModelInputWithDiagnostics/);
+  assert.doesNotMatch(repositorySource, /sanitizeModelInput/);
+  assert.doesNotMatch(repositorySource, /sanitizeBbConnectionInput/);
+  assert.doesNotMatch(repositorySource, /sanitizeTrackedTeamInput/);
+  assert.doesNotMatch(repositorySource, /sanitizeTrackedPlayerInput/);
+  assert.doesNotMatch(repositorySource, /sanitizeNestedAttributes/);
+  assert.doesNotMatch(repositorySource, /stripAttributesDeep/);
+});
+
+test("workspace connection builders validate nested owned payloads before carrying them forward", () => {
+  const workspaceConnectionSource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "workspace-connection.ts"),
+    "utf8",
+  );
+
+  assert.match(workspaceConnectionSource, /assertStoredTeamInfo/);
+  assert.match(workspaceConnectionSource, /assertWorkspaceCachePayload/);
+});
+
+test("workspace home connection paths project raw connection records into explicit DTOs", () => {
+  const workspaceSource = readFileSync(
+    join(repoRoot, "amplify", "data", "_backend", "workspace.ts"),
+    "utf8",
+  );
+  const readBffSource = readFileSync(
+    join(repoRoot, "app", "server", "read-bff.ts"),
+    "utf8",
+  );
+  const buildHomeWorkspaceSection =
+    workspaceSource.match(
+      /function buildHomeWorkspace[\s\S]*?function buildHomeNextMatch/,
+    )?.[0] ?? "";
+  const rehydrateHomeWorkspaceSection =
+    workspaceSource.match(
+      /function rehydrateHomeWorkspace[\s\S]*?function projectHomeWorkspaceConnection/,
+    )?.[0] ?? "";
+
+  assert.match(workspaceSource, /from\s+["']\.\/connection-projection["']/);
+  assert.match(
+    buildHomeWorkspaceSection,
+    /connection:\s*projectHomeWorkspaceConnection\(/,
+  );
+  assert.doesNotMatch(buildHomeWorkspaceSection, /^\s*connection,\s*$/m);
+  assert.match(
+    rehydrateHomeWorkspaceSection,
+    /connection:\s*projectHomeWorkspaceConnection\(/,
+  );
+  assert.doesNotMatch(rehydrateHomeWorkspaceSection, /^\s*connection,\s*$/m);
+  assert.match(readBffSource, /projectCurrentConnectionResult/);
+});
+
+test("dashboard connection and cache parsers reuse the shared strict owned-data contracts", () => {
+  const queryClientSource = readFileSync(
+    join(repoRoot, "app", "dashboard", "workspace-query-client.ts"),
+    "utf8",
+  );
+  const connectionContractSection =
+    queryClientSource.match(
+      /const nullableStringSchema[\s\S]*?const lineupHelperDefensiveSwitchSchema/,
+    )?.[0] ?? "";
+
+  assert.match(queryClientSource, /from\s+["']@\/lib\/owned-data\/contracts["']/);
+  assert.doesNotMatch(connectionContractSection, /const namedReferenceSchema/);
+  assert.doesNotMatch(connectionContractSection, /const connectionResultSchema/);
+  assert.doesNotMatch(connectionContractSection, /const homeWorkspaceSchema/);
+  assert.doesNotMatch(connectionContractSection, /const workspaceCachePayloadSchema/);
+  assert.doesNotMatch(connectionContractSection, /\.passthrough\(/);
+});
+
 test("production source avoids wrapper-derived meta-types", () => {
   const bannedPatterns = [
     /Awaited<ReturnType<typeof /,

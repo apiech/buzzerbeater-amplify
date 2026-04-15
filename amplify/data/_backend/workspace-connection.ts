@@ -4,6 +4,10 @@ import {
 } from "./active-tracked-teams";
 import { resolveBbAccessKey } from "./credentials";
 import {
+  assertStoredTeamInfo,
+  assertWorkspaceCachePayload,
+} from "../../../lib/owned-data/contracts";
+import {
   getBbCredential,
   type BbConnectionRecord,
   type BbCredentialRecord,
@@ -145,17 +149,10 @@ export function buildConnectionRecord(
       "lastSyncError",
       null,
     ),
-    profileJson: resolveConnectionField(
+    profileJson: resolveConnectionProfile(existingConnection, updates),
+    workspaceCacheJson: resolveConnectionWorkspaceCache(
       existingConnection,
       updates,
-      "profileJson",
-      null,
-    ),
-    workspaceCacheJson: resolveConnectionField(
-      existingConnection,
-      updates,
-      "workspaceCacheJson",
-      null,
     ),
   };
 }
@@ -187,9 +184,52 @@ function resolveConnectionField<Key extends keyof BbConnectionRecord>(
   key: Key,
   fallback: BbConnectionRecord[Key],
 ): BbConnectionRecord[Key] {
-  const value = Object.prototype.hasOwnProperty.call(updates, key)
+  const value = hasOwnConnectionField(updates, key)
     ? updates[key]
     : existingConnection?.[key];
 
   return value === undefined ? fallback : value;
+}
+
+function resolveConnectionProfile(
+  existingConnection: BbConnectionRecord | null,
+  updates: Partial<BbConnectionRecord>,
+): BbConnectionRecord["profileJson"] {
+  const value = hasOwnConnectionField(updates, "profileJson")
+    ? updates.profileJson
+    : existingConnection?.profileJson;
+
+  if (value == null) {
+    return null;
+  }
+
+  return assertStoredTeamInfo(
+    value,
+    "workspace connection record profileJson",
+  );
+}
+
+function resolveConnectionWorkspaceCache(
+  existingConnection: BbConnectionRecord | null,
+  updates: Partial<BbConnectionRecord>,
+): BbConnectionRecord["workspaceCacheJson"] {
+  const value = hasOwnConnectionField(updates, "workspaceCacheJson")
+    ? updates.workspaceCacheJson
+    : existingConnection?.workspaceCacheJson;
+
+  if (value == null) {
+    return null;
+  }
+
+  return assertWorkspaceCachePayload(
+    value,
+    "workspace connection record workspaceCacheJson",
+  );
+}
+
+function hasOwnConnectionField<Key extends keyof BbConnectionRecord>(
+  value: Partial<BbConnectionRecord>,
+  key: Key,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }

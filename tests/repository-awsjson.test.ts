@@ -26,6 +26,11 @@ import {
   upsertTrackedPlayer,
   updatePredictionJobIfRequestMatches,
 } from "../amplify/data/_backend/repository";
+import {
+  createStoredOwnedRosterPlayer,
+  createStoredTeamInfo,
+  createWorkspaceCachePayload,
+} from "./fixtures/owned-data";
 
 test("createSyncRun serializes AWSJSON payloads before model.create", async (t) => {
   let createInput: Record<string, unknown> | null = null;
@@ -448,10 +453,7 @@ test("generic upserts serialize AWSJSON payloads before model.create", async (t)
     playerId: "p1",
     teamId: "t1",
     fullName: "Prospect",
-    profileJson: {
-      playerId: "p1",
-      skills: { outsideScoring: 12 },
-    },
+    profileJson: createStoredOwnedRosterPlayer(),
   });
 
   assert.deepStrictEqual(getInput, {
@@ -463,10 +465,7 @@ test("generic upserts serialize AWSJSON payloads before model.create", async (t)
     playerId: "p1",
     teamId: "t1",
     fullName: "Prospect",
-    profileJson: {
-      playerId: "p1",
-      skills: { outsideScoring: 12 },
-    },
+    profileJson: createStoredOwnedRosterPlayer(),
   });
 });
 
@@ -713,38 +712,52 @@ test("upsertBbConnection updates the existing record without adding refresh meta
   });
 });
 
-test("prepareModelInput strips unsupported named-reference attributes from BbConnection payloads", () => {
+test("prepareModelInput preserves valid explicit BbConnection payloads", () => {
   const payload = repositoryTesting.prepareModelInput("BbConnection", {
     userId: "u1",
     bbLoginName: "coach",
-    profileJson: {
+    profileJson: createStoredTeamInfo({
       teamId: "29656",
       teamName: "Visionaries",
-      isBot: false,
       league: {
         id: "1000",
         name: "NBBA",
-        attributes: {
-          level: "D.II",
-        },
       },
       country: {
         id: "1",
         name: "USA",
-        attributes: {
-          continent: "North America",
-        },
       },
-      rival: null,
-    },
+    }),
     status: "CONNECTED",
-    workspaceCacheJson: {
-      home: {
-        connection: {
-          bbLoginName: "coach",
-          status: "CONNECTED",
-        },
-        league: {
+    workspaceCacheJson: createWorkspaceCachePayload(),
+  });
+
+  assert.deepStrictEqual(payload, {
+    userId: "u1",
+    bbLoginName: "coach",
+    profileJson: createStoredTeamInfo({
+      teamId: "29656",
+      teamName: "Visionaries",
+      league: {
+        id: "1000",
+        name: "NBBA",
+      },
+      country: {
+        id: "1",
+        name: "USA",
+      },
+    }),
+    status: "CONNECTED",
+    workspaceCacheJson: createWorkspaceCachePayload(),
+  });
+});
+
+test("prepareModelInput rejects unsupported nested keys for tracked-team summaries", () => {
+  assert.throws(
+    () =>
+      repositoryTesting.prepareModelInput("TrackedTeam", {
+        name: "Visionaries",
+        summaryJson: createStoredTeamInfo({
           league: {
             id: "1000",
             name: "NBBA",
@@ -752,330 +765,35 @@ test("prepareModelInput strips unsupported named-reference attributes from BbCon
               level: "D.II",
             },
           },
-          standings: [],
-        },
-        recentMatches: [],
-        team: {
-          injuries: [],
-          topPlayers: [],
-        },
-      },
-    },
-  });
-
-  assert.deepStrictEqual(payload, {
-    userId: "u1",
-    bbLoginName: "coach",
-    profileJson: {
-      teamId: "29656",
-      teamName: "Visionaries",
-      isBot: false,
-      league: {
-        id: "1000",
-        name: "NBBA",
-      },
-      country: {
-        id: "1",
-        name: "USA",
-      },
-      rival: null,
-    },
-    status: "CONNECTED",
-    workspaceCacheJson: {
-      home: {
-        connection: {
-          bbLoginName: "coach",
-          status: "CONNECTED",
-        },
-        league: {
-          league: {
-            id: "1000",
-            name: "NBBA",
-          },
-          standings: [],
-        },
-        recentMatches: [],
-        team: {
-          injuries: [],
-          topPlayers: [],
-        },
-      },
-    },
-  });
-});
-
-test("prepareModelInput strips unsupported named-reference attributes from tracked-team summaries", () => {
-  const payload = repositoryTesting.prepareModelInput("TrackedTeam", {
-    name: "Visionaries",
-    summaryJson: {
-      country: null,
-      isBot: false,
-      league: {
-        id: "1000",
-        name: "NBBA",
-        attributes: {
-          level: "D.II",
-        },
-      },
-      ownerName: "apiech",
-      rival: null,
-      shortName: "Visionaries",
-      teamId: "29656",
-      teamName: "Visionaries",
-    },
-    teamId: "29656",
-    userId: "u1",
-  });
-
-  assert.deepStrictEqual(payload, {
-    name: "Visionaries",
-    summaryJson: {
-      country: null,
-      isBot: false,
-      league: {
-        id: "1000",
-        name: "NBBA",
-      },
-      ownerName: "apiech",
-      rival: null,
-      shortName: "Visionaries",
-      teamId: "29656",
-      teamName: "Visionaries",
-    },
-    teamId: "29656",
-    userId: "u1",
-  });
-});
-
-test("prepareModelInputWithDiagnostics strips transport-only nested keys and reports their paths", () => {
-  const prepared = repositoryTesting.prepareModelInputWithDiagnostics(
-    "BbConnection",
-    {
-      bbLoginName: "coach",
-      profileJson: {
-        country: {
-          __typename: "NamedReference",
-          id: "1",
-          name: "USA",
-        },
-        isBot: false,
-        league: {
-          attributes: {
-            level: "D.II",
-          },
-          id: "1000",
-          name: "NBBA",
-        },
-        ownerName: "apiech",
-        rival: null,
-        shortName: "Visionaries",
+        }),
         teamId: "29656",
-        teamName: "Visionaries",
-      },
-      status: "CONNECTED",
-      userId: "u1",
-      workspaceCacheJson: {
-        arena: null,
-        home: {
-          connection: {
-            __typename: "WorkspaceCacheConnection",
-            bbLoginName: "coach",
-            status: "CONNECTED",
-          },
-          league: {
-            league: {
-              __typename: "NamedReference",
-              id: "1000",
-              name: "NBBA",
-            },
-            standings: [],
-          },
-          recentMatches: [],
-          team: {
-            injuries: [],
-            topPlayers: [],
-          },
-        },
-        leagueIntel: {
-          league: null,
-          standings: [],
-        },
-        playerLab: {
-          players: [],
-        },
-        scout: {
-          availableOpponents: [],
-          recentMatchups: [],
-        },
-        teamHub: {
-          roster: [],
-          team: {
-            country: null,
-            isBot: false,
-            league: null,
-            ownerName: "apiech",
-            rival: null,
-            shortName: "Visionaries",
-            teamId: "29656",
-            teamName: "Visionaries",
-          },
-        },
-        version: 5,
-      },
-    },
+        userId: "u1",
+      } as any),
+    /TrackedTeam\.summaryJson.*unsupported key\(s\): attributes/,
   );
-
-  assert.deepStrictEqual(prepared.payload.profileJson, {
-    country: {
-      id: "1",
-      name: "USA",
-    },
-    isBot: false,
-    league: {
-      id: "1000",
-      name: "NBBA",
-    },
-    ownerName: "apiech",
-    rival: null,
-    shortName: "Visionaries",
-    teamId: "29656",
-    teamName: "Visionaries",
-  });
-  assert.deepStrictEqual(prepared.removedPaths.slice().sort(), [
-    "profileJson.country.__typename",
-    "profileJson.league.attributes",
-    "workspaceCacheJson.home.connection.__typename",
-    "workspaceCacheJson.home.league.league.__typename",
-  ]);
-  assert.deepStrictEqual(prepared.sanitizedFields, [
-    "profileJson",
-    "workspaceCacheJson",
-  ]);
-  assert.deepStrictEqual(prepared.namedReferenceDiagnostics, []);
 });
 
-test("prepareModelInputWithDiagnostics strips unsupported named-reference keys and records compact diagnostics", () => {
-  const prepared = repositoryTesting.prepareModelInputWithDiagnostics(
-    "BbConnection",
-    {
-      profileJson: {
-        country: null,
-        isBot: false,
-        league: {
-          id: "1000",
-          level: "D.II",
-          name: "NBBA",
-        },
-        rival: null,
-      },
-      workspaceCacheJson: {
-        home: {
-          connection: {
-            bbLoginName: "coach",
-            profileJson: {
-              country: {
-                code: "US",
-                id: "1",
-                name: "USA",
-              },
-              isBot: false,
-              league: null,
-              rival: null,
-            },
-            status: "CONNECTED",
+test("prepareModelInput rejects unsupported nested keys for owned BbConnection payloads", () => {
+  assert.throws(
+    () =>
+      repositoryTesting.assertModelInputShape("BbConnection", {
+        bbLoginName: "coach",
+        profileJson: createStoredTeamInfo({
+          country: {
+            __typename: "NamedReference",
+            id: "1",
+            name: "USA",
           },
-          league: {
-            league: null,
-            standings: [],
-          },
-          recentMatches: [],
-          team: {
-            injuries: [],
-            topPlayers: [],
-          },
-        },
-        leagueIntel: {
-          league: {
-            id: "1000",
-            name: "NBBA",
-            seasonLabel: "Season 69",
-          },
-          standings: [],
-        },
-        playerLab: {
-          players: [],
-        },
-        scout: {
-          availableOpponents: [],
-          recentMatchups: [],
-        },
-        teamHub: {
-          roster: [],
-          team: {
-            country: null,
-            isBot: false,
-            league: null,
-            rival: null,
-          },
-        },
-      },
-    },
+        }),
+        status: "CONNECTED",
+        userId: "u1",
+      }),
+    /BbConnection\.profileJson.*unsupported key\(s\): __typename/,
   );
-
-  assert.deepStrictEqual(prepared.namedReferenceDiagnostics, [
-    {
-      originalKeys: ["id", "level", "name"],
-      path: "profileJson.league",
-      removedKeys: ["level"],
-      sanitizedPreview: {
-        id: "1000",
-        name: "NBBA",
-      },
-    },
-    {
-      originalKeys: ["code", "id", "name"],
-      path: "workspaceCacheJson.home.connection.profileJson.country",
-      removedKeys: ["code"],
-      sanitizedPreview: {
-        id: "1",
-        name: "USA",
-      },
-    },
-    {
-      originalKeys: ["id", "name", "seasonLabel"],
-      path: "workspaceCacheJson.leagueIntel.league",
-      removedKeys: ["seasonLabel"],
-      sanitizedPreview: {
-        id: "1000",
-        name: "NBBA",
-      },
-    },
-  ]);
-  assert.deepStrictEqual(
-    repositoryTesting.describeBbConnectionNamedReferenceViolations(
-      prepared.payload,
-    ),
-    [],
-  );
-  assert.deepStrictEqual(prepared.payload.profileJson.league, {
-    id: "1000",
-    name: "NBBA",
-  });
-  assert.deepStrictEqual(
-    prepared.payload.workspaceCacheJson.home.connection.profileJson.country,
-    {
-      id: "1",
-      name: "USA",
-    },
-  );
-  assert.deepStrictEqual(prepared.payload.workspaceCacheJson.leagueIntel.league, {
-    id: "1000",
-    name: "NBBA",
-  });
 });
 
-test("upsertBbConnection strips unsupported named-reference keys before model.update", async (t) => {
-  let updateInput: Record<string, unknown> | null = null;
+test("upsertBbConnection rejects invalid owned payloads before model.update", async (t) => {
+  let updateCalled = false;
 
   t.mock.method(
     repositoryTesting.runtime,
@@ -1089,8 +807,8 @@ test("upsertBbConnection strips unsupported named-reference keys before model.up
                 userId: "u1",
               },
             }),
-            update: async (input: Record<string, unknown>) => {
-              updateInput = input;
+            update: async () => {
+              updateCalled = true;
               return {
                 data: {
                   userId: "u1",
@@ -1102,34 +820,27 @@ test("upsertBbConnection strips unsupported named-reference keys before model.up
       }) as any,
   );
 
-  await upsertBbConnection({} as any, {
-    bbLoginName: "coach",
-    profileJson: {
-      country: null,
-      isBot: false,
-      league: {
-        id: "1000",
-        level: "D.II",
-        name: "NBBA",
-      },
-      rival: null,
-    },
-    status: "CONNECTED",
-    userId: "u1",
-  });
+  await assert.rejects(
+    () =>
+      upsertBbConnection({} as any, {
+        bbLoginName: "coach",
+        profileJson: createStoredTeamInfo({
+          league: {
+            id: "1000",
+            level: "D.II",
+            name: "NBBA",
+          },
+        }),
+        status: "CONNECTED",
+        userId: "u1",
+      } as any),
+    /BbConnection\.profileJson.*unsupported key\(s\): level/,
+  );
 
-  assert.deepStrictEqual(updateInput?.profileJson, {
-    country: null,
-    isBot: false,
-    league: {
-      id: "1000",
-      name: "NBBA",
-    },
-    rival: null,
-  });
+  assert.equal(updateCalled, false);
 });
 
-test("upsertBbConnection surfaces likely named-reference paths when AppSync rejects the payload", async (t) => {
+test("upsertBbConnection explains GraphQL drift when AppSync rejects a valid payload", async (t) => {
   let updateInput: Record<string, unknown> | null = null;
 
   t.mock.method(
@@ -1165,30 +876,27 @@ test("upsertBbConnection surfaces likely named-reference paths when AppSync reje
     () =>
       upsertBbConnection({} as any, {
         bbLoginName: "coach",
-        profileJson: {
-          country: null,
-          isBot: false,
+        profileJson: createStoredTeamInfo({
           league: {
             id: "1000",
-            level: "D.II",
             name: "NBBA",
           },
-          rival: null,
-        },
+        }),
         status: "CONNECTED",
         userId: "u1",
+        workspaceCacheJson: createWorkspaceCachePayload(),
       }),
-    /NamedReferenceInput'.*Likely paths: profileJson\.league removed unsupported key\(s\) \[level\].*sanitized preview: \{\"id\":\"1000\",\"name\":\"NBBA\"\}/,
+    /NamedReferenceInput'.*passed local owned-contract validation.*owned-data\/contracts\.ts/,
   );
-  assert.deepStrictEqual(updateInput?.profileJson, {
-    country: null,
-    isBot: false,
-    league: {
-      id: "1000",
-      name: "NBBA",
-    },
-    rival: null,
-  });
+  assert.deepStrictEqual(
+    updateInput?.profileJson,
+    createStoredTeamInfo({
+      league: {
+        id: "1000",
+        name: "NBBA",
+      },
+    }),
+  );
 });
 
 test("getBbConnection returns JSON fields as plain objects", async (t) => {
@@ -1216,14 +924,28 @@ test("getBbConnection returns JSON fields as plain objects", async (t) => {
                 lastValidatedAt: "2026-03-15T00:00:00.000Z",
                 lastSyncAt: "2026-03-15T00:00:00.000Z",
                 lastSyncError: null,
-                profileJson: { teamId: "123" },
-                workspaceCacheJson: {
-                  home: { team: { teamId: "123" } },
-                  teamHub: {},
-                  scout: {},
-                  leagueIntel: {},
-                  playerLab: {},
-                },
+                profileJson: createStoredTeamInfo({
+                  teamId: "123",
+                  teamName: "Buzz City",
+                }),
+                workspaceCacheJson: createWorkspaceCachePayload({
+                  home: {
+                    connection: {
+                      teamId: "123",
+                      teamName: "Buzz City",
+                    },
+                    team: {
+                      teamId: "123",
+                      teamName: "Buzz City",
+                    },
+                  },
+                  teamHub: {
+                    team: {
+                      teamId: "123",
+                      teamName: "Buzz City",
+                    },
+                  },
+                }),
               },
             }),
           },
@@ -1234,14 +956,34 @@ test("getBbConnection returns JSON fields as plain objects", async (t) => {
   const record = await getBbConnection({} as any, "u1");
 
   assert.ok(record);
-  assert.deepStrictEqual(record.profileJson, { teamId: "123" });
-  assert.deepStrictEqual(record.workspaceCacheJson, {
-    home: { team: { teamId: "123" } },
-    teamHub: {},
-    scout: {},
-    leagueIntel: {},
-    playerLab: {},
-  });
+  assert.deepStrictEqual(
+    record.profileJson,
+    createStoredTeamInfo({
+      teamId: "123",
+      teamName: "Buzz City",
+    }),
+  );
+  assert.deepStrictEqual(
+    record.workspaceCacheJson,
+    createWorkspaceCachePayload({
+      home: {
+        connection: {
+          teamId: "123",
+          teamName: "Buzz City",
+        },
+        team: {
+          teamId: "123",
+          teamName: "Buzz City",
+        },
+      },
+      teamHub: {
+        team: {
+          teamId: "123",
+          teamName: "Buzz City",
+        },
+      },
+    }),
+  );
 });
 
 test("getBbConnection suppresses legacy workspace cache coercion errors when the record data is otherwise available", async (t) => {
@@ -1277,6 +1019,7 @@ test("getBbConnection suppresses legacy workspace cache coercion errors when the
   assert.deepStrictEqual(record, {
     userId: "u1",
     bbLoginName: "apiech",
+    profileJson: null,
     status: "CONNECTED",
     teamId: "123",
     workspaceCacheJson: null,

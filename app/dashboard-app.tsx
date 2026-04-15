@@ -568,8 +568,6 @@ function ConnectionOnboarding({
 
   const isSubmitting = connectMutation.isPending;
 
-  console.log("[dashboard-app] show me a log at all.")
-
   return (
     <Panel>
       <SectionHeading

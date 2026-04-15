@@ -16,6 +16,7 @@ import {
   fetchTeamHighlightsQuery,
   workspaceQueryKeys,
 } from "../app/dashboard/workspace-query-client";
+import { createStoredTeamInfo } from "./fixtures/owned-data";
 
 function installQueryMock<TName extends keyof typeof client.queries>(
   t: TestContext,
@@ -125,6 +126,27 @@ test("connection loading tolerates a connected record with a null workspace cach
   assert.ok(connection);
   assert.equal(connection.status, "CONNECTED");
   assert.equal(connection.workspaceCacheJson, null);
+});
+
+test("connection loading rejects owned extra fields from the read contract", async (t) => {
+  installReadMock(t, "getCurrentBbConnection", async () => ({
+    data: {
+      bbLoginName: "apiech",
+      profileJson: {
+        ...createStoredTeamInfo(),
+        unexpected: true,
+      },
+      status: "CONNECTED",
+      teamId: "our-1",
+      teamName: "Visionaries",
+    },
+    errors: null,
+  }));
+
+  await assert.rejects(
+    () => fetchConnectionRecord(),
+    /unsupported key\(s\): unexpected/,
+  );
 });
 
 test("scout summary parsing accepts key-based tendencies", async (t) => {

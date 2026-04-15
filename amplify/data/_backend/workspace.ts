@@ -7,6 +7,10 @@ import {
   formatRosterGameShapeLabel,
   ownedRosterPlayerToRawPlayerSkills,
 } from "../../../lib/bbapi";
+import {
+  readSharedPlayerCardPayload,
+  type ConnectionResultShape,
+} from "../../../lib/owned-data/contracts";
 import type {
   BBApiBoxScore,
   BBApiBoxScorePlayer,
@@ -89,6 +93,10 @@ import {
   readWorkspaceCachePayload,
   type WorkspaceCachePayload,
 } from "./workspace-cache";
+import {
+  projectCurrentConnectionResult,
+  projectEmbeddedConnectionResult,
+} from "./connection-projection";
 import { getNormalizedCachedMatchBoxscore } from "./cached-boxscore";
 import { toStoredMatchBoxscore } from "./stored-boxscore";
 import {
@@ -149,7 +157,7 @@ type CachedPlayerLabWorkspace = NonNullable<WorkspaceCachePayload["playerLab"]>;
 type CachedArenaWorkspace = NonNullable<WorkspaceCachePayload["arena"]>;
 
 export type WorkspaceBundle = {
-  connection: BbConnectionRecord;
+  connectionRecord: BbConnectionRecord;
   home: HomeWorkspaceResult;
   teamHub: TeamHubWorkspaceResult;
   scout: ScoutWorkspaceResult;
@@ -306,7 +314,7 @@ export async function connectAccount(args: {
   identity: unknown;
   bbLoginName: string;
   accessKey: string;
-}): Promise<BbConnectionRecord> {
+}): Promise<ConnectionResultShape> {
   await assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
@@ -327,9 +335,8 @@ export async function connectAccount(args: {
         "Both the BuzzerBeater login name and access key are required.",
       workspaceCacheJson: null,
     });
-    console.log("[connectAccount] (upsertBbConnection 1) invalidRecord", invalidRecord);
     await upsertBbConnection(args.env, invalidRecord);
-    return invalidRecord;
+    return projectCurrentConnectionResult(invalidRecord, "connectAccount result");
   }
 
   try {
@@ -365,7 +372,10 @@ export async function connectAccount(args: {
       },
     });
 
-    return synced.workspace.connection;
+    return projectCurrentConnectionResult(
+      synced.workspace.connectionRecord,
+      "connectAccount result",
+    );
   } catch (error) {
     const record = buildConnectionRecord(userId, existingConnection, {
       bbLoginName,
@@ -374,16 +384,15 @@ export async function connectAccount(args: {
       lastSyncError: toErrorMessage(error),
       workspaceCacheJson: null,
     });
-    console.log("[connectAccount] (upsertBbConnection 2) record", record);
     await upsertBbConnection(args.env, record);
-    return record;
+    return projectCurrentConnectionResult(record, "connectAccount result");
   }
 }
 
 export async function disconnectAccount(args: {
   env: GraphqlEnv;
   identity: unknown;
-}): Promise<BbConnectionRecord> {
+}): Promise<ConnectionResultShape> {
   await assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
@@ -393,10 +402,13 @@ export async function disconnectAccount(args: {
 
   const existingConnection = await getBbConnection(args.env, userId);
   if (!existingConnection) {
-    return buildConnectionRecord(userId, null, {
-      bbLoginName: "",
-      status: "DISCONNECTED",
-    });
+    return projectCurrentConnectionResult(
+      buildConnectionRecord(userId, null, {
+        bbLoginName: "",
+        status: "DISCONNECTED",
+      }),
+      "disconnectAccount result",
+    );
   }
 
   await deleteBbCredential(args.env, userId);
@@ -408,16 +420,15 @@ export async function disconnectAccount(args: {
     lastSyncError: null,
     workspaceCacheJson: null,
   });
-  console.log("[disconnectAccount] (upsertBbConnection 3) updated", updated);
   await upsertBbConnection(args.env, updated);
-  return updated;
+  return projectCurrentConnectionResult(updated, "disconnectAccount result");
 }
 
 export async function setLeagueTimeZone(args: {
   env: GraphqlEnv;
   identity: unknown;
   leagueTimeZone: string;
-}): Promise<BbConnectionRecord> {
+}): Promise<ConnectionResultShape> {
   await assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
@@ -440,9 +451,11 @@ export async function setLeagueTimeZone(args: {
   const updatedConnection = buildConnectionRecord(userId, existingConnection, {
     leagueTimeZone,
   });
-  console.log("[setLeagueTimeZone] (upsertBbConnection 4) updatedConnection", updatedConnection);
   await upsertBbConnection(args.env, updatedConnection);
-  return updatedConnection;
+  return projectCurrentConnectionResult(
+    updatedConnection,
+    "setLeagueTimeZone result",
+  );
 }
 
 export async function repairOwnerRosterData(
@@ -541,7 +554,6 @@ export async function repairOwnerRosterData(
       ),
     ),
   });
-  console.log("[repairOwnerRosterData] (upsertBbConnection 5) updatedConnection", updatedConnection);
   await dependencies.upsertBbConnection(args.env, updatedConnection);
 
   return {
@@ -684,7 +696,7 @@ export async function revokePlayerCard(
     note: record.note ?? null,
     expiresAt: record.expiresAt ?? null,
     revokedAt,
-    payload: sanitizeSharedPlayerCardPayload(record.payloadJson),
+    payload: readStoredSharedPlayerCardPayload(record.payloadJson),
   });
 }
 
@@ -717,16 +729,16 @@ async function _getScoutWorkspaceForTeam(args: {
   const requestedTeamId = normalizeScoutRequestedTeamId(args.teamId);
   const resolvedTeamId = resolveScoutTeamId(baseWorkspace, requestedTeamId);
   if (!resolvedTeamId) {
-    return {
-      competitionProfile: null,
-      connection: baseWorkspace.connection,
-      scout: buildScoutFallback(baseWorkspace, requestedTeamId),
-    };
+      return {
+        competitionProfile: null,
+        connection: baseWorkspace.connectionRecord,
+        scout: buildScoutFallback(baseWorkspace, requestedTeamId),
+      };
   }
 
   const accessKey = await resolveAccessKey(args.env, userId);
   const client = new BBXmlApiClient({
-    username: baseWorkspace.connection.bbLoginName,
+    username: baseWorkspace.connectionRecord.bbLoginName,
     securityCode: accessKey,
   });
   try {
@@ -761,7 +773,7 @@ async function _getScoutWorkspaceForTeam(args: {
 
     return {
       competitionProfile: opponentWorkspace?.competitionProfile ?? null,
-      connection: baseWorkspace.connection,
+      connection: baseWorkspace.connectionRecord,
       scout: buildScoutWorkspace(
         currentWorkspace,
         currentBoxScores,
@@ -780,7 +792,7 @@ async function _getScoutWorkspaceForTeam(args: {
       });
       return {
         competitionProfile: null,
-        connection: baseWorkspace.connection,
+        connection: baseWorkspace.connectionRecord,
         scout: buildMatchInProgressScoutFallback(
           baseWorkspace,
           requestedTeamId,
@@ -841,7 +853,7 @@ export async function getScoutTeamSummaryForTeamWithMeta(args: {
   const resolvedTeamId = resolveScoutTeamId(baseWorkspace, requestedTeamId);
   if (!resolvedTeamId) {
     return {
-      connection: baseWorkspace.connection,
+      connection: baseWorkspace.connectionRecord,
       meta: {
         recentBoxscoreCount: 0,
         recentMatchCount: 0,
@@ -855,7 +867,7 @@ export async function getScoutTeamSummaryForTeamWithMeta(args: {
 
   const accessKey = await resolveAccessKey(args.env, userId);
   const client = new BBXmlApiClient({
-    username: baseWorkspace.connection.bbLoginName,
+    username: baseWorkspace.connectionRecord.bbLoginName,
     securityCode: accessKey,
   });
   try {
@@ -882,7 +894,7 @@ export async function getScoutTeamSummaryForTeamWithMeta(args: {
     );
 
     return {
-      connection: baseWorkspace.connection,
+      connection: baseWorkspace.connectionRecord,
       meta: {
         recentBoxscoreCount: opponentWorkspace.recentBoxScores.length,
         recentMatchCount: opponentWorkspace.recentMatches.length,
@@ -908,7 +920,7 @@ export async function getScoutTeamSummaryForTeamWithMeta(args: {
         ...toLoggableError(error),
       });
       return {
-        connection: baseWorkspace.connection,
+        connection: baseWorkspace.connectionRecord,
         meta: {
           recentBoxscoreCount:
             scout.summary?.recentGames.filter((match) => match.hasBoxscore)
@@ -1017,7 +1029,7 @@ export async function getScoutScheduleForTeamWithMeta(args: {
 
   const accessKey = await resolveAccessKey(args.env, userId);
   const client = new BBXmlApiClient({
-    username: baseWorkspace.connection.bbLoginName,
+    username: baseWorkspace.connectionRecord.bbLoginName,
     securityCode: accessKey,
   });
   const currentWorkspaceStartedAt = Date.now();
@@ -1141,7 +1153,7 @@ export async function lookupSharedPlayerCardByToken(
     return null;
   }
 
-  const payload = sanitizeSharedPlayerCardPayload(record.payloadJson);
+  const payload = readStoredSharedPlayerCardPayload(record.payloadJson);
   if (!payload) {
     return null;
   }
@@ -1561,7 +1573,6 @@ async function syncWorkspace(args: {
         }),
       },
     );
-    console.log("[syncWorkspace] (upsertBbConnection 6) updatedConnection", updatedConnection);
     await upsertBbConnection(args.env, updatedConnection);
     const persistWorkspaceStartedAt = Date.now();
     const persistedWorkspace = await persistWorkspace(
@@ -1668,7 +1679,7 @@ async function syncWorkspace(args: {
         usedCachedWorkspace: false,
       },
       workspace: {
-        connection: updatedConnection,
+        connectionRecord: updatedConnection,
         home,
         teamHub,
         scout,
@@ -1680,40 +1691,35 @@ async function syncWorkspace(args: {
   } catch (error) {
     if (cachedWorkspace && isMatchInProgressWorkspaceError(error)) {
       const now = new Date().toISOString();
+      const fallbackHomeConnection = projectEmbeddedConnectionResult(
+        {
+          ...projectHomeWorkspaceConnection(
+            connection,
+            cachedWorkspace.home.connection,
+            "match-in-progress fallback home connection base",
+          ),
+          lastSyncError: null,
+          status: "CONNECTED",
+        },
+        "match-in-progress fallback home connection",
+      );
       const fallbackConnection = buildConnectionRecord(args.userId, connection, {
-        accessKeyLast4:
-          connection.accessKeyLast4 ??
-          cachedWorkspace.connection.accessKeyLast4 ??
-          null,
-        bbLoginName: connection.bbLoginName,
-        countryId: cachedWorkspace.connection.countryId ?? connection.countryId ?? null,
-        countryName:
-          cachedWorkspace.connection.countryName ?? connection.countryName ?? null,
-        lastSyncAt:
-          cachedWorkspace.connection.lastSyncAt ?? connection.lastSyncAt ?? null,
+        accessKeyLast4: fallbackHomeConnection.accessKeyLast4,
+        bbLoginName: fallbackHomeConnection.bbLoginName,
+        connectedAt: fallbackHomeConnection.connectedAt,
+        countryId: fallbackHomeConnection.countryId,
+        countryName: fallbackHomeConnection.countryName,
+        lastSyncAt: fallbackHomeConnection.lastSyncAt,
         lastSyncError: null,
-        leagueId: cachedWorkspace.connection.leagueId ?? connection.leagueId ?? null,
-        leagueName:
-          cachedWorkspace.connection.leagueName ?? connection.leagueName ?? null,
-        leagueTimeZone:
-          cachedWorkspace.connection.leagueTimeZone ??
-          connection.leagueTimeZone ??
-          null,
-        lastValidatedAt:
-          cachedWorkspace.connection.lastValidatedAt ??
-          connection.lastValidatedAt ??
-          null,
-        profileJson:
-          cachedWorkspace.connection.profileJson ?? connection.profileJson ?? null,
-        shortName:
-          cachedWorkspace.connection.shortName ?? connection.shortName ?? null,
+        leagueId: fallbackHomeConnection.leagueId,
+        leagueName: fallbackHomeConnection.leagueName,
+        leagueTimeZone: fallbackHomeConnection.leagueTimeZone,
+        lastValidatedAt: fallbackHomeConnection.lastValidatedAt,
+        profileJson: fallbackHomeConnection.profileJson,
         status: "CONNECTED",
-        teamId: cachedWorkspace.connection.teamId ?? connection.teamId ?? null,
-        teamName:
-          cachedWorkspace.connection.teamName ?? connection.teamName ?? null,
-        workspaceCacheJson: connection.workspaceCacheJson,
+        teamId: fallbackHomeConnection.teamId,
+        teamName: fallbackHomeConnection.teamName,
       });
-      console.log("[syncWorkspace] (upsertBbConnection 7) fallbackConnection", fallbackConnection);
       await upsertBbConnection(args.env, fallbackConnection);
       await updateSyncRun(args.env, {
         id: syncRun.id,
@@ -1741,7 +1747,11 @@ async function syncWorkspace(args: {
         },
         workspace: {
           ...cachedWorkspace,
-          connection: fallbackConnection,
+          connectionRecord: fallbackConnection,
+          home: {
+            ...cachedWorkspace.home,
+            connection: fallbackHomeConnection,
+          },
         },
       };
     }
@@ -1754,7 +1764,6 @@ async function syncWorkspace(args: {
       lastSyncError: toErrorMessage(error),
       lastValidatedAt: connection.lastValidatedAt ?? null,
     });
-    console.log("[syncWorkspace] (upsertBbConnection 8) failedConnection", failedConnection);
     await upsertBbConnection(args.env, failedConnection);
     await updateSyncRun(args.env, {
       id: syncRun.id,
@@ -2575,7 +2584,7 @@ function buildHomeWorkspace(
   homeCoreMatches: BBApiScheduleMatch[],
   homeCoreBoxScores: BBApiBoxScore[],
   opponentWorkspace: OpponentWorkspace | null,
-  connection: BbConnectionRecord,
+  connectionRecord: BbConnectionRecord,
 ): HomeWorkspaceResult {
   const cachedMatchIds = new Set(
     currentBoxScores.map((boxScore) => boxScore.matchId),
@@ -2588,8 +2597,12 @@ function buildHomeWorkspace(
     maxIncludedGames: 5,
   });
   return {
-    syncedAt: connection.lastSyncAt ?? null,
-    connection,
+    syncedAt: connectionRecord.lastSyncAt ?? null,
+    connection: projectHomeWorkspaceConnection(
+      connectionRecord,
+      null,
+      "home workspace connection",
+    ),
     team: {
       teamId: workspace.teamInfo.teamId,
       teamName: workspace.teamInfo.teamName,
@@ -3867,16 +3880,10 @@ function buildSharedPlayerCardPayload(
   };
 }
 
-function sanitizeSharedPlayerCardPayload(
+function readStoredSharedPlayerCardPayload(
   payload: unknown,
 ): SharedPlayerCardPayload | null {
-  const source = toRecord(payload);
-  const player = toRecord(source?.player);
-  if (!player) {
-    return null;
-  }
-
-  return buildSharedPlayerCardPayload(player);
+  return readSharedPlayerCardPayload(payload);
 }
 
 function isSharedPlayerCardActive(record: {
@@ -3951,7 +3958,7 @@ function readCachedWorkspace(
   const syncedAt = connection.lastSyncAt ?? null;
 
   return {
-    connection,
+    connectionRecord: connection,
     home: rehydrateHomeWorkspace(home, connection, syncedAt),
     teamHub: rehydrateTeamHubWorkspace(teamHub, syncedAt),
     scout: rehydrateScoutWorkspace(scout, syncedAt),
@@ -3963,12 +3970,16 @@ function readCachedWorkspace(
 
 function rehydrateHomeWorkspace(
   home: CachedHomeWorkspace,
-  connection: BbConnectionRecord,
+  connectionRecord: BbConnectionRecord,
   syncedAt: string | null,
 ): HomeWorkspaceResult {
   return {
     syncedAt: asString(home.syncedAt) ?? syncedAt,
-    connection,
+    connection: projectHomeWorkspaceConnection(
+      connectionRecord,
+      home.connection,
+      "cached home workspace connection",
+    ),
     team: home.team,
     nextMatch: home.nextMatch ?? null,
     nextScoutMatch: home.nextScoutMatch ?? null,
@@ -3976,6 +3987,46 @@ function rehydrateHomeWorkspace(
     recentMatches: home.recentMatches,
     league: home.league,
   } satisfies HomeWorkspaceResult;
+}
+
+function projectHomeWorkspaceConnection(
+  connectionRecord: BbConnectionRecord,
+  cachedConnection: CachedHomeWorkspace["connection"] | null,
+  label: string,
+): ConnectionResultShape {
+  return projectEmbeddedConnectionResult(
+    {
+      accessKeyLast4:
+        connectionRecord.accessKeyLast4 ?? cachedConnection?.accessKeyLast4 ?? null,
+      bbLoginName: connectionRecord.bbLoginName || cachedConnection?.bbLoginName || "",
+      connectedAt:
+        connectionRecord.connectedAt ?? cachedConnection?.connectedAt ?? null,
+      countryId: connectionRecord.countryId ?? cachedConnection?.countryId ?? null,
+      countryName:
+        connectionRecord.countryName ?? cachedConnection?.countryName ?? null,
+      lastSyncAt:
+        connectionRecord.lastSyncAt ?? cachedConnection?.lastSyncAt ?? null,
+      lastSyncError:
+        connectionRecord.lastSyncError ?? cachedConnection?.lastSyncError ?? null,
+      lastValidatedAt:
+        connectionRecord.lastValidatedAt ??
+        cachedConnection?.lastValidatedAt ??
+        null,
+      leagueId: connectionRecord.leagueId ?? cachedConnection?.leagueId ?? null,
+      leagueName:
+        connectionRecord.leagueName ?? cachedConnection?.leagueName ?? null,
+      leagueTimeZone:
+        connectionRecord.leagueTimeZone ??
+        cachedConnection?.leagueTimeZone ??
+        null,
+      profileJson:
+        connectionRecord.profileJson ?? cachedConnection?.profileJson ?? null,
+      status: connectionRecord.status ?? cachedConnection?.status ?? "UNSET",
+      teamId: connectionRecord.teamId ?? cachedConnection?.teamId ?? null,
+      teamName: connectionRecord.teamName ?? cachedConnection?.teamName ?? null,
+    },
+    label,
+  );
 }
 
 function rehydrateTeamHubWorkspace(
@@ -4077,7 +4128,7 @@ function buildWorkspaceCacheMeta(
     workspace.teamHub.syncedAt ??
     workspace.scout.syncedAt ??
     workspace.playerLab.syncedAt ??
-    workspace.connection.lastSyncAt ??
+    workspace.connectionRecord.lastSyncAt ??
     null;
 
   return {

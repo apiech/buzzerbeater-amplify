@@ -6,7 +6,16 @@ import {
   decodeAwsJsonList,
 } from "./awsjson";
 import { getDataClient, type AmplifyDataFunctionEnv } from "./data-client";
-import { partitionLegacyWorkspaceCacheCoercionErrors } from "./workspace-cache";
+import {
+  partitionLegacyWorkspaceCacheCoercionErrors,
+  readWorkspaceCachePayload,
+} from "./workspace-cache";
+import {
+  assertSharedPlayerCardPayload,
+  assertStoredOwnedRosterPlayer,
+  assertStoredTeamInfo,
+  assertWorkspaceCachePayload,
+} from "../../../lib/owned-data/contracts";
 import type { PredictionInputShape } from "../../../lib/prediction/normalization";
 import type { Schema } from "../resource";
 
@@ -603,56 +612,17 @@ export type PagedRecords<TRecord> = {
   records: TRecord[];
 };
 
-type PreparedModelInput<TRecord> = {
-  payload: TRecord;
-  removedPaths: string[];
-  sanitizedFields: string[];
-  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
-};
-
-type NamedReferenceFieldDiagnostic = {
-  originalKeys: string[];
-  path: string;
-  removedKeys: string[];
-  sanitizedPreview: {
-    id: string | null;
-    name: string | null;
-  };
-};
-
-type NamedReferenceFieldViolation = {
-  extraKeys: string[];
-  keys: string[];
-  path: string;
-};
-
 const runtime = {
   getClient: getDataClient,
 };
 
 export const __testing = {
-  describeBbConnectionNamedReferenceViolations,
+  assertModelInputShape,
   prepareModelInput,
-  prepareModelInputWithDiagnostics,
   runtime,
 };
 
 const REPOSITORY_LOG_PREFIX = "[repository]";
-const NAMED_REFERENCE_INPUT_KEYS = new Set(["id", "name"]);
-const BB_CONNECTION_NAMED_REFERENCE_PATHS = [
-  "profileJson.country",
-  "profileJson.league",
-  "profileJson.rival",
-  "workspaceCacheJson.home.connection.profileJson.country",
-  "workspaceCacheJson.home.connection.profileJson.league",
-  "workspaceCacheJson.home.connection.profileJson.rival",
-  "workspaceCacheJson.home.league.league",
-  "workspaceCacheJson.leagueIntel.league",
-  "workspaceCacheJson.teamHub.team.country",
-  "workspaceCacheJson.teamHub.team.league",
-  "workspaceCacheJson.teamHub.team.rival",
-] as const;
-const UNSUPPORTED_CUSTOM_TYPE_KEYS = new Set(["attributes", "__typename"]);
 
 export async function getBbConnection(
   env: RepositoryEnv,
@@ -664,17 +634,18 @@ export async function getBbConnection(
     partitionLegacyWorkspaceCacheCoercionErrors(result.errors);
 
   if (!result.errors?.length) {
-    return decodeAwsJsonFields("BbConnection", result.data ?? null);
+    return normalizeBbConnectionRecord(
+      decodeAwsJsonFields("BbConnection", result.data ?? null),
+      "load BB connection",
+    );
   }
 
   if (result.data && legacyErrors.length > 0 && otherErrors.length === 0) {
-    const record = decodeAwsJsonFields("BbConnection", result.data);
-    return record
-      ? {
-          ...record,
-          workspaceCacheJson: null,
-        }
-      : null;
+    return normalizeBbConnectionRecord(
+      decodeAwsJsonFields("BbConnection", result.data),
+      "load BB connection",
+      { suppressWorkspaceCache: true },
+    );
   }
 
   const errorsToReport =
@@ -801,98 +772,61 @@ export async function upsertBbConnection(
   env: RepositoryEnv,
   record: BbConnectionRecord,
 ): Promise<void> {
-  console.log("[upsertBbConnection] A");
   const model = await getModel<BbConnectionRecord>(env, "BbConnection");
-  console.log("[upsertBbConnection] B");
   const currentRecord = await assertSuccessful(
     model.get({ userId: record.userId }),
     "load BbConnection record",
   );
-  console.log("[upsertBbConnection] C");
-  const prepared = prepareModelInputWithDiagnostics("BbConnection", record);
-  console.log("prepared", prepared);
+  const payload = prepareModelInput("BbConnection", record);
   const mode = currentRecord ? "update" : "create";
-  console.log("[upsertBbConnection] D");
-  const namedReferenceViolations = describeBbConnectionNamedReferenceViolations(
-    prepared.payload,
-  );
-  console.log("[upsertBbConnection] E");
-  const payloadKeys = Object.keys(prepared.payload).sort();
-  console.log("[upsertBbConnection] F");
+  const payloadKeys = Object.keys(payload).sort();
+
   logRepositoryInfo("upsertBbConnection.prepare", {
-    hasProfileJson: prepared.payload.profileJson != null,
-    hasWorkspaceCacheJson: prepared.payload.workspaceCacheJson != null,
+    hasProfileJson: payload.profileJson != null,
+    hasWorkspaceCacheJson: payload.workspaceCacheJson != null,
     mode,
-    namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
-    namedReferenceDiagnostics: prepared.namedReferenceDiagnostics,
-    namedReferenceViolationCount: namedReferenceViolations.length,
-    namedReferenceViolations,
+    payload,
     payloadKeys,
-    removedPaths: prepared.removedPaths,
-    sanitizedFields: prepared.sanitizedFields,
     userId: record.userId,
   });
 
   try {
-    console.log("[upsertBbConnection] F2");
     logRepositoryInfo("upsertBbConnection.mutation", {
+      payload,
       mode,
-      namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
-      namedReferenceDiagnostics: prepared.namedReferenceDiagnostics,
-      namedReferenceViolationCount: namedReferenceViolations.length,
-      namedReferenceViolations,
       payloadKeys,
       userId: record.userId,
     });
-    console.log("[upsertBbConnection] G");
     if (currentRecord) {
       await assertSuccessful(
-        model.update(prepared.payload),
+        model.update(payload),
         "update BbConnection record",
       );
-      console.log("[upsertBbConnection] H");
     } else {
       await assertSuccessful(
-        model.create(prepared.payload),
+        model.create(payload),
         "create BbConnection record",
       );
-      console.log("[upsertBbConnection] I");
     }
   } catch (error) {
-    console.log("[upsertBbConnection] J");
-    const detailedError = annotateBbConnectionMutationError(
-      error,
-      prepared.namedReferenceDiagnostics,
-      namedReferenceViolations,
-    );
-    console.log("[upsertBbConnection] K");
+    const detailedError = annotateBbConnectionMutationError(error);
     logRepositoryError("upsertBbConnection.failed", {
-      hasProfileJson: prepared.payload.profileJson != null,
-      hasWorkspaceCacheJson: prepared.payload.workspaceCacheJson != null,
+      hasProfileJson: payload.profileJson != null,
+      hasWorkspaceCacheJson: payload.workspaceCacheJson != null,
       mode,
-      namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
-      namedReferenceDiagnostics: prepared.namedReferenceDiagnostics,
-      namedReferenceViolationCount: namedReferenceViolations.length,
-      namedReferenceViolations,
+      payload,
       payloadKeys,
-      removedPaths: prepared.removedPaths,
-      sanitizedFields: prepared.sanitizedFields,
       userId: record.userId,
       ...toLoggableError(detailedError),
     });
     throw detailedError;
   }
 
-  console.log("[upsertBbConnection] L");
   logRepositoryInfo("upsertBbConnection.completed", {
-    hasProfileJson: prepared.payload.profileJson != null,
-    hasWorkspaceCacheJson: prepared.payload.workspaceCacheJson != null,
+    hasProfileJson: payload.profileJson != null,
+    hasWorkspaceCacheJson: payload.workspaceCacheJson != null,
     mode,
-    namedReferenceDiagnosticCount: prepared.namedReferenceDiagnostics.length,
-    namedReferenceViolationCount: namedReferenceViolations.length,
     payloadKeys,
-    removedPaths: prepared.removedPaths,
-    sanitizedFields: prepared.sanitizedFields,
     userId: record.userId,
   });
 }
@@ -2163,268 +2097,41 @@ function prepareModelInput<TRecord extends Record<string, unknown>>(
   modelName: string,
   input: TRecord,
 ): TRecord {
-  return prepareModelInputWithDiagnostics(modelName, input).payload;
+  assertModelInputShape(modelName, input);
+  return omitUndefinedValues(encodeAwsJsonFields(modelName, input));
 }
 
-function prepareModelInputWithDiagnostics<
-  TRecord extends Record<string, unknown>,
->(modelName: string, input: TRecord): PreparedModelInput<TRecord> {
-  const sanitized = sanitizeModelInput(modelName, input);
-
-  return {
-    payload: omitUndefinedValues(
-      encodeAwsJsonFields(modelName, sanitized.input),
-    ),
-    namedReferenceDiagnostics: sanitized.namedReferenceDiagnostics,
-    removedPaths: sanitized.removedPaths,
-    sanitizedFields: sanitized.sanitizedFields,
-  };
-}
-
-function sanitizeModelInput<TRecord extends Record<string, unknown>>(
+function assertModelInputShape<TRecord extends Record<string, unknown>>(
   modelName: string,
   input: TRecord,
-): {
-  input: TRecord;
-  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
-  removedPaths: string[];
-  sanitizedFields: string[];
-} {
+): void {
   if (modelName === "BbConnection") {
-    return sanitizeBbConnectionInput(input);
+    assertBbConnectionInputShape(input);
+    return;
   }
   if (modelName === "TrackedTeam") {
-    return sanitizeTrackedTeamInput(input);
+    assertTrackedTeamInputShape(input);
+    return;
   }
   if (modelName === "TrackedPlayer") {
-    return sanitizeTrackedPlayerInput(input);
+    assertTrackedPlayerInputShape(input);
+    return;
   }
-
-  return {
-    input,
-    namedReferenceDiagnostics: [],
-    removedPaths: [],
-    sanitizedFields: [],
-  };
-}
-
-function sanitizeBbConnectionInput<TRecord extends Record<string, unknown>>(
-  input: TRecord,
-): {
-  input: TRecord;
-  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
-  removedPaths: string[];
-  sanitizedFields: string[];
-} {
-  const sanitized = sanitizeNestedAttributes(input, [
-    "profileJson",
-    "workspaceCacheJson",
-  ]);
-
-  return sanitizeBbConnectionNamedReferencePaths(
-    sanitized.input,
-    sanitized.removedPaths,
-    sanitized.sanitizedFields,
-  );
-}
-
-function sanitizeTrackedTeamInput<TRecord extends Record<string, unknown>>(
-  input: TRecord,
-): {
-  input: TRecord;
-  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
-  removedPaths: string[];
-  sanitizedFields: string[];
-} {
-  const sanitized = sanitizeNestedAttributes(input, ["summaryJson"]);
-
-  return {
-    ...sanitized,
-    namedReferenceDiagnostics: [],
-  };
-}
-
-function sanitizeTrackedPlayerInput<TRecord extends Record<string, unknown>>(
-  input: TRecord,
-): {
-  input: TRecord;
-  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
-  removedPaths: string[];
-  sanitizedFields: string[];
-} {
-  const sanitized = sanitizeNestedAttributes(input, ["profileJson"]);
-
-  return {
-    ...sanitized,
-    namedReferenceDiagnostics: [],
-  };
-}
-
-function sanitizeNestedAttributes<TRecord extends Record<string, unknown>>(
-  input: TRecord,
-  fieldNames: readonly string[],
-): {
-  input: TRecord;
-  removedPaths: string[];
-  sanitizedFields: string[];
-} {
-  let updated: Record<string, unknown> | null = null;
-  const removedPaths: string[] = [];
-  const sanitizedFields: string[] = [];
-
-  for (const fieldName of fieldNames) {
-    if (!(fieldName in input)) {
-      continue;
-    }
-
-    const currentValue = input[fieldName];
-    const nextValue = stripAttributesDeep(
-      currentValue,
-      fieldName,
-      removedPaths,
-    );
-
-    if (nextValue === currentValue) {
-      continue;
-    }
-
-    updated ??= { ...input };
-    updated[fieldName] = nextValue;
-    sanitizedFields.push(fieldName);
+  if (modelName === "SharedPlayerCard") {
+    assertSharedPlayerCardInputShape(input);
   }
-
-  return {
-    input: (updated ?? input) as TRecord,
-    removedPaths,
-    sanitizedFields,
-  };
 }
 
-function stripAttributesDeep(
-  value: unknown,
-  path: string,
-  removedPaths: string[],
-): unknown {
-  if (Array.isArray(value)) {
-    let updated: unknown[] | null = null;
-
-    for (let index = 0; index < value.length; index += 1) {
-      const entry = value[index];
-      const nextEntry = stripAttributesDeep(
-        entry,
-        `${path}[${index}]`,
-        removedPaths,
-      );
-      if (nextEntry === entry) {
-        continue;
-      }
-
-      updated ??= [...value];
-      updated[index] = nextEntry;
-    }
-
-    return updated ?? value;
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  const source = value as Record<string, unknown>;
-  let updated: Record<string, unknown> | null = null;
-
-  for (const [key, entry] of Object.entries(source)) {
-    if (UNSUPPORTED_CUSTOM_TYPE_KEYS.has(key)) {
-      updated ??= { ...source };
-      delete updated[key];
-      removedPaths.push(`${path}.${key}`);
-      continue;
-    }
-
-    const nextEntry = stripAttributesDeep(
-      entry,
-      `${path}.${key}`,
-      removedPaths,
-    );
-    if (nextEntry === entry) {
-      continue;
-    }
-
-    updated ??= { ...source };
-    updated[key] = nextEntry;
-  }
-
-  return updated ?? value;
-}
-
-function describeBbConnectionNamedReferenceViolations(
-  payload: Record<string, unknown>,
-): NamedReferenceFieldViolation[] {
-  const violations: NamedReferenceFieldViolation[] = [];
-
-  for (const path of BB_CONNECTION_NAMED_REFERENCE_PATHS) {
-    const value = readNestedValue(payload, path);
-    if (!isRecord(value)) {
-      continue;
-    }
-
-    const keys = Object.keys(value).sort();
-    const extraKeys = keys.filter((key) => !NAMED_REFERENCE_INPUT_KEYS.has(key));
-    if (!extraKeys.length) {
-      continue;
-    }
-
-    violations.push({
-      extraKeys,
-      keys,
-      path,
-    });
-  }
-
-  return violations;
-}
-
-function annotateBbConnectionMutationError(
-  error: unknown,
-  diagnostics: readonly NamedReferenceFieldDiagnostic[],
-  violations: readonly NamedReferenceFieldViolation[],
-): Error {
+function annotateBbConnectionMutationError(error: unknown): Error {
   const baseError =
     error instanceof Error ? error : new Error(String(error ?? "Unknown error"));
-  if (
-    !baseError.message.includes("NamedReferenceInput") ||
-    (diagnostics.length === 0 && violations.length === 0)
-  ) {
+  if (!baseError.message.includes("NamedReferenceInput")) {
     return baseError;
   }
 
-  const detailParts: string[] = [];
-  if (diagnostics.length > 0) {
-    detailParts.push(
-      diagnostics
-        .map(
-          ({ originalKeys, path, removedKeys, sanitizedPreview }) =>
-            `${path} removed unsupported key(s) [${removedKeys.join(", ")}] (keys: ${originalKeys.join(", ")}, sanitized preview: ${JSON.stringify(sanitizedPreview)})`,
-        )
-        .join("; "),
-    );
-  }
-  if (violations.length > 0) {
-    detailParts.push(
-      violations
-        .map(
-          ({ extraKeys, keys, path }) =>
-            `${path} still has unsupported key(s) [${extraKeys.join(", ")}] (keys: ${keys.join(", ")})`,
-        )
-        .join("; "),
-    );
-  }
-  const details = detailParts.join("; ");
-  if (!details || baseError.message.includes(details)) {
-    return baseError;
-  }
-
-  const annotated = new Error(`${baseError.message} Likely paths: ${details}`);
+  const annotated = new Error(
+    `${baseError.message} The payload passed local owned-contract validation, so the GraphQL schema or owned-data contracts may have drifted. Re-check /Users/karey/projects/bb/bb-amplify/amplify/data/resource.ts and /Users/karey/projects/bb/bb-amplify/lib/owned-data/contracts.ts.`,
+  );
   if (baseError.stack) {
     annotated.stack = `${annotated.name}: ${annotated.message}\n${baseError.stack
       .split("\n")
@@ -2434,137 +2141,82 @@ function annotateBbConnectionMutationError(
   return annotated;
 }
 
-function sanitizeBbConnectionNamedReferencePaths<
-  TRecord extends Record<string, unknown>,
->(
+function normalizeBbConnectionRecord(
+  record: BbConnectionRecord | null,
+  label: string,
+  options?: {
+    suppressWorkspaceCache?: boolean;
+  },
+): BbConnectionRecord | null {
+  if (!record) {
+    return null;
+  }
+
+  return {
+    ...record,
+    profileJson:
+      record.profileJson == null
+        ? null
+        : assertStoredTeamInfo(record.profileJson, `${label} profileJson`),
+    workspaceCacheJson: options?.suppressWorkspaceCache
+      ? null
+      : readWorkspaceCachePayload(record.workspaceCacheJson),
+  };
+}
+
+function assertBbConnectionInputShape<TRecord extends Record<string, unknown>>(
   input: TRecord,
-  removedPaths: readonly string[],
-  sanitizedFields: readonly string[],
-): {
-  input: TRecord;
-  namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[];
-  removedPaths: string[];
-  sanitizedFields: string[];
-} {
-  let updated: Record<string, unknown> | null = null;
-  const nextRemovedPaths = [...removedPaths];
-  const nextSanitizedFields = [...sanitizedFields];
-  const namedReferenceDiagnostics: NamedReferenceFieldDiagnostic[] = [];
+): void {
+  if (hasOwnInputField(input, "profileJson") && input.profileJson != null) {
+    assertStoredTeamInfo(input.profileJson, "BbConnection.profileJson");
+  }
 
-  for (const path of BB_CONNECTION_NAMED_REFERENCE_PATHS) {
-    const currentValue = readNestedValue(updated ?? input, path);
-    if (!isRecord(currentValue)) {
-      continue;
-    }
-
-    const originalKeys = Object.keys(currentValue).sort();
-    const removedKeys = originalKeys.filter(
-      (key) => !NAMED_REFERENCE_INPUT_KEYS.has(key),
-    );
-    if (!removedKeys.length) {
-      continue;
-    }
-
-    namedReferenceDiagnostics.push({
-      originalKeys,
-      path,
-      removedKeys,
-      sanitizedPreview: buildNamedReferencePreview(currentValue),
-    });
-
-    for (const key of removedKeys) {
-      nextRemovedPaths.push(`${path}.${key}`);
-    }
-    pushUnique(nextSanitizedFields, path.split(".")[0] ?? path);
-    updated = replaceNestedValue(
-      updated ?? input,
-      path,
-      buildNamedReferencePreview(currentValue),
+  if (
+    hasOwnInputField(input, "workspaceCacheJson") &&
+    input.workspaceCacheJson != null
+  ) {
+    assertWorkspaceCachePayload(
+      input.workspaceCacheJson,
+      "BbConnection.workspaceCacheJson",
     );
   }
-
-  return {
-    input: (updated ?? input) as TRecord,
-    namedReferenceDiagnostics,
-    removedPaths: nextRemovedPaths,
-    sanitizedFields: nextSanitizedFields,
-  };
 }
 
-function buildNamedReferencePreview(value: Record<string, unknown>): {
-  id: string | null;
-  name: string | null;
-} {
-  return {
-    id: typeof value.id === "string" ? value.id : null,
-    name: typeof value.name === "string" ? value.name : null,
-  };
-}
-
-function replaceNestedValue<TValue>(
-  value: TValue,
-  path: string,
-  replacement: unknown,
-): TValue {
-  return replaceNestedValueAtSegments(
-    value,
-    path.split("."),
-    replacement,
-  ) as TValue;
-}
-
-function replaceNestedValueAtSegments(
-  value: unknown,
-  segments: readonly string[],
-  replacement: unknown,
-): unknown {
-  if (segments.length === 0) {
-    return replacement;
-  }
-  if (!isRecord(value)) {
-    return value;
-  }
-
-  const [segment, ...rest] = segments;
-  if (segment === undefined) {
-    return value;
-  }
-  const currentValue = value[segment];
-  const nextValue =
-    rest.length === 0
-      ? replacement
-      : replaceNestedValueAtSegments(currentValue, rest, replacement);
-  if (nextValue === currentValue) {
-    return value;
-  }
-
-  return {
-    ...value,
-    [segment]: nextValue,
-  };
-}
-
-function pushUnique(values: string[], value: string): void {
-  if (!values.includes(value)) {
-    values.push(value);
+function assertTrackedTeamInputShape<TRecord extends Record<string, unknown>>(
+  input: TRecord,
+): void {
+  if (hasOwnInputField(input, "summaryJson") && input.summaryJson != null) {
+    assertStoredTeamInfo(input.summaryJson, "TrackedTeam.summaryJson");
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+function assertTrackedPlayerInputShape<TRecord extends Record<string, unknown>>(
+  input: TRecord,
+): void {
+  if (hasOwnInputField(input, "profileJson") && input.profileJson != null) {
+    assertStoredOwnedRosterPlayer(
+      input.profileJson,
+      "TrackedPlayer.profileJson",
+    );
+  }
 }
 
-function readNestedValue(value: unknown, path: string): unknown {
-  let current = value;
-
-  for (const segment of path.split(".")) {
-    if (!isRecord(current)) {
-      return undefined;
-    }
-    current = current[segment];
+function assertSharedPlayerCardInputShape<
+  TRecord extends Record<string, unknown>,
+>(input: TRecord): void {
+  if (hasOwnInputField(input, "payloadJson") && input.payloadJson != null) {
+    assertSharedPlayerCardPayload(
+      input.payloadJson,
+      "SharedPlayerCard.payloadJson",
+    );
   }
+}
 
-  return current;
+function hasOwnInputField<TRecord extends Record<string, unknown>>(
+  input: TRecord,
+  key: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(input, key);
 }
 
 function logRepositoryInfo(

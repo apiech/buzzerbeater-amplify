@@ -11,6 +11,7 @@ import {
 } from "../amplify/data/_backend/lineup-helper";
 import {
   WORKSPACE_CACHE_VERSION,
+  buildWorkspaceCachePayload,
   readWorkspaceCachePayload,
 } from "../amplify/data/_backend/workspace-cache";
 import type {
@@ -26,6 +27,10 @@ import {
   repairOwnerRosterData,
   revokePlayerCard,
 } from "../amplify/data/_backend/workspace";
+import {
+  createWorkspaceCacheConnection,
+  createWorkspaceCachePayload,
+} from "./fixtures/owned-data";
 import { installInactiveMaintenanceRuntime } from "./inactive-maintenance-runtime";
 
 installInactiveMaintenanceRuntime();
@@ -230,15 +235,7 @@ test("workspace sync stays cache-first unless a force refresh is requested", () 
     bbLoginName: "coach",
     status: "CONNECTED",
     lastSyncAt: "2020-03-15T00:00:00.000Z",
-    workspaceCacheJson: {
-      version: WORKSPACE_CACHE_VERSION,
-      home: {},
-      teamHub: {},
-      scout: {},
-      leagueIntel: {},
-      playerLab: {},
-      arena: createEmptyArenaWorkspace(),
-    },
+    workspaceCacheJson: createWorkspaceCachePayload(),
   } as any;
 
   const cachedWorkspace = workspaceTesting.readCachedWorkspace(connection);
@@ -273,13 +270,8 @@ test("workspace cache version mismatches force a refresh", () => {
     status: "CONNECTED",
     lastSyncAt: "2020-03-15T00:00:00.000Z",
     workspaceCacheJson: {
+      ...createWorkspaceCachePayload(),
       version: WORKSPACE_CACHE_VERSION - 1,
-      home: {},
-      teamHub: {},
-      scout: {},
-      leagueIntel: {},
-      playerLab: {},
-      arena: createEmptyArenaWorkspace(),
     },
   } as any;
 
@@ -307,12 +299,45 @@ test("workspace cache rows missing arena are treated as unreadable cache misses"
   assert.equal(cache, null);
 });
 
+test("readCachedWorkspace rehydrates the home connection without raw storage fields", () => {
+  const connection = {
+    userId: "user-1",
+    bbLoginName: "coach",
+    status: "CONNECTED",
+    teamName: null,
+    shortName: "Visionaries",
+    lastSyncAt: "2026-03-15T00:00:00.000Z",
+    workspaceCacheJson: createWorkspaceCachePayload({
+      home: {
+        connection: createWorkspaceCacheConnection({
+          teamName: "Cached Visionaries",
+        }),
+      },
+    }),
+  } as any;
+
+  const cachedWorkspace = workspaceTesting.readCachedWorkspace(connection);
+
+  assert.ok(cachedWorkspace);
+  assert.equal(cachedWorkspace.connectionRecord.userId, "user-1");
+  assert.equal(cachedWorkspace.home.connection.teamName, "Cached Visionaries");
+  assert.equal(
+    "userId" in (cachedWorkspace.home.connection as Record<string, unknown>),
+    false,
+  );
+  assert.equal(
+    "shortName" in (cachedWorkspace.home.connection as Record<string, unknown>),
+    false,
+  );
+  assert.equal(
+    "workspaceCacheJson" in
+      (cachedWorkspace.home.connection as Record<string, unknown>),
+    false,
+  );
+});
+
 test("repairOwnerRosterData upserts owner snapshots and patches only the cached team-hub roster", async () => {
-  const existingCache = {
-    version: WORKSPACE_CACHE_VERSION,
-    home: {
-      marker: "home",
-    },
+  const existingCache = createWorkspaceCachePayload({
     teamHub: {
       roster: [
         {
@@ -332,29 +357,8 @@ test("repairOwnerRosterData upserts owner snapshots and patches only the cached 
         },
       ],
       syncedAt: "2026-04-10T00:00:00.000Z",
-      team: {
-        country: null,
-        isBot: false,
-        league: null,
-        ownerName: "Coach",
-        rival: null,
-        shortName: "Visionaries",
-        teamId: "team-1",
-        teamName: "Visionaries",
-      },
     },
-    scout: {
-      marker: "scout",
-    },
-    leagueIntel: {
-      marker: "league",
-    },
-    playerLab: {
-      marker: "playerLab",
-      players: [],
-    },
-    arena: createEmptyArenaWorkspace(),
-  } as any;
+  }) as any;
 
   const connection = {
     bbLoginName: "coach",
@@ -602,6 +606,75 @@ test("buildHomeWorkspace keeps next-opponent summary available when scout schedu
   assert.deepStrictEqual(home.nextOpponent.tendencies.offense, [
     { count: 1, key: "Push" },
   ]);
+  assert.equal("userId" in (home.connection as Record<string, unknown>), false);
+  assert.equal(
+    "shortName" in (home.connection as Record<string, unknown>),
+    false,
+  );
+  assert.equal(
+    "workspaceCacheJson" in (home.connection as Record<string, unknown>),
+    false,
+  );
+});
+
+test("workspace cache persistence projects the home connection into the cached connection shape", () => {
+  const home = workspaceTesting.buildHomeWorkspace(
+    {
+      roster: { players: [] },
+      schedule: { matches: [] },
+      standings: {
+        conferences: [],
+        league: { id: "L1", name: "League One" },
+      },
+      teamInfo: {
+        teamId: "OUR",
+        teamName: "Our Team",
+        shortName: "Our Short Name",
+      },
+      teamStats: null,
+    } as any,
+    null,
+    null,
+    [],
+    [],
+    [],
+    [],
+    null,
+    {
+      userId: "user-1",
+      bbLoginName: "coach",
+      status: "CONNECTED",
+      teamId: "team-1",
+      teamName: "Visionaries",
+      shortName: "Visionaries",
+      lastSyncAt: "2026-04-11T00:00:00.000Z",
+      workspaceCacheJson: createWorkspaceCachePayload(),
+    } as any,
+  );
+  const seededCache = createWorkspaceCachePayload();
+
+  const payload = buildWorkspaceCachePayload({
+    home,
+    teamHub: seededCache.teamHub,
+    scout: seededCache.scout,
+    leagueIntel: seededCache.leagueIntel,
+    playerLab: seededCache.playerLab,
+    arena: seededCache.arena,
+  });
+
+  assert.equal(payload.home.connection.teamName, "Visionaries");
+  assert.equal(
+    "userId" in (payload.home.connection as Record<string, unknown>),
+    false,
+  );
+  assert.equal(
+    "shortName" in (payload.home.connection as Record<string, unknown>),
+    false,
+  );
+  assert.equal(
+    "workspaceCacheJson" in (payload.home.connection as Record<string, unknown>),
+    false,
+  );
 });
 
 test("buildHomeCorePlayers tolerates box score players without performance stats", () => {
@@ -892,6 +965,19 @@ test("live-match workspace refresh falls back to cached data instead of flipping
   assert.match(syncWorkspaceSection, /syncWorkspace\.match_in_progress_fallback/);
   assert.match(syncWorkspaceSection, /status:\s*"CONNECTED"/);
   assert.match(syncWorkspaceSection, /usedCachedWorkspace:\s*true/);
+  assert.match(
+    syncWorkspaceSection,
+    /projectHomeWorkspaceConnection\(\s*connection,\s*cachedWorkspace\.home\.connection,/s,
+  );
+  assert.doesNotMatch(syncWorkspaceSection, /cachedWorkspace\.connection\./);
+  assert.doesNotMatch(
+    syncWorkspaceSection,
+    /const fallbackConnection = buildConnectionRecord\([\s\S]*shortName:/s,
+  );
+  assert.doesNotMatch(
+    syncWorkspaceSection,
+    /const fallbackConnection = buildConnectionRecord\([\s\S]*workspaceCacheJson:/s,
+  );
 });
 
 test("workspace cache-hit logs explain which cached workspace bundle was reused", () => {
@@ -1625,8 +1711,28 @@ test("lineup helper repairs an unreadable cached boxscore before falling through
   const persistedMatchIds: string[] = [];
   const connection = createLineupHelperConnection();
   connection.workspaceCacheJson.home.recentMatches = [
-    { matchId: "m-unreadable" },
-    { matchId: "m-usable" },
+    {
+      effortDelta: null,
+      hasBoxscore: true,
+      matchId: "m-unreadable",
+      opponentScore: null,
+      opponentTeamName: "Unreadable",
+      outcome: null,
+      startTime: null,
+      teamScore: null,
+      type: null,
+    },
+    {
+      effortDelta: null,
+      hasBoxscore: true,
+      matchId: "m-usable",
+      opponentScore: null,
+      opponentTeamName: "Usable",
+      outcome: null,
+      startTime: null,
+      teamScore: null,
+      type: null,
+    },
   ];
 
   const workspace = await getLineupHelperWorkspace(
@@ -2054,7 +2160,7 @@ test("buildConnectionRecord preserves explicit null updates when clearing stale 
   });
 });
 
-test("lookupSharedPlayerCardByToken unwraps only the sanitized share payload", async () => {
+test("lookupSharedPlayerCardByToken returns null for malformed stored payloads", async () => {
   const result = await lookupSharedPlayerCardByToken(
     {
       env: {},
@@ -2093,26 +2199,7 @@ test("lookupSharedPlayerCardByToken unwraps only the sanitized share payload", a
     },
   );
 
-  assert.deepStrictEqual(result, {
-    shareToken: "share-token",
-    shareUrl: null,
-    title: "My player",
-    note: "Fresh snapshot",
-    expiresAt: "2099-03-15T00:00:00.000Z",
-    revokedAt: null,
-    payload: {
-      player: {
-        playerId: "player-1",
-        fullName: "Test Player",
-        bestPosition: "SG",
-        salary: 12345,
-        nationalityName: "USA",
-        gameShape: "strong",
-        dmi: 456789,
-        injuryWeeks: 0,
-      },
-    },
-  });
+  assert.equal(result, null);
 });
 
 test("lookupSharedPlayerCardByToken returns null for revoked shares", async () => {
@@ -2173,11 +2260,7 @@ function createLineupHelperConnection() {
     teamId: "team-1",
     bbLoginName: "coach-alpha",
     lastSyncAt: "2026-03-15T00:00:00.000Z",
-    workspaceCacheJson: {
-      version: WORKSPACE_CACHE_VERSION,
-      home: {
-        recentMatches: [],
-      },
+    workspaceCacheJson: createWorkspaceCachePayload({
       teamHub: {
         roster: [
           {
@@ -2190,38 +2273,8 @@ function createLineupHelperConnection() {
           },
         ],
       },
-      scout: {},
-      leagueIntel: {},
-      playerLab: {
-        players: [],
-      },
-      arena: createEmptyArenaWorkspace(),
-    },
+    }),
   } as any;
-}
-
-function createEmptyArenaWorkspace() {
-  return {
-    syncedAt: null,
-    nextHomeMatch: null,
-    arena: {
-      name: null,
-      seats: [],
-      expansion: null,
-    },
-    economy: {
-      cash: null,
-      availableBalance: null,
-      transactions: [],
-    },
-    recentHomeGames: [],
-    recommendation: null,
-    diagnostics: {
-      comparableGameCount: 0,
-      matchedSnapshotCount: 0,
-      lowConfidenceReasons: [],
-    },
-  };
 }
 
 function createLineupHelperDependencies(overrides: Record<string, unknown> = {}) {
