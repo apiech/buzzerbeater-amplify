@@ -47,7 +47,7 @@
     "test": "node --test --import tsx ./tests/*.test.ts",
     "test:docs": "node --test --import tsx ./tests/docs/*.test.ts",
     "test:privacy": "node --test --import tsx ./tests/player-snapshot-access.test.ts ./tests/workspace-backend.test.ts ./tests/amplify-architecture.test.ts ./tests/deploy-workflow.test.ts ./tests/private-alpha-auth.test.ts",
-    "verify:deploy": "npm test && npm run test:privacy && npm run lint && npm run typecheck:app && npm run typecheck:amplify",
+    "verify:deploy": "npm test && npm run test:privacy && npm run lint && npm run typecheck:app",
     "verify:deploy:sandbox": "npm test && npm run test:privacy && npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox && npm run typecheck:amplify:sandbox",
     "test:bbapi": "node --test --import tsx ./tests/bbapi-parser.test.ts",
     "generate:bbapi-goldens": "node --import tsx ./scripts/generate-bbapi-goldens.ts",

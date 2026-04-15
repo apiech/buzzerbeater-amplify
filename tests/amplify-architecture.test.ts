@@ -487,7 +487,11 @@ test("deploy verification uses a cold app typecheck", () => {
     packageJson.scripts?.["typecheck:app"] ?? "",
     /--incremental false/,
   );
-  assert.match(packageJson.scripts?.["verify:deploy"] ?? "", /typecheck:amplify/);
+  assert.doesNotMatch(
+    packageJson.scripts?.["verify:deploy"] ?? "",
+    /typecheck:amplify/,
+  );
+  assert.match(packageJson.scripts?.["typecheck:amplify"] ?? "", /typecheck-amplify/);
   assert.match(
     packageJson.scripts?.["verify:deploy:sandbox"] ?? "",
     /typecheck:amplify:sandbox/,

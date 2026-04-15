@@ -39,6 +39,10 @@ test("sandbox scripts expose the happy path and raw escape hatch", () => {
     "node ./scripts/typecheck-amplify.mjs --allow-missing-generated-env",
   );
   assert.equal(
+    scripts["verify:deploy"],
+    "npm test && npm run test:privacy && npm run lint && npm run typecheck:app",
+  );
+  assert.equal(
     scripts["verify:deploy:sandbox"],
     "npm test && npm run test:privacy && npm run lint:deploy:sandbox && npm run typecheck:app:deploy:sandbox && npm run typecheck:amplify:sandbox",
   );

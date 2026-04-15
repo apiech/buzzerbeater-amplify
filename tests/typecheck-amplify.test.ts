@@ -29,7 +29,7 @@ test("runAmplifyTypecheck fails when generated env modules are missing", () => {
   assert.deepStrictEqual(errors, [missingGeneratedEnvMessage]);
 });
 
-test("runAmplifyTypecheck skips cleanly for sandbox preflight when generated env modules are missing", () => {
+test("runAmplifyTypecheck skips cleanly when generated env modules are explicitly allowed to be missing", () => {
   const warnings: string[] = [];
   let spawned = false;
 

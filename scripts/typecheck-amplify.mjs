@@ -13,14 +13,14 @@ export const tscPath = join(repoRoot, "node_modules", ".bin", "tsc");
 
 export const missingGeneratedEnvMessage = [
   "Amplify generated env modules are missing.",
-  "Strict Amplify backend typecheck requires a bootstrapped local sandbox.",
-  "Run `npm run sandbox:once`, then rerun `npm run typecheck:amplify`.",
+  "Standalone Amplify backend typecheck requires Amplify-generated env modules.",
+  "Run `npm run sandbox:once` or `npx ampx pipeline-deploy ...`, then rerun `npm run typecheck:amplify`.",
 ].join(" ");
 
 export const skippedGeneratedEnvMessage = [
   "Amplify generated env modules are missing.",
-  "Skipping strict Amplify backend typecheck for this sandbox bootstrap preflight.",
-  "Run `npm run sandbox:once`, then rerun `npm run typecheck:amplify` for the strict check.",
+  "Skipping standalone Amplify backend typecheck because generated env modules are unavailable.",
+  "Run `npm run sandbox:once` or `npx ampx pipeline-deploy ...`, then rerun `npm run typecheck:amplify` for the strict check.",
 ].join(" ");
 
 export function parseTypecheckAmplifyArgs(argv = process.argv.slice(2)) {
