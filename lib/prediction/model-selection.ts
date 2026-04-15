@@ -14,6 +14,11 @@ export const INTERNAL_PREDICTION_MODEL_OPTIONS = [
     label: "CatBoost",
     value: "catboost",
   },
+  {
+    description: "Force the current decomposition predictor.",
+    label: "Decomposition",
+    value: "decomposition",
+  },
 ] as const;
 
 export function normalizePredictionModelKey(

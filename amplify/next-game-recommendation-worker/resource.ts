@@ -7,6 +7,6 @@ export const nextGameRecommendationWorker = defineFunction({
   name: "next-game-recommendation-worker",
   entry: "./handler.ts",
   timeoutSeconds: 300,
-  memoryMB: 1024,
+  memoryMB: 3072,
   environment: buildBbConnectionSecretFunctionEnvironment(),
 });

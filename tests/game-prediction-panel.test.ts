@@ -610,6 +610,43 @@ test("prediction imports append a transient select option for a manually loaded 
   });
 });
 
+test("prediction imports auto-resolve the matching home or away team from a boxscore", () => {
+  assert.equal(
+    gamePredictionTesting.resolvePredictionImportTeamLocation({
+      boxscore: transientImportBoxscore,
+      sideTeamId: "home-1",
+    }),
+    "HOME",
+  );
+  assert.equal(
+    gamePredictionTesting.resolvePredictionImportTeamLocation({
+      boxscore: transientImportBoxscore,
+      sideTeamId: "away-1",
+    }),
+    "AWAY",
+  );
+});
+
+test("prediction imports only auto-resolve when the selected side is unambiguous", () => {
+  assert.equal(
+    gamePredictionTesting.resolvePredictionImportTeamLocation({
+      boxscore: transientImportBoxscore,
+      sideTeamId: "missing-team",
+    }),
+    null,
+  );
+  assert.equal(
+    gamePredictionTesting.resolvePredictionImportTeamLocation({
+      boxscore: {
+        ...transientImportBoxscore,
+        awayTeam: null,
+      },
+      sideTeamId: null,
+    }),
+    "HOME",
+  );
+});
+
 test("prediction import field descriptions explain blank team IDs and empty schedules", () => {
   assert.deepStrictEqual(
     gamePredictionTesting.describePredictionImportMatchField({

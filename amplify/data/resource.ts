@@ -1628,6 +1628,8 @@ const schema = a
       excludedPlayerCount: a.integer(),
       forecastJobId: a.string(),
       forecastScenarioCount: a.integer(),
+      plannerBatchCount: a.integer(),
+      plannerBatchesCompleted: a.integer(),
       plannerPairCount: a.integer(),
       sourceMatchId: a.string(),
       sourceTeamLocation: a.string(),

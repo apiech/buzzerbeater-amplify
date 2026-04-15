@@ -37,8 +37,6 @@ const OFFENSE_ALIASES: Record<string, string> = {
   "Look Inside": "Look Inside",
   LowPost: "Low Post",
   "Low Post": "Low Post",
-  InsideIsolation: "Look Inside",
-  OutsideIsolation: "Motion",
 };
 
 const DEFENSE_ALIASES: Record<string, string> = {
@@ -52,8 +50,6 @@ const DEFENSE_ALIASES: Record<string, string> = {
   "1-3-1 Zone": "1-3-1 Zone",
   Press: "Full Court Press",
   "Full Court Press": "Full Court Press",
-  InsideBoxAndOne: "2-3 Zone",
-  OutsideBoxAndOne: "3-2 Zone",
 };
 
 export const coachParrotArtifacts = artifactData as CoachParrotArtifacts;

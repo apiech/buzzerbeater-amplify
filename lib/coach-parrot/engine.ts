@@ -1,3 +1,5 @@
+import { Worker } from "node:worker_threads";
+
 import {
   coachParrotArtifacts,
   normalizeDefense,
@@ -41,6 +43,38 @@ const DEFENSE_POSITION_RATINGS = [
   "insideDefense",
   "rebounding",
 ] as const satisfies Rating[];
+const DEFAULT_BATCH_WORKER_COUNT = 2;
+const COACH_PARROT_BATCH_WORKER_SOURCE = `
+const { parentPort, workerData } = require("node:worker_threads");
+
+void (async () => {
+  const moduleRef = await import(workerData.moduleUrl);
+
+  parentPort?.on("message", async (job) => {
+    try {
+      const evaluation = await moduleRef.evaluateRosterBatchWorkerUnit({
+        algorithm: workerData.algorithm ?? undefined,
+        context: job.context,
+        roster: workerData.roster,
+      });
+      parentPort?.postMessage({
+        contextId: job.contextId,
+        evaluation,
+      });
+    } catch (error) {
+      parentPort?.postMessage({
+        contextId: job.contextId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+})().catch((error) => {
+  parentPort?.postMessage({
+    error: error instanceof Error ? error.message : String(error),
+    fatal: true,
+  });
+});
+`;
 
 type CanonicalSkillField =
   | "js"
@@ -57,6 +91,16 @@ type CanonicalSkillField =
   | "ft"
   | "ex"
   | "gs";
+
+export type EvaluateRosterBatchContextInput = {
+  context: Partial<CoachParrotContext>;
+  contextId: string;
+};
+
+export type EvaluateRosterBatchResult = {
+  contextId: string;
+  evaluation: CoachParrotEvaluation;
+};
 
 const SKILL_ALIASES: Partial<Record<string, CanonicalSkillField>> = {
   jumpshot: "js",
@@ -356,22 +400,11 @@ export async function buildLineup(args: {
   playerOutputs: Record<string, Record<Position, number>>;
   warnings: string[];
 }> {
-  const { playerOutputs, rankings } = rankRoster(args);
-  const playerOutputsByMinutes = Object.fromEntries(
-    args.roster.players.map((player) => [
-      player.playerId,
-      Object.fromEntries(
-        LINEUP_ALLOWED_MINUTES.map((minutes) => [
-          minutes,
-          positionOutputTotals({
-            player,
-            context: args.context,
-            assignedMinutes: minutes,
-          }),
-        ]),
-      ),
-    ]),
-  ) as Record<string, Record<number, Record<Position, number>>>;
+  const { playerOutputs, playerOutputsByMinutes, rankings } =
+    prepareLineupOptimization({
+      context: args.context,
+      roster: args.roster,
+    });
   const optimized = await optimizeLineup({
     algorithm: args.algorithm,
     playerOutputsByMinutes,
@@ -389,6 +422,38 @@ export async function buildLineup(args: {
     rankings,
     playerOutputs,
     warnings: [],
+  };
+}
+
+function prepareLineupOptimization(args: {
+  context: CoachParrotContext;
+  roster: CoachParrotRoster;
+}): {
+  playerOutputs: Record<string, Record<Position, number>>;
+  playerOutputsByMinutes: Record<string, Record<number, Record<Position, number>>>;
+  rankings: Record<Position, RankingEntry[]>;
+} {
+  const { playerOutputs, rankings } = rankRoster(args);
+  const playerOutputsByMinutes = Object.fromEntries(
+    args.roster.players.map((player) => [
+      player.playerId,
+      Object.fromEntries(
+        LINEUP_ALLOWED_MINUTES.map((minutes) => [
+          minutes,
+          positionOutputTotals({
+            player,
+            context: args.context,
+            assignedMinutes: minutes,
+          }),
+        ]),
+      ),
+    ]),
+  ) as Record<string, Record<number, Record<Position, number>>>;
+
+  return {
+    playerOutputs,
+    playerOutputsByMinutes,
+    rankings,
   };
 }
 
@@ -454,12 +519,31 @@ export function evaluateLineup(args: {
 }): CoachParrotEvaluation {
   const context = normalizeContext(args.context);
   const lineup = normalizeLineupAssignments(args.lineup);
-  const playerIndex = new Map(args.roster.players.map((player) => [player.playerId, player]));
-  const totalMinutesByPlayer = new Map<string, number>();
-  const warnings: string[] = [];
   const { playerOutputs, rankings } = rankRoster({ roster: args.roster, context });
 
-  for (const assignment of lineup) {
+  return evaluateLineupWithPreparedData({
+    context,
+    lineup,
+    playerOutputs,
+    rankings,
+    roster: args.roster,
+  });
+}
+
+function evaluateLineupWithPreparedData(args: {
+  context: CoachParrotContext;
+  lineup: LineupAssignment[];
+  playerOutputs: Record<string, Record<Position, number>>;
+  rankings: Record<Position, RankingEntry[]>;
+  roster: CoachParrotRoster;
+}): CoachParrotEvaluation {
+  const playerIndex = new Map(
+    args.roster.players.map((player) => [player.playerId, player]),
+  );
+  const totalMinutesByPlayer = new Map<string, number>();
+  const warnings: string[] = [];
+
+  for (const assignment of args.lineup) {
     totalMinutesByPlayer.set(
       assignment.playerId,
       (totalMinutesByPlayer.get(assignment.playerId) ?? 0) + assignment.minutes,
@@ -482,7 +566,9 @@ export function evaluateLineup(args: {
   ) as Record<Rating, Record<Position, number>>;
 
   for (const position of POSITION_SEQUENCE) {
-    const positionAssignments = lineup.filter((assignment) => assignment.position === position);
+    const positionAssignments = args.lineup.filter(
+      (assignment) => assignment.position === position,
+    );
     const positionTotalMinutes = positionAssignments.reduce(
       (sum, assignment) => sum + assignment.minutes,
       0,
@@ -506,14 +592,14 @@ export function evaluateLineup(args: {
         player,
         position,
         assignedMinutes,
-        context,
+        context: args.context,
       });
-      const defensivePosition = context.defensiveSwitch[position];
+      const defensivePosition = args.context.defensiveSwitch[position];
       const defensiveComponents = positionRatingComponents({
         player,
         position: defensivePosition,
         assignedMinutes,
-        context,
+        context: args.context,
       });
       for (const rating of OFFENSE_POSITION_RATINGS) {
         perPositionContributions[rating][position] +=
@@ -536,7 +622,7 @@ export function evaluateLineup(args: {
     const adjustedRating = baseRating + contextAdjustment({
       rating,
       baseRating,
-      context,
+      context: args.context,
     });
     if (baseRating > 0 && adjustedRating !== baseRating) {
       const ratio = adjustedRating / baseRating;
@@ -560,7 +646,7 @@ export function evaluateLineup(args: {
 
   return {
     version: "CoachParrotEvaluationV1",
-    context,
+    context: args.context,
     rawRatings,
     roundedRatings,
     ratingLabels,
@@ -581,10 +667,10 @@ export function evaluateLineup(args: {
         ),
       ]),
     ) as Record<Rating, Record<Position, number>>,
-    playerPositionOutputs: playerOutputs,
-    chosenLineup: lineup,
+    playerPositionOutputs: args.playerOutputs,
+    chosenLineup: args.lineup,
     warnings,
-    rankings,
+    rankings: args.rankings,
   };
 }
 
@@ -599,16 +685,221 @@ export async function evaluateRoster(args: {
     roster: args.roster,
     context,
   });
-  const evaluation = evaluateLineup({
-    roster: args.roster,
-    lineup: built.assignments,
+  const evaluation = evaluateLineupWithPreparedData({
     context,
+    lineup: built.assignments,
+    playerOutputs: built.playerOutputs,
+    rankings: built.rankings,
+    roster: args.roster,
   });
   return {
     ...evaluation,
     warnings: [...evaluation.warnings, ...built.warnings],
     rankings: built.rankings,
   };
+}
+
+export async function evaluateRosterBatchWorkerUnit(args: {
+  algorithm?: LineupOptimizerAlgorithm;
+  context: Partial<CoachParrotContext>;
+  roster: CoachParrotRoster;
+}): Promise<CoachParrotEvaluation> {
+  return await evaluateRoster(args);
+}
+
+export async function evaluateRosterBatch(args: {
+  algorithm?: LineupOptimizerAlgorithm;
+  contexts: readonly EvaluateRosterBatchContextInput[];
+  onProgress?: (result: {
+    completedCount: number;
+    contextId: string;
+    totalCount: number;
+  }) => Promise<void> | void;
+  roster: CoachParrotRoster;
+  workerCount?: number;
+}): Promise<EvaluateRosterBatchResult[]> {
+  const jobs = args.contexts.map((context) => ({
+    context: normalizeContext(context.context),
+    contextId: context.contextId,
+  }));
+  if (!jobs.length) {
+    return [];
+  }
+
+  const workerCount = Math.min(
+    Math.max(1, args.workerCount ?? DEFAULT_BATCH_WORKER_COUNT),
+    jobs.length,
+  );
+
+  if (workerCount === 1) {
+    const results: EvaluateRosterBatchResult[] = [];
+    let completedCount = 0;
+    for (const job of jobs) {
+      const evaluation = await evaluateRosterBatchWorkerUnit({
+        algorithm: args.algorithm,
+        context: job.context,
+        roster: args.roster,
+      });
+      completedCount += 1;
+      results.push({
+        contextId: job.contextId,
+        evaluation,
+      });
+      await Promise.resolve(
+        args.onProgress?.({
+          completedCount,
+          contextId: job.contextId,
+          totalCount: jobs.length,
+        }),
+      );
+    }
+    return results;
+  }
+
+  return await evaluateRosterBatchWithWorkers({
+    algorithm: args.algorithm,
+    jobs,
+    onProgress: args.onProgress,
+    roster: args.roster,
+    workerCount,
+  });
+}
+
+async function evaluateRosterBatchWithWorkers(args: {
+  algorithm?: LineupOptimizerAlgorithm;
+  jobs: Array<{
+    context: CoachParrotContext;
+    contextId: string;
+  }>;
+  onProgress?: (result: {
+    completedCount: number;
+    contextId: string;
+    totalCount: number;
+  }) => Promise<void> | void;
+  roster: CoachParrotRoster;
+  workerCount: number;
+}): Promise<EvaluateRosterBatchResult[]> {
+  const results = new Array<EvaluateRosterBatchResult>(args.jobs.length);
+  const indexByContextId = new Map(
+    args.jobs.map((job, index) => [job.contextId, index]),
+  );
+  const workers = Array.from({ length: args.workerCount }, () =>
+    new Worker(COACH_PARROT_BATCH_WORKER_SOURCE, {
+      eval: true,
+      execArgv: process.execArgv,
+      workerData: {
+        algorithm: args.algorithm ?? null,
+        moduleUrl: import.meta.url,
+        roster: args.roster,
+      },
+    }),
+  );
+  let completedCount = 0;
+  let nextIndex = 0;
+  let settled = false;
+
+  const cleanup = async () => {
+    await Promise.allSettled(workers.map((worker) => worker.terminate()));
+  };
+
+  return await new Promise<EvaluateRosterBatchResult[]>((resolve, reject) => {
+    const fail = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      void cleanup().then(() => {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    };
+
+    const maybeFinish = () => {
+      if (settled || completedCount !== args.jobs.length) {
+        return;
+      }
+      settled = true;
+      void cleanup().then(() => resolve(results));
+    };
+
+    const dispatchNext = (worker: Worker) => {
+      if (settled) {
+        return;
+      }
+      const job = args.jobs[nextIndex];
+      if (!job) {
+        maybeFinish();
+        return;
+      }
+      nextIndex += 1;
+      worker.postMessage(job);
+    };
+
+    for (const worker of workers) {
+      worker.on("message", (message: unknown) => {
+        void (async () => {
+          if (settled) {
+            return;
+          }
+          const record = message as {
+            contextId?: unknown;
+            error?: unknown;
+            evaluation?: unknown;
+            fatal?: unknown;
+          };
+          if (record.error) {
+            fail(new Error(String(record.error)));
+            return;
+          }
+
+          const contextId =
+            typeof record.contextId === "string" ? record.contextId : null;
+          if (!contextId || !record.evaluation) {
+            fail(
+              new Error(
+                "Coach Parrot batch worker returned an invalid optimization payload.",
+              ),
+            );
+            return;
+          }
+
+          const resultIndex = indexByContextId.get(contextId);
+          if (resultIndex === undefined) {
+            fail(
+              new Error(
+                `Coach Parrot batch worker returned an unknown context id: ${contextId}.`,
+              ),
+            );
+            return;
+          }
+
+          results[resultIndex] = {
+            contextId,
+            evaluation: record.evaluation as CoachParrotEvaluation,
+          };
+          completedCount += 1;
+          await Promise.resolve(
+            args.onProgress?.({
+              completedCount,
+              contextId,
+              totalCount: args.jobs.length,
+            }),
+          );
+          dispatchNext(worker);
+        })().catch(fail);
+      });
+      worker.on("error", fail);
+      worker.on("exit", (code) => {
+        if (!settled && code !== 0 && completedCount < args.jobs.length) {
+          fail(
+            new Error(
+              `Coach Parrot batch worker exited unexpectedly with code ${code}.`,
+            ),
+          );
+        }
+      });
+      dispatchNext(worker);
+    }
+  });
 }
 
 export function sampleFixture() {

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Fragment,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -173,6 +174,23 @@ export function GamePredictionPanel({
   const [showAdvancedMatrix, setShowAdvancedMatrix] = useState(false);
   const [showDefenseDrilldown, setShowDefenseDrilldown] = useState(false);
   const [showExtremes, setShowExtremes] = useState(false);
+  const applyImportMatchIfResolvable = useEffectEvent(
+    (args: {
+      boxscore: MatchBoxscorePayload | null;
+      side: ImportSide;
+      sideTeamId: string | null;
+    }) => {
+      const teamLocation = resolvePredictionImportTeamLocation({
+        boxscore: args.boxscore,
+        sideTeamId: args.sideTeamId,
+      });
+      if (!teamLocation || !args.boxscore) {
+        return;
+      }
+
+      handleImportTeam(args.side, args.boxscore, teamLocation);
+    },
+  );
 
   useEffect(() => {
     if (didRestoreDraftRef.current) {
@@ -286,6 +304,31 @@ export function GamePredictionPanel({
     }),
     enabled: Boolean(teamBImportMatchId),
   });
+
+  useEffect(() => {
+    if (!teamAImportMatchId) {
+      return;
+    }
+
+    applyImportMatchIfResolvable({
+      boxscore: teamAImportQuery.data ?? null,
+      side: "teamA",
+      sideTeamId: draft.teamA.teamId,
+    });
+  }, [draft.teamA.teamId, teamAImportMatchId, teamAImportQuery.data]);
+
+  useEffect(() => {
+    if (!teamBImportMatchId) {
+      return;
+    }
+
+    applyImportMatchIfResolvable({
+      boxscore: teamBImportQuery.data ?? null,
+      side: "teamB",
+      sideTeamId: draft.teamB.teamId,
+    });
+  }, [draft.teamB.teamId, teamBImportMatchId, teamBImportQuery.data]);
+
   const teamAImportMatchOptions = useMemo(
     () =>
       ensurePredictionImportMatchOption({
@@ -891,6 +934,14 @@ export function GamePredictionPanel({
       } else {
         setTeamBImportMatchId(matchId);
         setTeamBManualImportMatchId(matchId);
+      }
+
+      const teamLocation = resolvePredictionImportTeamLocation({
+        boxscore,
+        sideTeamId: side === "teamA" ? draft.teamA.teamId : draft.teamB.teamId,
+      });
+      if (teamLocation) {
+        handleImportTeam(side, boxscore, teamLocation);
       }
     } catch (error) {
       setError(
@@ -2821,6 +2872,39 @@ function buildSelectedPredictionImportMatchOption(args: {
   };
 }
 
+function resolvePredictionImportTeamLocation(args: {
+  boxscore: MatchBoxscorePayload | null;
+  sideTeamId: string | null;
+}): "HOME" | "AWAY" | null {
+  const sideTeamId = normalizeImportIdentifier(args.sideTeamId);
+  const homeTeam = args.boxscore?.homeTeam ?? null;
+  const awayTeam = args.boxscore?.awayTeam ?? null;
+  const homeTeamId = normalizeImportIdentifier(homeTeam?.teamId);
+  const awayTeamId = normalizeImportIdentifier(awayTeam?.teamId);
+
+  if (sideTeamId) {
+    const homeMatches = homeTeamId === sideTeamId;
+    const awayMatches = awayTeamId === sideTeamId;
+
+    if (homeMatches && !awayMatches) {
+      return "HOME";
+    }
+    if (awayMatches && !homeMatches) {
+      return "AWAY";
+    }
+    return null;
+  }
+
+  if (homeTeam && !awayTeam) {
+    return "HOME";
+  }
+  if (!homeTeam && awayTeam) {
+    return "AWAY";
+  }
+
+  return null;
+}
+
 function describePredictionImportMatchField(args: {
   errorMessage: string | null;
   isLoading: boolean;
@@ -3628,6 +3712,7 @@ export const __testing = {
   listUniquePairDefenses,
   reconcileSelectedOptions,
   reconcileSelectedDefenseOptions,
+  resolvePredictionImportTeamLocation,
   resolvePredictionSideRecentMatches,
   resolveVisibleSelection,
   sortPairs,

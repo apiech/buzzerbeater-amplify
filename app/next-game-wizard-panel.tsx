@@ -1182,6 +1182,14 @@ export function NextGameWizardPanel({
                   )}
                 </span>
                 <span>
+                  Planner batches:{" "}
+                  {formatCompletedCount(
+                    recommendationProgressContext?.plannerBatchesCompleted,
+                    recommendationProgressContext?.plannerBatchCount,
+                    "batches",
+                  )}
+                </span>
+                <span>
                   Candidates:{" "}
                   {formatOptionalCount(
                     recommendationProgressContext?.candidateCount,
@@ -1879,7 +1887,6 @@ function buildRecommendationPhaseTimeline(
     if (progress?.phaseKey === phase.key) {
       return {
         detail:
-          phase.key === "OPTIMIZING_LINEUPS" &&
           progress.completedUnits !== null &&
           progress.completedUnits !== undefined &&
           progress.totalUnits !== null &&
@@ -1942,6 +1949,23 @@ function formatOptionalCount(
   label: string,
 ): string {
   return value === null || value === undefined ? "Pending" : `${value} ${label}`;
+}
+
+function formatCompletedCount(
+  completed: number | null | undefined,
+  total: number | null | undefined,
+  label: string,
+): string {
+  if (
+    completed === null ||
+    completed === undefined ||
+    total === null ||
+    total === undefined
+  ) {
+    return "Pending";
+  }
+
+  return `${completed}/${total} ${label}`;
 }
 
 function formatWorkspaceCacheDetail(

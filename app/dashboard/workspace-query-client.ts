@@ -730,6 +730,8 @@ const nextGameRecommendationProgressContextSchema = z
     excludedPlayerCount: nullableNumberSchema,
     forecastJobId: nullableStringSchema,
     forecastScenarioCount: nullableNumberSchema,
+    plannerBatchCount: nullableNumberSchema,
+    plannerBatchesCompleted: nullableNumberSchema,
     plannerPairCount: nullableNumberSchema,
     sourceMatchId: nullableStringSchema,
     sourceTeamLocation: nullableStringSchema,

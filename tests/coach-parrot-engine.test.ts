@@ -6,8 +6,11 @@ import {
   checkRotationFeasibility,
   evaluateLineup,
   evaluateRoster,
+  evaluateRosterBatch,
   LINEUP_MAX_MINUTES_PER_PLAYER,
   LINEUP_MINUTE_INCREMENT,
+  normalizeDefense,
+  normalizeOffense,
   rankRoster,
   sampleFixture,
   validateOptimizedLineup,
@@ -213,6 +216,49 @@ test("CoachParrot artifact includes extracted context coefficients", () => {
     Object.keys(coachParrotArtifacts.home_court_adjustments).sort().join(","),
     "insideDefense,outsideDefense,rebounding",
   );
+});
+
+test("CoachParrot compatibility fallback keeps estimated tactics on supported lineup tactics", () => {
+  assert.equal(normalizeOffense("InsideIsolation"), "Base Offense");
+  assert.equal(normalizeOffense("OutsideIsolation"), "Base Offense");
+  assert.equal(normalizeDefense("InsideBoxAndOne"), "Man to man");
+  assert.equal(normalizeDefense("OutsideBoxAndOne"), "Man to man");
+});
+
+test("CoachParrot batch roster optimization matches single-context solves", async () => {
+  const { roster, context } = buildSampleInputs();
+  const homeContext = {
+    ...context,
+    homeCourt: "Home Court",
+    enthusiasm: 8,
+  } as const;
+
+  const batch = await evaluateRosterBatch({
+    contexts: [
+      { context, contextId: "away" },
+      { context: homeContext, contextId: "home" },
+    ],
+    roster,
+    workerCount: 1,
+  });
+
+  const awaySingle = await evaluateRoster({
+    context,
+    roster,
+  });
+  const homeSingle = await evaluateRoster({
+    context: homeContext,
+    roster,
+  });
+
+  assert.deepEqual(
+    batch.map((entry) => entry.contextId),
+    ["away", "home"],
+  );
+  assert.deepEqual(batch[0].evaluation.chosenLineup, awaySingle.chosenLineup);
+  assert.deepEqual(batch[1].evaluation.chosenLineup, homeSingle.chosenLineup);
+  assert.deepEqual(batch[0].evaluation.rawRatings, awaySingle.rawRatings);
+  assert.deepEqual(batch[1].evaluation.rawRatings, homeSingle.rawRatings);
 });
 
 test("CoachParrot skill normalization accepts legacy roster key variants", () => {

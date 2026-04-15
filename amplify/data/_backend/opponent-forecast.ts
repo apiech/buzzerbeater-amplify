@@ -1,10 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  InvokeEndpointCommand,
-  SageMakerRuntimeClient,
-} from "@aws-sdk/client-sagemaker-runtime";
-
 import type { Schema } from "../resource";
 import { requireFeatureAccess } from "./billing";
 import {
@@ -33,6 +28,7 @@ import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
 } from "./maintenance";
+import { invokePredictionRuntimeEndpoint } from "./prediction-runtime";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -427,20 +423,11 @@ async function invokeOpponentForecastEndpoint(
   endpointName: string,
   payload: JsonRecord,
 ): Promise<JsonRecord> {
-  const runtime = new SageMakerRuntimeClient({});
-  const response = await runtime.send(
-    new InvokeEndpointCommand({
-      EndpointName: endpointName,
-      ContentType: "application/json",
-      Body: Buffer.from(JSON.stringify(payload)),
-    }),
-  );
-
-  const rawBody = response.Body?.transformToString
-    ? await Promise.resolve(response.Body.transformToString())
-    : Buffer.from(response.Body ?? []).toString("utf-8");
   return requireRecord(
-    rawBody ? JSON.parse(rawBody) : null,
+    await invokePredictionRuntimeEndpoint({
+      endpointName,
+      payload,
+    }),
     "SageMaker opponent forecast response",
   );
 }

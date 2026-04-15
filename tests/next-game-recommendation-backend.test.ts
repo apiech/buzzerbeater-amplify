@@ -81,6 +81,7 @@ test("next-game recommendation worker keeps lineup-helper snapshot prerequisites
     nextGameRecommendationWorkerResourceSource,
     /buildBbConnectionSecretFunctionEnvironment/,
   );
+  assert.match(nextGameRecommendationWorkerResourceSource, /memoryMB:\s*3072/);
   assert.match(
     nextGameRecommendationJobsSource,
     /PLAYER_SKILL_SNAPSHOT_TABLE_NAME/,
@@ -244,9 +245,71 @@ test("next-game recommendation worker emits structured progress diagnostics", ()
   assert.match(source, /process\.status_transition/);
   assert.match(source, /process\.context\.ready/);
   assert.match(source, /process\.lineup_optimization\.progress/);
+  assert.match(source, /process\.lineup_optimization\.completed/);
   assert.match(source, /process\.planner\.request\.ready/);
   assert.match(source, /process\.planner\.response\.ready/);
+  assert.match(source, /process\.planner\.batch\.completed/);
+  assert.match(source, /optimizeLineupHelperBatch/);
+  assert.match(source, /invokePlannerRequests/);
   assert.match(source, /progressJson/);
+});
+
+test("estimated tactics stay first-class in predictor payloads and use lineup-only fallback mappings", () => {
+  const perspective = recommendationTesting.buildPredictorPerspective({
+    opponentDefense: "ManToMan",
+    opponentEffort: 0,
+    opponentOffense: "Motion",
+    opponentRatings: {
+      outsideScoring: 7,
+      insideScoring: 8,
+      outsideDefense: 9,
+      insideDefense: 10,
+      rebounding: 11,
+      offensiveFlow: 12,
+    },
+    ourDefense: "InsideBoxAndOne",
+    ourEffort: 0,
+    ourIsHome: true,
+    ourOffense: "InsideIsolation",
+    ourRatings: {
+      outsideScoring: 1,
+      insideScoring: 2,
+      outsideDefense: 3,
+      insideDefense: 4,
+      rebounding: 5,
+      offensiveFlow: 6,
+    },
+  });
+
+  assert.equal(perspective.payload.home_offStrategy, "InsideIsolation");
+  assert.equal(perspective.payload.home_defStrategy, "InsideBoxAndOne");
+
+  const source = readFileSync(
+    join(
+      repoRoot,
+      "amplify",
+      "data",
+      "_backend",
+      "next-game-recommendation.ts",
+    ),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /case "InsideIsolation":[\s\S]*?return "Base Offense";/,
+  );
+  assert.match(
+    source,
+    /case "OutsideIsolation":[\s\S]*?return "Base Offense";/,
+  );
+  assert.match(
+    source,
+    /case "InsideBoxAndOne":[\s\S]*?return "Man to man";/,
+  );
+  assert.match(
+    source,
+    /case "OutsideBoxAndOne":[\s\S]*?return "Man to man";/,
+  );
 });
 
 test("buildPredictorPerspective flips home-away orientation for away games", () => {

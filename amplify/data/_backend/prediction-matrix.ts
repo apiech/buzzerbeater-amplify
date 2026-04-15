@@ -1,8 +1,3 @@
-import {
-  InvokeEndpointCommand,
-  SageMakerRuntimeClient,
-} from "@aws-sdk/client-sagemaker-runtime";
-
 import { predictionPlannerResponseSchema } from "../../../lib/prediction/contracts";
 import { normalizePredictionModelKey } from "../../../lib/prediction/model-selection";
 import { normalizePlannerEndpointInvocationError } from "../../../lib/prediction/planner-endpoint-errors";
@@ -13,6 +8,8 @@ import {
   buildPlannerPairDefinitions,
   effortChoiceToOrdinal,
 } from "./next-game-recommendation";
+import { invokePlannerRequests } from "./prediction-planner";
+import { invokePredictionRuntimeEndpoint } from "./prediction-runtime";
 
 type GraphqlEnv = Record<string, string | undefined>;
 type JsonRecord = Record<string, unknown>;
@@ -160,15 +157,22 @@ export async function evaluatePredictionMatrix(
     teamBEffortChoice: request.teamB.effortChoice,
     teamBPairs,
   });
-  let plannerResponse: unknown;
-  try {
-    plannerResponse = await runtimeDependencies.invokePredictionEndpoint(
-      args.endpointName,
-      plannerRequest,
-    );
-  } catch (error) {
-    throw normalizePlannerEndpointInvocationError(error, args.endpointName);
-  }
+  const plannerResponse = (
+    await invokePlannerRequests({
+      endpointName: args.endpointName,
+      invokePredictionEndpoint: async (endpointName, payload) => {
+        try {
+          return await runtimeDependencies.invokePredictionEndpoint(
+            endpointName,
+            payload,
+          );
+        } catch (error) {
+          throw normalizePlannerEndpointInvocationError(error, endpointName);
+        }
+      },
+      requests: [{ payload: plannerRequest, requestId: "matrix" }],
+    })
+  )[0]?.response;
   const response = predictionPlannerResponseSchema.parse(plannerResponse);
 
   return {
@@ -397,25 +401,17 @@ async function invokePredictionEndpoint(
   endpointName: string,
   payload: JsonRecord,
 ): Promise<JsonRecord> {
-  const runtime = new SageMakerRuntimeClient({});
-  let response;
   try {
-    response = await runtime.send(
-      new InvokeEndpointCommand({
-        EndpointName: endpointName,
-        ContentType: "application/json",
-        Body: Buffer.from(JSON.stringify(payload)),
+    return requireRecord(
+      await invokePredictionRuntimeEndpoint({
+        endpointName,
+        payload,
       }),
+      "prediction matrix response",
     );
   } catch (error) {
     throw normalizePlannerEndpointInvocationError(error, endpointName);
   }
-
-  const rawBody = response.Body?.transformToString
-    ? await Promise.resolve(response.Body.transformToString())
-    : Buffer.from(response.Body ?? []).toString("utf-8");
-  const parsed = rawBody ? JSON.parse(rawBody) : null;
-  return requireRecord(parsed, "prediction matrix response");
 }
 
 function requireRecord(value: unknown, label: string): JsonRecord {

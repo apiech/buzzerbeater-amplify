@@ -4,6 +4,7 @@ import {
   OFFENSE_OPTIONS,
   evaluateLineup,
   evaluateRoster,
+  evaluateRosterBatch,
   normalizeDefensiveSwitch,
   normalizeLineupAssignments,
   normalizeContext,
@@ -58,6 +59,10 @@ type LineupHelperOptimizeResult = ResolverResult<"optimizeLineupHelper">;
 type HelperRosterSkills = LineupHelperWorkspaceResult["roster"][number]["skills"];
 type LineupHelperPositionOutput =
   LineupHelperEvaluationResult["playerPositionOutputs"][number]["output"];
+type LineupHelperBatchOptimizeResult = Array<{
+  contextId: string;
+  evaluation: LineupHelperOptimizeResult;
+}>;
 
 type CachedWorkspaceBundle = {
   connection: Record<string, unknown>;
@@ -223,6 +228,58 @@ export async function optimizeLineupHelper(args: {
     roster: rosterPlayers,
     context,
   });
+}
+
+export async function optimizeLineupHelperBatch(args: {
+  algorithm?: unknown;
+  contexts: unknown;
+  onProgress?: (result: {
+    completedCount: number;
+    contextId: string;
+    totalCount: number;
+  }) => Promise<void> | void;
+  roster: unknown;
+}): Promise<LineupHelperBatchOptimizeResult> {
+  await assertMaintenanceInactive();
+
+  const rosterPlayers = parseHelperRoster(args.roster);
+  const algorithm = asLineupHelperAlgorithm(args.algorithm);
+  const contexts = toRecordArray(args.contexts).map((entry) => {
+    const contextId = asString(entry.contextId);
+    if (!contextId) {
+      throw new Error(
+        "Lineup helper batch optimization requires a contextId for each context.",
+      );
+    }
+
+    const context = normalizeContext(toContextRecord(entry.context));
+    const defensiveSwitchErrors = validateDefensiveSwitch(
+      context.defensiveSwitch,
+    );
+    if (defensiveSwitchErrors.length) {
+      throw new Error(defensiveSwitchErrors.join(" "));
+    }
+
+    return {
+      context,
+      contextId,
+    };
+  });
+  const availableRoster = rosterPlayers.filter((player) => player.available);
+  const rawRoster = {
+    players: availableRoster.map(toRawPlayerSkills),
+  };
+  const evaluations = await evaluateRosterBatch({
+    algorithm,
+    contexts,
+    onProgress: args.onProgress,
+    roster: rawRoster,
+  });
+
+  return evaluations.map((evaluation) => ({
+    contextId: evaluation.contextId,
+    evaluation: serializeEvaluation(evaluation.evaluation),
+  }));
 }
 
 export async function buildLineupHelperWorkspacePayload(input: {

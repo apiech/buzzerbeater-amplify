@@ -1,11 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  InvokeEndpointCommand,
-  SageMakerRuntimeClient,
-} from "@aws-sdk/client-sagemaker-runtime";
-
-import {
   predictionEndpointResponseSchema,
   type PredictionEndpointResponse,
 } from "../../../lib/prediction/contracts";
@@ -32,6 +27,7 @@ import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
 } from "./maintenance";
+import { invokePredictionRuntimeEndpoint } from "./prediction-runtime";
 import type { Schema } from "../resource";
 
 type GraphqlEnv = Record<string, string | undefined>;
@@ -354,19 +350,10 @@ async function invokePredictionEndpoint(
   endpointName: string,
   resolvedInput: JsonRecord,
 ): Promise<PredictionEndpointResponse> {
-  const runtime = new SageMakerRuntimeClient({});
-  const response = await runtime.send(
-    new InvokeEndpointCommand({
-      EndpointName: endpointName,
-      ContentType: "application/json",
-      Body: Buffer.from(JSON.stringify(resolvedInput)),
-    }),
-  );
-
-  const rawBody = response.Body?.transformToString
-    ? await Promise.resolve(response.Body.transformToString())
-    : Buffer.from(response.Body ?? []).toString("utf-8");
-  const parsed = rawBody ? JSON.parse(rawBody) : null;
+  const parsed = await invokePredictionRuntimeEndpoint({
+    endpointName,
+    payload: resolvedInput,
+  });
   const result = predictionEndpointResponseSchema.safeParse(parsed);
   if (!result.success) {
     const issue = result.error.issues[0];

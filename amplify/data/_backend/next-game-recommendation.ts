@@ -1,10 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  InvokeEndpointCommand,
-  SageMakerRuntimeClient,
-} from "@aws-sdk/client-sagemaker-runtime";
-
 import { BBXmlApiClient } from "../../../lib/bbapi";
 import {
   POSITION_SEQUENCE,
@@ -12,8 +7,6 @@ import {
   validateDefensiveSwitch,
 } from "../../../lib/coach-parrot";
 import {
-  predictionEndpointResponseSchema,
-  predictionPlannerResponseSchema,
   type PredictionEndpointResponse,
   type PredictionPlannerResponse,
 } from "../../../lib/prediction/contracts";
@@ -30,7 +23,7 @@ import { PositionCode } from "../schema-enums";
 import { requireFeatureAccess } from "./billing";
 import {
   getLineupHelperWorkspace,
-  optimizeLineupHelper,
+  optimizeLineupHelperBatch,
 } from "./lineup-helper";
 import {
   assertMaintenanceInactive,
@@ -70,6 +63,11 @@ import {
   type WorkspaceRefreshMeta,
 } from "./workspace";
 import { toLoggableError } from "./workspace-request-logging";
+import {
+  invokePlannerRequests,
+  mergePlannerResponses,
+} from "./prediction-planner";
+import { invokePredictionRuntimeEndpoint } from "./prediction-runtime";
 
 type GraphqlEnv = Record<string, string | undefined>;
 
@@ -145,7 +143,7 @@ type ListNextGameRecommendationJobsByUserDependency =
   typeof listNextGameRecommendationJobsByUser;
 type ListOpponentForecastJobsByUserDependency =
   typeof listOpponentForecastJobsByUser;
-type OptimizeLineupHelperDependency = typeof optimizeLineupHelper;
+type OptimizeLineupHelperBatchDependency = typeof optimizeLineupHelperBatch;
 type ReadMatchBoxscoreCacheRecordDependency =
   typeof readMatchBoxscoreCacheRecord;
 type RequireFeatureAccessDependency = typeof requireFeatureAccess;
@@ -207,11 +205,11 @@ type ProcessDependencies = {
   invokePredictionEndpoint: (
     endpointName: string,
     payload: JsonRecord,
-  ) => Promise<PredictionEndpointResponse | PredictionPlannerResponse>;
+  ) => Promise<unknown>;
   listNextGamePlannerArtifactRowsByArtifactKey:
     ListNextGamePlannerArtifactRowsByArtifactKeyDependency;
   listOpponentForecastJobsByUser: ListOpponentForecastJobsByUserDependency;
-  optimizeLineupHelper: OptimizeLineupHelperDependency;
+  optimizeLineupHelperBatch: OptimizeLineupHelperBatchDependency;
   readMatchBoxscoreCacheRecord: ReadMatchBoxscoreCacheRecordDependency;
   resolveBbAccessKey: ResolveBbAccessKeyDependency;
   upsertNextGamePlannerArtifact: UpsertNextGamePlannerArtifactDependency;
@@ -307,8 +305,9 @@ const DEFAULT_ENTHUSIASM = 8;
 const TARGET_EFFICIENT_MARGIN = 10;
 const MAX_JOB_PAGES = 4;
 const RECOMMENDATION_PAGE_SIZE = 50;
-const PREDICTION_CONCURRENCY = 8;
 const LINEUP_PROGRESS_BATCH_SIZE = 10;
+const PLANNER_CHUNK_SIZE = 14;
+const PLANNER_REQUEST_CONCURRENCY = 2;
 const DEFAULT_PREDICTION_GDP = "N/A";
 const MATRIX_DEFAULT_EFFORT = 0;
 const MAX_EVALUATED_SCENARIOS = 3;
@@ -357,8 +356,8 @@ const OFFENSE_TO_PREDICTOR: Record<string, string> = {
   "Run and Gun": "RunAndGun",
   RunAndGun: "RunAndGun",
   Princeton: "Princeton",
-  InsideIsolation: "LookInside",
-  OutsideIsolation: "Motion",
+  InsideIsolation: "InsideIsolation",
+  OutsideIsolation: "OutsideIsolation",
 };
 
 const DEFENSE_TO_PREDICTOR: Record<string, string> = {
@@ -372,8 +371,8 @@ const DEFENSE_TO_PREDICTOR: Record<string, string> = {
   "1-3-1 Zone": "131Zone",
   Press: "Press",
   "Full Court Press": "Press",
-  InsideBoxAndOne: "23Zone",
-  OutsideBoxAndOne: "32Zone",
+  InsideBoxAndOne: "InsideBoxAndOne",
+  OutsideBoxAndOne: "OutsideBoxAndOne",
 };
 
 const defaultSubmitDependencies: SubmitDependencies = {
@@ -421,7 +420,7 @@ const defaultProcessDependencies: ProcessDependencies = {
   invokePredictionEndpoint,
   listNextGamePlannerArtifactRowsByArtifactKey,
   listOpponentForecastJobsByUser,
-  optimizeLineupHelper,
+  optimizeLineupHelperBatch,
   readMatchBoxscoreCacheRecord,
   resolveBbAccessKey,
   upsertNextGamePlannerArtifact,
@@ -925,6 +924,10 @@ export async function processNextGameRecommendationJob(
 
     const plannerPairDefinitions = buildPlannerPairDefinitions();
     const totalPlannerPairs = plannerPairDefinitions.length;
+    const plannerPairChunks = chunkArray(
+      plannerPairDefinitions,
+      PLANNER_CHUNK_SIZE,
+    );
     const progressContext = mergeRecommendationProgressContext(
       progress.context ?? null,
       {
@@ -932,6 +935,8 @@ export async function processNextGameRecommendationJob(
         excludedPlayerCount: normalizedInput.excludedPlayerIds.length,
         forecastJobId: forecast.job.id,
         forecastScenarioCount: forecast.scenarios.length,
+        plannerBatchCount: plannerPairChunks.length,
+        plannerBatchesCompleted: 0,
         plannerPairCount: totalPlannerPairs,
         sourceMatchId: opponentSource.matchId,
         sourceTeamLocation: opponentSource.teamLocation,
@@ -994,6 +999,16 @@ export async function processNextGameRecommendationJob(
     const rosterById = new Map(
       lineupWorkspace.roster.map((player) => [player.playerId, player]),
     );
+    const lineupContexts = plannerPairDefinitions.map((pair) => ({
+      context: {
+        offense: toLineupHelperOffense(pair.predictorOffense),
+        defense: toLineupHelperDefense(pair.predictorDefense),
+        enthusiasm: normalizedInput.enthusiasm,
+        homeCourt: ourHomeCourt,
+        defensiveSwitch: normalizedInput.defensiveSwitch,
+      },
+      contextId: pair.pairId,
+    }));
 
     let completedLineupPairs = 0;
     const reportedLineupMilestones = new Set<number>();
@@ -1043,32 +1058,44 @@ export async function processNextGameRecommendationJob(
 
       return lineupProgressWrite;
     };
-    const ourPairContexts = await mapWithConcurrency(
-      plannerPairDefinitions,
-      PREDICTION_CONCURRENCY,
-      async (pair) => {
-        const evaluation = await deps.optimizeLineupHelper({
-          algorithm: "EXACT",
-          roster: availableRoster,
-          context: {
-            offense: toLineupHelperOffense(pair.predictorOffense),
-            defense: toLineupHelperDefense(pair.predictorDefense),
-            enthusiasm: normalizedInput.enthusiasm,
-            homeCourt: ourHomeCourt,
-            defensiveSwitch: normalizedInput.defensiveSwitch,
-          },
-        });
-        completedLineupPairs += 1;
+    const lineupOptimizationsStartedAtMs = Date.now();
+    const optimizedLineups = await deps.optimizeLineupHelperBatch({
+      algorithm: "EXACT",
+      contexts: lineupContexts,
+      onProgress: async ({ completedCount }) => {
+        completedLineupPairs = completedCount;
         await queueLineupProgressUpdate(completedLineupPairs);
-
-        return {
-          ...pair,
-          lineup: buildRecommendedLineup(evaluation, rosterById),
-          ratings: normalizeTeamRatingsRecord(evaluation.rawRatings),
-        };
       },
+      roster: availableRoster,
+    });
+    const optimizedLineupByPairId = new Map(
+      optimizedLineups.map((evaluation) => [
+        evaluation.contextId,
+        evaluation.evaluation,
+      ]),
     );
+    const ourPairContexts = plannerPairDefinitions.map((pair) => {
+      const evaluation = optimizedLineupByPairId.get(pair.pairId);
+      if (!evaluation) {
+        throw new Error(
+          `Missing optimized lineup evaluation for planner pair ${pair.pairId}.`,
+        );
+      }
+
+      return {
+        ...pair,
+        lineup: buildRecommendedLineup(evaluation, rosterById),
+        ratings: normalizeTeamRatingsRecord(evaluation.rawRatings),
+      };
+    });
     await lineupProgressWrite;
+    logRecommendationInfo("process.lineup_optimization.completed", {
+      completedUnits: totalPlannerPairs,
+      elapsedMs: Date.now() - lineupOptimizationsStartedAtMs,
+      jobId: job.id,
+      totalUnits: totalPlannerPairs,
+      userId: job.userId,
+    });
 
     const evaluatedScenarios = buildEvaluatedScenarios(forecast.scenarios);
     const plannerScenarios = buildPlannerScenarioContexts({
@@ -1076,14 +1103,28 @@ export async function processNextGameRecommendationJob(
       scenarios: forecast.scenarios,
       teamLocation: ourIsHome ? "AWAY" : "HOME",
     });
+    const scoringProgressContext = mergeRecommendationProgressContext(
+      progressContext,
+      {
+        plannerBatchCount: plannerPairChunks.length,
+        plannerBatchesCompleted: 0,
+      },
+    );
 
     const scoringStartedAt = new Date().toISOString();
     progress = advanceRecommendationProgress({
-      context: progressContext,
+      completedUnits: 0,
+      context: scoringProgressContext,
       currentProgress: progress,
       currentPhaseStartedAt: scoringStartedAt,
       nextPhaseKey: "SCORING_MATCHUPS",
-      summary: buildScoringMatchupsSummary(plannerScenarios.length),
+      summary: buildScoringMatchupsSummary(
+        plannerScenarios.length,
+        0,
+        plannerPairChunks.length,
+      ),
+      totalUnits: plannerPairChunks.length,
+      unitLabel: "planner batches",
       updatedAt: scoringStartedAt,
     });
     logRecommendationInfo("process.status_transition", {
@@ -1101,32 +1142,100 @@ export async function processNextGameRecommendationJob(
       progressJson: progress,
     });
 
-    const plannerRequest = buildPlannerRequest({
-      opponentScenarios: plannerScenarios,
-      ourIsHome,
-      ourPairs: ourPairContexts,
-    });
+    const ourPairContextById = new Map(
+      ourPairContexts.map((pair) => [pair.pairId, pair]),
+    );
+    const plannerRequests = plannerPairChunks.map((chunk, index) => ({
+      payload: buildPlannerRequest({
+        opponentScenarios: plannerScenarios,
+        ourIsHome,
+        ourPairs: chunk.map((pair) => {
+          const context = ourPairContextById.get(pair.pairId);
+          if (!context) {
+            throw new Error(
+              `Missing planner pair context for planner chunk pair ${pair.pairId}.`,
+            );
+          }
+          return context;
+        }),
+      }),
+      requestId: buildPlannerChunkRequestId(index),
+    }));
     logRecommendationInfo("process.planner.request.ready", {
+      chunkSize: PLANNER_CHUNK_SIZE,
       jobId: job.id,
       opponentScenarioCount: plannerScenarios.length,
+      plannerBatchCount: plannerRequests.length,
       plannerPairCount: ourPairContexts.length,
       userId: job.userId,
     });
-    let rawPlannerResponse:
-      | PredictionEndpointResponse
-      | PredictionPlannerResponse;
-    try {
-      rawPlannerResponse = await deps.invokePredictionEndpoint(
-        args.endpointName,
-        plannerRequest,
-      );
-    } catch (error) {
-      throw normalizePlannerEndpointInvocationError(error, args.endpointName);
-    }
-    const plannerResponse = expectPlannerResponse(rawPlannerResponse);
-    logRecommendationInfo("process.planner.response.ready", {
+    const reportedPlannerMilestones = new Set<number>();
+    let scoringProgressWrite = Promise.resolve();
+    const queueScoringProgressUpdate = (completedBatches: number) => {
+      scoringProgressWrite = scoringProgressWrite.then(async () => {
+        if (reportedPlannerMilestones.has(completedBatches)) {
+          return;
+        }
+        reportedPlannerMilestones.add(completedBatches);
+
+        const updatedAt = new Date().toISOString();
+        progress = advanceRecommendationProgress({
+          completedUnits: completedBatches,
+          context: mergeRecommendationProgressContext(scoringProgressContext, {
+            plannerBatchCount: plannerRequests.length,
+            plannerBatchesCompleted: completedBatches,
+          }),
+          currentProgress: progress,
+          nextPhaseKey: "SCORING_MATCHUPS",
+          summary: buildScoringMatchupsSummary(
+            plannerScenarios.length,
+            completedBatches,
+            plannerRequests.length,
+          ),
+          totalUnits: plannerRequests.length,
+          unitLabel: "planner batches",
+          updatedAt,
+        });
+        await deps.updateNextGameRecommendationJob(args.env, {
+          id: job.id,
+          status: "SCORING_MATCHUPS",
+          opponentTeamName: context.opponentTeamName,
+          error: null,
+          progressJson: progress,
+        });
+      });
+
+      return scoringProgressWrite;
+    };
+    const plannerResponses = await invokePlannerRequests({
+      concurrency: PLANNER_REQUEST_CONCURRENCY,
+      endpointName: args.endpointName,
+      invokePredictionEndpoint: deps.invokePredictionEndpoint,
+      onRequestCompleted: async (result) => {
+        await queueScoringProgressUpdate(result.completedCount);
+        logRecommendationInfo("process.planner.response.ready", {
+          chunkElapsedMs: result.elapsedMs,
+          chunkPayloadBytes: result.payloadBytes,
+          completedBatches: result.completedCount,
+          jobId: job.id,
+          planEvaluationCount: result.response.planEvaluations.length,
+          plannerBatchCount: result.totalCount,
+          requestId: result.requestId,
+          scenarioMatrixCount: result.response.scenarioMatrices.length,
+          userId: job.userId,
+        });
+      },
+      requests: plannerRequests,
+    });
+    const plannerResponse = mergePlannerResponses({
+      orderedRequestIds: plannerRequests.map((request) => request.requestId),
+      responses: plannerResponses,
+    });
+    await scoringProgressWrite;
+    logRecommendationInfo("process.planner.batch.completed", {
       jobId: job.id,
       planEvaluationCount: plannerResponse.planEvaluations.length,
+      plannerBatchCount: plannerRequests.length,
       scenarioMatrixCount: plannerResponse.scenarioMatrices.length,
       userId: job.userId,
     });
@@ -1134,7 +1243,7 @@ export async function processNextGameRecommendationJob(
     const artifactKey = job.id;
     const buildingStartedAt = new Date().toISOString();
     progress = advanceRecommendationProgress({
-      context: mergeRecommendationProgressContext(progressContext, {
+      context: mergeRecommendationProgressContext(progress.context ?? null, {
         artifactKey,
       }),
       currentProgress: progress,
@@ -1737,21 +1846,6 @@ function buildPlannerRequest(args: {
   };
 }
 
-function expectPlannerResponse(
-  value: PredictionEndpointResponse | PredictionPlannerResponse,
-): PredictionPlannerResponse {
-  const parsed = predictionPlannerResponseSchema.safeParse(value);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    throw new Error(
-      issue
-        ? `Planner prediction response was invalid at ${issue.path.join(".") || "root"}: ${issue.message}`
-        : "Planner prediction response was invalid.",
-    );
-  }
-  return parsed.data;
-}
-
 async function replacePlannerArtifactRows(
   env: GraphqlEnv,
   deps: Pick<
@@ -2164,8 +2258,23 @@ function buildLineupOptimizationSummary(
   return `Optimizing usable lineups: ${completedUnits} of ${totalUnits} tactic pairs evaluated.`;
 }
 
-function buildScoringMatchupsSummary(opponentScenarioCount: number): string {
-  return `Scoring matchup combinations across ${opponentScenarioCount} forecast scenario${opponentScenarioCount === 1 ? "" : "s"}.`;
+function buildScoringMatchupsSummary(
+  opponentScenarioCount: number,
+  completedBatches?: number | null,
+  totalBatches?: number | null,
+): string {
+  const scenarioLabel = `${opponentScenarioCount} forecast scenario${opponentScenarioCount === 1 ? "" : "s"}`;
+  if (
+    typeof completedBatches === "number" &&
+    Number.isFinite(completedBatches) &&
+    typeof totalBatches === "number" &&
+    Number.isFinite(totalBatches) &&
+    totalBatches > 0
+  ) {
+    return `Scoring matchup combinations: ${completedBatches} of ${totalBatches} planner batches completed across ${scenarioLabel}.`;
+  }
+
+  return `Scoring matchup combinations across ${scenarioLabel}.`;
 }
 
 function isTrackableRecommendationPhase(
@@ -2240,7 +2349,11 @@ function defaultRecommendationProgressSummary(args: {
     );
   }
   if (args.phaseKey === "SCORING_MATCHUPS") {
-    return buildScoringMatchupsSummary(args.context?.forecastScenarioCount ?? 0);
+    return buildScoringMatchupsSummary(
+      args.context?.forecastScenarioCount ?? 0,
+      args.progress?.completedUnits,
+      args.progress?.totalUnits,
+    );
   }
 
   switch (args.phaseKey) {
@@ -2337,25 +2450,26 @@ function advanceRecommendationProgress(args: {
         ? args.currentPhaseStartedAt ?? args.updatedAt
         : null;
 
+  const phaseTracksUnits =
+    args.nextPhaseKey === "OPTIMIZING_LINEUPS" ||
+    args.nextPhaseKey === "SCORING_MATCHUPS";
+
   return createRecommendationProgress({
     completedPhases,
-    completedUnits:
-      args.nextPhaseKey === "OPTIMIZING_LINEUPS"
-        ? args.completedUnits ?? current.completedUnits ?? null
-        : null,
+    completedUnits: phaseTracksUnits
+      ? args.completedUnits ?? current.completedUnits ?? null
+      : null,
     context: args.context ?? current.context ?? null,
     currentPhaseStartedAt: nextPhaseStartedAt,
     nextPhaseKey: args.nextPhaseKey,
     phaseIndexOverride: args.phaseIndexOverride,
     summary: args.summary,
-    totalUnits:
-      args.nextPhaseKey === "OPTIMIZING_LINEUPS"
-        ? args.totalUnits ?? current.totalUnits ?? null
-        : null,
-    unitLabel:
-      args.nextPhaseKey === "OPTIMIZING_LINEUPS"
-        ? args.unitLabel ?? current.unitLabel ?? null
-        : null,
+    totalUnits: phaseTracksUnits
+      ? args.totalUnits ?? current.totalUnits ?? null
+      : null,
+    unitLabel: phaseTracksUnits
+      ? args.unitLabel ?? current.unitLabel ?? null
+      : null,
     updatedAt: args.updatedAt,
   });
 }
@@ -2528,6 +2642,8 @@ function normalizeRecommendationProgressContext(
     excludedPlayerCount: asFiniteInteger(record.excludedPlayerCount),
     forecastJobId: asOptionalString(record.forecastJobId),
     forecastScenarioCount: asFiniteInteger(record.forecastScenarioCount),
+    plannerBatchCount: asFiniteInteger(record.plannerBatchCount),
+    plannerBatchesCompleted: asFiniteInteger(record.plannerBatchesCompleted),
     plannerPairCount: asFiniteInteger(record.plannerPairCount),
     sourceMatchId: asOptionalString(record.sourceMatchId),
     sourceTeamLocation: asOptionalString(record.sourceTeamLocation),
@@ -2938,62 +3054,34 @@ function normalizeTeamRatingsRecord(value: unknown): TeamRatings {
 async function invokePredictionEndpoint(
   endpointName: string,
   payload: JsonRecord,
-): Promise<PredictionEndpointResponse | PredictionPlannerResponse> {
-  const runtime = new SageMakerRuntimeClient({});
-  let response;
+): Promise<unknown> {
   try {
-    response = await runtime.send(
-      new InvokeEndpointCommand({
-        EndpointName: endpointName,
-        ContentType: "application/json",
-        Body: Buffer.from(JSON.stringify(payload)),
-      }),
-    );
+    return await invokePredictionRuntimeEndpoint({
+      endpointName,
+      payload,
+    });
   } catch (error) {
     throw normalizePlannerEndpointInvocationError(error, endpointName);
   }
-  const rawBody = response.Body?.transformToString
-    ? await Promise.resolve(response.Body.transformToString())
-    : Buffer.from(response.Body ?? []).toString("utf-8");
-  const body = rawBody ? JSON.parse(rawBody) : null;
-  const parsed =
-    payload.plannerRequest !== undefined
-      ? predictionPlannerResponseSchema.safeParse(body)
-      : predictionEndpointResponseSchema.safeParse(body);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    throw new Error(
-      issue
-        ? `SageMaker prediction response was invalid at ${issue.path.join(".") || "root"}: ${issue.message}`
-        : "SageMaker prediction response was invalid.",
-    );
-  }
-  return parsed.data;
 }
 
-async function mapWithConcurrency<TInput, TResult>(
-  items: readonly TInput[],
-  concurrency: number,
-  mapper: (item: TInput, index: number) => Promise<TResult>,
-): Promise<TResult[]> {
-  const results = new Array<TResult>(items.length);
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      const item = items[currentIndex];
-      if (item === undefined) {
-        return;
-      }
-      results[currentIndex] = await mapper(item, currentIndex);
-    }
+function chunkArray<TValue>(
+  items: readonly TValue[],
+  chunkSize: number,
+): TValue[][] {
+  if (chunkSize <= 0) {
+    throw new Error("Planner chunk size must be greater than zero.");
   }
 
-  const workerCount = Math.min(Math.max(1, concurrency), items.length || 1);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results;
+  const chunks: TValue[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function buildPlannerChunkRequestId(index: number): string {
+  return `planner-${index + 1}`;
 }
 
 function resolveRecommendationJobMessage(args: {
@@ -3075,14 +3163,16 @@ function toLineupHelperOffense(value: string): string {
       return "Base Offense";
     case "Push":
       return "Push the Ball";
-    case "LookInside":
     case "InsideIsolation":
+      return "Base Offense";
+    case "LookInside":
       return "Look Inside";
     case "LowPost":
       return "Low Post";
-    case "RunAndGun":
     case "OutsideIsolation":
-      return value === "RunAndGun" ? "Run and Gun" : "Motion";
+      return "Base Offense";
+    case "RunAndGun":
+      return "Run and Gun";
     default:
       return toPlannerDisplayOffense(value);
   }
@@ -3092,11 +3182,12 @@ function toLineupHelperDefense(value: string): string {
   switch (value) {
     case "ManToMan":
       return "Man to man";
-    case "23Zone":
     case "InsideBoxAndOne":
+    case "OutsideBoxAndOne":
+      return "Man to man";
+    case "23Zone":
       return "2-3 Zone";
     case "32Zone":
-    case "OutsideBoxAndOne":
       return "3-2 Zone";
     case "131Zone":
       return "1-3-1 Zone";

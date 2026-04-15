@@ -267,7 +267,7 @@ test("match boxscore queries forward preferLive when requested", async (t) => {
   });
 
   assert.equal(receivedInput?.matchId, "match-1");
-  assert.equal(receivedInput?.preferLive, true);
+  assert.equal(receivedInput.preferLive, true);
   assert.equal(payload?.source, "LIVE_BB_API");
 });
 
