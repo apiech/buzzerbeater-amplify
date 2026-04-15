@@ -498,6 +498,22 @@ test("deploy verification uses a cold app typecheck", () => {
   );
 });
 
+test("production source avoids raw Map/Set iterator loops that require downlevelIteration", () => {
+  const rawIteratorLoopPattern =
+    /for\s*\(\s*const\s+[^)]*\s+of\s+[A-Za-z0-9_$.]+\.(?:entries|keys|values)\(\)\s*\)/g;
+
+  for (const sourceFile of listProductionSourceFiles()) {
+    const source = readFileSync(sourceFile, "utf8");
+    const relativePath = relative(repoRoot, sourceFile).replaceAll("\\", "/");
+
+    assert.doesNotMatch(
+      source,
+      rawIteratorLoopPattern,
+      `${relativePath} uses a raw iterator loop that can fail under the app TypeScript target. Wrap the iterator in Array.from(...) or use forEach().`,
+    );
+  }
+});
+
 test("app data access exposes explicit read endpoints and no generic model proxy", () => {
   assert.equal(
     existsSync(

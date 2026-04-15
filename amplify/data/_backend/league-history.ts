@@ -902,14 +902,14 @@ function summarizePlayoffResults(
     }
   }
 
-  for (const [teamId, finalsSummary] of finals.entries()) {
+  finals.forEach((finalsSummary, teamId) => {
     if (
       !finalsSummary.hasIncompleteMatch &&
       finalsSummary.wins > finalsSummary.losses
     ) {
       getOrCreatePostseasonSummary(summaries, teamId).championships = 1;
     }
-  }
+  });
 
   return summaries;
 }
