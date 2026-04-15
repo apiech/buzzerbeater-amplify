@@ -156,6 +156,10 @@ export type AnalyticsEventMap = {
     has_team_b_source_match: boolean;
     venue: string;
   };
+  game_prediction_matrix_mode_changed: {
+    next_mode: "advanced" | "overview";
+    source: "game_prediction_panel";
+  };
   game_prediction_offense_filter_changed: {
     axis: "team_a" | "team_b";
     offense: string;

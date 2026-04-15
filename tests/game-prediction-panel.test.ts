@@ -768,6 +768,16 @@ test("prediction matrix selection reconciliation falls back to all options when 
   );
 });
 
+test("prediction matrix offense groups default to fully expanded when nothing is selected yet", () => {
+  assert.deepStrictEqual(
+    gamePredictionTesting.reconcileSelectedOptions([], [
+      "Patient",
+      "Run and Gun",
+    ]),
+    ["Patient", "Run and Gun"],
+  );
+});
+
 test("prediction matrix defense reconciliation upgrades legacy labels to canonical M2M", () => {
   assert.deepStrictEqual(
     gamePredictionTesting.reconcileSelectedDefenseOptions(
@@ -786,6 +796,11 @@ test("prediction matrix defense reconciliation upgrades legacy labels to canonic
   );
 });
 
+test("prediction matrix defense counts use full wording", () => {
+  assert.equal(gamePredictionTesting.formatDefenseCount(1), "1 defense");
+  assert.equal(gamePredictionTesting.formatDefenseCount(7), "7 defenses");
+});
+
 test("prediction matrix defense toggles do not allow every visible option to disappear", () => {
   assert.deepStrictEqual(
     gamePredictionTesting.toggleRequiredOption(["Patient"], "Patient", [
@@ -793,6 +808,37 @@ test("prediction matrix defense toggles do not allow every visible option to dis
       "Run and Gun",
     ]),
     ["Patient"],
+  );
+});
+
+test("prediction matrix advanced layout counts only expanded offense groups", () => {
+  const groups = gamePredictionTesting.buildOffenseGroups({
+    expandedOffenses: ["Patient"],
+    pairs: pairFixtures,
+  });
+  const expanded = gamePredictionTesting.listExpandedOffenseGroups(groups);
+
+  assert.deepStrictEqual(
+    expanded.map((group) => group.offense),
+    ["Patient"],
+  );
+  assert.equal(gamePredictionTesting.countExpandedGroupPairs(expanded), 2);
+});
+
+test("prediction matrix mode visibility only shows one surface at a time", () => {
+  assert.deepStrictEqual(
+    gamePredictionTesting.resolvePredictionMatrixSurfaceVisibility("overview"),
+    {
+      showAdvanced: false,
+      showOverview: true,
+    },
+  );
+  assert.deepStrictEqual(
+    gamePredictionTesting.resolvePredictionMatrixSurfaceVisibility("advanced"),
+    {
+      showAdvanced: true,
+      showOverview: false,
+    },
   );
 });
 
