@@ -919,6 +919,57 @@ export function GamePredictionPanel({
     if (result.draft !== draft) {
       setDraft(result.draft);
     }
+
+    const committedTeamId = normalizeImportIdentifier(result.committedTeamIdInput);
+    if (!committedTeamId) {
+      return;
+    }
+
+    const currentDraftSide = result.draft[side];
+    if (normalizeImportIdentifier(currentDraftSide.teamId) !== committedTeamId) {
+      return;
+    }
+
+    const normalizedCurrentTeamId = normalizeImportIdentifier(currentTeamId);
+    const normalizedCurrentTeamName = currentTeamName?.trim() || null;
+
+    if (
+      normalizedCurrentTeamId === committedTeamId &&
+      normalizedCurrentTeamName
+    ) {
+      setDraft((current) =>
+        applyPredictionSideResolvedTeamName({
+          draft: current,
+          side,
+          teamId: committedTeamId,
+          teamName: normalizedCurrentTeamName,
+        }),
+      );
+      return;
+    }
+
+    void queryClient
+      .fetchQuery(
+        scoutTeamSummaryQueryOptions({
+          teamId: committedTeamId,
+        }),
+      )
+      .then((summary) => {
+        const resolvedTeamName = summary?.summary?.teamName?.trim() || null;
+        if (!resolvedTeamName) {
+          return;
+        }
+
+        setDraft((current) =>
+          applyPredictionSideResolvedTeamName({
+            draft: current,
+            side,
+            teamId: committedTeamId,
+            teamName: resolvedTeamName,
+          }),
+        );
+      })
+      .catch(() => undefined);
   }
 
   async function handleManualImportSubmit(side: ImportSide) {
@@ -2764,6 +2815,36 @@ function commitPredictionSideTeamIdChange(args: {
   };
 }
 
+function applyPredictionSideResolvedTeamName(args: {
+  draft: PredictionDraft;
+  side: ImportSide;
+  teamId: string;
+  teamName: string | null | undefined;
+}) {
+  const currentSide = args.draft[args.side];
+  const normalizedCurrentTeamId = normalizeImportIdentifier(currentSide.teamId);
+  const normalizedTargetTeamId = normalizeImportIdentifier(args.teamId);
+  const resolvedTeamName = args.teamName?.trim() || null;
+
+  if (
+    !normalizedCurrentTeamId ||
+    !normalizedTargetTeamId ||
+    normalizedCurrentTeamId !== normalizedTargetTeamId ||
+    !resolvedTeamName ||
+    currentSide.teamName === resolvedTeamName
+  ) {
+    return args.draft;
+  }
+
+  return {
+    ...args.draft,
+    [args.side]: {
+      ...currentSide,
+      teamName: resolvedTeamName,
+    },
+  };
+}
+
 function usesCurrentTeamSchedule(args: {
   currentTeamId: string | null;
   sideTeamId: string | null;
@@ -3756,6 +3837,7 @@ function normalizeNumber(value: string, fallback: number) {
 export const __testing = {
   abbreviateMatrixDefenseLabel,
   abbreviateMatrixOffenseLabel,
+  applyPredictionSideResolvedTeamName,
   buildOffenseGroups,
   buildOffenseOverviewRows,
   buildPredictionImportMatchOptions,

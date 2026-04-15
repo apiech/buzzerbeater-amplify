@@ -9,11 +9,20 @@ const repoRoot = join(currentDir, "..");
 const appRoot = join(repoRoot, "app");
 
 function collectFiles(root: string): string[] {
-  const entries = readdirSync(root, { withFileTypes: true });
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
   const results: string[] = [];
 
   for (const entry of entries) {
     if (
+      entry.name === ".amplify" ||
       entry.name === ".next" ||
       entry.name === "coverage" ||
       entry.name === "dist" ||

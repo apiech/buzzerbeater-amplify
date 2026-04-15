@@ -595,6 +595,44 @@ test("prediction import team ID commits clear stale import provenance only on th
   assert.equal(result.draft.teamB.sourceLabel, "Keep this side");
 });
 
+test("prediction team identity sync updates the side name when the committed team id still matches", () => {
+  const draft = createDefaultPredictionDraft({
+    teamAId: "original-team",
+    teamAName: "Old Name",
+    teamBId: "other-team",
+    teamBName: "Other Team",
+  });
+
+  const result = gamePredictionTesting.applyPredictionSideResolvedTeamName({
+    draft,
+    side: "teamA",
+    teamId: "original-team",
+    teamName: "Updated Name",
+  });
+
+  assert.equal(result.teamA.teamName, "Updated Name");
+  assert.equal(result.teamB.teamName, "Other Team");
+});
+
+test("prediction team identity sync ignores stale async names after the side changes again", () => {
+  const draft = createDefaultPredictionDraft({
+    teamAId: "new-team",
+    teamAName: "Newest Name",
+    teamBId: "other-team",
+    teamBName: "Other Team",
+  });
+
+  const result = gamePredictionTesting.applyPredictionSideResolvedTeamName({
+    draft,
+    side: "teamA",
+    teamId: "old-team",
+    teamName: "Stale Name",
+  });
+
+  assert.equal(result, draft);
+  assert.equal(result.teamA.teamName, "Newest Name");
+});
+
 test("prediction imports append a transient select option for a manually loaded game", () => {
   const options = gamePredictionTesting.ensurePredictionImportMatchOption({
     importMatch: transientImportBoxscore,
