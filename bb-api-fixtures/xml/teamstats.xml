@@ -6,6 +6,65 @@
       <insideAttack>proficient</insideAttack>
       <outsideAttack>respectable</outsideAttack>
     </ratings>
+    <points>
+      <team>91.2</team>
+      <opp>74.2</opp>
+      <diff>17.0</diff>
+    </points>
+    <fieldGoalPct>
+      <team>0.381</team>
+      <opp>0.331</opp>
+      <diff>0.050</diff>
+    </fieldGoalPct>
+    <threePointPct>
+      <team>0.278</team>
+      <opp>0.262</opp>
+    </threePointPct>
+    <freeThrowPct>
+      <team>90.1</team>
+      <opp>84.5</opp>
+      <diff>5.6</diff>
+    </freeThrowPct>
+    <apg>
+      <team>19.4</team>
+      <opp>19.0</opp>
+      <diff>0.4</diff>
+    </apg>
+    <oreb>
+      <team>12.7</team>
+      <opp>12.0</opp>
+      <diff>0.7</diff>
+    </oreb>
+    <effg>
+      <team>104.5</team>
+      <opp>99.3</opp>
+      <diff>5.2</diff>
+    </effg>
+    <reb>
+      <team>51.4</team>
+      <opp>49.8</opp>
+      <diff>1.6</diff>
+    </reb>
+    <blk>
+      <team>7.4</team>
+      <opp>8.3</opp>
+      <diff>-0.9</diff>
+    </blk>
+    <stl>
+      <team>5.8</team>
+      <opp>5.6</opp>
+      <diff>0.2</diff>
+    </stl>
+    <to>
+      <team>9.5</team>
+      <opp>11.0</opp>
+      <diff>-1.5</diff>
+    </to>
+    <pf>
+      <team>13.5</team>
+      <opp>16.3</opp>
+      <diff>-2.8</diff>
+    </pf>
     <totals>
       <pts>91.2</pts>
       <reb>42.4</reb>

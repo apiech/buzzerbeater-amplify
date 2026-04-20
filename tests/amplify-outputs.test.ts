@@ -17,10 +17,12 @@ test("loadAmplifyOutputs memoizes successful loader results", async (t) => {
     version: "1.4",
   } as const;
   let calls = 0;
+  const restoreEnvReader = outputsTesting.installRuntimeEnvReader(() => ({}));
   const restore = outputsTesting.installLoader(async () => {
     calls += 1;
     return fakeOutputs as any;
   });
+  t.after(restoreEnvReader);
   t.after(restore);
 
   const first = await loadAmplifyOutputs();
@@ -33,10 +35,12 @@ test("loadAmplifyOutputs memoizes successful loader results", async (t) => {
 
 test("loadAmplifyOutputs retries after failures instead of caching an error", async (t) => {
   let calls = 0;
+  const restoreEnvReader = outputsTesting.installRuntimeEnvReader(() => ({}));
   const restore = outputsTesting.installLoader(async () => {
     calls += 1;
     throw new Error("Cannot find module './amplify_outputs.json'");
   });
+  t.after(restoreEnvReader);
   t.after(restore);
 
   await assert.rejects(
@@ -48,6 +52,31 @@ test("loadAmplifyOutputs retries after failures instead of caching an error", as
     /amplify_outputs\.json is not available/i,
   );
   assert.equal(calls, 2);
+});
+
+test("loadAmplifyOutputs overlays the custom auth domain when configured at runtime", async (t) => {
+  const restoreLoader = outputsTesting.installLoader(async () => ({
+    auth: {
+      oauth: {
+        domain: "prefix.auth.us-east-1.amazoncognito.com",
+      },
+    },
+  } as any));
+  const restoreEnvReader = outputsTesting.installRuntimeEnvReader(() => ({
+    COGNITO_AUTH_CUSTOM_DOMAIN: "auth.example.com",
+  }));
+  t.after(restoreLoader);
+  t.after(restoreEnvReader);
+
+  const outputs = await loadAmplifyOutputs();
+
+  assert.deepEqual(outputs, {
+    auth: {
+      oauth: {
+        domain: "auth.example.com",
+      },
+    },
+  });
 });
 
 test("server runtime initializes lazily and memoizes the resolved runtime", async (t) => {

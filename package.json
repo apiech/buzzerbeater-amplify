@@ -24,6 +24,7 @@
     "dev:prepare": "node --import tsx ./scripts/deploy-workflow.ts dev:prepare",
     "hosted:prepare-env": "node --import tsx ./scripts/materialize-hosted-env.mjs",
     "hosted:sync-compute-role": "node --import tsx ./scripts/sync-hosted-compute-role.ts",
+    "auth:brand": "node --import tsx ./scripts/apply-cognito-hosted-ui-branding.ts",
     "check:hosted:shared-infra": "node --import tsx ./scripts/check-hosted-shared-infra.ts",
     "bb:backfill-secret-fingerprints": "node --import tsx ./scripts/backfill-bb-connection-secret-fingerprints.ts",
     "shared-infra:deploy:ml-data-infra": "npm --prefix ../bb-shared-infra run deploy:ml-data-infra --",

@@ -51,6 +51,19 @@ test("resolveAnalyticsRouteContext classifies workspace and public routes", () =
     pageName: "workspace-predictions",
     workspaceSection: "predictions",
   });
+  assert.deepEqual(resolveAnalyticsRouteContext("/workspace/simple/schedule"), {
+    pageCategory: "workspace",
+    pageName: "workspace-simple-schedule",
+    workspaceSection: "simple-schedule",
+  });
+  assert.deepEqual(
+    resolveAnalyticsRouteContext("/workspace/simple/prediction"),
+    {
+      pageCategory: "workspace",
+      pageName: "workspace-simple-prediction",
+      workspaceSection: "simple-prediction",
+    },
+  );
   assert.deepEqual(resolveAnalyticsRouteContext("/workspace/boxscores/123"), {
     pageCategory: "workspace",
     pageName: "workspace-boxscore",

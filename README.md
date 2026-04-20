@@ -94,12 +94,44 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
    and CI-style checks. Use `npm run verify:deploy:sandbox` when you need the
    sandbox-bootstrap-safe version of that gate locally.
 
+## Auth Branding
+
+This app keeps Cognito on the Lite tier and preserves the existing server-side
+`/api/auth/*` flow for SSR-safe sessions. In hosted environments, auth can move
+onto a branded Cognito custom domain such as `auth.example.com`, while the
+app-owned `/login` page remains a contextual reassurance screen instead of the
+required first hop.
+Classic hosted UI branding is applied per Cognito user pool and app client, so
+each hosted environment needs its own explicit `npm run auth:brand` apply step.
+For non-prod branches, prefer a branch-specific auth hostname such as
+`auth.dev.example.com` so it does not collide with the eventual production auth
+domain.
+
+To reapply the code-owned classic hosted UI branding after a backend deploy or
+asset change, run:
+
+```bash
+npm run auth:brand
+```
+
+Use `npm run auth:brand -- --dry-run` to print the resolved user pool, app
+client, asset sizes, and preview URL without calling AWS. The branding source
+files live in [`scripts/cognito-hosted-ui/`](/Users/karey/projects/bb/bb-amplify/scripts/cognito-hosted-ui),
+and the operator notes live in
+[`docs/runbooks/cognito-classic-hosted-ui.md`](/Users/karey/projects/bb/bb-amplify/docs/runbooks/cognito-classic-hosted-ui.md).
+
+To verify hosted readiness for the branded auth domain, Amplify custom domains,
+and shared infra bindings together, run:
+
+```bash
+npm run check:hosted:shared-infra -- --app-id <amplify-app-id>
+```
+
 ## Backend Requirements
 
 This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/karey/projects/bb/bb-amplify/amplify).
 
 <!-- ENV-CONTRACT:START -->
-
 ### Required Plain Env
 
 - `APP_BASE_URL`
@@ -120,6 +152,15 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `GAME_DAY_RECAP_MODEL_ID_PREMIUM`
   - Premium recap override model. Premium recap jobs fall back to `GAME_DAY_RECAP_MODEL_ID` when this is unset.
   - Default or recommended value: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
+- `COGNITO_AUTH_CUSTOM_DOMAIN`
+  - Optional branded Cognito auth hostname override. When unset but a hosted zone name is configured, runtime and synth default to `auth.<zone>`.
+  - Default or recommended value: `unset`.
+- `COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME`
+  - Route 53 hosted zone name for the branded Cognito auth domain. Required together with `COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID` when enabling the custom auth domain.
+  - Default or recommended value: `unset`.
+- `COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID`
+  - Route 53 hosted zone id for the branded Cognito auth domain. Required together with `COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME` when enabling the custom auth domain.
+  - Default or recommended value: `unset`.
 - `COMMERCIAL_MODE_ENABLED`
   - Site-wide commerce toggle. When false, the store and billing UI disappear, checkout offers stay off, and premium-gated features run without paywalls.
   - Default or recommended value: `true`.
@@ -213,6 +254,12 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 
 - `BB_CONNECTION_ENCRYPTION_SECRET`
   - Deployment-only raw secret used by shared-infra publish/rotate flows to write the canonical SSM SecureString and fingerprint for an environment.
+- `AMPLIFY_OUTPUTS_FILE`
+  - Optional outputs path override for `npm run auth:brand` when Cognito identifiers should come from a non-default Amplify outputs file.
+- `COGNITO_USER_POOL_CLIENT_ID`
+  - Optional Cognito app client id override for `npm run auth:brand` when you do not want to read it from Amplify outputs.
+- `COGNITO_USER_POOL_ID`
+  - Optional Cognito user pool id override for `npm run auth:brand` when you do not want to read it from Amplify outputs.
 - `BILLING_ADMIN_OVERRIDE_URL`
   - Local helper script target URL for `npm run billing:override`.
 - `MAINTENANCE_ADMIN_URL`

@@ -825,6 +825,12 @@ const schema = a
       tendencies: a.ref("TendenciesSummary").required(),
     }),
 
+    LeagueComparisonMetricTriplet: a.customType({
+      team: a.float(),
+      opponent: a.float(),
+      diff: a.float(),
+    }),
+
     LeagueTeamStanding: a.customType({
       teamId: a.string(),
       teamName: a.string(),
@@ -838,6 +844,71 @@ const schema = a
       teams: a.ref("LeagueTeamStanding").required().array().required(),
     }),
 
+    LeagueOffenseRow: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      conferenceIndex: a.integer().required(),
+      standingsIndex: a.integer().required(),
+      gamesPlayed: a.integer(),
+      points: a.ref("LeagueComparisonMetricTriplet"),
+      fgPct: a.ref("LeagueComparisonMetricTriplet"),
+      threePtPct: a.ref("LeagueComparisonMetricTriplet"),
+      ftPct: a.ref("LeagueComparisonMetricTriplet"),
+      assists: a.ref("LeagueComparisonMetricTriplet"),
+      offensiveRebounds: a.ref("LeagueComparisonMetricTriplet"),
+      effectiveFgPct: a.ref("LeagueComparisonMetricTriplet"),
+    }),
+
+    LeagueDefenseRow: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      conferenceIndex: a.integer().required(),
+      standingsIndex: a.integer().required(),
+      gamesPlayed: a.integer(),
+      totalRebounds: a.ref("LeagueComparisonMetricTriplet"),
+      blocks: a.ref("LeagueComparisonMetricTriplet"),
+      steals: a.ref("LeagueComparisonMetricTriplet"),
+      turnovers: a.ref("LeagueComparisonMetricTriplet"),
+      fouls: a.ref("LeagueComparisonMetricTriplet"),
+    }),
+
+    LeaguePayrollRow: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      conferenceIndex: a.integer().required(),
+      standingsIndex: a.integer().required(),
+      playerCount: a.integer(),
+      totalPayroll: a.integer(),
+      averageSalary: a.integer(),
+      standardDeviation: a.integer(),
+      top5Payroll: a.integer(),
+      top8Payroll: a.integer(),
+      top10Payroll: a.integer(),
+      payrollRanks6To10: a.integer(),
+    }),
+
+    LeagueArenaRow: a.customType({
+      teamId: a.string(),
+      teamName: a.string(),
+      conferenceIndex: a.integer().required(),
+      standingsIndex: a.integer().required(),
+      totalCapacity: a.integer(),
+      bleachers: a.integer(),
+      lowerTier: a.integer(),
+      courtside: a.integer(),
+      luxuryBoxes: a.integer(),
+    }),
+
+    LeagueComparisons: a.customType({
+      builtAt: a.datetime().required(),
+      season: a.integer(),
+      incompleteTeamCount: a.integer().required(),
+      offense: a.ref("LeagueOffenseRow").required().array().required(),
+      defense: a.ref("LeagueDefenseRow").required().array().required(),
+      payroll: a.ref("LeaguePayrollRow").required().array().required(),
+      arena: a.ref("LeagueArenaRow").required().array().required(),
+    }),
+
     LeagueIntelWorkspace: a.customType({
       league: a.ref("NamedReference"),
       standings: a
@@ -845,6 +916,7 @@ const schema = a
         .required()
         .array()
         .required(),
+      comparisons: a.ref("LeagueComparisons"),
     }),
 
     LeagueHistoryRow: a.customType({

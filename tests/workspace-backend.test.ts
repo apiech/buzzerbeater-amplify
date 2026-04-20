@@ -336,6 +336,55 @@ test("readCachedWorkspace rehydrates the home connection without raw storage fie
   );
 });
 
+test("league intel cache rehydrates persisted comparisons and refresh checks honor newer syncs", () => {
+  const connection = {
+    bbLoginName: "coach",
+    lastSyncAt: "2026-04-19T12:30:00.000Z",
+    status: "CONNECTED",
+    teamId: "team-1",
+    userId: "user-1",
+    workspaceCacheJson: createWorkspaceCachePayload({
+      leagueIntel: {
+        comparisons: {
+          arena: [],
+          builtAt: "2026-04-19T12:00:00.000Z",
+          defense: [],
+          incompleteTeamCount: 0,
+          offense: [],
+          payroll: [],
+          season: 72,
+        },
+        league: {
+          id: "1000",
+          name: "NBBA",
+        },
+        standings: [],
+      },
+    }),
+  } as any;
+
+  const cachedWorkspace = workspaceTesting.readCachedWorkspace(connection);
+
+  assert.ok(cachedWorkspace?.leagueIntel.comparisons);
+  assert.equal(cachedWorkspace.leagueIntel.comparisons.season, 72);
+  assert.equal(
+    workspaceTesting.shouldRefreshLeagueComparisons({
+      comparisons: cachedWorkspace.leagueIntel.comparisons ?? null,
+      force: false,
+      lastSyncAt: "2026-04-19T12:30:00.000Z",
+    }),
+    true,
+  );
+  assert.equal(
+    workspaceTesting.shouldRefreshLeagueComparisons({
+      comparisons: cachedWorkspace.leagueIntel.comparisons ?? null,
+      force: false,
+      lastSyncAt: "2026-04-19T11:30:00.000Z",
+    }),
+    false,
+  );
+});
+
 test("repairOwnerRosterData upserts owner snapshots and patches only the cached team-hub roster", async () => {
   const existingCache = createWorkspaceCachePayload({
     teamHub: {

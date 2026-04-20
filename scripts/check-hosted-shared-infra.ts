@@ -1,6 +1,10 @@
 import { execFileSync } from "node:child_process";
 import process from "node:process";
 
+import {
+  resolveCognitoAuthCustomDomainConfig,
+  resolveCognitoAuthCustomDomainOverride,
+} from "../amplify/_shared/auth-domain.js";
 import { getParametersByName } from "../amplify/_shared/aws-cli-ssm.js";
 import {
   branchToEnvironmentName,
@@ -51,6 +55,7 @@ const OPTIONAL_SHARED_INFRA_BINDING_KEYS = new Set<keyof SharedInfraBindings>([
 
 type AwsCliRuntime = {
   execAwsJson: (args: string[]) => unknown;
+  httpsStatus?: (url: string) => number | null;
   write: (message: string) => void;
 };
 
@@ -58,6 +63,10 @@ type HostedBranchSummary = {
   branchName: string;
   computeRoleArn: string | null;
   environmentName: string;
+};
+
+type HostedBranchDetails = HostedBranchSummary & {
+  environmentVariables: Record<string, string | undefined>;
 };
 
 type HostedCustomRule = {
@@ -100,6 +109,7 @@ type RoleAccessCheck =
 export type HostedSharedInfraReport = {
   appId: string;
   appName: string;
+  authDomain: string | null;
   branchSummaries: HostedBranchSummary[];
   computeRoleChecks: BranchComputeRoleCheck[];
   issues: string[];
@@ -206,11 +216,12 @@ export function collectHostedSharedInfraReadiness(
   }
 
   const serviceRoleArn = normalizeOptionalString(app.iamServiceRoleArn);
-  const branchSummaries = describeHostedBranches(
+  const branchDetails = describeHostedBranchDetails(
     options.appId,
     region,
     runtime,
   );
+  const branchSummaries = branchDetails.map(summarizeHostedBranch);
   const domainAssociations = describeHostedDomainAssociations(
     options.appId,
     region,
@@ -235,8 +246,16 @@ export function collectHostedSharedInfraReadiness(
     customRules,
     domainAssociations,
   });
+  const authDomainChecks = checkHostedAuthDomainConfiguration({
+    appEnvironmentVariables: app.environmentVariables ?? {},
+    branchDetails,
+    region,
+    runtime,
+  });
   issues.push(...domainChecks.issues);
+  issues.push(...authDomainChecks.issues);
   warnings.push(...domainChecks.warnings);
+  warnings.push(...authDomainChecks.warnings);
   warnings.push(
     ...parameterChecks.flatMap((check) =>
       check.missingOptionalPaths.map(
@@ -294,6 +313,7 @@ export function collectHostedSharedInfraReadiness(
   return {
     appId: options.appId,
     appName: normalizeOptionalString(app.name) ?? options.appId,
+    authDomain: authDomainChecks.activeDomain,
     branchSummaries,
     computeRoleChecks,
     issues,
@@ -310,6 +330,16 @@ export function describeHostedBranches(
   region: string,
   runtime: Pick<AwsCliRuntime, "execAwsJson"> = createDefaultRuntime(),
 ): HostedBranchSummary[] {
+  return describeHostedBranchDetails(appId, region, runtime).map(
+    summarizeHostedBranch,
+  );
+}
+
+function describeHostedBranchDetails(
+  appId: string,
+  region: string,
+  runtime: Pick<AwsCliRuntime, "execAwsJson"> = createDefaultRuntime(),
+): HostedBranchDetails[] {
   const payload = runtime.execAwsJson([
     "amplify",
     "list-branches",
@@ -344,6 +374,7 @@ export function describeHostedBranches(
       ]) as {
         branch?: {
           computeRoleArn?: string;
+          environmentVariables?: Record<string, string | undefined>;
         };
       };
 
@@ -354,10 +385,19 @@ export function describeHostedBranches(
             branchPayload.branch?.computeRoleArn,
           ),
           environmentName: branchToEnvironmentName(branchName),
+          environmentVariables: branchPayload.branch?.environmentVariables ?? {},
         },
       ];
     })
     .sort((left, right) => left.branchName.localeCompare(right.branchName));
+}
+
+function summarizeHostedBranch(branch: HostedBranchDetails): HostedBranchSummary {
+  return {
+    branchName: branch.branchName,
+    computeRoleArn: branch.computeRoleArn,
+    environmentName: branch.environmentName,
+  };
 }
 
 function describeHostedDomainAssociations(
@@ -849,6 +889,22 @@ function createDefaultRuntime(): AwsCliRuntime {
           stdio: ["ignore", "pipe", "pipe"],
         }),
       ),
+    httpsStatus: (url) => {
+      try {
+        const output = execFileSync(
+          "curl",
+          ["-LsS", "-o", "/dev/null", "-w", "%{http_code}", url],
+          {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        ).trim();
+        const statusCode = Number.parseInt(output, 10);
+        return Number.isFinite(statusCode) ? statusCode : null;
+      } catch {
+        return null;
+      }
+    },
     write: (message) => {
       process.stdout.write(`${message}\n`);
     },
@@ -970,6 +1026,145 @@ function checkHostedDomainConfiguration(options: {
   };
 }
 
+function checkHostedAuthDomainConfiguration(options: {
+  appEnvironmentVariables: Record<string, string | undefined>;
+  branchDetails: HostedBranchDetails[];
+  region: string;
+  runtime: AwsCliRuntime;
+}): {
+  activeDomain: string | null;
+  issues: string[];
+  warnings: string[];
+} {
+  const issues: string[] = [];
+  const warnings: string[] = [];
+  const branchDomains = options.branchDetails
+    .map((branch) => {
+      const environmentVariables = {
+        ...options.appEnvironmentVariables,
+        ...branch.environmentVariables,
+      };
+
+      return {
+        branchName: branch.branchName,
+        environmentVariables,
+        activeDomain:
+          resolveCognitoAuthCustomDomainOverride(environmentVariables) ?? null,
+      };
+    })
+    .filter(
+      (branch): branch is {
+        activeDomain: string;
+        branchName: string;
+        environmentVariables: Record<string, string | undefined>;
+      } => branch.activeDomain !== null,
+    );
+
+  if (branchDomains.length === 0) {
+    const activeDomain =
+      resolveCognitoAuthCustomDomainOverride(options.appEnvironmentVariables) ??
+      null;
+    if (activeDomain === null) {
+      return {
+        activeDomain: null,
+        issues,
+        warnings,
+      };
+    }
+
+    branchDomains.push({
+      activeDomain,
+      branchName: "app",
+      environmentVariables: options.appEnvironmentVariables,
+    });
+  }
+
+  for (const branch of branchDomains) {
+    try {
+      resolveCognitoAuthCustomDomainConfig(branch.environmentVariables);
+    } catch (error) {
+      issues.push(
+        branch.branchName === "app"
+          ? error instanceof Error
+            ? error.message
+            : String(error)
+          : `[${branch.branchName}] ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+      );
+      continue;
+    }
+
+    const payload = options.runtime.execAwsJson([
+      "cognito-idp",
+      "describe-user-pool-domain",
+      "--domain",
+      branch.activeDomain,
+      "--region",
+      options.region,
+      "--output",
+      "json",
+    ]) as {
+      DomainDescription?: {
+        CloudFrontDistribution?: string;
+        Domain?: string;
+      };
+    };
+    const describedDomain = normalizeOptionalString(
+      payload.DomainDescription?.Domain,
+    )?.toLowerCase();
+    const cloudFrontDistribution = normalizeOptionalString(
+      payload.DomainDescription?.CloudFrontDistribution,
+    );
+
+    if (describedDomain !== branch.activeDomain) {
+      issues.push(
+        branch.branchName === "app"
+          ? `Cognito custom auth domain '${branch.activeDomain}' is not currently configured for this user pool.`
+          : `[${branch.branchName}] Cognito custom auth domain '${branch.activeDomain}' is not currently configured for this user pool.`,
+      );
+    }
+    if (!cloudFrontDistribution) {
+      issues.push(
+        branch.branchName === "app"
+          ? `Cognito custom auth domain '${branch.activeDomain}' is missing a CloudFront distribution target.`
+          : `[${branch.branchName}] Cognito custom auth domain '${branch.activeDomain}' is missing a CloudFront distribution target.`,
+      );
+    }
+
+    const httpsStatusReader = options.runtime.httpsStatus;
+    const httpsStatus = httpsStatusReader
+      ? httpsStatusReader(`https://${branch.activeDomain}/login`)
+      : null;
+    if (httpsStatus === null) {
+      warnings.push(
+        branch.branchName === "app"
+          ? `Could not verify HTTPS readiness for the Cognito custom auth domain '${branch.activeDomain}'.`
+          : `[${branch.branchName}] Could not verify HTTPS readiness for the Cognito custom auth domain '${branch.activeDomain}'.`,
+      );
+    } else if (httpsStatus >= 400 && httpsStatus !== 400) {
+      issues.push(
+        branch.branchName === "app"
+          ? `Cognito custom auth domain '${branch.activeDomain}' returned HTTP ${httpsStatus} for /login.`
+          : `[${branch.branchName}] Cognito custom auth domain '${branch.activeDomain}' returned HTTP ${httpsStatus} for /login.`,
+      );
+    }
+  }
+
+  const renderedDomains =
+    branchDomains.length === 1 && branchDomains[0]
+      ? [branchDomains[0].activeDomain]
+      : branchDomains.map(({ branchName, activeDomain }) =>
+          branchName === "app" ? activeDomain : `${branchName}=${activeDomain}`,
+        );
+
+  return {
+    activeDomain: renderedDomains.join(", "),
+    issues,
+    warnings,
+  };
+}
+
 function extractHostFromAbsoluteUrl(value: string | null): string | null {
   if (value === null) {
     return null;
@@ -999,6 +1194,7 @@ function printSummary(report: HostedSharedInfraReport, region: string): void {
   runtime.write(`Amplify app: ${report.appName} (${report.appId})`);
   runtime.write(`Region: ${region}`);
   runtime.write(`Service role: ${report.serviceRoleArn ?? "missing"}`);
+  runtime.write(`Auth domain: ${report.authDomain ?? "prefix-domain fallback"}`);
   runtime.write("Hosted branches:");
   for (const branch of report.branchSummaries) {
     runtime.write(

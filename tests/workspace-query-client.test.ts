@@ -7,6 +7,7 @@ import { client } from "../app/amplify-client";
 import {
   boxscoreQueryOptions,
   fetchConnectionRecord,
+  fetchLeagueIntelQuery,
   fetchManualSalaryEstimateQuery,
   fetchMatchBoxscoreQuery,
   fetchSalaryCalculatorSeedQuery,
@@ -191,6 +192,170 @@ test("scout summary parsing accepts key-based tendencies", async (t) => {
   assert.deepStrictEqual(scout.summary.tendencies.defense, [
     { count: 1, key: "23Zone" },
   ]);
+});
+
+test("league intel parsing accepts enriched comparison payloads and still tolerates missing comparisons", async (t) => {
+  installQueryMock(t, "getLeagueIntel", async () => ({
+    data: {
+      comparisons: {
+        arena: [
+          {
+            bleachers: 14000,
+            conferenceIndex: 0,
+            courtside: 500,
+            lowerTier: 6243,
+            luxuryBoxes: 50,
+            standingsIndex: 0,
+            teamId: "our-1",
+            teamName: "Visionaries",
+            totalCapacity: 20793,
+          },
+        ],
+        builtAt: "2026-04-19T22:30:00.000Z",
+        defense: [
+          {
+            blocks: {
+              diff: -0.9,
+              opponent: 8.3,
+              team: 7.4,
+            },
+            conferenceIndex: 0,
+            fouls: {
+              diff: -2.8,
+              opponent: 16.3,
+              team: 13.5,
+            },
+            gamesPlayed: 14,
+            standingsIndex: 0,
+            steals: {
+              diff: 0.2,
+              opponent: 5.6,
+              team: 5.8,
+            },
+            teamId: "our-1",
+            teamName: "Visionaries",
+            totalRebounds: {
+              diff: 1.6,
+              opponent: 49.8,
+              team: 51.4,
+            },
+            turnovers: {
+              diff: -1.5,
+              opponent: 11,
+              team: 9.5,
+            },
+          },
+        ],
+        incompleteTeamCount: 1,
+        offense: [
+          {
+            assists: {
+              diff: 0.4,
+              opponent: 19,
+              team: 19.4,
+            },
+            conferenceIndex: 0,
+            effectiveFgPct: {
+              diff: 5.2,
+              opponent: 99.3,
+              team: 104.5,
+            },
+            fgPct: {
+              diff: 5,
+              opponent: 33.1,
+              team: 38.1,
+            },
+            ftPct: {
+              diff: 5.6,
+              opponent: 84.5,
+              team: 90.1,
+            },
+            gamesPlayed: 14,
+            offensiveRebounds: {
+              diff: 0.7,
+              opponent: 12,
+              team: 12.7,
+            },
+            points: {
+              diff: 17,
+              opponent: 74.2,
+              team: 91.2,
+            },
+            standingsIndex: 0,
+            teamId: "our-1",
+            teamName: "Visionaries",
+            threePtPct: {
+              diff: null,
+              opponent: 26.2,
+              team: 27.8,
+            },
+          },
+        ],
+        payroll: [
+          {
+            averageSalary: 63886,
+            conferenceIndex: 0,
+            payrollRanks6To10: 19076,
+            playerCount: 11,
+            standingsIndex: 0,
+            standardDeviation: 89094,
+            teamId: "our-1",
+            teamName: "Visionaries",
+            top10Payroll: 702515,
+            top5Payroll: 683439,
+            top8Payroll: 701923,
+            totalPayroll: 702741,
+          },
+        ],
+        season: 72,
+      },
+      league: {
+        id: "nbba",
+        name: "NBBA",
+      },
+      standings: [],
+    },
+    errors: null,
+  }));
+
+  const league = await fetchLeagueIntelQuery();
+
+  assert.ok(league?.comparisons);
+  assert.equal(league.comparisons.incompleteTeamCount, 1);
+  assert.equal(league.comparisons.offense[0]?.threePtPct?.diff, null);
+  assert.equal(league.comparisons.arena[0]?.totalCapacity, 20793);
+});
+
+test("league intel parsing still accepts standings-only payloads", async (t) => {
+  installQueryMock(t, "getLeagueIntel", async () => ({
+    data: {
+      league: {
+        id: "nbba",
+        name: "NBBA",
+      },
+      standings: [
+        {
+          index: 0,
+          teams: [
+            {
+              losses: 4,
+              pointMargin: 30,
+              teamId: "our-1",
+              teamName: "Visionaries",
+              wins: 10,
+            },
+          ],
+        },
+      ],
+    },
+    errors: null,
+  }));
+
+  const league = await fetchLeagueIntelQuery();
+
+  assert.ok(league);
+  assert.equal(league.comparisons, undefined);
+  assert.equal(league.standings[0]?.teams[0]?.teamId, "our-1");
 });
 
 test("team highlights parsing accepts string periods from the generated API contract", async (t) => {

@@ -51,7 +51,8 @@ test("store route is public and drives billing through the new store-facing APIs
   assert.match(storefrontSource, /createBillingLifetimeCheckoutUrlMutation\(returnPath\)/);
   assert.match(storefrontSource, /createBillingPortalUrlMutation\(returnPath\)/);
   assert.match(storefrontSource, /billingSummaryQueryOptions\(\)/);
-  assert.match(storefrontSource, /href="\/login"/);
+  assert.match(storefrontSource, /href="\/api\/auth\/sign-in"/);
+  assert.match(storefrontSource, /href="\/api\/auth\/sign-up"/);
   assert.match(storefrontSource, /href="\/workspace\/ops"/);
 });
 

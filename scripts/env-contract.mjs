@@ -40,6 +40,27 @@ export const envContract = {
         templateValue: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       },
       {
+        name: "COGNITO_AUTH_CUSTOM_DOMAIN",
+        purpose:
+          "Optional branded Cognito auth hostname override. When unset but a hosted zone name is configured, runtime and synth default to `auth.<zone>`.",
+        defaultValue: "unset",
+        templateValue: "auth.example.com",
+      },
+      {
+        name: "COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME",
+        purpose:
+          "Route 53 hosted zone name for the branded Cognito auth domain. Required together with `COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID` when enabling the custom auth domain.",
+        defaultValue: "unset",
+        templateValue: "example.com",
+      },
+      {
+        name: "COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID",
+        purpose:
+          "Route 53 hosted zone id for the branded Cognito auth domain. Required together with `COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME` when enabling the custom auth domain.",
+        defaultValue: "unset",
+        templateValue: "Z123EXAMPLE456",
+      },
+      {
         name: "COMMERCIAL_MODE_ENABLED",
         purpose:
           "Site-wide commerce toggle. When false, the store and billing UI disappear, checkout offers stay off, and premium-gated features run without paywalls.",
@@ -294,6 +315,21 @@ export const envContract = {
       name: "BB_CONNECTION_ENCRYPTION_SECRET",
       purpose:
         "Deployment-only raw secret used by shared-infra publish/rotate flows to write the canonical SSM SecureString and fingerprint for an environment.",
+    },
+    {
+      name: "AMPLIFY_OUTPUTS_FILE",
+      purpose:
+        "Optional outputs path override for `npm run auth:brand` when Cognito identifiers should come from a non-default Amplify outputs file.",
+    },
+    {
+      name: "COGNITO_USER_POOL_CLIENT_ID",
+      purpose:
+        "Optional Cognito app client id override for `npm run auth:brand` when you do not want to read it from Amplify outputs.",
+    },
+    {
+      name: "COGNITO_USER_POOL_ID",
+      purpose:
+        "Optional Cognito user pool id override for `npm run auth:brand` when you do not want to read it from Amplify outputs.",
     },
     {
       name: "BILLING_ADMIN_OVERRIDE_URL",

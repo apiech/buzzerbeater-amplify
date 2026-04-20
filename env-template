@@ -16,6 +16,9 @@ GAME_DAY_RECAP_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 
 # Optional deploy-time tuning. Defaults or recommended values shown below.
 # GAME_DAY_RECAP_MODEL_ID_PREMIUM=us.anthropic.claude-haiku-4-5-20251001-v1:0
+# COGNITO_AUTH_CUSTOM_DOMAIN=auth.example.com
+# COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME=example.com
+# COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID=Z123EXAMPLE456
 # COMMERCIAL_MODE_ENABLED=true
 # BILLING_DEFAULT_PLAN=premium
 # BILLING_ENABLE_PREMIUM_SUBSCRIPTION=true

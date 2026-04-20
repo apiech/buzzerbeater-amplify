@@ -47,10 +47,6 @@ export const metadata = createPageMetadata({
 
 export default async function HomePage() {
   const currentUser = await getServerCurrentUser();
-  const primaryHref = currentUser ? "/workspace/home" : "/login";
-  const primaryLabel = currentUser ? "Open workspace" : "Sign in";
-  const secondaryHref = currentUser ? "/workspace/ops" : "/api/auth/sign-up";
-  const secondaryLabel = currentUser ? "Account settings" : "Create account";
   const viewerLabel = currentUser
     ? await resolveServerViewerLabel(currentUser)
     : null;
@@ -89,12 +85,27 @@ export default async function HomePage() {
           />
 
           <div className="flex flex-wrap items-center gap-3">
-            <Link className={primaryLinkClassName} href={primaryHref}>
-              {primaryLabel}
-            </Link>
-            <Link className={secondaryLinkClassName} href={secondaryHref}>
-              {secondaryLabel}
-            </Link>
+            {currentUser ? (
+              <>
+                <Link className={primaryLinkClassName} href="/workspace/home">
+                  Open workspace
+                </Link>
+                <Link className={secondaryLinkClassName} href="/workspace/ops">
+                  Account settings
+                </Link>
+              </>
+            ) : (
+              <>
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+                <a className={primaryLinkClassName} href="/api/auth/sign-in">
+                  Sign in
+                </a>
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+                <a className={secondaryLinkClassName} href="/api/auth/sign-up">
+                  Create account
+                </a>
+              </>
+            )}
             {commercialModeEnabled ? (
               <Link className={tertiaryLinkClassName} href="/store">
                 Visit the store
@@ -122,7 +133,7 @@ export default async function HomePage() {
             <p className="text-ink-muted m-0 text-sm leading-6">
               Workspace data, account settings, and billing details stay behind
               your app session. Public pages are limited to the homepage,
-              sign-in helper
+              secure sign-in
               {commercialModeEnabled ? ", and store." : "."}
             </p>
           </div>

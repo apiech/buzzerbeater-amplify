@@ -77,6 +77,25 @@ export function resolveAnalyticsRouteContext(
     };
   }
 
+  if (
+    normalizedPath === "/workspace/simple" ||
+    normalizedPath === "/workspace/simple/schedule"
+  ) {
+    return {
+      pageCategory: "workspace",
+      pageName: "workspace-simple-schedule",
+      workspaceSection: "simple-schedule",
+    };
+  }
+
+  if (normalizedPath === "/workspace/simple/prediction") {
+    return {
+      pageCategory: "workspace",
+      pageName: "workspace-simple-prediction",
+      workspaceSection: "simple-prediction",
+    };
+  }
+
   if (normalizedPath.startsWith("/workspace/boxscores/")) {
     return {
       pageCategory: "workspace",

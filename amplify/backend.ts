@@ -1,5 +1,6 @@
 import { defineBackend } from "@aws-amplify/backend";
 
+import { configureAuthCustomDomain } from "./_backend/auth-custom-domain.js";
 import { configureAuthControls } from "./_backend/auth-controls.js";
 import { configureBbConnectionSecretAccess } from "./_backend/bb-connection-secret-access.js";
 import { configureBillingIntegration } from "./_backend/billing-integration.js";
@@ -150,6 +151,7 @@ const sharedInfraBindings = resolveSharedInfraBindings();
 const appResourceRemovalPolicy = resolveAppResourceRemovalPolicy();
 
 configureAuthControls(backend);
+configureAuthCustomDomain(backend);
 configureBbConnectionSecretAccess([
   backend.connectBbAccount,
   backend.disconnectBbAccount,

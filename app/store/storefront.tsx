@@ -211,9 +211,20 @@ export function Storefront({
             </>
           ) : (
             <>
-              <Link className={storeLinkClassName} href="/login">
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+              <a
+                className={storeLinkClassName}
+                href="/api/auth/sign-in"
+                onClick={() => {
+                  markPendingAuthFlow("sign_in");
+                  captureAnalyticsEvent("auth_flow_started", {
+                    flow: "sign_in",
+                    source: "store",
+                  });
+                }}
+              >
                 Sign in to buy
-              </Link>
+              </a>
               {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
               <a
                 className={storeLinkClassName}
@@ -305,19 +316,22 @@ export function Storefront({
                   </p>
                 )
               ) : (
-                <Link
-                  className={storeLinkClassName}
-                  href="/login"
-                  onClick={() => {
-                    markPendingAuthFlow("sign_in");
-                    captureAnalyticsEvent("auth_flow_started", {
-                      flow: "sign_in",
-                      source: "store_subscription_offer",
-                    });
-                  }}
-                >
-                  Sign in for monthly Premium
-                </Link>
+                <>
+                  {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+                  <a
+                    className={storeLinkClassName}
+                    href="/api/auth/sign-in"
+                    onClick={() => {
+                      markPendingAuthFlow("sign_in");
+                      captureAnalyticsEvent("auth_flow_started", {
+                        flow: "sign_in",
+                        source: "store_subscription_offer",
+                      });
+                    }}
+                  >
+                    Sign in for monthly Premium
+                  </a>
+                </>
               )
             }
             description="Recurring Stripe subscription for premium feature gating. Good default if you want recurring support and reversible billing."
@@ -357,19 +371,22 @@ export function Storefront({
                   </p>
                 )
               ) : (
-                <Link
-                  className={storeLinkClassName}
-                  href="/login"
-                  onClick={() => {
-                    markPendingAuthFlow("sign_in");
-                    captureAnalyticsEvent("auth_flow_started", {
-                      flow: "sign_in",
-                      source: "store_lifetime_offer",
-                    });
-                  }}
-                >
-                  Sign in for lifetime access
-                </Link>
+                <>
+                  {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- auth routes must hard-navigate to Cognito */}
+                  <a
+                    className={storeLinkClassName}
+                    href="/api/auth/sign-in"
+                    onClick={() => {
+                      markPendingAuthFlow("sign_in");
+                      captureAnalyticsEvent("auth_flow_started", {
+                        flow: "sign_in",
+                        source: "store_lifetime_offer",
+                      });
+                    }}
+                  >
+                    Sign in for lifetime access
+                  </a>
+                </>
               )
             }
             description="One Stripe Checkout payment that permanently grants premium access. The amount is configured on the Stripe side."

@@ -252,6 +252,178 @@ const lineupHelperWorkspaceSchema = z
 
 const leagueIntelSchema = z
   .object({
+    comparisons: z
+      .object({
+        arena: z.array(
+          z
+            .object({
+              bleachers: nullableNumberSchema,
+              conferenceIndex: z.number(),
+              courtside: nullableNumberSchema,
+              lowerTier: nullableNumberSchema,
+              luxuryBoxes: nullableNumberSchema,
+              standingsIndex: z.number(),
+              teamId: nullableStringSchema,
+              teamName: nullableStringSchema,
+              totalCapacity: nullableNumberSchema,
+            })
+            .passthrough(),
+        ),
+        builtAt: z.string(),
+        defense: z.array(
+          z
+            .object({
+              blocks: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              conferenceIndex: z.number(),
+              fouls: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              gamesPlayed: nullableNumberSchema,
+              standingsIndex: z.number(),
+              steals: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              teamId: nullableStringSchema,
+              teamName: nullableStringSchema,
+              totalRebounds: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              turnovers: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+            })
+            .passthrough(),
+        ),
+        incompleteTeamCount: z.number(),
+        offense: z.array(
+          z
+            .object({
+              assists: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              conferenceIndex: z.number(),
+              effectiveFgPct: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              fgPct: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              ftPct: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              gamesPlayed: nullableNumberSchema,
+              offensiveRebounds: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              points: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+              standingsIndex: z.number(),
+              teamId: nullableStringSchema,
+              teamName: nullableStringSchema,
+              threePtPct: z
+                .object({
+                  diff: nullableNumberSchema,
+                  opponent: nullableNumberSchema,
+                  team: nullableNumberSchema,
+                })
+                .passthrough()
+                .nullable()
+                .optional(),
+            })
+            .passthrough(),
+        ),
+        payroll: z.array(
+          z
+            .object({
+              averageSalary: nullableNumberSchema,
+              conferenceIndex: z.number(),
+              payrollRanks6To10: nullableNumberSchema,
+              playerCount: nullableNumberSchema,
+              standingsIndex: z.number(),
+              standardDeviation: nullableNumberSchema,
+              teamId: nullableStringSchema,
+              teamName: nullableStringSchema,
+              top10Payroll: nullableNumberSchema,
+              top5Payroll: nullableNumberSchema,
+              top8Payroll: nullableNumberSchema,
+              totalPayroll: nullableNumberSchema,
+            })
+            .passthrough(),
+        ),
+        season: nullableNumberSchema,
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
     league: namedReferenceSchema,
     standings: z.array(
       z

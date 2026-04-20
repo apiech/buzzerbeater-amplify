@@ -4,9 +4,13 @@ import type { Schema } from "../resource";
 import { createBillingCheckoutSession } from "../_backend/billing";
 
 type Handler = Schema["createBillingCheckoutSession"]["functionHandler"];
+type BillingCheckoutRuntimeEnv = typeof env & {
+  APP_BASE_URL?: string;
+  STRIPE_PREMIUM_PRICE_ID?: string;
+};
 
 export const handler: Handler = async (event) => {
-  const runtimeEnv = env;
+  const runtimeEnv: BillingCheckoutRuntimeEnv = env;
   const stripeSecretKey = runtimeEnv.STRIPE_SECRET_KEY;
   const premiumPriceId = runtimeEnv.STRIPE_PREMIUM_PRICE_ID;
   const appBaseUrl = runtimeEnv.APP_BASE_URL;

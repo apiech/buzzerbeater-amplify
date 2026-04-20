@@ -473,6 +473,252 @@ test("hosted readiness reports APP_BASE_URL hosts outside Amplify custom domains
   );
 });
 
+test("hosted readiness verifies the configured Cognito custom auth domain", () => {
+  const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
+    {
+      appId: "d2ckw6mf5kdema",
+    },
+    createRuntime({
+      "amplify:get-app": {
+        app: {
+          environmentVariables: {
+            APP_BASE_URL: "https://app.example.com",
+            COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID: "Z123",
+            COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME: "example.com",
+          },
+          iamServiceRoleArn:
+            "arn:aws:iam::427377913956:role/service-role/AmplifySSRLoggingRole-example",
+          name: "buzzerbeater-amplify",
+        },
+      },
+      "amplify:list-domain-associations": {
+        domainAssociations: [
+          {
+            domainName: "example.com",
+            subDomains: [
+              {
+                subDomainSetting: {
+                  prefix: "app",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      "amplify:list-branches": {
+        branches: [{ branchName: "main" }],
+      },
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "cognito-idp:describe-user-pool-domain": {
+        DomainDescription: {
+          CloudFrontDistribution: "d111111abcdef8.cloudfront.net",
+          Domain: "auth.example.com",
+        },
+      },
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
+      "https:status": 200,
+      "service-quotas:get-service-quota": {
+        Quota: {
+          Value: 10,
+        },
+      },
+      "sagemaker:list-endpoints": {
+        Endpoints: [],
+      },
+      "ssm:get-parameters": {
+        InvalidParameters: [],
+      },
+    }),
+  );
+
+  assert.equal(report.authDomain, "auth.example.com");
+  assert.equal(report.issues.length, 0);
+});
+
+test("hosted readiness detects branch-level Cognito custom auth domains and accepts the classic login parameter error", () => {
+  const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
+    {
+      appId: "d2ckw6mf5kdema",
+    },
+    createRuntime({
+      "amplify:get-app": {
+        app: {
+          iamServiceRoleArn:
+            "arn:aws:iam::427377913956:role/service-role/AmplifySSRLoggingRole-example",
+          name: "buzzerbeater-amplify",
+        },
+      },
+      "amplify:list-branches": {
+        branches: [{ branchName: "dev" }, { branchName: "main" }],
+      },
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
+            environmentVariables: {
+              COGNITO_AUTH_CUSTOM_DOMAIN: "auth.dev.example.com",
+              COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID: "Z123EXAMPLE",
+              COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME: "example.com",
+            },
+          },
+        },
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "cognito-idp:describe-user-pool-domain": {
+        DomainDescription: {
+          CloudFrontDistribution: "d111111abcdef8.cloudfront.net",
+          Domain: "auth.dev.example.com",
+        },
+      },
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
+      "https:status": 400,
+      "service-quotas:get-service-quota": {
+        Quota: {
+          Value: 10,
+        },
+      },
+      "sagemaker:list-endpoints": {
+        Endpoints: [],
+      },
+      "ssm:get-parameters": {
+        InvalidParameters: [],
+      },
+    }),
+  );
+
+  assert.equal(report.authDomain, "auth.dev.example.com");
+  assert.equal(report.issues.length, 0);
+});
+
+test("hosted readiness reports incomplete Cognito custom auth domain configuration", () => {
+  const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
+    {
+      appId: "d2ckw6mf5kdema",
+    },
+    createRuntime({
+      "amplify:get-app": {
+        app: {
+          environmentVariables: {
+            APP_BASE_URL: "https://app.example.com",
+            COGNITO_AUTH_CUSTOM_DOMAIN: "auth.example.com",
+          },
+          iamServiceRoleArn:
+            "arn:aws:iam::427377913956:role/service-role/AmplifySSRLoggingRole-example",
+          name: "buzzerbeater-amplify",
+        },
+      },
+      "amplify:list-domain-associations": {
+        domainAssociations: [
+          {
+            domainName: "example.com",
+            subDomains: [
+              {
+                subDomainSetting: {
+                  prefix: "app",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      "amplify:list-branches": {
+        branches: [{ branchName: "main" }],
+      },
+      "amplify:get-branch": [
+        {
+          branch: {
+            computeRoleArn:
+              "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
+          },
+        },
+      ],
+      "iam:simulate-principal-policy": [
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameters", EvalDecision: "allowed" },
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+            {
+              EvalActionName: "ssm:GetParametersByPath",
+              EvalDecision: "allowed",
+            },
+          ],
+        },
+        {
+          EvaluationResults: [
+            { EvalActionName: "ssm:GetParameter", EvalDecision: "allowed" },
+          ],
+        },
+      ],
+      "service-quotas:get-service-quota": {
+        Quota: {
+          Value: 10,
+        },
+      },
+      "sagemaker:list-endpoints": {
+        Endpoints: [],
+      },
+      "ssm:get-parameters": {
+        InvalidParameters: [],
+      },
+    }),
+  );
+
+  assert.match(
+    report.issues.join("\n"),
+    /COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME and COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID must both be set/i,
+  );
+});
+
 test("hosted readiness reports quota blockers when sandbox exceeds its intended allocation", () => {
   const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
     {
@@ -637,6 +883,10 @@ function createRuntime(fixtures: Record<string, unknown | unknown[]>) {
       }
 
       return fixture;
+    },
+    httpsStatus() {
+      const fixture = fixtures["https:status"];
+      return typeof fixture === "number" ? fixture : null;
     },
     write() {
       return undefined;

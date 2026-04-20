@@ -69,15 +69,18 @@ test("home dashboard uses dedicated boxscore routes and owner roster copy", () =
   assert.doesNotMatch(boxscoreRouteSource, /Your tactics|Opponent tactics/);
 });
 
-test("auth copy routes users through managed login instead of local password forms", () => {
+test("auth copy routes users through secure hosted sign-in instead of local password forms", () => {
   const dashboardSource = readAppFile(["app", "dashboard-app.tsx"]);
   const loginSource = readAppFile(["app", "login", "page.tsx"]);
 
   assert.doesNotMatch(dashboardSource, /placeholder="Create a password"/);
   assert.doesNotMatch(dashboardSource, /placeholder="Confirm your password"/);
-  assert.match(loginSource, /managed login/);
+  assert.match(loginSource, /secure hosted sign-in/);
+  assert.match(loginSource, /URL bar/);
+  assert.match(loginSource, /Branded account domain/);
   assert.match(
     loginSource,
-    /Sign-in, sign-up, password reset, and account confirmation all\s+continue in Cognito managed login\./,
+    /Credential entry, account creation, password resets, and email\s+confirmation continue on the secure account domain/,
   );
+  assert.doesNotMatch(loginSource, /Cognito-hosted/);
 });

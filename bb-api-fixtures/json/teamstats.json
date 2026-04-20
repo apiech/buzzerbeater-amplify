@@ -12,6 +12,65 @@
       "insideAttack": "proficient",
       "outsideAttack": "respectable"
     },
+    "points": {
+      "team": 91.2,
+      "opp": 74.2,
+      "diff": 17
+    },
+    "fieldGoalPct": {
+      "team": 0.381,
+      "opp": 0.331,
+      "diff": 0.05
+    },
+    "threePointPct": {
+      "team": 0.278,
+      "opp": 0.262
+    },
+    "freeThrowPct": {
+      "team": 90.1,
+      "opp": 84.5,
+      "diff": 5.6
+    },
+    "apg": {
+      "team": 19.4,
+      "opp": 19,
+      "diff": 0.4
+    },
+    "oreb": {
+      "team": 12.7,
+      "opp": 12,
+      "diff": 0.7
+    },
+    "effg": {
+      "team": 104.5,
+      "opp": 99.3,
+      "diff": 5.2
+    },
+    "reb": {
+      "team": 51.4,
+      "opp": 49.8,
+      "diff": 1.6
+    },
+    "blk": {
+      "team": 7.4,
+      "opp": 8.3,
+      "diff": -0.9
+    },
+    "stl": {
+      "team": 5.8,
+      "opp": 5.6,
+      "diff": 0.2
+    },
+    "to": {
+      "team": 9.5,
+      "opp": 11,
+      "diff": -1.5
+    },
+    "pf": {
+      "team": 13.5,
+      "opp": 16.3,
+      "diff": -2.8
+    },
     "totals": {
       "pts": 91.2,
       "reb": 42.4

@@ -39,6 +39,10 @@ import {
   buildArenaWorkspace,
   selectNextHomeMatch,
 } from "./arena-pricing";
+import {
+  buildLeagueComparisons,
+  type LeagueComparisonTeamSnapshot,
+} from "./league-comparisons";
 import { encryptValue, resolveBbConnectionSecretState } from "./encryption";
 import {
   listWorkspacePlayerHistory,
@@ -295,10 +299,13 @@ export const __testing = {
   buildMatchInProgressScoutFallback,
   buildConnectionRecord,
   buildHomeCorePlayers,
+  buildLeagueIntel,
   buildHomeWorkspace,
   buildTeamHubRosterFromOwnedRoster,
   countStarters,
+  fetchLeagueComparisonTeamSnapshots,
   matchIncludesTeam,
+  patchWorkspaceCacheLeagueIntel,
   patchWorkspaceCacheTeamHubRoster,
   resolveScoutTeamId,
   selectCompletedMatches,
@@ -306,6 +313,7 @@ export const __testing = {
   selectNextScoutMatch,
   selectRecentMatches,
   readCachedWorkspace,
+  shouldRefreshLeagueComparisons,
   shouldSyncWorkspace,
 };
 
@@ -600,6 +608,78 @@ export async function getOrRefreshWorkspaceWithMeta(args: {
     force: args.force ?? false,
     syncActiveTrackedTeams: args.syncActiveTrackedTeams ?? false,
   });
+}
+
+export async function getLeagueIntelWorkspace(args: {
+  env: GraphqlEnv;
+  force?: boolean;
+  identity: unknown;
+}): Promise<LeagueIntelWorkspaceResult> {
+  await assertMaintenanceInactive();
+
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+
+  const force = args.force ?? false;
+  const { workspace } = await getOrRefreshWorkspaceWithMeta({
+    env: args.env,
+    force,
+    identity: args.identity,
+    syncActiveTrackedTeams: force,
+  });
+
+  if (!workspace.leagueIntel.standings.length) {
+    return workspace.leagueIntel;
+  }
+
+  const connection = workspace.connectionRecord;
+  if (
+    !shouldRefreshLeagueComparisons({
+      comparisons: workspace.leagueIntel.comparisons ?? null,
+      force,
+      lastSyncAt: connection.lastSyncAt ?? null,
+    })
+  ) {
+    return workspace.leagueIntel;
+  }
+
+  const bbLoginName = connection.bbLoginName?.trim();
+  if (!bbLoginName) {
+    throw new Error("The saved BuzzerBeater login is unavailable.");
+  }
+
+  const accessKey = await resolveAccessKey(args.env, userId);
+  const client = new BBXmlApiClient({
+    securityCode: accessKey,
+    username: bbLoginName,
+  });
+  const builtAt = new Date().toISOString();
+  const teamSnapshots = await fetchLeagueComparisonTeamSnapshots(
+    client,
+    workspace.leagueIntel.standings,
+  );
+  const enrichedLeagueIntel = {
+    ...workspace.leagueIntel,
+    comparisons: buildLeagueComparisons({
+      builtAt,
+      teamSnapshots,
+    }),
+  } satisfies LeagueIntelWorkspaceResult;
+
+  const cachedWorkspace = readWorkspaceCachePayload(connection.workspaceCacheJson);
+  if (cachedWorkspace) {
+    const updatedConnection = buildConnectionRecord(userId, connection, {
+      workspaceCacheJson: patchWorkspaceCacheLeagueIntel(
+        cachedWorkspace,
+        enrichedLeagueIntel,
+      ),
+    });
+    await upsertBbConnection(args.env, updatedConnection);
+  }
+
+  return enrichedLeagueIntel;
 }
 
 export async function generatePlayerCard(args: {
@@ -2735,6 +2815,20 @@ function patchWorkspaceCacheTeamHubRoster(
   });
 }
 
+function patchWorkspaceCacheLeagueIntel(
+  cache: WorkspaceCachePayload,
+  leagueIntel: LeagueIntelWorkspaceResult,
+): WorkspaceCachePayload {
+  return buildWorkspaceCachePayload({
+    home: cache.home,
+    teamHub: cache.teamHub,
+    scout: cache.scout,
+    leagueIntel,
+    playerLab: cache.playerLab,
+    arena: cache.arena,
+  });
+}
+
 export function buildScoutWorkspace(
   currentWorkspace: BBApiCurrentWorkspace,
   currentBoxScores: BBApiBoxScore[],
@@ -2849,12 +2943,14 @@ function buildLeagueIntel(
 ): LeagueIntelWorkspaceResult {
   if (!standings) {
     return {
+      comparisons: null,
       league: null,
       standings: [],
     };
   }
 
   return {
+    comparisons: null,
     league: projectNamedReference(standings.league),
     standings: standings.conferences.map((conference) => ({
       index: conference.index,
@@ -2868,6 +2964,92 @@ function buildLeagueIntel(
       })),
     })),
   };
+}
+
+async function fetchLeagueComparisonTeamSnapshots(
+  client: BBXmlApiClient,
+  standings: LeagueIntelWorkspaceResult["standings"],
+): Promise<LeagueComparisonTeamSnapshot[]> {
+  let standingsIndex = 0;
+  const teams = standings.flatMap((conference) =>
+    conference.teams.map((team) => ({
+      conferenceIndex: conference.index,
+      losses: team.losses ?? null,
+      standingsIndex: standingsIndex++,
+      teamId: team.teamId ?? null,
+      teamName: team.teamName ?? null,
+      wins: team.wins ?? null,
+    })),
+  );
+
+  return mapWithConcurrency(teams, 4, async (team) => {
+    if (!team.teamId) {
+      return {
+        arena: null,
+        conferenceIndex: team.conferenceIndex,
+        incomplete: true,
+        losses: team.losses,
+        rosterPlayers: null,
+        standingsIndex: team.standingsIndex,
+        teamId: team.teamId,
+        teamName: team.teamName,
+        teamStats: null,
+        wins: team.wins,
+      } satisfies LeagueComparisonTeamSnapshot;
+    }
+
+    const [teamStatsResult, rosterResult, arenaResult] = await Promise.allSettled([
+      client.getTeamStats(team.teamId, undefined, "averages"),
+      client.getRoster(team.teamId),
+      client.getArena(team.teamId),
+    ]);
+
+    return {
+      arena: arenaResult.status === "fulfilled" ? arenaResult.value : null,
+      conferenceIndex: team.conferenceIndex,
+      incomplete:
+        teamStatsResult.status === "rejected" ||
+        rosterResult.status === "rejected" ||
+        arenaResult.status === "rejected",
+      losses: team.losses,
+      rosterPlayers:
+        rosterResult.status === "fulfilled" ? rosterResult.value.players : null,
+      standingsIndex: team.standingsIndex,
+      teamId: team.teamId,
+      teamName: team.teamName,
+      teamStats:
+        teamStatsResult.status === "fulfilled" ? teamStatsResult.value : null,
+      wins: team.wins,
+    } satisfies LeagueComparisonTeamSnapshot;
+  });
+}
+
+function shouldRefreshLeagueComparisons(args: {
+  comparisons: LeagueIntelWorkspaceResult["comparisons"] | null;
+  force: boolean;
+  lastSyncAt: string | null;
+}): boolean {
+  if (args.force || !args.comparisons) {
+    return true;
+  }
+
+  if (!args.comparisons.builtAt) {
+    return true;
+  }
+
+  const builtAtMs = Date.parse(args.comparisons.builtAt);
+  if (Number.isNaN(builtAtMs)) {
+    return true;
+  }
+
+  if (
+    args.lastSyncAt &&
+    Date.parse(args.lastSyncAt) > builtAtMs
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function buildAvailableOpponents(
@@ -4082,6 +4264,7 @@ function rehydrateLeagueIntelWorkspace(
   leagueIntel: CachedLeagueIntelWorkspace,
 ): LeagueIntelWorkspaceResult {
   return {
+    comparisons: leagueIntel.comparisons ?? null,
     league: leagueIntel.league ?? null,
     standings: leagueIntel.standings,
   } satisfies LeagueIntelWorkspaceResult;

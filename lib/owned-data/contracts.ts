@@ -226,7 +226,78 @@ export const leagueConferenceStandingSchema = strictObject({
   teams: z.array(leagueTeamStandingSchema),
 });
 
+export const leagueComparisonMetricTripletSchema = strictObject({
+  team: nullableNumberSchema,
+  opponent: nullableNumberSchema,
+  diff: nullableNumberSchema,
+})
+  .nullable()
+  .optional();
+
+const leagueComparisonRowShape = {
+  conferenceIndex: z.number().finite(),
+  standingsIndex: z.number().finite(),
+  teamId: nullableStringSchema,
+  teamName: nullableStringSchema,
+} as const;
+
+export const leagueOffenseRowSchema = strictObject({
+  ...leagueComparisonRowShape,
+  assists: leagueComparisonMetricTripletSchema,
+  effectiveFgPct: leagueComparisonMetricTripletSchema,
+  fgPct: leagueComparisonMetricTripletSchema,
+  ftPct: leagueComparisonMetricTripletSchema,
+  gamesPlayed: nullableNumberSchema,
+  offensiveRebounds: leagueComparisonMetricTripletSchema,
+  points: leagueComparisonMetricTripletSchema,
+  threePtPct: leagueComparisonMetricTripletSchema,
+});
+
+export const leagueDefenseRowSchema = strictObject({
+  ...leagueComparisonRowShape,
+  blocks: leagueComparisonMetricTripletSchema,
+  fouls: leagueComparisonMetricTripletSchema,
+  gamesPlayed: nullableNumberSchema,
+  steals: leagueComparisonMetricTripletSchema,
+  totalRebounds: leagueComparisonMetricTripletSchema,
+  turnovers: leagueComparisonMetricTripletSchema,
+});
+
+export const leaguePayrollRowSchema = strictObject({
+  ...leagueComparisonRowShape,
+  averageSalary: nullableNumberSchema,
+  payrollRanks6To10: nullableNumberSchema,
+  playerCount: nullableNumberSchema,
+  standardDeviation: nullableNumberSchema,
+  top10Payroll: nullableNumberSchema,
+  top5Payroll: nullableNumberSchema,
+  top8Payroll: nullableNumberSchema,
+  totalPayroll: nullableNumberSchema,
+});
+
+export const leagueArenaRowSchema = strictObject({
+  ...leagueComparisonRowShape,
+  bleachers: nullableNumberSchema,
+  courtside: nullableNumberSchema,
+  lowerTier: nullableNumberSchema,
+  luxuryBoxes: nullableNumberSchema,
+  totalCapacity: nullableNumberSchema,
+});
+
+export const leagueComparisonsSchema = strictObject({
+  arena: z.array(leagueArenaRowSchema),
+  builtAt: z.string(),
+  defense: z.array(leagueDefenseRowSchema),
+  incompleteTeamCount: z.number().finite(),
+  offense: z.array(leagueOffenseRowSchema),
+  payroll: z.array(leaguePayrollRowSchema),
+  season: nullableNumberSchema,
+})
+  .nullable()
+  .optional();
+
 export const leagueIntelWorkspaceSchema = strictObject({
+  comparisons: leagueComparisonsSchema,
   league: nullableNamedReferenceSchema,
   standings: z.array(leagueConferenceStandingSchema),
 });

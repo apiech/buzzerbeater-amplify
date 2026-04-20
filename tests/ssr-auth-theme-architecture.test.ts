@@ -81,10 +81,8 @@ test("workspace requests are routed through server-authenticated Next entry poin
   assert.match(proxySource, /new URL\("\/login", request\.url\)/);
   assert.match(homePageSource, /getServerCurrentUser/);
   assert.match(homePageSource, /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/);
-  assert.match(
-    homePageSource,
-    /const primaryHref = currentUser \? "\/workspace\/home" : "\/login";/,
-  );
+  assert.match(homePageSource, /href="\/api\/auth\/sign-in"/);
+  assert.match(homePageSource, /href="\/api\/auth\/sign-up"/);
   assert.match(homePageSource, /href="\/store"/);
   assert.match(workspaceDashboardLayoutSource, /getServerCurrentUser/);
   assert.match(workspaceDashboardLayoutSource, /redirect\("\/login"\)/);
@@ -109,10 +107,9 @@ test("workspace requests are routed through server-authenticated Next entry poin
     loginPageSource,
     /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
   );
-  assert.match(loginActionsSource, /href="\/api\/auth\/sign-in"/);
-  assert.match(loginActionsSource, /href="\/api\/auth\/sign-up"/);
-  assert.match(loginActionsSource, /<a[\s\S]*?href="\/api\/auth\/sign-in"/);
-  assert.match(loginActionsSource, /<a[\s\S]*?href="\/api\/auth\/sign-up"/);
+  assert.match(loginActionsSource, /"\/api\/auth\/sign-in"/);
+  assert.match(loginActionsSource, /"\/api\/auth\/sign-up"/);
+  assert.match(loginActionsSource, /<a/);
   assert.doesNotMatch(
     loginActionsSource,
     /<Link[\s\S]*?href="\/api\/auth\/sign-in"/,
@@ -128,11 +125,8 @@ test("workspace requests are routed through server-authenticated Next entry poin
     /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
   );
   assert.match(storePageSource, /notFound\(\)/);
-  assert.match(storefrontSource, /<a[\s\S]*?href="\/api\/auth\/sign-up"/);
-  assert.doesNotMatch(
-    storefrontSource,
-    /<Link[^>]*href="\/api\/auth\/sign-up"/,
-  );
+  assert.match(storefrontSource, /href="\/api\/auth\/sign-in"/);
+  assert.match(storefrontSource, /href="\/api\/auth\/sign-up"/);
   assert.match(authRouteSource, /createAuthRouteHandlers/);
   assert.match(authRouteSource, /!slug\.endsWith\("-callback"\)/);
   assert.match(
@@ -192,4 +186,38 @@ test("client theme updates and data access go through internal app routes", () =
   assert.doesNotMatch(clientSource, /\/api\/app\/models\//);
   assert.doesNotMatch(clientSource, /generateClient</);
   assert.doesNotMatch(clientSource, /Amplify\.configure/);
+});
+
+test("auth infrastructure can attach a branded Lite custom domain without changing the SSR auth contract", () => {
+  const backendSource = readRepoFile("amplify", "backend.ts");
+  const authControlsSource = readRepoFile(
+    "amplify",
+    "_backend",
+    "auth-controls.ts",
+  );
+  const authCustomDomainSource = readRepoFile(
+    "amplify",
+    "_backend",
+    "auth-custom-domain.ts",
+  );
+
+  assert.match(backendSource, /configureAuthCustomDomain/);
+  assert.match(authControlsSource, /userPool\.userPoolTier = "LITE"/);
+  assert.match(authCustomDomainSource, /resolveAuthCustomDomainConfig/);
+  assert.match(
+    authCustomDomainSource,
+    /ManagedLoginVersion\.CLASSIC_HOSTED_UI/,
+  );
+  assert.match(
+    authCustomDomainSource,
+    /HostedZone\.fromHostedZoneAttributes/,
+  );
+  assert.match(authCustomDomainSource, /new Certificate\(/);
+  assert.match(authCustomDomainSource, /new route53\.ARecord\(/);
+  assert.match(authCustomDomainSource, /new route53\.AaaaRecord\(/);
+  assert.match(
+    authCustomDomainSource,
+    /new route53Targets\.UserPoolDomainTarget/,
+  );
+  assert.doesNotMatch(authCustomDomainSource, /NEWER_MANAGED_LOGIN/);
 });

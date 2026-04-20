@@ -6,6 +6,7 @@ import { RemovalPolicy } from "aws-cdk-lib";
 import {
   __testing as synthEnvTesting,
   resolveAuthAppOrigin,
+  resolveAuthCustomDomainConfig,
   resolveBillingConfig,
   resolveHostedBranchConfig,
   resolveSharedEnvironmentName,
@@ -79,6 +80,30 @@ test("shared synth env resolves hosted branch config only when Amplify app and b
       AWS_BRANCH: "dev",
     }),
     null,
+  );
+});
+
+test("shared synth env derives the branded auth subdomain from the hosted zone config", () => {
+  assert.deepEqual(
+    resolveAuthCustomDomainConfig(
+      {
+        COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_ID: "Z123",
+        COGNITO_AUTH_CUSTOM_DOMAIN_ZONE_NAME: "example.com",
+      },
+      {
+        execAwsJson: () => {
+          throw new Error("not used");
+        },
+        fileExists: () => false,
+        loadEnvFile: () => undefined,
+        userName: () => "ignored",
+      },
+    ),
+    {
+      domain: "auth.example.com",
+      zoneId: "Z123",
+      zoneName: "example.com",
+    },
   );
 });
 

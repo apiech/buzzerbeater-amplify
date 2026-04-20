@@ -1,0 +1,14 @@
+.background-customizable{background-color:#f3ecdf;}
+.banner-customizable{padding:28px 0 18px 0;background-color:#1f2a33;}
+.logo-customizable{max-width:78%;max-height:34%;background-color:#1f2a33;}
+.label-customizable{color:#1f2a33;font-weight:600;}
+.textDescription-customizable{padding-top:12px;padding-bottom:8px;display:block;font-size:13px;color:#4b5d6a;}
+.legalText-customizable{color:#4b5d6a;font-size:11px;}
+.inputField-customizable{width:100%;height:42px;color:#1f2a33;background-color:#fffaf4;border:1px solid #cdbca5;}
+.inputField-customizable:focus{border-color:#2c5e81;outline:1px;}
+.submitButton-customizable{font-size:14px;font-weight:bold;margin:20px 0 10px 0;width:100%;height:44px;color:#fff7f0;background-color:#b44d24;}
+.submitButton-customizable:hover{color:#fff7f0;background-color:#8d3816;}
+.errorMessage-customizable{padding:8px;font-size:12px;width:100%;background:#fff2ee;border:1px solid #b44d24;color:#8d3816;box-sizing:border-box;}
+.redirect-customizable{text-align:center;}
+.passwordCheck-valid-customizable{color:#1c7150;}
+.passwordCheck-notValid-customizable{color:#8d3816;}

@@ -34,8 +34,8 @@ export default function NotFound() {
         </div>
 
         <p className="text-ink-muted m-0 text-sm leading-7">
-          Head back to the homepage, open the workspace, or use the login helper
-          to get back on track.
+          Head back to the homepage, open the workspace, or use the secure
+          sign-in page to get back on track.
         </p>
 
         <div className="flex flex-wrap gap-3">
@@ -46,7 +46,7 @@ export default function NotFound() {
             Open workspace
           </Link>
           <Link className={secondaryLinkClassName} href="/login">
-            Login helper
+            Secure sign-in
           </Link>
         </div>
       </Panel>

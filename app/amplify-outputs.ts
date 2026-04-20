@@ -1,10 +1,16 @@
 import type { ResourcesConfig } from "@aws-amplify/core";
 import { importAmplifyOutputsModule } from "@/app/amplify-outputs-runtime.js";
+import {
+  applyCognitoAuthDomainOverride,
+  readAuthDomainRuntimeEnv,
+  resolveCognitoAuthCustomDomainOverride,
+} from "@/lib/env/auth-domain";
 
 type AmplifyOutputsLoader = () => Promise<ResourcesConfig>;
 type AmplifyOutputsModule = {
   readonly default?: unknown;
 };
+type RuntimeEnvReader = () => Record<string, string | undefined>;
 
 const missingOutputsMessage =
   "amplify_outputs.json is not available. Pure validation phases must not require generated outputs; only real Amplify runtime construction may load them after backend deployment.";
@@ -12,6 +18,7 @@ const missingOutputsMessage =
 let amplifyOutputs: ResourcesConfig | null = null;
 let amplifyOutputsPromise: Promise<ResourcesConfig> | null = null;
 let amplifyOutputsLoader: AmplifyOutputsLoader = defaultAmplifyOutputsLoader;
+let runtimeEnvReader: RuntimeEnvReader = readAuthDomainRuntimeEnv;
 
 export class AmplifyOutputsUnavailableError extends Error {
   constructor(cause?: unknown) {
@@ -33,8 +40,9 @@ export async function loadAmplifyOutputs(): Promise<ResourcesConfig> {
   if (!amplifyOutputsPromise) {
     amplifyOutputsPromise = amplifyOutputsLoader()
       .then((outputs) => {
-        amplifyOutputs = outputs;
-        return outputs;
+        const resolvedOutputs = applyCustomAuthDomainOverride(outputs);
+        amplifyOutputs = resolvedOutputs;
+        return resolvedOutputs;
       })
       .catch((error) => {
         amplifyOutputsPromise = null;
@@ -54,6 +62,15 @@ async function defaultAmplifyOutputsLoader(): Promise<ResourcesConfig> {
 function normalizeAmplifyOutputs(module: unknown): ResourcesConfig {
   const maybeModule = module as AmplifyOutputsModule;
   return (maybeModule.default ?? module) as ResourcesConfig;
+}
+
+function applyCustomAuthDomainOverride(
+  outputs: ResourcesConfig,
+): ResourcesConfig {
+  return applyCognitoAuthDomainOverride(
+    outputs,
+    resolveCognitoAuthCustomDomainOverride(runtimeEnvReader()),
+  );
 }
 
 function toAmplifyOutputsError(
@@ -81,6 +98,16 @@ export const __testing = {
       resetAmplifyOutputsCache();
     };
   },
+  installRuntimeEnvReader(reader: RuntimeEnvReader) {
+    const previousReader = runtimeEnvReader;
+    runtimeEnvReader = reader;
+    resetAmplifyOutputsCache();
+    return () => {
+      runtimeEnvReader = previousReader;
+      resetAmplifyOutputsCache();
+    };
+  },
+  applyCustomAuthDomainOverride,
   normalizeAmplifyOutputs,
   resetCache: resetAmplifyOutputsCache,
   toAmplifyOutputsError,

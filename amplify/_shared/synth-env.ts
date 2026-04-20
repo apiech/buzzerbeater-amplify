@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import { RemovalPolicy } from "aws-cdk-lib";
 
+import {
+  resolveCognitoAuthCustomDomainConfig,
+  type CognitoAuthCustomDomainConfig,
+} from "./auth-domain.js";
 import { getParametersByName } from "./aws-cli-ssm.js";
 import { resolvePublicAppOrigin } from "./public-app-origin.js";
 import {
@@ -86,6 +90,7 @@ export const __testing = {
   createDefaultRuntime,
   resetCachedState,
   readSharedInfraBindingsFromRuntime,
+  resolveAuthCustomDomainConfig,
   resolveAppResourceRemovalPolicy,
   resolveHostedBranchConfig,
   resolveSharedEnvironmentName,
@@ -113,6 +118,14 @@ export function resolveAuthAppOrigin(
   return resolvePublicAppOrigin(process.env, {
     errorMessage: "APP_BASE_URL must be configured for auth callback URLs.",
   });
+}
+
+export function resolveAuthCustomDomainConfig(
+  env: Record<string, string | undefined> = process.env,
+  runtime: AwsCliRuntime = createDefaultRuntime(),
+): CognitoAuthCustomDomainConfig | null {
+  loadLocalSynthEnv(runtime);
+  return resolveCognitoAuthCustomDomainConfig(env);
 }
 
 export function resolveBillingConfig(): BillingSynthConfig {

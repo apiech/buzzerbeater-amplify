@@ -39,6 +39,7 @@ import {
   writePredictionDraftToStorage,
 } from "@/app/game-prediction-state";
 import { HighlightsPanel } from "@/app/highlights-panel";
+import { LeaguePanel } from "@/app/league-panel";
 import { LeagueHistoryPanel } from "@/app/league-history-panel";
 import { LineupHelper } from "@/app/lineup-helper";
 import { NextGameWizardPanel } from "@/app/next-game-wizard-panel";
@@ -1424,76 +1425,19 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "league" ? (
-        workspace.leagueIntel ? (
-          <PanelErrorBoundary
-            resetKeys={[
-              workspace.leagueIntel.league?.id ?? null,
-              workspace.leagueIntel.standings.length,
-            ]}
-            title="League standings"
-          >
-            <Panel>
-              <SectionHeading
-                eyebrow="League"
-                title={workspace.leagueIntel.league?.name ?? "League standings"}
-              />
-              <div className={twoColumnGridClassName}>
-                {workspace.leagueIntel.standings.length ? (
-                  workspace.leagueIntel.standings.map((conference) => (
-                    <Panel
-                      as="article"
-                      key={conference.index}
-                      padding="sm"
-                      variant="solid"
-                    >
-                      <SectionHeading
-                        title={`Conference ${conference.index + 1}`}
-                        titleAs="h4"
-                      />
-                      <TableShell compact>
-                        <thead>
-                          <tr>
-                            <TableHeadCell className="pl-0">Team</TableHeadCell>
-                            <TableHeadCell>W-L</TableHeadCell>
-                            <TableHeadCell>Margin</TableHeadCell>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {conference.teams.map((team) => (
-                            <tr key={team.teamId ?? team.teamName}>
-                              <TableCell className="pl-0">
-                                {team.teamName ?? "Unknown team"}
-                              </TableCell>
-                              <TableCell>
-                                {team.wins ?? 0}-{team.losses ?? 0}
-                              </TableCell>
-                              <TableCell>
-                                {formatSigned(team.pointMargin)}
-                              </TableCell>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </TableShell>
-                    </Panel>
-                  ))
-                ) : (
-                  <Panel as="article" padding="sm" variant="solid">
-                    <p className={statusCopyClassName}>
-                      No standings are ready yet.
-                    </p>
-                  </Panel>
-                )}
-              </div>
-            </Panel>
-          </PanelErrorBoundary>
-        ) : (
-          <Panel>
-            <SectionHeading eyebrow="League" title="Loading league standings" />
-            <p className={statusCopyClassName}>
-              Pulling the current conference table for this section.
-            </p>
-          </Panel>
-        )
+        <PanelErrorBoundary
+          resetKeys={[
+            workspace.leagueIntel?.league?.id ?? null,
+            workspace.leagueIntel?.standings.length ?? 0,
+            workspace.leagueIntel?.comparisons?.builtAt ?? null,
+          ]}
+          title="League comparisons"
+        >
+          <LeaguePanel
+            currentTeamId={workspace.home.team.teamId ?? null}
+            league={workspace.leagueIntel ?? null}
+          />
+        </PanelErrorBoundary>
       ) : null}
 
       {activeSection === "league-history" ? (
