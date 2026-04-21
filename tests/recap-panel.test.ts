@@ -264,3 +264,14 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
   assert.match(forumPost, /Match: \[match=137828772]/);
   assert.match(forumPost, /Match: scrim-like/);
 });
+
+test("recap capability copy mentions public play-by-play availability", () => {
+  assert.match(
+    recapTesting.RECAP_CAPABILITY_SUMMARY,
+    /public play-by-play moments when available/i,
+  );
+  assert.doesNotMatch(
+    recapTesting.RECAP_CAPABILITY_SUMMARY,
+    /play-by-play are intentionally excluded/i,
+  );
+});

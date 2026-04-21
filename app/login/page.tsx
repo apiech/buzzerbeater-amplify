@@ -22,7 +22,7 @@ export const metadata: Metadata = createPageMetadata({
   path: "/login",
   title: "Sign In",
   description:
-    "Continue to the secure hosted sign-in flow for BuzzerBeater Assistant Coach and return to your private workspace when you finish.",
+    "Continue on the branded account domain for BuzzerBeater Assistant Coach and return to your private workspace when you finish.",
   noindex: true,
 });
 
@@ -60,27 +60,27 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const authHost = await resolveDisplayAuthHost();
   const trustBullets = [
     authHost
-      ? `Credential entry continues on ${authHost}, the branded account domain for this app.`
-      : "Credential entry continues on the secure account domain for this app.",
-    "Your scouting data, billing, and private workspace stay behind the same authenticated session.",
+      ? `You'll finish account access on ${authHost}, the branded account domain for this app.`
+      : "You'll finish account access on the branded account domain for this app.",
+    "The URL bar stays on the product's own account domain instead of a generic vendor host.",
     "When sign-in or account setup is complete, you come straight back to the workspace.",
   ] as const;
   const nextStepCards = [
     {
-      title: "Choose your path",
+      title: "Choose sign in or create account",
       description:
-        "Pick secure sign-in if you already have an account, or create a new one first.",
+        "Pick the account action you need and we'll open the branded account domain in this browser.",
     },
     {
-      title: authHost ? "Watch the URL bar" : "Finish account access",
+      title: authHost ? "Watch the URL bar" : "Finish on the account domain",
       description: authHost
-        ? `The next screen opens on ${authHost}. Finish sign-in, sign-up, or reset there without leaving the app's branded domain family.`
-        : "The next screen opens on the secure account domain for this app. Finish sign-in, sign-up, or reset there.",
+        ? `The next screen opens on ${authHost}. That's the branded account host for this environment.`
+        : "The next screen opens on the branded account domain for this app.",
     },
     {
       title: "Return to work",
       description:
-        "After the hosted flow finishes, the app brings you back with your private session ready.",
+        "After the account step finishes, the app brings you back with your private session ready.",
     },
   ] as const;
 
@@ -104,21 +104,21 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <SectionHeading
             description={
               isCreateAccountFlow
-                ? "Create your account through the secure hosted access flow, then come back here with the same private workspace session."
-                : "Use the secure hosted sign-in flow for this app, then return directly to your private workspace."
+                ? "Create your account on the branded account domain, then return here with your private workspace session."
+                : "Sign in on the branded account domain, then return directly to your private workspace."
             }
-            eyebrow="Secure access"
+            eyebrow="Account access"
             title={
               isCreateAccountFlow
-                ? "Create your account with confidence."
-                : "Continue to secure hosted sign-in."
+                ? "Create your account on the account domain."
+                : "Sign in on the account domain."
             }
             titleAs="h1"
           />
 
           <p className="text-ink-muted m-0 max-w-3xl text-sm leading-7">
-            Credential entry, account creation, password resets, and email
-            confirmation continue on the secure account domain for this app.
+            Sign-in, account creation, password resets, and email confirmation
+            continue on the branded account domain for this app.
             {authHost ? (
               <>
                 {" "}
@@ -135,7 +135,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             {trustBullets.map((bullet) => (
               <li
                 key={bullet}
-                className="rounded-card border-border-soft bg-white/65 p-4 text-sm leading-7 text-ink-muted shadow-sm"
+                className="rounded-card border-border-soft text-ink-muted bg-white/65 p-4 text-sm leading-7 shadow-sm"
               >
                 {bullet}
               </li>
@@ -145,17 +145,17 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           <div className="rounded-card border-border-soft grid gap-2 border bg-white/72 p-4">
             <strong className="text-ink text-sm">What happens next</strong>
             <p className="text-ink-muted m-0 text-sm leading-7">
-              Choose one of the secure account actions below. We&apos;ll open
+              Choose one of the account actions below. We&apos;ll open
               {authHost ? (
                 <>
                   {" "}
                   <span className="text-ink font-semibold">{authHost}</span>
                 </>
               ) : (
-                " the secure account domain"
+                " the branded account domain"
               )}{" "}
-              in this browser, you&apos;ll finish the auth step there, and then
-              the app will bring you back to the private workspace.
+              in this browser, you&apos;ll finish the account step there, and
+              then the app will bring you back to the private workspace.
             </p>
           </div>
 
@@ -174,12 +174,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                 Branded account domain
               </p>
               <h2 className="text-ink m-0 text-2xl font-semibold tracking-[-0.04em]">
-                Private workspace, trusted account URL.
+                Private workspace, branded account URL.
               </h2>
             </div>
             <p className="text-ink-muted m-0 text-sm leading-7">
               This app keeps the workspace UI on your main domain while the
-              credential step happens on a dedicated secure account domain.
+              account step happens on a dedicated branded account domain.
               {authHost ? (
                 <>
                   {" "}
@@ -188,8 +188,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
                   before you sign in.
                 </>
               ) : null}{" "}
-              That gives us SSR-friendly sessions without turning the public
-              app into a generic login wall.
+              That keeps the account experience feeling like part of the product
+              instead of a generic detour.
             </p>
           </Panel>
 

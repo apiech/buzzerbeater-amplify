@@ -96,18 +96,19 @@ Amplify Gen 2 web app for private BuzzerBeater scouting, player analysis, lineup
 
 ## Auth Branding
 
-This app keeps Cognito on the Lite tier and preserves the existing server-side
-`/api/auth/*` flow for SSR-safe sessions. In hosted environments, auth can move
-onto a branded Cognito custom domain such as `auth.example.com`, while the
-app-owned `/login` page remains a contextual reassurance screen instead of the
-required first hop.
-Classic hosted UI branding is applied per Cognito user pool and app client, so
-each hosted environment needs its own explicit `npm run auth:brand` apply step.
+This app keeps the existing server-side `/api/auth/*` flow for SSR-safe
+sessions and upgrades Cognito to the Essentials tier so the branded auth domain
+can use managed login instead of the classic hosted UI. In hosted
+environments, auth moves onto a branded Cognito custom domain such as
+`auth.example.com`, while the app-owned `/login` page remains a contextual
+reassurance screen instead of the required first hop.
+Managed-login branding is applied per Cognito user pool and app client, so each
+hosted environment needs its own explicit `npm run auth:brand` apply step.
 For non-prod branches, prefer a branch-specific auth hostname such as
 `auth.dev.example.com` so it does not collide with the eventual production auth
 domain.
 
-To reapply the code-owned classic hosted UI branding after a backend deploy or
+To reapply the code-owned managed-login branding after a backend deploy or
 asset change, run:
 
 ```bash
@@ -115,10 +116,16 @@ npm run auth:brand
 ```
 
 Use `npm run auth:brand -- --dry-run` to print the resolved user pool, app
-client, asset sizes, and preview URL without calling AWS. The branding source
-files live in [`scripts/cognito-hosted-ui/`](/Users/karey/projects/bb/bb-amplify/scripts/cognito-hosted-ui),
+client, payload size, and preview URL without calling AWS. The branding source
+files live in [`scripts/cognito-managed-login/`](/Users/karey/projects/bb/bb-amplify/scripts/cognito-managed-login),
+the apply script lives at
+[`scripts/apply-cognito-managed-login-branding.ts`](/Users/karey/projects/bb/bb-amplify/scripts/apply-cognito-managed-login-branding.ts),
 and the operator notes live in
-[`docs/runbooks/cognito-classic-hosted-ui.md`](/Users/karey/projects/bb/bb-amplify/docs/runbooks/cognito-classic-hosted-ui.md).
+[`docs/runbooks/cognito-managed-login.md`](/Users/karey/projects/bb/bb-amplify/docs/runbooks/cognito-managed-login.md).
+
+Switching a Cognito domain from classic hosted UI to managed login can require
+users to sign in again, so roll this out on hosted `dev` first and promote to
+production after validation.
 
 To verify hosted readiness for the branded auth domain, Amplify custom domains,
 and shared infra bindings together, run:
@@ -132,6 +139,7 @@ npm run check:hosted:shared-infra -- --app-id <amplify-app-id>
 This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/karey/projects/bb/bb-amplify/amplify).
 
 <!-- ENV-CONTRACT:START -->
+
 ### Required Plain Env
 
 - `APP_BASE_URL`

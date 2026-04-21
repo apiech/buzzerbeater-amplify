@@ -44,6 +44,8 @@ const listItemClassName =
 const modeSwitcherClassName = "flex flex-wrap gap-2";
 const statusCopyClassName = "text-sm leading-7 text-ink-muted";
 const twoColumnGridClassName = "grid gap-4 xl:grid-cols-[1.5fr_0.9fr]";
+const RECAP_CAPABILITY_SUMMARY =
+  "v1 uses standings, schedules, recent form, box scores, effort context, and public play-by-play moments when available. Transfers are still excluded for now.";
 
 type RecapPanelProps = {
   context: RecapPanelContext;
@@ -267,11 +269,7 @@ export function RecapPanel({ context }: RecapPanelProps) {
         title="Recap generator"
       />
 
-      <p className={statusCopyClassName}>
-        v1 uses standings, schedules, recent form, box scores, and effort
-        context only. Transfers and play-by-play are intentionally excluded for
-        now.
-      </p>
+      <p className={statusCopyClassName}>{RECAP_CAPABILITY_SUMMARY}</p>
 
       {recapError ? <Alert>{recapError}</Alert> : null}
 
@@ -924,10 +922,7 @@ function formatRecapForumPost(
   for (const game of result.games) {
     lines.push("");
     lines.push(`[b]${escapeForumText(game.headline)}[/b]`);
-    if (
-      game.surpriseFactor != null ||
-      game.matchId === gameOfTheDay?.matchId
-    ) {
+    if (game.surpriseFactor != null || game.matchId === gameOfTheDay?.matchId) {
       const metadata: string[] = [];
       if (game.surpriseFactor != null) {
         metadata.push(
@@ -1047,6 +1042,7 @@ function formatEvidenceTag(tag: string): string {
 }
 
 export const __testing = {
+  RECAP_CAPABILITY_SUMMARY,
   describeRecapRecord,
   formatRecapForumPost,
   recapTitle,

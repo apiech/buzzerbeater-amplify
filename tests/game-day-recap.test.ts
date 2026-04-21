@@ -29,10 +29,8 @@ function expectPresent<T>(value: T | null | undefined, message: string): T {
   return value;
 }
 
-const DEFAULT_RECAP_MODEL_ID =
-  "us.anthropic.claude-haiku-4-5-20251001-v1:0";
-const PREMIUM_RECAP_MODEL_ID =
-  "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+const DEFAULT_RECAP_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+const PREMIUM_RECAP_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
 
 function createRecapEnv(
   overrides: Record<string, string | undefined> = {},
@@ -84,15 +82,35 @@ function createStandings(season = 64, leagueId = "100"): BBApiStandings {
       {
         index: 0,
         teams: [
-          createStandingTeam({ id: "A", losses: 4, teamName: "Alpha", wins: 12 }),
-          createStandingTeam({ id: "B", losses: 5, teamName: "Beta", wins: 11 }),
+          createStandingTeam({
+            id: "A",
+            losses: 4,
+            teamName: "Alpha",
+            wins: 12,
+          }),
+          createStandingTeam({
+            id: "B",
+            losses: 5,
+            teamName: "Beta",
+            wins: 11,
+          }),
         ],
       },
       {
         index: 1,
         teams: [
-          createStandingTeam({ id: "C", losses: 6, teamName: "Gamma", wins: 10 }),
-          createStandingTeam({ id: "D", losses: 7, teamName: "Delta", wins: 9 }),
+          createStandingTeam({
+            id: "C",
+            losses: 6,
+            teamName: "Gamma",
+            wins: 10,
+          }),
+          createStandingTeam({
+            id: "D",
+            losses: 7,
+            teamName: "Delta",
+            wins: 9,
+          }),
         ],
       },
     ],
@@ -120,7 +138,9 @@ function createCompleteTeamRatings(base: number) {
 
 function createBoxScorePerformanceStats(
   overrides: Partial<
-    NonNullable<BBApiBoxScore["awayTeam"]>["players"][number]["performanceStats"]
+    NonNullable<
+      BBApiBoxScore["awayTeam"]
+    >["players"][number]["performanceStats"]
   > = {},
 ) {
   return {
@@ -149,7 +169,9 @@ function createBoxScorePlayer(args: {
   lastName: string;
   minutesByPosition: Record<string, number>;
   performanceStats?: Partial<
-    NonNullable<BBApiBoxScore["awayTeam"]>["players"][number]["performanceStats"]
+    NonNullable<
+      BBApiBoxScore["awayTeam"]
+    >["players"][number]["performanceStats"]
   >;
   ratingRaw: string;
   ratingValue: number | null;
@@ -258,6 +280,82 @@ function createBoxScore(args: {
   };
 }
 
+function createPublicPlayByPlay(args: {
+  events?: Array<Record<string, unknown>>;
+  matchId: string;
+}) {
+  const numericMatchId = Number.parseInt(args.matchId.replace(/\D/g, ""), 10);
+  return {
+    events: args.events ?? [
+      {
+        awayScore: 0,
+        homeScore: 0,
+        id: -1,
+        isScoringPlay: false,
+        quarter: 1,
+        type: "QUARTER_HEADER",
+        wallClock: 0,
+      },
+      {
+        awayScore: 2,
+        clock: "11:40",
+        eventText: "Beta opened the scoring.",
+        homeScore: 0,
+        id: 1,
+        isScoringPlay: true,
+        quarter: 1,
+        type: "WING",
+        wallClock: 10,
+      },
+      {
+        awayScore: 2,
+        clock: "11:05",
+        eventText: "Alpha answered to tie it.",
+        homeScore: 2,
+        id: 2,
+        isScoringPlay: true,
+        quarter: 1,
+        type: "STRONG",
+        wallClock: 20,
+      },
+      {
+        awayScore: 4,
+        clock: "08:10",
+        eventText: "Beta nudged back in front.",
+        homeScore: 2,
+        id: 3,
+        isScoringPlay: true,
+        quarter: 2,
+        type: "WING",
+        wallClock: 30,
+      },
+      {
+        awayScore: 4,
+        clock: "00:30",
+        eventText: "Alpha tied it late.",
+        homeScore: 4,
+        id: 4,
+        isScoringPlay: true,
+        quarter: 4,
+        type: "WING",
+        wallClock: 40,
+      },
+      {
+        awayScore: 4,
+        clock: "00:10",
+        eventText: "Alpha answered for the lead.",
+        homeScore: 6,
+        id: 5,
+        isScoringPlay: true,
+        quarter: 4,
+        type: "STRONG",
+        wallClock: 50,
+      },
+    ],
+    matchId: Number.isFinite(numericMatchId) ? numericMatchId : 1,
+  };
+}
+
 function createExpectedPromptGame(matchId: string) {
   return {
     effortDelta: 0,
@@ -268,6 +366,8 @@ function createExpectedPromptGame(matchId: string) {
     finalMargin: 4,
     matchId,
     neutral: false,
+    playByPlayFacts: null,
+    playByPlaySummaryLines: [],
     quarterFacts: {
       decisiveQuarter: null,
       fourthQuarterOutcome: {
@@ -431,32 +531,35 @@ test("summarizeSeasonDiagnostics marks the latest open season as usable", () => 
     version: "1",
   };
 
-  assert.deepStrictEqual(__testing.summarizeSeasonDiagnostics(seasons, "2026-03-15"), [
-    {
-      finish: "2026-01-20T14:23:23Z",
-      finishTimestamp: Date.parse("2026-01-20T00:00:00Z"),
-      hasUsableBounds: true,
-      id: 70,
-      invalidBounds: false,
-      matchesGameDate: false,
-      normalizedFinish: "2026-01-20",
-      normalizedStart: "2025-10-14",
-      start: "2025-10-14T10:05:35Z",
-      startTimestamp: Date.parse("2025-10-14T00:00:00Z"),
-    },
-    {
-      finish: null,
-      finishTimestamp: null,
-      hasUsableBounds: true,
-      id: 71,
-      invalidBounds: false,
-      matchesGameDate: true,
-      normalizedFinish: null,
-      normalizedStart: "2026-01-20",
-      start: "2026-01-20T14:23:23Z",
-      startTimestamp: Date.parse("2026-01-20T00:00:00Z"),
-    },
-  ]);
+  assert.deepStrictEqual(
+    __testing.summarizeSeasonDiagnostics(seasons, "2026-03-15"),
+    [
+      {
+        finish: "2026-01-20T14:23:23Z",
+        finishTimestamp: Date.parse("2026-01-20T00:00:00Z"),
+        hasUsableBounds: true,
+        id: 70,
+        invalidBounds: false,
+        matchesGameDate: false,
+        normalizedFinish: "2026-01-20",
+        normalizedStart: "2025-10-14",
+        start: "2025-10-14T10:05:35Z",
+        startTimestamp: Date.parse("2025-10-14T00:00:00Z"),
+      },
+      {
+        finish: null,
+        finishTimestamp: null,
+        hasUsableBounds: true,
+        id: 71,
+        invalidBounds: false,
+        matchesGameDate: true,
+        normalizedFinish: null,
+        normalizedStart: "2026-01-20",
+        start: "2026-01-20T14:23:23Z",
+        startTimestamp: Date.parse("2026-01-20T00:00:00Z"),
+      },
+    ],
+  );
 });
 
 test("resolveLeagueDaySlate deduplicates games and excludes non-league opponents", async () => {
@@ -547,27 +650,35 @@ test("resolveLeagueDaySlate matches the league local date instead of the UTC dat
   const schedules = new Map<string, BBApiSchedule>([
     [
       "A",
-      createSchedule("A", [
-        {
-          awayTeam: { id: "B", score: 98, teamName: "Beta" },
-          homeTeam: { id: "A", score: 114, teamName: "Alpha" },
-          id: "137828772",
-          startTime: "2026-03-04T01:00:00Z",
-          type: "league.rs",
-        },
-      ], 71),
+      createSchedule(
+        "A",
+        [
+          {
+            awayTeam: { id: "B", score: 98, teamName: "Beta" },
+            homeTeam: { id: "A", score: 114, teamName: "Alpha" },
+            id: "137828772",
+            startTime: "2026-03-04T01:00:00Z",
+            type: "league.rs",
+          },
+        ],
+        71,
+      ),
     ],
     [
       "B",
-      createSchedule("B", [
-        {
-          awayTeam: { id: "B", score: 98, teamName: "Beta" },
-          homeTeam: { id: "A", score: 114, teamName: "Alpha" },
-          id: "137828772",
-          startTime: "2026-03-04T01:00:00Z",
-          type: "league.rs",
-        },
-      ], 71),
+      createSchedule(
+        "B",
+        [
+          {
+            awayTeam: { id: "B", score: 98, teamName: "Beta" },
+            homeTeam: { id: "A", score: 114, teamName: "Alpha" },
+            id: "137828772",
+            startTime: "2026-03-04T01:00:00Z",
+            type: "league.rs",
+          },
+        ],
+        71,
+      ),
     ],
     ["C", createSchedule("C", [], 71)],
     ["D", createSchedule("D", [], 71)],
@@ -588,7 +699,10 @@ test("resolveLeagueDaySlate matches the league local date instead of the UTC dat
     timeZone: "America/New_York",
   });
 
-  assert.deepStrictEqual(slate.map((game) => game.matchId), ["137828772"]);
+  assert.deepStrictEqual(
+    slate.map((game) => game.matchId),
+    ["137828772"],
+  );
 });
 
 test("resolveLeagueGameDaySlate selects the requested regular-season game day", async () => {
@@ -596,72 +710,88 @@ test("resolveLeagueGameDaySlate selects the requested regular-season game day", 
   const schedules = new Map<string, BBApiSchedule>([
     [
       "A",
-      createSchedule("A", [
-        {
-          awayTeam: { id: "B", score: 80, teamName: "Beta" },
-          homeTeam: { id: "A", score: 90, teamName: "Alpha" },
-          id: "g1",
-          startTime: "2026-02-10T00:00:00Z",
-          type: "league.rs",
-        },
-        {
-          awayTeam: { id: "A", score: 88, teamName: "Alpha" },
-          homeTeam: { id: "C", score: 92, teamName: "Gamma" },
-          id: "g2",
-          startTime: "2026-02-17T00:00:00Z",
-          type: "League",
-        },
-        {
-          awayTeam: { id: "D", score: 84, teamName: "Delta" },
-          homeTeam: { id: "A", score: 102, teamName: "Alpha" },
-          id: "g3",
-          startTime: "2026-02-24T00:00:00Z",
-          type: "league.rs",
-        },
-        {
-          awayTeam: { id: "X", score: 81, teamName: "Cup Opponent" },
-          homeTeam: { id: "A", score: 95, teamName: "Alpha" },
-          id: "cup-1",
-          startTime: "2026-02-12T00:00:00Z",
-          type: "Cup",
-        },
-      ], 71),
+      createSchedule(
+        "A",
+        [
+          {
+            awayTeam: { id: "B", score: 80, teamName: "Beta" },
+            homeTeam: { id: "A", score: 90, teamName: "Alpha" },
+            id: "g1",
+            startTime: "2026-02-10T00:00:00Z",
+            type: "league.rs",
+          },
+          {
+            awayTeam: { id: "A", score: 88, teamName: "Alpha" },
+            homeTeam: { id: "C", score: 92, teamName: "Gamma" },
+            id: "g2",
+            startTime: "2026-02-17T00:00:00Z",
+            type: "League",
+          },
+          {
+            awayTeam: { id: "D", score: 84, teamName: "Delta" },
+            homeTeam: { id: "A", score: 102, teamName: "Alpha" },
+            id: "g3",
+            startTime: "2026-02-24T00:00:00Z",
+            type: "league.rs",
+          },
+          {
+            awayTeam: { id: "X", score: 81, teamName: "Cup Opponent" },
+            homeTeam: { id: "A", score: 95, teamName: "Alpha" },
+            id: "cup-1",
+            startTime: "2026-02-12T00:00:00Z",
+            type: "Cup",
+          },
+        ],
+        71,
+      ),
     ],
     [
       "B",
-      createSchedule("B", [
-        {
-          awayTeam: { id: "B", score: 80, teamName: "Beta" },
-          homeTeam: { id: "A", score: 90, teamName: "Alpha" },
-          id: "g1",
-          startTime: "2026-02-10T00:00:00Z",
-          type: "league.rs",
-        },
-      ], 71),
+      createSchedule(
+        "B",
+        [
+          {
+            awayTeam: { id: "B", score: 80, teamName: "Beta" },
+            homeTeam: { id: "A", score: 90, teamName: "Alpha" },
+            id: "g1",
+            startTime: "2026-02-10T00:00:00Z",
+            type: "league.rs",
+          },
+        ],
+        71,
+      ),
     ],
     [
       "C",
-      createSchedule("C", [
-        {
-          awayTeam: { id: "A", score: 88, teamName: "Alpha" },
-          homeTeam: { id: "C", score: 92, teamName: "Gamma" },
-          id: "g2",
-          startTime: "2026-02-17T00:00:00Z",
-          type: "League",
-        },
-      ], 71),
+      createSchedule(
+        "C",
+        [
+          {
+            awayTeam: { id: "A", score: 88, teamName: "Alpha" },
+            homeTeam: { id: "C", score: 92, teamName: "Gamma" },
+            id: "g2",
+            startTime: "2026-02-17T00:00:00Z",
+            type: "League",
+          },
+        ],
+        71,
+      ),
     ],
     [
       "D",
-      createSchedule("D", [
-        {
-          awayTeam: { id: "D", score: 84, teamName: "Delta" },
-          homeTeam: { id: "A", score: 102, teamName: "Alpha" },
-          id: "g3",
-          startTime: "2026-02-24T00:00:00Z",
-          type: "league.rs",
-        },
-      ], 71),
+      createSchedule(
+        "D",
+        [
+          {
+            awayTeam: { id: "D", score: 84, teamName: "Delta" },
+            homeTeam: { id: "A", score: 102, teamName: "Alpha" },
+            id: "g3",
+            startTime: "2026-02-24T00:00:00Z",
+            type: "league.rs",
+          },
+        ],
+        71,
+      ),
     ],
   ]);
 
@@ -679,7 +809,10 @@ test("resolveLeagueGameDaySlate selects the requested regular-season game day", 
     standings,
   });
 
-  assert.deepStrictEqual(slate.map((game) => game.matchId), ["g3"]);
+  assert.deepStrictEqual(
+    slate.map((game) => game.matchId),
+    ["g3"],
+  );
 });
 
 test("team form helpers compute streaks, last-five form, and top players", () => {
@@ -754,7 +887,9 @@ test("team form helpers compute streaks, last-five form, and top players", () =>
   assert.equal(context.lastFive, "3-2");
   assert.equal(context.wins, 3);
   assert.equal(context.losses, 2);
-  assert.ok(context.recentSignalFlags.includes("possible_strategic_deemphasis"));
+  assert.ok(
+    context.recentSignalFlags.includes("possible_strategic_deemphasis"),
+  );
 
   const topPlayers = __testing.extractTopPlayers(
     createBoxScore({
@@ -903,7 +1038,9 @@ test("derivePostgameTeamSeasonContext extends a losing streak after another loss
   assert.equal(context.lastFive, "0-5");
   assert.deepStrictEqual(context.recentMargins, [-12, -12, -9, -15, -20]);
   assert.equal(context.recentAverageMargin, -13.6);
-  assert.ok(context.recentSignalFlags.includes("possible_strategic_deemphasis"));
+  assert.ok(
+    context.recentSignalFlags.includes("possible_strategic_deemphasis"),
+  );
   assert.ok(context.recentSignalFlags.includes("recent_slide"));
   assert.ok(context.recentSignalFlags.includes("cold_streak"));
 });
@@ -1150,6 +1287,10 @@ test("buildGameDayRecapPromptPayload uses postgame-first records and retains ent
       status: "CONNECTED",
       userId: "user-1",
     },
+    fetchPublicMatchPlayByPlay: async (matchId) =>
+      createPublicPlayByPlay({
+        matchId: String(matchId),
+      }),
     now: new Date("2026-03-15T23:10:00Z"),
     requestedGames: [
       {
@@ -1198,6 +1339,33 @@ test("buildGameDayRecapPromptPayload uses postgame-first records and retains ent
   assert.equal(firstGame.teams.home.ratingTotal, 62.1);
   assert.equal(firstGame.teams.away.ratingLabels.outsideScoring, "sensational");
   assert.equal(firstGame.teams.away.ratingTotal, 66.9);
+  assert.ok(firstGame.playByPlayFacts);
+  assert.equal(firstGame.playByPlayFacts.leadChangeCount, 1);
+  assert.deepStrictEqual(firstGame.playByPlayFacts.lateGameMoments, [
+    {
+      awayScore: 4,
+      clock: "00:30",
+      eventText: "Alpha tied it late.",
+      homeScore: 4,
+      momentType: "tie",
+      quarter: 4,
+      scoringTeamName: "Alpha",
+      scoringTeamSide: "home",
+    },
+    {
+      awayScore: 4,
+      clock: "00:10",
+      eventText: "Alpha answered for the lead.",
+      homeScore: 6,
+      momentType: "go_ahead",
+      quarter: 4,
+      scoringTeamName: "Alpha",
+      scoringTeamSide: "home",
+    },
+  ]);
+  assert.deepStrictEqual(firstGame.playByPlaySummaryLines, [
+    "Late-game swings: Alpha tied it at 4-4 with 00:30 left in the 4th quarter; Alpha went ahead 6-4 with 00:10 left in the 4th quarter.",
+  ]);
   assert.deepStrictEqual(firstGame.gameDayPrepSummaries, [
     "Alpha came out well prepared to protect the paint.",
     "Beta looked well prepared for a balanced attack.",
@@ -1507,15 +1675,13 @@ test("submitGameDayRecap is idempotent while a recap is already active", async (
 });
 
 test("submitGameDayRecap reruns terminal jobs in place", async () => {
-  let queuedMessage:
-    | {
-        kind: string;
-        modelId?: string;
-        requestedAt: string;
-        targetKey: string;
-        userId: string;
-      }
-    | null = null;
+  let queuedMessage: {
+    kind: string;
+    modelId?: string;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  } | null = null;
   let savedStatus = "";
 
   await submitGameDayRecap(
@@ -1528,7 +1694,11 @@ test("submitGameDayRecap reruns terminal jobs in place", async () => {
         "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
     },
     {
-      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
         queuedMessage = message;
         return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:rerun";
       },
@@ -1553,9 +1723,12 @@ test("submitGameDayRecap reruns terminal jobs in place", async () => {
   );
 
   assert.equal(savedStatus, "QUEUED");
-  const rerunMessage = expectPresent<
-    { kind: string; requestedAt: string; targetKey: string; userId: string }
-  >(queuedMessage, "startWorkflowExecution did not receive a rerun message");
+  const rerunMessage = expectPresent<{
+    kind: string;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  }>(queuedMessage, "startWorkflowExecution did not receive a rerun message");
   assert.equal(rerunMessage.kind, "LEAGUE_DATE");
   assert.equal(rerunMessage.targetKey, "100#2026-03-15");
 });
@@ -1580,7 +1753,11 @@ test("submitGameDayRecap allows access when premium is granted by the environmen
         "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
     },
     {
-      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
         queuedMessage = message;
         return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:premium";
       },
@@ -1588,7 +1765,9 @@ test("submitGameDayRecap allows access when premium is granted by the environmen
       now: () => new Date("2026-03-15T22:30:00Z"),
       requireFeatureAccess: (args) =>
         requireFeatureAccess(args, {
-          createPortalSession: async () => ({ url: "https://example.com/portal" }),
+          createPortalSession: async () => ({
+            url: "https://example.com/portal",
+          }),
           createSubscriptionCheckoutSession: async () => ({
             url: "https://example.com/checkout",
           }),
@@ -1608,15 +1787,13 @@ test("submitGameDayRecap allows access when premium is granted by the environmen
       "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:premium",
     targetKey: "100#2026-03-15",
   });
-  const premiumMessage = expectPresent<
-    {
-      kind: string;
-      modelId?: string;
-      requestedAt: string;
-      targetKey: string;
-      userId: string;
-    }
-  >(queuedMessage, "startWorkflowExecution did not receive a premium message");
+  const premiumMessage = expectPresent<{
+    kind: string;
+    modelId?: string;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  }>(queuedMessage, "startWorkflowExecution did not receive a premium message");
   assert.equal(premiumMessage.kind, "LEAGUE_DATE");
   assert.equal(premiumMessage.modelId, DEFAULT_RECAP_MODEL_ID);
   assert.equal(premiumMessage.targetKey, "100#2026-03-15");
@@ -1665,7 +1842,11 @@ test("submitLeagueGameDayRecap uses the default model when commercial mode disab
       season: 71,
     },
     {
-      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
         queuedMessage = message;
         return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-day";
       },
@@ -1673,7 +1854,9 @@ test("submitLeagueGameDayRecap uses the default model when commercial mode disab
       now: () => new Date("2026-03-15T22:30:00Z"),
       requireFeatureAccess: (args) =>
         requireFeatureAccess(args, {
-          createPortalSession: async () => ({ url: "https://example.com/portal" }),
+          createPortalSession: async () => ({
+            url: "https://example.com/portal",
+          }),
           createSubscriptionCheckoutSession: async () => ({
             url: "https://example.com/checkout",
           }),
@@ -1753,7 +1936,11 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
       season: 71,
     },
     {
-      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
         queuedMessage = message;
         return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-day";
       },
@@ -1799,7 +1986,11 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
         "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
     },
     {
-      startWorkflowExecution: async (_stateMachineArn, _executionName, message) => {
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
         queuedMessage = message;
         return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:single";
       },
@@ -2220,6 +2411,204 @@ test("processGameDayRecap still allows partial coverage for same-day games that 
   });
 });
 
+test("processGameDayRecap keeps running when one game's play-by-play fetch fails", async () => {
+  const recapRecord = {
+    gameDate: "2026-03-15",
+    leagueId: "100",
+    requestJson: {
+      gameDate: "2026-03-15",
+      leagueId: "100",
+    },
+    requestedAt: "2026-03-15T23:00:00Z",
+    status: "QUEUED" as const,
+    targetKey: "100#2026-03-15",
+    userId: "user-1",
+  };
+  const standings = createStandings();
+  const schedules = new Map<string, BBApiSchedule>([
+    [
+      "A",
+      createSchedule("A", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "B",
+      createSchedule("B", [
+        {
+          awayTeam: { id: "B", score: 81, teamName: "Beta" },
+          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+          id: "m-1",
+          startTime: "2026-03-15T19:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "C",
+      createSchedule("C", [
+        {
+          awayTeam: { id: "D", score: 90, teamName: "Delta" },
+          homeTeam: { id: "C", score: 94, teamName: "Gamma" },
+          id: "m-2",
+          startTime: "2026-03-15T21:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+    [
+      "D",
+      createSchedule("D", [
+        {
+          awayTeam: { id: "D", score: 90, teamName: "Delta" },
+          homeTeam: { id: "C", score: 94, teamName: "Gamma" },
+          id: "m-2",
+          startTime: "2026-03-15T21:00:00Z",
+          type: "League",
+        },
+      ]),
+    ],
+  ]);
+  const boxScores = new Map<string, BBApiBoxScore>([
+    [
+      "m-1",
+      createBoxScore({
+        awayScore: 81,
+        awayTeamId: "B",
+        awayTeamName: "Beta",
+        homeScore: 85,
+        homeTeamId: "A",
+        homeTeamName: "Alpha",
+        matchId: "m-1",
+      }),
+    ],
+    [
+      "m-2",
+      createBoxScore({
+        awayScore: 90,
+        awayTeamId: "D",
+        awayTeamName: "Delta",
+        homeScore: 94,
+        homeTeamId: "C",
+        homeTeamName: "Gamma",
+        matchId: "m-2",
+      }),
+    ],
+  ]);
+  const updates: Array<Record<string, unknown>> = [];
+  let capturedPayload: {
+    games: Array<{
+      matchId: string;
+      playByPlayFacts: unknown;
+      playByPlaySummaryLines: string[];
+    }>;
+  } | null = null;
+
+  await processGameDayRecap(
+    {
+      env: {},
+      messageBody: JSON.stringify({
+        requestedAt: recapRecord.requestedAt,
+        targetKey: recapRecord.targetKey,
+        userId: recapRecord.userId,
+      }),
+      modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      region: "us-east-1",
+    },
+    {
+      createBbClient: () => ({
+        getBoxScore: async (matchId) => {
+          const boxScore = boxScores.get(matchId ?? "");
+          if (!boxScore) {
+            throw new Error(`Missing box score for ${matchId}`);
+          }
+          return boxScore;
+        },
+        getSchedule: async (teamId) => {
+          const schedule = schedules.get(teamId ?? "");
+          if (!schedule) {
+            throw new Error(`Missing schedule for ${teamId}`);
+          }
+          return schedule;
+        },
+        getSeasons: async () => ({
+          seasons: [{ finish: "2026-05-01", id: 64, start: "2026-02-02" }],
+          version: "1",
+        }),
+        getStandings: async () => standings,
+        getTeamInfo: async () => ({
+          country: null,
+          fields: {},
+          isBot: false,
+          league: { id: "100", name: "Elite League" },
+          ownerName: "Owner",
+          retrievedAt: "2026-03-15T00:00:00Z",
+          rival: null,
+          shortName: "ALP",
+          teamId: "A",
+          teamName: "Alpha",
+          version: "1",
+        }),
+      }),
+      createProvider: () => ({
+        generate: async (payload) => {
+          capturedPayload = payload;
+          return {
+            games: payload.games.map((game) => ({
+              evidenceTags: ["recent_form"],
+              headline: `Recap for ${game.matchId}`,
+              matchId: game.matchId,
+              writeup: `${game.teams.home.name} had enough to close out ${game.teams.away.name}.`,
+            })),
+            summary: {
+              headline: "Elite League roundup",
+              lede: "The recap kept moving even though one game's public play-by-play could not be loaded.",
+            },
+          };
+        },
+        modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        providerName: "bedrock",
+      }),
+      fetchPublicMatchPlayByPlay: async (matchId) => {
+        if (String(matchId) === "m-2") {
+          throw new Error("temporary play-by-play outage");
+        }
+        return createPublicPlayByPlay({
+          matchId: String(matchId),
+        });
+      },
+      getBbConnection: async () => ({
+        bbLoginName: "coach-alpha",
+        leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T23:10:00.000Z",
+        status: "CONNECTED",
+        userId: "user-1",
+      }),
+      getGameDayRecap: async () => recapRecord,
+      now: () => new Date("2026-03-17T23:10:00Z"),
+      resolveBbAccessKey: async () => "secret",
+      updateGameDayRecap: async (_env, input) => {
+        updates.push(input);
+      },
+    },
+  );
+
+  assert.equal(updates.at(-1)?.status, "SUCCEEDED");
+  const payload = expectPresent(capturedPayload, "missing captured payload");
+  assert.equal(payload.games.length, 2);
+  assert.deepStrictEqual(payload.games[0]?.playByPlaySummaryLines, [
+    "Late-game swings: Alpha tied it at 4-4 with 00:30 left in the 4th quarter; Alpha went ahead 6-4 with 00:10 left in the 4th quarter.",
+  ]);
+  assert.deepStrictEqual(payload.games[1]?.playByPlaySummaryLines, []);
+  assert.equal(payload.games[1]?.playByPlayFacts, null);
+});
+
 test("processGameDayRecap retries once after semantic validation fails", async () => {
   const recapRecord = {
     gameDate: "2026-03-15",
@@ -2330,8 +2719,7 @@ test("processGameDayRecap retries once after semantic validation fails", async (
               })),
               summary: {
                 headline: "Elite League roundup",
-                lede:
-                  "The first draft needed one repair after a tied quarter was described as if one side had won it outright.",
+                lede: "The first draft needed one repair after a tied quarter was described as if one side had won it outright.",
               },
             };
           }
@@ -2346,8 +2734,7 @@ test("processGameDayRecap retries once after semantic validation fails", async (
             })),
             summary: {
               headline: "Elite League roundup",
-              lede:
-                "A repaired recap kept the tied third quarter accurate and shifted the emphasis to the fourth-quarter push that actually settled the result.",
+              lede: "A repaired recap kept the tied third quarter accurate and shifted the emphasis to the fourth-quarter push that actually settled the result.",
             },
           };
         },
@@ -2372,7 +2759,9 @@ test("processGameDayRecap retries once after semantic validation fails", async (
 
   assert.equal(providerCalls.length, 2);
   assert.equal(providerCalls[0], undefined);
-  assert.ok(providerCalls[1]?.some((feedback) => feedback.includes("tied 24-24")));
+  assert.ok(
+    providerCalls[1]?.some((feedback) => feedback.includes("tied 24-24")),
+  );
   assert.equal(updates.at(-1)?.status, "SUCCEEDED");
 });
 
@@ -2485,8 +2874,7 @@ test("processGameDayRecap patches repeated semantic contradictions after the ret
             })),
             summary: {
               headline: "Elite League roundup",
-              lede:
-                "The bad quarter claim persisted across both attempts, so the worker had to repair the contradiction before saving the recap.",
+              lede: "The bad quarter claim persisted across both attempts, so the worker had to repair the contradiction before saving the recap.",
             },
           };
         },
@@ -2519,9 +2907,8 @@ test("processGameDayRecap patches repeated semantic contradictions after the ret
     requestedGames: 1,
   });
   assert.equal(
-    ((finalUpdate.resultJson as { games: Array<{ writeup: string }> }).games[0]
-      ?.writeup ??
-      ""),
+    (finalUpdate.resultJson as { games: Array<{ writeup: string }> }).games[0]
+      ?.writeup ?? "",
     "The 3rd quarter ended tied at 24-24.",
   );
 });
@@ -2688,8 +3075,7 @@ test("processGameDayRecap drops one invalid game and saves a partial result", as
             ),
             summary: {
               headline: "Elite League roundup",
-              lede:
-                "Both finals were summarized at first, but one game recap kept a contradiction in the headline that could not be safely repaired.",
+              lede: "Both finals were summarized at first, but one game recap kept a contradiction in the headline that could not be safely repaired.",
             },
           };
         },
@@ -2729,10 +3115,12 @@ test("processGameDayRecap drops one invalid game and saves a partial result", as
     requestedGames: 2,
   });
   assert.deepStrictEqual(
-    (finalUpdate.resultJson as {
-      games: Array<{ matchId: string }>;
-      summary: { headline: string; lede: string };
-    }).games.map((game) => game.matchId),
+    (
+      finalUpdate.resultJson as {
+        games: Array<{ matchId: string }>;
+        summary: { headline: string; lede: string };
+      }
+    ).games.map((game) => game.matchId),
     ["m-1"],
   );
   assert.equal(
@@ -2857,8 +3245,7 @@ test("processGameDayRecap still fails when every invalid game must be dropped", 
                 })),
                 summary: {
                   headline: "Elite League roundup",
-                  lede:
-                    "The remaining contradiction lived in the headline, so the worker should only fail after it has no valid game recap left to keep.",
+                  lede: "The remaining contradiction lived in the headline, so the worker should only fail after it has no valid game recap left to keep.",
                 },
               };
             },
@@ -3366,34 +3753,45 @@ test("processGameDayRecap resolves the current open season before fetching seaso
     userId: "user-1",
   };
   const standingsCalls: Array<number | undefined> = [];
-  const scheduleCalls: Array<{ season: number | undefined; teamId: string | undefined }> = [];
+  const scheduleCalls: Array<{
+    season: number | undefined;
+    teamId: string | undefined;
+  }> = [];
   let seasonsFetched = 0;
   const updates: Array<Record<string, unknown>> = [];
   const currentStandings = createStandings(71);
   const schedules = new Map<string, BBApiSchedule>([
     [
       "A:71",
-      createSchedule("A", [
-        {
-          awayTeam: { id: "B", score: 81, teamName: "Beta" },
-          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
-          id: "m-1",
-          startTime: "2026-03-10T19:00:00Z",
-          type: "League",
-        },
-      ], 71),
+      createSchedule(
+        "A",
+        [
+          {
+            awayTeam: { id: "B", score: 81, teamName: "Beta" },
+            homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+            id: "m-1",
+            startTime: "2026-03-10T19:00:00Z",
+            type: "League",
+          },
+        ],
+        71,
+      ),
     ],
     [
       "B:71",
-      createSchedule("B", [
-        {
-          awayTeam: { id: "B", score: 81, teamName: "Beta" },
-          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
-          id: "m-1",
-          startTime: "2026-03-10T19:00:00Z",
-          type: "League",
-        },
-      ], 71),
+      createSchedule(
+        "B",
+        [
+          {
+            awayTeam: { id: "B", score: 81, teamName: "Beta" },
+            homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+            id: "m-1",
+            startTime: "2026-03-10T19:00:00Z",
+            type: "League",
+          },
+        ],
+        71,
+      ),
     ],
     ["C:71", createSchedule("C", [], 71)],
     ["D:71", createSchedule("D", [], 71)],
@@ -3424,9 +3822,13 @@ test("processGameDayRecap resolves the current open season before fetching seaso
           }),
         getSchedule: async (teamId, season) => {
           scheduleCalls.push({ season, teamId });
-          const schedule = schedules.get(`${teamId ?? ""}:${season ?? "current"}`);
+          const schedule = schedules.get(
+            `${teamId ?? ""}:${season ?? "current"}`,
+          );
           if (!schedule) {
-            throw new Error(`Missing schedule for ${teamId} in season ${String(season)}`);
+            throw new Error(
+              `Missing schedule for ${teamId} in season ${String(season)}`,
+            );
           }
           return schedule;
         },
@@ -3515,27 +3917,35 @@ test("processGameDayRecap falls back to historical season candidates when curren
     ["D:71", createSchedule("D", [], 71)],
     [
       "A:70",
-      createSchedule("A", [
-        {
-          awayTeam: { id: "B", score: 81, teamName: "Beta" },
-          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
-          id: "m-1",
-          startTime: "2026-01-10T19:00:00Z",
-          type: "League",
-        },
-      ], 70),
+      createSchedule(
+        "A",
+        [
+          {
+            awayTeam: { id: "B", score: 81, teamName: "Beta" },
+            homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+            id: "m-1",
+            startTime: "2026-01-10T19:00:00Z",
+            type: "League",
+          },
+        ],
+        70,
+      ),
     ],
     [
       "B:70",
-      createSchedule("B", [
-        {
-          awayTeam: { id: "B", score: 81, teamName: "Beta" },
-          homeTeam: { id: "A", score: 85, teamName: "Alpha" },
-          id: "m-1",
-          startTime: "2026-01-10T19:00:00Z",
-          type: "League",
-        },
-      ], 70),
+      createSchedule(
+        "B",
+        [
+          {
+            awayTeam: { id: "B", score: 81, teamName: "Beta" },
+            homeTeam: { id: "A", score: 85, teamName: "Alpha" },
+            id: "m-1",
+            startTime: "2026-01-10T19:00:00Z",
+            type: "League",
+          },
+        ],
+        70,
+      ),
     ],
     ["C:70", createSchedule("C", [], 70)],
     ["D:70", createSchedule("D", [], 70)],
@@ -3566,9 +3976,13 @@ test("processGameDayRecap falls back to historical season candidates when curren
             matchId: "m-1",
           }),
         getSchedule: async (teamId, season) => {
-          const schedule = schedules.get(`${teamId ?? ""}:${season ?? "current"}`);
+          const schedule = schedules.get(
+            `${teamId ?? ""}:${season ?? "current"}`,
+          );
           if (!schedule) {
-            throw new Error(`Missing schedule for ${teamId} in season ${String(season)}`);
+            throw new Error(
+              `Missing schedule for ${teamId} in season ${String(season)}`,
+            );
           }
           return schedule;
         },
@@ -3683,7 +4097,8 @@ test("processGameDayRecap fails with a slate-specific error when no candidate se
             ],
             version: "1",
           }),
-          getStandings: async (_leagueId, season) => createStandings(season ?? 71),
+          getStandings: async (_leagueId, season) =>
+            createStandings(season ?? 71),
           getTeamInfo: async () => ({
             country: null,
             fields: {},
@@ -3750,34 +4165,86 @@ test("processLeagueGameDayRecap resolves a full regular-season slate by ordinal 
   const schedules = new Map<string, BBApiSchedule>([
     [
       "A",
-      createSchedule("A", [
-        {
-          awayTeam: { id: "B", score: 82, teamName: "Beta" },
-          homeTeam: { id: "A", score: 95, teamName: "Alpha" },
-          id: "g1",
-          startTime: "2026-02-10T00:00:00Z",
-          type: "league.rs",
-        },
-        {
-          awayTeam: { id: "A", score: 87, teamName: "Alpha" },
-          homeTeam: { id: "C", score: 91, teamName: "Gamma" },
-          id: "g2",
-          startTime: "2026-02-17T00:00:00Z",
-          type: "League",
-        },
-        {
-          awayTeam: { id: "D", score: 98, teamName: "Delta" },
-          homeTeam: { id: "A", score: 114, teamName: "Alpha" },
-          id: "137828772",
-          startTime: "2026-03-04T01:00:00Z",
-          type: "league.rs",
-        },
-      ], 71),
+      createSchedule(
+        "A",
+        [
+          {
+            awayTeam: { id: "B", score: 82, teamName: "Beta" },
+            homeTeam: { id: "A", score: 95, teamName: "Alpha" },
+            id: "g1",
+            startTime: "2026-02-10T00:00:00Z",
+            type: "league.rs",
+          },
+          {
+            awayTeam: { id: "A", score: 87, teamName: "Alpha" },
+            homeTeam: { id: "C", score: 91, teamName: "Gamma" },
+            id: "g2",
+            startTime: "2026-02-17T00:00:00Z",
+            type: "League",
+          },
+          {
+            awayTeam: { id: "D", score: 98, teamName: "Delta" },
+            homeTeam: { id: "A", score: 114, teamName: "Alpha" },
+            id: "137828772",
+            startTime: "2026-03-04T01:00:00Z",
+            type: "league.rs",
+          },
+        ],
+        71,
+      ),
     ],
-    ["B", createSchedule("B", [{ awayTeam: { id: "B", score: 82, teamName: "Beta" }, homeTeam: { id: "A", score: 95, teamName: "Alpha" }, id: "g1", startTime: "2026-02-10T00:00:00Z", type: "league.rs" }], 71)],
-    ["C", createSchedule("C", [{ awayTeam: { id: "A", score: 87, teamName: "Alpha" }, homeTeam: { id: "C", score: 91, teamName: "Gamma" }, id: "g2", startTime: "2026-02-17T00:00:00Z", type: "League" }], 71)],
-    ["D", createSchedule("D", [{ awayTeam: { id: "D", score: 98, teamName: "Delta" }, homeTeam: { id: "A", score: 114, teamName: "Alpha" }, id: "137828772", startTime: "2026-03-04T01:00:00Z", type: "league.rs" }], 71)],
+    [
+      "B",
+      createSchedule(
+        "B",
+        [
+          {
+            awayTeam: { id: "B", score: 82, teamName: "Beta" },
+            homeTeam: { id: "A", score: 95, teamName: "Alpha" },
+            id: "g1",
+            startTime: "2026-02-10T00:00:00Z",
+            type: "league.rs",
+          },
+        ],
+        71,
+      ),
+    ],
+    [
+      "C",
+      createSchedule(
+        "C",
+        [
+          {
+            awayTeam: { id: "A", score: 87, teamName: "Alpha" },
+            homeTeam: { id: "C", score: 91, teamName: "Gamma" },
+            id: "g2",
+            startTime: "2026-02-17T00:00:00Z",
+            type: "League",
+          },
+        ],
+        71,
+      ),
+    ],
+    [
+      "D",
+      createSchedule(
+        "D",
+        [
+          {
+            awayTeam: { id: "D", score: 98, teamName: "Delta" },
+            homeTeam: { id: "A", score: 114, teamName: "Alpha" },
+            id: "137828772",
+            startTime: "2026-03-04T01:00:00Z",
+            type: "league.rs",
+          },
+        ],
+        71,
+      ),
+    ],
   ]);
+  let capturedLeagueGameDayPayload: {
+    games: Array<{ playByPlaySummaryLines: string[] }>;
+  } | null = null;
 
   await processLeagueGameDayRecap(
     {
@@ -3811,7 +4278,9 @@ test("processLeagueGameDayRecap resolves a full regular-season slate by ordinal 
           return schedule;
         },
         getSeasons: async () => {
-          throw new Error("league game-day recaps should not fetch seasons when season is explicit");
+          throw new Error(
+            "league game-day recaps should not fetch seasons when season is explicit",
+          );
         },
         getStandings: async () => createStandings(71, "1"),
         getTeamInfo: async () => ({
@@ -3829,21 +4298,28 @@ test("processLeagueGameDayRecap resolves a full regular-season slate by ordinal 
         }),
       }),
       createProvider: () => ({
-        generate: async (payload) => ({
-          games: payload.games.map((game) => ({
-            evidenceTags: ["recent_form"],
-            headline: `Recap for ${game.matchId}`,
-            matchId: game.matchId,
-            writeup: `${game.teams.home.name} kept control of the game-day slate and handled ${game.teams.away.name} without giving up the fourth quarter.`,
-          })),
-          summary: {
-            headline: "NBBA game day roundup",
-            lede: "The requested regular-season game day resolved from ordered league schedules without any calendar-date filtering.",
-          },
-        }),
+        generate: async (payload) => {
+          capturedLeagueGameDayPayload = payload;
+          return {
+            games: payload.games.map((game) => ({
+              evidenceTags: ["recent_form"],
+              headline: `Recap for ${game.matchId}`,
+              matchId: game.matchId,
+              writeup: `${game.teams.home.name} kept control of the game-day slate and handled ${game.teams.away.name} without giving up the fourth quarter.`,
+            })),
+            summary: {
+              headline: "NBBA game day roundup",
+              lede: "The requested regular-season game day resolved from ordered league schedules without any calendar-date filtering.",
+            },
+          };
+        },
         modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         providerName: "bedrock",
       }),
+      fetchPublicMatchPlayByPlay: async (matchId) =>
+        createPublicPlayByPlay({
+          matchId: String(matchId),
+        }),
       getBbConnection: async () => ({
         bbLoginName: "coach-alpha",
         leagueId: "1",
@@ -3864,6 +4340,16 @@ test("processLeagueGameDayRecap resolves a full regular-season slate by ordinal 
 
   assert.equal(updates.at(-1)?.status, "SUCCEEDED");
   assert.equal(updates.at(-1)?.season, 71);
+  assert.equal(
+    updates.at(-1)?.promptVersion,
+    __testing.GAME_DAY_RECAP_PROMPT_VERSION,
+  );
+  assert.deepStrictEqual(
+    capturedLeagueGameDayPayload?.games[0]?.playByPlaySummaryLines,
+    [
+      "Late-game swings: Alpha tied it at 4-4 with 00:30 left in the 4th quarter; Alpha went ahead 6-4 with 00:10 left in the 4th quarter.",
+    ],
+  );
 });
 
 test("processSingleGameSummary summarizes one finished match without standings or schedules", async () => {
@@ -3879,6 +4365,9 @@ test("processSingleGameSummary summarizes one finished match without standings o
     userId: "user-1",
   };
   const updates: Array<Record<string, unknown>> = [];
+  let capturedSingleGamePayload: {
+    games: Array<{ playByPlaySummaryLines: string[] }>;
+  } | null = null;
 
   await processSingleGameSummary(
     {
@@ -3918,21 +4407,28 @@ test("processSingleGameSummary summarizes one finished match without standings o
         },
       }),
       createProvider: () => ({
-        generate: async (payload) => ({
-          games: payload.games.map((game) => ({
-            evidenceTags: ["top_performance"],
-            headline: "Visionaries pull away late",
-            matchId: game.matchId,
-            writeup: `${game.teams.home.name} turned a steady performance into a decisive finish and never let ${game.teams.away.name} recover once the margin widened.`,
-          })),
-          summary: {
-            headline: "Visionaries handle Delta 9",
-            lede: "A direct match-id request can produce a finished-game summary without any league-day or season lookup.",
-          },
-        }),
+        generate: async (payload) => {
+          capturedSingleGamePayload = payload;
+          return {
+            games: payload.games.map((game) => ({
+              evidenceTags: ["top_performance"],
+              headline: "Visionaries pull away late",
+              matchId: game.matchId,
+              writeup: `${game.teams.home.name} turned a steady performance into a decisive finish and never let ${game.teams.away.name} recover once the margin widened.`,
+            })),
+            summary: {
+              headline: "Visionaries handle Delta 9",
+              lede: "A direct match-id request can produce a finished-game summary without any league-day or season lookup.",
+            },
+          };
+        },
         modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         providerName: "bedrock",
       }),
+      fetchPublicMatchPlayByPlay: async (matchId) =>
+        createPublicPlayByPlay({
+          matchId: String(matchId),
+        }),
       getBbConnection: async () => ({
         bbLoginName: "coach-alpha",
         leagueId: "1",
@@ -3954,6 +4450,12 @@ test("processSingleGameSummary summarizes one finished match without standings o
   assert.equal(updates.at(-1)?.status, "SUCCEEDED");
   assert.equal(updates.at(-1)?.leagueId, "1");
   assert.equal(updates.at(-1)?.gameDate, "2026-03-15");
+  assert.deepStrictEqual(
+    capturedSingleGamePayload?.games[0]?.playByPlaySummaryLines,
+    [
+      "Late-game swings: Visionaries tied it at 4-4 with 00:30 left in the 4th quarter; Visionaries went ahead 6-4 with 00:10 left in the 4th quarter.",
+    ],
+  );
 });
 
 test("buildGameDayRecapBedrockRequest attaches a structured output schema", () => {
@@ -3984,20 +4486,19 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
   const schema = request.outputConfig.textFormat.structure.jsonSchema.schema;
 
   assert.equal(request.outputConfig.textFormat.type, "json_schema");
-  assert.match(
-    schema,
-    /"summary"/,
-  );
-  assert.match(
-    schema,
-    /"games"/,
-  );
+  assert.match(schema, /"summary"/);
+  assert.match(schema, /"games"/);
 
   const systemText = request.system[0]?.text ?? "";
   assert.match(systemText, /never cite the raw effortDelta value/i);
   assert.match(systemText, /never cite raw GDP focus codes/i);
   assert.match(systemText, /not a checklist of facts/i);
-  assert.match(systemText, /do not invent reasons such as injuries, load management, or discipline/i);
+  assert.match(
+    systemText,
+    /do not invent reasons such as injuries, load management, or discipline/i,
+  );
+  assert.match(systemText, /playByPlaySummaryLines are present/i);
+  assert.match(systemText, /unsupplied play-by-play details/i);
 });
 
 test("describeEffortDeltaForRecap uses natural language for nonzero effort deltas", () => {
@@ -4121,19 +4622,19 @@ test("buildRotationSummariesForRecap flags key absences and foul trouble without
     }),
   ];
 
-  assert.deepStrictEqual(__testing.buildRotationSummariesForRecap(boxScore.homeTeam), [
-    "LA Lions came in without Leo Star, leaving them short-handed.",
-    "Mason Key spent much of the night in foul trouble and played only 22 minutes.",
-  ]);
+  assert.deepStrictEqual(
+    __testing.buildRotationSummariesForRecap(boxScore.homeTeam),
+    [
+      "LA Lions came in without Leo Star, leaving them short-handed.",
+      "Mason Key spent much of the night in foul trouble and played only 22 minutes.",
+    ],
+  );
 });
 
 test("assertSupportedBedrockRecapModel fails fast for unsupported configuration", () => {
   assert.throws(
     () =>
-      assertSupportedBedrockRecapModel(
-        "anthropic.claude-v2:1",
-        "us-east-1",
-      ),
+      assertSupportedBedrockRecapModel("anthropic.claude-v2:1", "us-east-1"),
     /verified structured-output allowlist/i,
   );
 
@@ -4216,8 +4717,7 @@ test("validateGameDayRecapResult accepts valid structured output for the expecte
       ],
       summary: {
         headline: "Elite League delivers a split slate",
-        lede:
-          "One game stayed competitive until the last few possessions while the other tilted sharply before the break and never really swung back.",
+        lede: "One game stayed competitive until the last few possessions while the other tilted sharply before the break and never really swung back.",
       },
     },
     [upset, dud],
@@ -4235,7 +4735,9 @@ test("validateGameDayRecapResult accepts valid structured output for the expecte
     firstGame.surpriseFactor,
   );
   assert.equal(result.summary.headline, "Elite League delivers a split slate");
-  assert.ok((firstGame.surpriseFactor ?? 0) > (secondGame.surpriseFactor ?? 10));
+  assert.ok(
+    (firstGame.surpriseFactor ?? 0) > (secondGame.surpriseFactor ?? 10),
+  );
   assert.ok((firstGame.surpriseFactor ?? 0) >= 9);
   assert.ok((secondGame.surpriseFactor ?? 10) <= 1.5);
 });
@@ -4320,8 +4822,7 @@ test("validateGameDayRecapResult rejects tied-quarter outscore claims", () => {
           ],
           summary: {
             headline: "League roundup",
-            lede:
-              "A single game delivered enough swing to create a full recap while the late push finally settled matters for the home side.",
+            lede: "A single game delivered enough swing to create a full recap while the late push finally settled matters for the home side.",
           },
         },
         [expectedGame],
@@ -4346,8 +4847,7 @@ test("validateGameDayRecapResult rejects wrong-team quarter winners", () => {
           ],
           summary: {
             headline: "League roundup",
-            lede:
-              "One matchup turned on the middle stretch before the winner still found a way to control the late possessions and finish the job.",
+            lede: "One matchup turned on the middle stretch before the winner still found a way to control the late possessions and finish the job.",
           },
         },
         [createExpectedPromptGame("m-1")],
@@ -4372,8 +4872,7 @@ test("validateGameDayRecapResult rejects postgame record and streak mismatches",
           ],
           summary: {
             headline: "League roundup",
-            lede:
-              "A composed closing stretch protected the lead and preserved the control the eventual winner built over the course of the night.",
+            lede: "A composed closing stretch protected the lead and preserved the control the eventual winner built over the course of the night.",
           },
         },
         [createExpectedPromptGame("m-1")],
@@ -4393,7 +4892,8 @@ test("removeInvalidWriteupSentences drops only the contradicted sentence", () =>
     },
     [
       {
-        feedback: "For match m-1, Home's postgame record is 13-3. Do not use 12-3.",
+        feedback:
+          "For match m-1, Home's postgame record is 13-3. Do not use 12-3.",
         field: "writeup",
         kind: "record_mismatch",
         matchId: "m-1",
@@ -4426,8 +4926,7 @@ test("validateGameDayRecapResult allows explicit entering-game trivia", () => {
       ],
       summary: {
         headline: "League roundup",
-        lede:
-          "The winner had strong pregame form, but the recap still centered on a late stretch that kept the result under control to the horn.",
+        lede: "The winner had strong pregame form, but the recap still centered on a late stretch that kept the result under control to the horn.",
       },
     },
     [createExpectedPromptGame("m-1")],

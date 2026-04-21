@@ -6,6 +6,7 @@ import {
 import {
   BBXmlApiClient,
   BBXmlApiParseError,
+  fetchPublicMatchPlayByPlay,
   type BBXmlApiClientOptions,
 } from "../../../lib/bbapi";
 import type {
@@ -62,6 +63,11 @@ import {
   toMaintenanceAwareErrorMessage,
 } from "./maintenance";
 import { classifyCompetition } from "./match-importance";
+import {
+  loadGameDayRecapPlayByPlayFacts,
+  type GameDayRecapPlayByPlayFacts,
+  type GameDayRecapPlayByPlayLoadResult,
+} from "./game-day-recap-play-by-play";
 import type { PlanId } from "../../../lib/billing/plans";
 import type { Schema } from "../resource";
 
@@ -135,6 +141,8 @@ type GameDayRecapPromptGame = {
   finalMargin: number;
   matchId: string;
   neutral: boolean | null;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  playByPlaySummaryLines: string[];
   quarterFacts: GameDayRecapPromptQuarterFacts;
   quarterScores: {
     away: number[];
@@ -332,6 +340,8 @@ type BedrockGameDayRecapProvider = {
   providerName: "bedrock";
 };
 
+type PublicPlayByPlayFetcher = typeof fetchPublicMatchPlayByPlay;
+
 type SubmitDependencies = {
   assertMaintenanceInactive: () => Promise<void>;
   startWorkflowExecution: (
@@ -369,6 +379,7 @@ type ProcessDependencies = {
     modelId: string;
     region: string | undefined;
   }) => BedrockGameDayRecapProvider;
+  fetchPublicMatchPlayByPlay: PublicPlayByPlayFetcher;
   getBbConnection: typeof getBbConnection;
   getGameDayRecap: typeof getGameDayRecap;
   getLeagueGameDayRecap: typeof getLeagueGameDayRecap;
@@ -383,7 +394,7 @@ type ProcessDependencies = {
 type SubmitDependencyOverrides = Partial<SubmitDependencies>;
 type ProcessDependencyOverrides = Partial<ProcessDependencies>;
 
-const GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v7";
+const GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v8";
 const GAME_DAY_RECAP_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID";
 const GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID_PREMIUM";
 const GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN = 8;
@@ -531,6 +542,7 @@ const defaultProcessDependencies: ProcessDependencies = {
       modelId,
       region,
     }),
+  fetchPublicMatchPlayByPlay,
   getBbConnection,
   getGameDayRecap,
   getLeagueGameDayRecap,
@@ -1025,6 +1037,7 @@ export async function processGameDayRecap(
       bb,
       connection,
       enforceCompletedSlateCoverage: true,
+      fetchPublicMatchPlayByPlay: dependencies.fetchPublicMatchPlayByPlay,
       now: deps.now(),
       requestedGames: slate,
       request: {
@@ -1264,6 +1277,7 @@ export async function processLeagueGameDayRecap(
       bb,
       connection,
       enforceCompletedSlateCoverage: true,
+      fetchPublicMatchPlayByPlay: dependencies.fetchPublicMatchPlayByPlay,
       now: deps.now(),
       requestedGames: slate,
       request: {
@@ -1418,6 +1432,7 @@ export async function processSingleGameSummary(
       bb,
       boxScore,
       connection,
+      fetchPublicMatchPlayByPlay: dependencies.fetchPublicMatchPlayByPlay,
       matchId: summary.matchId,
     });
     coverage = promptPayload.coverage;
@@ -1841,11 +1856,15 @@ export function buildGameDayRecapBedrockRequest(args: {
                     "If a game includes effortSummary, fold that effort edge into the writeup in natural language instead of quoting the raw effortDelta number.",
                     "If a game includes gameDayPrepSummaries, fold the defensive preparation angle into the writeup in natural language instead of quoting raw GDP focus codes.",
                     "If a game includes rotationSummaries, fold that short-handed or foul-trouble context into the writeup in natural language without guessing why a player sat.",
+                    "If a game includes playByPlaySummaryLines, prefer those code-generated lines when mentioning supplied play-by-play context.",
+                    "If a game includes playByPlayFacts, use only those supplied facts and never infer unsupplied possession-by-possession detail.",
                     "Keep each writeup flowing like sports-reporter prose rather than a checklist, bullet list, or stack of disconnected facts.",
                     "Use only the provided evidence and keep any strategic de-emphasis language cautious.",
                   ],
                   validationFeedback:
-                    validationFeedback.length > 0 ? validationFeedback : undefined,
+                    validationFeedback.length > 0
+                      ? validationFeedback
+                      : undefined,
                 },
                 recapContext: args.payload,
               },
@@ -1876,12 +1895,14 @@ export function buildGameDayRecapBedrockRequest(args: {
       {
         text: [
           "You are writing basketball recaps for the requested game or slate.",
-          "Use only supplied facts. Do not invent transfers, injuries, off-court news, or play-by-play.",
+          "Use only supplied facts. Do not invent transfers, injuries, off-court news, or unsupplied play-by-play details.",
           "Write in a natural sports-reporter voice with connected prose, not a checklist of facts.",
           "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
           "When effortSummary is present for a game, mention it naturally in that game's writeup and never cite the raw effortDelta value.",
           "When gameDayPrepSummaries are present for a game, mention that preparation naturally in the writeup and never cite raw GDP focus codes.",
           "When rotationSummaries are present for a game, mention that short-handed or foul-trouble context naturally and do not invent reasons such as injuries, load management, or discipline beyond the provided note.",
+          "When playByPlaySummaryLines are present for a game, treat them as the preferred source for any supplied play-by-play mention.",
+          "When playByPlayFacts are present for a game, use them only as provided and do not embellish them into unsupplied sequences.",
           "Unqualified team record, streak, and recent-form fields describe the postgame state after the final result.",
           "Team context fields ending in EnteringGame describe the state before tipoff and should only appear when you are explicitly contrasting the pregame setup.",
           "Use quarterFacts as the source of truth for period-by-period scoring. If a quarter is tied, do not say either team outscored, won, or took that quarter.",
@@ -1936,6 +1957,7 @@ async function buildGameDayRecapPromptPayload(args: {
   bb: Pick<BBXmlApiClient, "getBoxScore" | "getSchedule" | "getTeamInfo">;
   connection: BbConnectionRecord;
   enforceCompletedSlateCoverage?: boolean;
+  fetchPublicMatchPlayByPlay?: PublicPlayByPlayFetcher;
   now: Date;
   requestedGames: SlateGame[];
   request: GameDayRecapPromptPayload["request"];
@@ -1954,6 +1976,10 @@ async function buildGameDayRecapPromptPayload(args: {
   );
   const scheduleByTeamId = new Map<string, BBApiSchedule>(schedules);
   const boxScoreCache = new Map<string, Promise<BoxScoreLoadResult>>();
+  const playByPlayCache = new Map<
+    string,
+    Promise<GameDayRecapPlayByPlayLoadResult>
+  >();
   const coverageIssues: CoverageIssue[] = [];
   const finalCoverageBlockers: CoverageIssue[] = [];
   const promptGames: GameDayRecapPromptPayload["games"] = [];
@@ -2040,24 +2066,51 @@ async function buildGameDayRecapPromptPayload(args: {
       continue;
     }
 
-    const [homeRecentBoxScores, awayRecentBoxScores] = await Promise.all([
-      loadRecentCompletedBoxScores({
-        bb: args.bb,
-        boxScoreCache,
-        gameStartTime: requestedGame.startTime,
-        includeMatch: includeRecapContextMatch,
-        limit: 3,
-        schedule: homeSchedule,
-      }),
-      loadRecentCompletedBoxScores({
-        bb: args.bb,
-        boxScoreCache,
-        gameStartTime: requestedGame.startTime,
-        includeMatch: includeRecapContextMatch,
-        limit: 3,
-        schedule: awaySchedule,
-      }),
-    ]);
+    const [homeRecentBoxScores, awayRecentBoxScores, playByPlayResult] =
+      await Promise.all([
+        loadRecentCompletedBoxScores({
+          bb: args.bb,
+          boxScoreCache,
+          gameStartTime: requestedGame.startTime,
+          includeMatch: includeRecapContextMatch,
+          limit: 3,
+          schedule: homeSchedule,
+        }),
+        loadRecentCompletedBoxScores({
+          bb: args.bb,
+          boxScoreCache,
+          gameStartTime: requestedGame.startTime,
+          includeMatch: includeRecapContextMatch,
+          limit: 3,
+          schedule: awaySchedule,
+        }),
+        args.fetchPublicMatchPlayByPlay
+          ? loadPromptGamePlayByPlay({
+              awayTeamName: requestedGame.awayTeamName,
+              cache: playByPlayCache,
+              fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
+              homeTeamName: requestedGame.homeTeamName,
+              matchId: requestedGame.matchId,
+            })
+          : Promise.resolve<GameDayRecapPlayByPlayLoadResult>({
+              error: null,
+              facts: null,
+            }),
+      ]);
+
+    if (playByPlayResult.error) {
+      logGameDayRecapWarn(
+        playByPlayResult.error.kind === "parse_failed"
+          ? "process.play_by_play_parse_failed"
+          : "process.play_by_play_fetch_failed",
+        {
+          matchId: requestedGame.matchId,
+          targetKey: args.targetKey,
+          userId: args.userId,
+          ...playByPlayResult.error.details,
+        },
+      );
+    }
 
     const homeContext = buildTeamSeasonContext({
       boxScores: homeRecentBoxScores,
@@ -2092,6 +2145,7 @@ async function buildGameDayRecapPromptPayload(args: {
         hasHistoricalContext: true,
         homeEnteringGameContext: homeContext,
         homePostgameContext,
+        playByPlayFacts: playByPlayResult.facts,
         requestedGame,
       }),
     );
@@ -2139,6 +2193,7 @@ async function buildSingleGameSummaryPromptPayload(args: {
   bb: Pick<BBXmlApiClient, "getBoxScore">;
   boxScore: BBApiBoxScore;
   connection: BbConnectionRecord;
+  fetchPublicMatchPlayByPlay?: PublicPlayByPlayFetcher;
   matchId: string;
 }): Promise<GameDayRecapPromptPayload> {
   const requestedGame = toSlateGameFromBoxScore(args.boxScore);
@@ -2150,6 +2205,29 @@ async function buildSingleGameSummaryPromptPayload(args: {
   const awayEnteringGameContext = buildNeutralTeamSeasonContext(
     args.boxScore.awayTeam,
   );
+  const playByPlayResult = args.fetchPublicMatchPlayByPlay
+    ? await loadGameDayRecapPlayByPlayFacts({
+        awayTeamName: requestedGame.awayTeamName,
+        fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
+        homeTeamName: requestedGame.homeTeamName,
+        matchId: args.matchId,
+      })
+    : {
+        error: null,
+        facts: null,
+      };
+
+  if (playByPlayResult.error) {
+    logGameDayRecapWarn(
+      playByPlayResult.error.kind === "parse_failed"
+        ? "process.play_by_play_parse_failed"
+        : "process.play_by_play_fetch_failed",
+      {
+        matchId: args.matchId,
+        ...playByPlayResult.error.details,
+      },
+    );
+  }
 
   return {
     coverage: {
@@ -2166,6 +2244,7 @@ async function buildSingleGameSummaryPromptPayload(args: {
         hasHistoricalContext: false,
         homeEnteringGameContext,
         homePostgameContext: homeEnteringGameContext,
+        playByPlayFacts: playByPlayResult.facts,
         requestedGame,
       }),
     ],
@@ -2190,11 +2269,16 @@ function buildPromptGame(args: {
   hasHistoricalContext: boolean;
   homeEnteringGameContext: TeamSeasonContext;
   homePostgameContext: TeamSeasonContext;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   requestedGame: SlateGame;
 }): GameDayRecapPromptGame {
   const quarterFacts = buildQuarterFacts(args.boxScore);
-  const awayRotationContext = analyzeRotationContextForRecap(args.boxScore.awayTeam);
-  const homeRotationContext = analyzeRotationContextForRecap(args.boxScore.homeTeam);
+  const awayRotationContext = analyzeRotationContextForRecap(
+    args.boxScore.awayTeam,
+  );
+  const homeRotationContext = analyzeRotationContextForRecap(
+    args.boxScore.homeTeam,
+  );
   const evidenceSignals = buildEvidenceSignals({
     awayContext: args.awayPostgameContext,
     boxScore: args.boxScore,
@@ -2221,6 +2305,7 @@ function buildPromptGame(args: {
     ...homeRotationContext.summaries,
     ...awayRotationContext.summaries,
   ];
+  const playByPlayFacts = args.playByPlayFacts ?? null;
 
   return {
     effortDelta: args.boxScore.effortDelta,
@@ -2237,6 +2322,8 @@ function buildPromptGame(args: {
     ),
     matchId: args.requestedGame.matchId,
     neutral: args.boxScore.neutral,
+    playByPlayFacts,
+    playByPlaySummaryLines: playByPlayFacts?.summaryLines ?? [],
     quarterFacts,
     quarterScores: {
       away: args.boxScore.awayTeam.partialScores,
@@ -2585,6 +2672,28 @@ async function loadBoxScore(
   return pending;
 }
 
+async function loadPromptGamePlayByPlay(args: {
+  awayTeamName: string;
+  cache: Map<string, Promise<GameDayRecapPlayByPlayLoadResult>>;
+  fetchPublicMatchPlayByPlay: PublicPlayByPlayFetcher;
+  homeTeamName: string;
+  matchId: string;
+}): Promise<GameDayRecapPlayByPlayLoadResult> {
+  const existing = args.cache.get(args.matchId);
+  if (existing) {
+    return existing;
+  }
+
+  const pending = loadGameDayRecapPlayByPlayFacts({
+    awayTeamName: args.awayTeamName,
+    fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
+    homeTeamName: args.homeTeamName,
+    matchId: args.matchId,
+  });
+  args.cache.set(args.matchId, pending);
+  return pending;
+}
+
 async function loadRecentCompletedBoxScores(args: {
   bb: Pick<BBXmlApiClient, "getBoxScore">;
   boxScoreCache: Map<string, Promise<BoxScoreLoadResult>>;
@@ -2614,9 +2723,7 @@ async function loadRecentCompletedBoxScores(args: {
 }
 
 function hasCompleteBoxScore(boxScore: BBApiBoxScore): boolean {
-  return (
-    boxScore.homeTeam.score !== null && boxScore.awayTeam.score !== null
-  );
+  return boxScore.homeTeam.score !== null && boxScore.awayTeam.score !== null;
 }
 
 function toBoxScoreLoadErrorDetails(error: unknown): BoxScoreLoadErrorDetails {
@@ -2684,15 +2791,15 @@ function isRequestedGameExpectedFinal(args: {
     args.requestedGame.startTime,
     timeZone,
   );
-  return Boolean(scheduledLeagueDate && scheduledLeagueDate < currentLeagueDate);
+  return Boolean(
+    scheduledLeagueDate && scheduledLeagueDate < currentLeagueDate,
+  );
 }
 
 function isCoverageStrictForRequest(
   request: GameDayRecapPromptPayload["request"],
 ): boolean {
-  return (
-    request.kind === "LEAGUE_DATE" || request.kind === "LEAGUE_GAME_DAY"
-  );
+  return request.kind === "LEAGUE_DATE" || request.kind === "LEAGUE_GAME_DAY";
 }
 
 function formatTeamRatingsForRecap(
@@ -2766,7 +2873,10 @@ function derivePostgameTeamSeasonContext(args: {
     return args.enteringGameContext;
   }
 
-  const recentMargins = [currentMargin, ...args.enteringGameContext.recentMargins]
+  const recentMargins = [
+    currentMargin,
+    ...args.enteringGameContext.recentMargins,
+  ]
     .filter((margin): margin is number => Number.isFinite(margin))
     .slice(0, 5);
   const postgameBoxScores = [args.boxScore, ...args.priorBoxScores].slice(0, 3);
@@ -2796,8 +2906,7 @@ function derivePostgameTeamSeasonContext(args: {
     ...args.enteringGameContext,
     currentStreak,
     lastFive: formatLastFiveFromMargins(recentMargins),
-    losses:
-      args.enteringGameContext.losses + (currentMargin < 0 ? 1 : 0),
+    losses: args.enteringGameContext.losses + (currentMargin < 0 ? 1 : 0),
     recentAverageMargin,
     recentBoxScoreCoverage: postgameBoxScores.length,
     recentMargins,
@@ -2823,7 +2932,10 @@ function buildTeamSeasonContext(args: {
     args.gameStartTime,
     args.includeMatch,
   );
-  const record = summarizeCompletedRecord(completedMatches, args.standing.teamId);
+  const record = summarizeCompletedRecord(
+    completedMatches,
+    args.standing.teamId,
+  );
   const recentMatches = completedMatches.slice(0, 5);
   const recentMargins = recentMatches
     .map((match) => getMarginForTeam(match, args.standing.teamId))
@@ -2881,7 +2993,10 @@ function buildRecentSignalFlags(args: {
   return Array.from(recentSignalFlags);
 }
 
-function countBlowoutLosses(boxScores: BBApiBoxScore[], teamId: string): number {
+function countBlowoutLosses(
+  boxScores: BBApiBoxScore[],
+  teamId: string,
+): number {
   return boxScores.filter((boxScore) => {
     const margin = getBoxScoreMarginForTeam(boxScore, teamId);
     return margin !== null && margin <= -15;
@@ -3002,10 +3117,9 @@ function scorePlayerPerformance(player: BBApiBoxScorePlayer): number {
 }
 
 function playerTotalMinutes(player: BBApiBoxScorePlayer): number {
-  return Object.values(toOptionalRecord(player.minutesByPosition) ?? {}).reduce<number>(
-    (sum, value) => sum + asNumberFromUnknown(value),
-    0,
-  );
+  return Object.values(
+    toOptionalRecord(player.minutesByPosition) ?? {},
+  ).reduce<number>((sum, value) => sum + asNumberFromUnknown(value), 0);
 }
 
 function wasPlayerLimitedByFoulTrouble(player: BBApiBoxScorePlayer): boolean {
@@ -3162,45 +3276,54 @@ function formatLastFive(matches: BBApiScheduleMatch[], teamId: string): string {
 function buildQuarterFacts(
   boxScore: BBApiBoxScore,
 ): GameDayRecapPromptQuarterFacts {
-  const periods = boxScore.homeTeam.partialScores.flatMap((homeScore, index) => {
-    const awayScore = boxScore.awayTeam.partialScores[index];
-    if (awayScore == null) {
-      return [];
-    }
+  const periods = boxScore.homeTeam.partialScores.flatMap(
+    (homeScore, index) => {
+      const awayScore = boxScore.awayTeam.partialScores[index];
+      if (awayScore == null) {
+        return [];
+      }
 
-    const margin = Math.abs(homeScore - awayScore);
-    const winningSide =
-      homeScore === awayScore ? "tie" : homeScore > awayScore ? "home" : "away";
+      const margin = Math.abs(homeScore - awayScore);
+      const winningSide =
+        homeScore === awayScore
+          ? "tie"
+          : homeScore > awayScore
+            ? "home"
+            : "away";
 
-    return [
-      {
-        awayScore,
-        homeScore,
-        label: formatPeriodLabel(index + 1),
-        margin,
-        period: index + 1,
-        winningSide,
-      } satisfies GameDayRecapPromptPeriodFact,
-    ];
-  });
+      return [
+        {
+          awayScore,
+          homeScore,
+          label: formatPeriodLabel(index + 1),
+          margin,
+          period: index + 1,
+          winningSide,
+        } satisfies GameDayRecapPromptPeriodFact,
+      ];
+    },
+  );
 
-  const decisiveQuarter = [...periods]
-    .filter(
-      (
-        period,
-      ): period is GameDayRecapPromptPeriodFact & {
-        winningSide: "away" | "home";
-      } =>
-        period.winningSide !== "tie" &&
-        period.margin >= GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN,
-    )
-    .sort((left, right) => right.margin - left.margin || left.period - right.period)
-    .at(0) ?? null;
+  const decisiveQuarter =
+    [...periods]
+      .filter(
+        (
+          period,
+        ): period is GameDayRecapPromptPeriodFact & {
+          winningSide: "away" | "home";
+        } =>
+          period.winningSide !== "tie" &&
+          period.margin >= GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN,
+      )
+      .sort(
+        (left, right) =>
+          right.margin - left.margin || left.period - right.period,
+      )
+      .at(0) ?? null;
 
   return {
     decisiveQuarter,
-    fourthQuarterOutcome:
-      periods.find((period) => period.period === 4) ?? null,
+    fourthQuarterOutcome: periods.find((period) => period.period === 4) ?? null,
     periods,
   };
 }
@@ -3784,14 +3907,18 @@ function summarizeCoverageForGameDayRecapLog(
 
   return {
     availableGames: toFiniteNumberOrNull(
-      typeof coverage.availableGames === "number" ? coverage.availableGames : NaN,
+      typeof coverage.availableGames === "number"
+        ? coverage.availableGames
+        : NaN,
     ),
     missingGameCount: Array.isArray(coverage.missingGames)
       ? coverage.missingGames.length
       : 0,
     partial,
     requestedGames: toFiniteNumberOrNull(
-      typeof coverage.requestedGames === "number" ? coverage.requestedGames : NaN,
+      typeof coverage.requestedGames === "number"
+        ? coverage.requestedGames
+        : NaN,
     ),
   };
 }
@@ -3804,7 +3931,9 @@ function shouldLogGameDayRecapCompletionInfo(
   }
 
   const requestedGames =
-    typeof coverage.requestedGames === "number" ? coverage.requestedGames : null;
+    typeof coverage.requestedGames === "number"
+      ? coverage.requestedGames
+      : null;
   const partial = coverage.partial === true;
   const missingGameCount =
     typeof coverage.missingGameCount === "number"
@@ -4073,7 +4202,9 @@ function validateGameDayRecapResult(
   );
 }
 
-function normalizeGameDayRecapResult(input: unknown): GameDayRecapResultPayload {
+function normalizeGameDayRecapResult(
+  input: unknown,
+): GameDayRecapResultPayload {
   const record = requireRecord(input, "Game day recap result");
   const summary = requireRecord(record.summary, "Game day recap summary");
   const games = Array.isArray(record.games) ? record.games : null;
@@ -4173,11 +4304,8 @@ function decorateGameDayRecapResultWithSurpriseMetadata(
   );
   const games = result.games.map((game) => ({
     ...game,
-    surpriseFactor:
-      expectedGamesByMatchId.get(game.matchId) ?
-        computeSurpriseFactorForGame(
-          expectedGamesByMatchId.get(game.matchId)!,
-        )
+    surpriseFactor: expectedGamesByMatchId.get(game.matchId)
+      ? computeSurpriseFactorForGame(expectedGamesByMatchId.get(game.matchId)!)
       : null,
   }));
   const gameOfTheDay = selectGameOfTheDay(games, expectedGamesByMatchId);
@@ -4210,7 +4338,10 @@ function computeSurpriseFactorForGame(game: GameDayRecapPromptGame): number {
     score += 0.7;
   }
 
-  score += surpriseFactorRatingAdjustment(winner.ratingTotal, loser.ratingTotal);
+  score += surpriseFactorRatingAdjustment(
+    winner.ratingTotal,
+    loser.ratingTotal,
+  );
   score += surpriseFactorRecordAdjustment(
     winner.recordEnteringGame,
     loser.recordEnteringGame,
@@ -4246,7 +4377,10 @@ function selectGameOfTheDay(
       continue;
     }
 
-    if ((game.surpriseFactor ?? -Infinity) > (bestGame.surpriseFactor ?? -Infinity)) {
+    if (
+      (game.surpriseFactor ?? -Infinity) >
+      (bestGame.surpriseFactor ?? -Infinity)
+    ) {
       bestGame = game;
       continue;
     }
@@ -4267,7 +4401,8 @@ function selectGameOfTheDay(
       continue;
     }
 
-    const currentMargin = currentExpected?.finalMargin ?? Number.POSITIVE_INFINITY;
+    const currentMargin =
+      currentExpected?.finalMargin ?? Number.POSITIVE_INFINITY;
     const bestMargin = bestExpected?.finalMargin ?? Number.POSITIVE_INFINITY;
     if (currentMargin < bestMargin) {
       bestGame = game;
@@ -4348,8 +4483,11 @@ function surpriseFactorRecordAdjustment(
     return 0;
   }
 
-  const winnerPct = winnerRecordValue.wins / (winnerRecordValue.wins + winnerRecordValue.losses);
-  const loserPct = loserRecordValue.wins / (loserRecordValue.wins + loserRecordValue.losses);
+  const winnerPct =
+    winnerRecordValue.wins /
+    (winnerRecordValue.wins + winnerRecordValue.losses);
+  const loserPct =
+    loserRecordValue.wins / (loserRecordValue.wins + loserRecordValue.losses);
   if (!Number.isFinite(winnerPct) || !Number.isFinite(loserPct)) {
     return 0;
   }
@@ -4415,7 +4553,9 @@ function countStrategicDeemphasisFlags(recentSignalFlags: string[]): number {
   return recentSignalFlags.includes("possible_strategic_deemphasis") ? 1 : 0;
 }
 
-function countOvertimePeriods(game: GameDayRecapPromptGame | undefined): number {
+function countOvertimePeriods(
+  game: GameDayRecapPromptGame | undefined,
+): number {
   return game ? Math.max(0, game.quarterFacts.periods.length - 4) : 0;
 }
 
@@ -4429,7 +4569,11 @@ function parsePromptRecord(
 
   const wins = Number(match[1]);
   const losses = Number(match[2]);
-  if (!Number.isInteger(wins) || !Number.isInteger(losses) || wins + losses === 0) {
+  if (
+    !Number.isInteger(wins) ||
+    !Number.isInteger(losses) ||
+    wins + losses === 0
+  ) {
     return null;
   }
 
@@ -4452,7 +4596,9 @@ function orderGameDayRecapGames(
       );
     }
     if (gamesByMatchId.has(game.matchId)) {
-      throw new Error("Game day recap result contained duplicate match coverage.");
+      throw new Error(
+        "Game day recap result contained duplicate match coverage.",
+      );
     }
     gamesByMatchId.set(game.matchId, game);
   }
@@ -4804,8 +4950,14 @@ function salvageGameDayRecapResult(args: {
   request: GameDayRecapPromptPayload["request"];
   result: GameDayRecapResultPayload;
 }): GeneratedGameDayRecap {
-  const orderedGames = orderGameDayRecapGames(args.result.games, args.expectedGames);
-  const issuesByMatchId = new Map<string, GameDayRecapSemanticValidationIssue[]>();
+  const orderedGames = orderGameDayRecapGames(
+    args.result.games,
+    args.expectedGames,
+  );
+  const issuesByMatchId = new Map<
+    string,
+    GameDayRecapSemanticValidationIssue[]
+  >();
 
   for (const issue of args.issues) {
     const issues = issuesByMatchId.get(issue.matchId);
@@ -4820,7 +4972,9 @@ function salvageGameDayRecapResult(args: {
   const coverageIssues: CoverageIssue[] = [];
 
   for (const expectedGame of args.expectedGames) {
-    const currentGame = orderedGames.find((game) => game.matchId === expectedGame.matchId);
+    const currentGame = orderedGames.find(
+      (game) => game.matchId === expectedGame.matchId,
+    );
     if (!currentGame) {
       continue;
     }
@@ -4890,7 +5044,11 @@ function salvageGameDayRecapGame(args: {
     return null;
   }
 
-  const patchedGame = applyGameWriteupRepairs(args.game, args.expectedGame, args.issues);
+  const patchedGame = applyGameWriteupRepairs(
+    args.game,
+    args.expectedGame,
+    args.issues,
+  );
   const remainingAfterPatch = validateRecapGameSemantics(
     patchedGame,
     args.expectedGame,
@@ -4925,7 +5083,10 @@ function applyGameWriteupRepairs(
   issues: GameDayRecapSemanticValidationIssue[],
 ): GameDayRecapResultGame {
   const sentences = splitRecapText(game.writeup);
-  const issuesBySentence = new Map<number, GameDayRecapSemanticValidationIssue[]>();
+  const issuesBySentence = new Map<
+    number,
+    GameDayRecapSemanticValidationIssue[]
+  >();
 
   for (const issue of issues) {
     if (issue.field !== "writeup") {
@@ -4970,9 +5131,11 @@ function choosePreferredRepairIssue(
     wrong_quarter_winner: 5,
   };
 
-  return [...issues].sort(
-    (left, right) => priorities[left.kind] - priorities[right.kind],
-  )[0] ?? issues[0]!;
+  return (
+    [...issues].sort(
+      (left, right) => priorities[left.kind] - priorities[right.kind],
+    )[0] ?? issues[0]!
+  );
 }
 
 function buildSafeReplacementSentence(
@@ -4982,7 +5145,9 @@ function buildSafeReplacementSentence(
   switch (issue.kind) {
     case "record_mismatch": {
       const team = issue.teamSide ? expectedGame.teams[issue.teamSide] : null;
-      return team?.record ? `${team.name} finished the game at ${team.record}.` : null;
+      return team?.record
+        ? `${team.name} finished the game at ${team.record}.`
+        : null;
     }
     case "compact_streak_mismatch": {
       const team = issue.teamSide ? expectedGame.teams[issue.teamSide] : null;
@@ -5045,8 +5210,7 @@ function buildSafePartialRecapSummary(args: {
   retainedGameCount: number;
 }): GameDayRecapResultSummary {
   const label = args.request.leagueName?.trim() || args.request.label.trim();
-  const retainedGamesLabel =
-    args.retainedGameCount === 1 ? "game" : "games";
+  const retainedGamesLabel = args.retainedGameCount === 1 ? "game" : "games";
   const droppedGamesLabel =
     args.droppedGameCount === 1 ? "game was" : "games were";
 
@@ -5068,7 +5232,10 @@ function mergeCoverageIssues(
 
   const missingGames = [...coverage.missingGames, ...coverageIssues];
   return {
-    availableGames: Math.max(0, coverage.availableGames - coverageIssues.length),
+    availableGames: Math.max(
+      0,
+      coverage.availableGames - coverageIssues.length,
+    ),
     missingGames,
     partial: true,
     requestedGames: coverage.requestedGames,
@@ -5113,7 +5280,8 @@ function findClosestScorePair(
   sentence: string,
   pivotIndex: number,
 ): { first: number; second: number } | null {
-  let selected: { distance: number; first: number; second: number } | null = null;
+  let selected: { distance: number; first: number; second: number } | null =
+    null;
 
   const scorePattern = /\b(\d{1,3})-(\d{1,3})\b/g;
   let match = scorePattern.exec(sentence);

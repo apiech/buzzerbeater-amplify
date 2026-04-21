@@ -1,5 +1,8 @@
 import { CfnOutput, Stack } from "aws-cdk-lib";
-import { Certificate, CertificateValidation } from "aws-cdk-lib/aws-certificatemanager";
+import {
+  Certificate,
+  CertificateValidation,
+} from "aws-cdk-lib/aws-certificatemanager";
 import { ManagedLoginVersion, type IUserPool } from "aws-cdk-lib/aws-cognito";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
@@ -51,7 +54,7 @@ export function configureAuthCustomDomain(
       certificate,
       domainName: config.domain,
     },
-    managedLoginVersion: ManagedLoginVersion.CLASSIC_HOSTED_UI,
+    managedLoginVersion: ManagedLoginVersion.NEWER_MANAGED_LOGIN,
   });
 
   new route53.ARecord(stack, "CognitoAuthCustomDomainAliasRecord", {

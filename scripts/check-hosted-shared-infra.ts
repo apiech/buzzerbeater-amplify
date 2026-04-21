@@ -13,6 +13,7 @@ import {
   type SharedInfraBindings,
 } from "../amplify/_shared/shared-infra-contract.js";
 import { buildMaintenanceParameterName } from "../lib/maintenance/environment.js";
+import { buildManagedLoginPreviewUrl } from "./apply-cognito-managed-login-branding.js";
 
 const ACTIVE_SERVERLESS_ENDPOINT_STATUSES = new Set([
   "Creating",
@@ -66,7 +67,13 @@ type HostedBranchSummary = {
 };
 
 type HostedBranchDetails = HostedBranchSummary & {
+  backendStackArn: string | null;
   environmentVariables: Record<string, string | undefined>;
+};
+
+type HostedAuthPreviewConfig = {
+  clientId: string;
+  redirectUri: string;
 };
 
 type HostedCustomRule = {
@@ -373,6 +380,9 @@ function describeHostedBranchDetails(
         "json",
       ]) as {
         branch?: {
+          backend?: {
+            stackArn?: string;
+          };
           computeRoleArn?: string;
           environmentVariables?: Record<string, string | undefined>;
         };
@@ -381,18 +391,24 @@ function describeHostedBranchDetails(
       return [
         {
           branchName,
+          backendStackArn: normalizeOptionalString(
+            branchPayload.branch?.backend?.stackArn,
+          ),
           computeRoleArn: normalizeOptionalString(
             branchPayload.branch?.computeRoleArn,
           ),
           environmentName: branchToEnvironmentName(branchName),
-          environmentVariables: branchPayload.branch?.environmentVariables ?? {},
+          environmentVariables:
+            branchPayload.branch?.environmentVariables ?? {},
         },
       ];
     })
     .sort((left, right) => left.branchName.localeCompare(right.branchName));
 }
 
-function summarizeHostedBranch(branch: HostedBranchDetails): HostedBranchSummary {
+function summarizeHostedBranch(
+  branch: HostedBranchDetails,
+): HostedBranchSummary {
   return {
     branchName: branch.branchName,
     computeRoleArn: branch.computeRoleArn,
@@ -503,9 +519,10 @@ function checkSharedInfraParameters(
             invalidParameters.has(parameterPath),
         )
         .map(([, parameterPath]) => parameterPath),
-      ...[bbConnectionSecretPaths.secret, bbConnectionSecretPaths.fingerprint].filter(
-        (parameterPath) => invalidParameters.has(parameterPath),
-      ),
+      ...[
+        bbConnectionSecretPaths.secret,
+        bbConnectionSecretPaths.fingerprint,
+      ].filter((parameterPath) => invalidParameters.has(parameterPath)),
     ],
     missingOptionalPaths: parameterEntries
       .filter(
@@ -979,7 +996,9 @@ function checkHostedDomainConfiguration(options: {
   warnings: string[];
 } {
   const configuredHosts = new Set(
-    options.domainAssociations.flatMap((association) => association.configuredHosts),
+    options.domainAssociations.flatMap(
+      (association) => association.configuredHosts,
+    ),
   );
   const issues: string[] = [];
   const warnings: string[] = [];
@@ -1046,6 +1065,7 @@ function checkHostedAuthDomainConfiguration(options: {
       };
 
       return {
+        backendStackArn: branch.backendStackArn,
         branchName: branch.branchName,
         environmentVariables,
         activeDomain:
@@ -1053,8 +1073,11 @@ function checkHostedAuthDomainConfiguration(options: {
       };
     })
     .filter(
-      (branch): branch is {
+      (
+        branch,
+      ): branch is {
         activeDomain: string;
+        backendStackArn: string | null;
         branchName: string;
         environmentVariables: Record<string, string | undefined>;
       } => branch.activeDomain !== null,
@@ -1074,6 +1097,7 @@ function checkHostedAuthDomainConfiguration(options: {
 
     branchDomains.push({
       activeDomain,
+      backendStackArn: null,
       branchName: "app",
       environmentVariables: options.appEnvironmentVariables,
     });
@@ -1132,28 +1156,43 @@ function checkHostedAuthDomainConfiguration(options: {
       );
     }
 
+    const previewUrl = resolveHostedAuthPreviewUrl({
+      activeDomain: branch.activeDomain,
+      branch,
+      region: options.region,
+      runtime: options.runtime,
+    });
+    if (previewUrl === null) {
+      warnings.push(
+        branch.branchName === "app"
+          ? `Could not resolve a managed login preview URL for the Cognito custom auth domain '${branch.activeDomain}'.`
+          : `[${branch.branchName}] Could not resolve a managed login preview URL for the Cognito custom auth domain '${branch.activeDomain}'.`,
+      );
+      continue;
+    }
+
     const httpsStatusReader = options.runtime.httpsStatus;
     const httpsStatus = httpsStatusReader
-      ? httpsStatusReader(`https://${branch.activeDomain}/login`)
+      ? httpsStatusReader(previewUrl)
       : null;
     if (httpsStatus === null) {
       warnings.push(
         branch.branchName === "app"
-          ? `Could not verify HTTPS readiness for the Cognito custom auth domain '${branch.activeDomain}'.`
-          : `[${branch.branchName}] Could not verify HTTPS readiness for the Cognito custom auth domain '${branch.activeDomain}'.`,
+          ? `Could not verify HTTPS readiness for the managed login preview URL on '${branch.activeDomain}'.`
+          : `[${branch.branchName}] Could not verify HTTPS readiness for the managed login preview URL on '${branch.activeDomain}'.`,
       );
-    } else if (httpsStatus >= 400 && httpsStatus !== 400) {
+    } else if (httpsStatus < 200 || httpsStatus >= 400) {
       issues.push(
         branch.branchName === "app"
-          ? `Cognito custom auth domain '${branch.activeDomain}' returned HTTP ${httpsStatus} for /login.`
-          : `[${branch.branchName}] Cognito custom auth domain '${branch.activeDomain}' returned HTTP ${httpsStatus} for /login.`,
+          ? `Cognito custom auth domain '${branch.activeDomain}' returned HTTP ${httpsStatus} for the managed login preview URL.`
+          : `[${branch.branchName}] Cognito custom auth domain '${branch.activeDomain}' returned HTTP ${httpsStatus} for the managed login preview URL.`,
       );
     }
   }
 
   const renderedDomains =
-    branchDomains.length === 1 && branchDomains[0]
-      ? [branchDomains[0].activeDomain]
+    branchDomains.length === 1
+      ? [branchDomains[0]!.activeDomain]
       : branchDomains.map(({ branchName, activeDomain }) =>
           branchName === "app" ? activeDomain : `${branchName}=${activeDomain}`,
         );
@@ -1163,6 +1202,95 @@ function checkHostedAuthDomainConfiguration(options: {
     issues,
     warnings,
   };
+}
+
+function resolveHostedAuthPreviewUrl(options: {
+  activeDomain: string;
+  branch: {
+    activeDomain: string;
+    backendStackArn: string | null;
+  };
+  region: string;
+  runtime: Pick<AwsCliRuntime, "execAwsJson">;
+}): string | null {
+  const previewConfig = describeHostedAuthPreviewConfig(
+    options.branch.backendStackArn,
+    options.region,
+    options.runtime,
+  );
+  if (previewConfig === null) {
+    return null;
+  }
+
+  return buildManagedLoginPreviewUrl({
+    clientId: previewConfig.clientId,
+    domain: options.activeDomain,
+    redirectUri: previewConfig.redirectUri,
+  });
+}
+
+function describeHostedAuthPreviewConfig(
+  backendStackArn: string | null,
+  region: string,
+  runtime: Pick<AwsCliRuntime, "execAwsJson">,
+): HostedAuthPreviewConfig | null {
+  if (backendStackArn === null) {
+    return null;
+  }
+
+  const payload = runtime.execAwsJson([
+    "cloudformation",
+    "describe-stacks",
+    "--stack-name",
+    backendStackArn,
+    "--region",
+    region,
+    "--output",
+    "json",
+  ]) as {
+    Stacks?: Array<{
+      Outputs?: Array<{
+        OutputKey?: string;
+        OutputValue?: string;
+      }>;
+    }>;
+  };
+  const outputs = payload.Stacks?.[0]?.Outputs ?? [];
+  const clientId =
+    readCloudFormationOutputValue(outputs, ["oauthClientId", "webClientId"]) ??
+    null;
+  const redirectUri =
+    normalizeOptionalString(
+      readCloudFormationOutputValue(outputs, ["oauthRedirectSignIn"]),
+    ) ?? null;
+
+  if (clientId === null || redirectUri === null) {
+    return null;
+  }
+
+  return {
+    clientId,
+    redirectUri,
+  };
+}
+
+function readCloudFormationOutputValue(
+  outputs: Array<{
+    OutputKey?: string;
+    OutputValue?: string;
+  }>,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const value = normalizeOptionalString(
+      outputs.find((output) => output.OutputKey === key)?.OutputValue,
+    );
+    if (value !== null) {
+      return value.split(",")[0]?.trim() ?? null;
+    }
+  }
+
+  return null;
 }
 
 function extractHostFromAbsoluteUrl(value: string | null): string | null {
@@ -1184,7 +1312,9 @@ function renderHostedCustomRule(rule: HostedCustomRule): string {
   return `${source} -> ${target} [${status}]`;
 }
 
-function normalizeOptionalString(value: string | undefined): string | null {
+function normalizeOptionalString(
+  value: string | undefined | null,
+): string | null {
   const normalized = typeof value === "string" ? value.trim() : "";
   return normalized ? normalized : null;
 }
@@ -1194,7 +1324,9 @@ function printSummary(report: HostedSharedInfraReport, region: string): void {
   runtime.write(`Amplify app: ${report.appName} (${report.appId})`);
   runtime.write(`Region: ${region}`);
   runtime.write(`Service role: ${report.serviceRoleArn ?? "missing"}`);
-  runtime.write(`Auth domain: ${report.authDomain ?? "prefix-domain fallback"}`);
+  runtime.write(
+    `Auth domain: ${report.authDomain ?? "prefix-domain fallback"}`,
+  );
   runtime.write("Hosted branches:");
   for (const branch of report.branchSummaries) {
     runtime.write(

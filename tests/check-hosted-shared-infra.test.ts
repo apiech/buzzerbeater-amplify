@@ -511,11 +511,32 @@ test("hosted readiness verifies the configured Cognito custom auth domain", () =
       "amplify:get-branch": [
         {
           branch: {
+            backend: {
+              stackArn:
+                "arn:aws:cloudformation:us-east-1:427377913956:stack/amplify-main/123",
+            },
             computeRoleArn:
               "arn:aws:iam::427377913956:role/buzzerbeater-prod-hosted-compute",
           },
         },
       ],
+      "cloudformation:describe-stacks": {
+        Stacks: [
+          {
+            Outputs: [
+              {
+                OutputKey: "oauthClientId",
+                OutputValue: "client-123",
+              },
+              {
+                OutputKey: "oauthRedirectSignIn",
+                OutputValue:
+                  "https://app.example.com/api/auth/sign-in-callback",
+              },
+            ],
+          },
+        ],
+      },
       "cognito-idp:describe-user-pool-domain": {
         DomainDescription: {
           CloudFrontDistribution: "d111111abcdef8.cloudfront.net",
@@ -558,7 +579,7 @@ test("hosted readiness verifies the configured Cognito custom auth domain", () =
   assert.equal(report.issues.length, 0);
 });
 
-test("hosted readiness detects branch-level Cognito custom auth domains and accepts the classic login parameter error", () => {
+test("hosted readiness detects branch-level Cognito custom auth domains and verifies the managed login preview URL", () => {
   const report = hostedCheckTesting.collectHostedSharedInfraReadiness(
     {
       appId: "d2ckw6mf5kdema",
@@ -577,6 +598,10 @@ test("hosted readiness detects branch-level Cognito custom auth domains and acce
       "amplify:get-branch": [
         {
           branch: {
+            backend: {
+              stackArn:
+                "arn:aws:cloudformation:us-east-1:427377913956:stack/amplify-dev/123",
+            },
             computeRoleArn:
               "arn:aws:iam::427377913956:role/buzzerbeater-dev-hosted-compute",
             environmentVariables: {
@@ -593,6 +618,23 @@ test("hosted readiness detects branch-level Cognito custom auth domains and acce
           },
         },
       ],
+      "cloudformation:describe-stacks": {
+        Stacks: [
+          {
+            Outputs: [
+              {
+                OutputKey: "oauthClientId",
+                OutputValue: "client-123",
+              },
+              {
+                OutputKey: "oauthRedirectSignIn",
+                OutputValue:
+                  "https://dev.example.com/api/auth/sign-in-callback",
+              },
+            ],
+          },
+        ],
+      },
       "cognito-idp:describe-user-pool-domain": {
         DomainDescription: {
           CloudFrontDistribution: "d111111abcdef8.cloudfront.net",
@@ -621,7 +663,7 @@ test("hosted readiness detects branch-level Cognito custom auth domains and acce
           ],
         },
       ],
-      "https:status": 400,
+      "https:status": 200,
       "service-quotas:get-service-quota": {
         Quota: {
           Value: 10,

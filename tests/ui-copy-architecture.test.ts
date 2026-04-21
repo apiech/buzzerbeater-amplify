@@ -58,7 +58,10 @@ test("home dashboard uses dedicated boxscore routes and owner roster copy", () =
     "boxscore-page-client.tsx",
   ]);
 
-  assert.match(dashboardSource, /\/workspace\/boxscores\/\$\{encodeURIComponent\(matchId\)\}/);
+  assert.match(
+    dashboardSource,
+    /\/workspace\/boxscores\/\$\{encodeURIComponent\(matchId\)\}/,
+  );
   assert.doesNotMatch(dashboardSource, /handleLoadBoxscore/);
   assert.match(dashboardSource, /Owner roster and lineup context/);
   assert.match(dashboardSource, /label="Pos"/);
@@ -69,18 +72,19 @@ test("home dashboard uses dedicated boxscore routes and owner roster copy", () =
   assert.doesNotMatch(boxscoreRouteSource, /Your tactics|Opponent tactics/);
 });
 
-test("auth copy routes users through secure hosted sign-in instead of local password forms", () => {
+test("auth copy routes users through the branded account domain instead of local password forms", () => {
   const dashboardSource = readAppFile(["app", "dashboard-app.tsx"]);
   const loginSource = readAppFile(["app", "login", "page.tsx"]);
 
   assert.doesNotMatch(dashboardSource, /placeholder="Create a password"/);
   assert.doesNotMatch(dashboardSource, /placeholder="Confirm your password"/);
-  assert.match(loginSource, /secure hosted sign-in/);
+  assert.match(loginSource, /branded account domain/);
   assert.match(loginSource, /URL bar/);
   assert.match(loginSource, /Branded account domain/);
   assert.match(
     loginSource,
-    /Credential entry, account creation, password resets, and email\s+confirmation continue on the secure account domain/,
+    /Sign-in, account creation, password resets, and email confirmation\s+continue on the branded account domain/,
   );
   assert.doesNotMatch(loginSource, /Cognito-hosted/);
+  assert.doesNotMatch(loginSource, /secure hosted sign-in/);
 });

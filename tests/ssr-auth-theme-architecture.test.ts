@@ -80,7 +80,10 @@ test("workspace requests are routed through server-authenticated Next entry poin
   assert.match(proxySource, /pathname === "\/api\/auth\/sign-out-callback"/);
   assert.match(proxySource, /new URL\("\/login", request\.url\)/);
   assert.match(homePageSource, /getServerCurrentUser/);
-  assert.match(homePageSource, /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/);
+  assert.match(
+    homePageSource,
+    /import\s+\{\s*commercialModeEnabled\s*\}\s+from\s+"@\/config\/commercial-mode"/,
+  );
   assert.match(homePageSource, /href="\/api\/auth\/sign-in"/);
   assert.match(homePageSource, /href="\/api\/auth\/sign-up"/);
   assert.match(homePageSource, /href="\/store"/);
@@ -188,7 +191,7 @@ test("client theme updates and data access go through internal app routes", () =
   assert.doesNotMatch(clientSource, /Amplify\.configure/);
 });
 
-test("auth infrastructure can attach a branded Lite custom domain without changing the SSR auth contract", () => {
+test("auth infrastructure can attach a branded managed-login domain without changing the SSR auth contract", () => {
   const backendSource = readRepoFile("amplify", "backend.ts");
   const authControlsSource = readRepoFile(
     "amplify",
@@ -202,16 +205,13 @@ test("auth infrastructure can attach a branded Lite custom domain without changi
   );
 
   assert.match(backendSource, /configureAuthCustomDomain/);
-  assert.match(authControlsSource, /userPool\.userPoolTier = "LITE"/);
+  assert.match(authControlsSource, /userPool\.userPoolTier = "ESSENTIALS"/);
   assert.match(authCustomDomainSource, /resolveAuthCustomDomainConfig/);
   assert.match(
     authCustomDomainSource,
-    /ManagedLoginVersion\.CLASSIC_HOSTED_UI/,
+    /ManagedLoginVersion\.NEWER_MANAGED_LOGIN/,
   );
-  assert.match(
-    authCustomDomainSource,
-    /HostedZone\.fromHostedZoneAttributes/,
-  );
+  assert.match(authCustomDomainSource, /HostedZone\.fromHostedZoneAttributes/);
   assert.match(authCustomDomainSource, /new Certificate\(/);
   assert.match(authCustomDomainSource, /new route53\.ARecord\(/);
   assert.match(authCustomDomainSource, /new route53\.AaaaRecord\(/);
@@ -219,5 +219,5 @@ test("auth infrastructure can attach a branded Lite custom domain without changi
     authCustomDomainSource,
     /new route53Targets\.UserPoolDomainTarget/,
   );
-  assert.doesNotMatch(authCustomDomainSource, /NEWER_MANAGED_LOGIN/);
+  assert.doesNotMatch(authCustomDomainSource, /CLASSIC_HOSTED_UI/);
 });

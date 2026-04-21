@@ -41,7 +41,7 @@ export function LoginActions({
             className: secondaryLinkClassName,
             flow: "sign_in" as const,
             href: "/api/auth/sign-in",
-            label: "Continue to secure sign in",
+            label: "Sign in",
           },
         ]
       : [
@@ -49,7 +49,7 @@ export function LoginActions({
             className: authLinkClassName,
             flow: "sign_in" as const,
             href: "/api/auth/sign-in",
-            label: "Continue to secure sign in",
+            label: "Sign in",
           },
           {
             className: secondaryLinkClassName,
@@ -87,8 +87,8 @@ export function LoginActions({
         ) : null}
       </div>
       <p className="text-ink-muted m-0 text-xs leading-6">
-        You&apos;ll stay in this browser, finish secure account access on the
-        account domain, and return here with your session ready.
+        We&apos;ll open the branded account domain in this browser, finish the
+        account step there, and return you here with your session ready.
       </p>
     </div>
   );

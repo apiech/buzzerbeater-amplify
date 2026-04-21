@@ -352,7 +352,10 @@ test("tracked-player storage contracts keep potential and use explicit stored-ro
     /potential: a\.integer\(\)\.required\(\),/,
   );
   assert.match(workspaceSource, /function projectStoredOwnedRosterPlayer/);
-  assert.match(trackedPlayerProjectionSection, /potential: player\.skills\.potential,/);
+  assert.match(
+    trackedPlayerProjectionSection,
+    /potential: player\.skills\.potential,/,
+  );
   assert.doesNotMatch(
     trackedPlayerProjectionSection,
     /skills:\s*\{\s*\.\.\.player\.skills\s*\}/s,
@@ -369,11 +372,20 @@ test("dashboard connection and cache parsers reuse the shared strict owned-data 
       /const nullableStringSchema[\s\S]*?const lineupHelperDefensiveSwitchSchema/,
     )?.[0] ?? "";
 
-  assert.match(queryClientSource, /from\s+["']@\/lib\/owned-data\/contracts["']/);
+  assert.match(
+    queryClientSource,
+    /from\s+["']@\/lib\/owned-data\/contracts["']/,
+  );
   assert.doesNotMatch(connectionContractSection, /const namedReferenceSchema/);
-  assert.doesNotMatch(connectionContractSection, /const connectionResultSchema/);
+  assert.doesNotMatch(
+    connectionContractSection,
+    /const connectionResultSchema/,
+  );
   assert.doesNotMatch(connectionContractSection, /const homeWorkspaceSchema/);
-  assert.doesNotMatch(connectionContractSection, /const workspaceCachePayloadSchema/);
+  assert.doesNotMatch(
+    connectionContractSection,
+    /const workspaceCachePayloadSchema/,
+  );
   assert.doesNotMatch(connectionContractSection, /\.passthrough\(/);
 });
 
@@ -424,7 +436,11 @@ test("production source does not hand-write Amplify contract object types that a
       const pattern = new RegExp(
         String.raw`(?:^|\n)\s*(?:export\s+)?(?:type|interface)\s+${escapeRegex(contractName)}\s*(?:=\s*\{|\{)`,
       );
-      assert.doesNotMatch(source, pattern, `${relativePath} redefines ${contractName}.`);
+      assert.doesNotMatch(
+        source,
+        pattern,
+        `${relativePath} redefines ${contractName}.`,
+      );
     }
   }
 });
@@ -447,7 +463,11 @@ test("production source avoids casting cached data into schema-backed workspace 
       const pattern = new RegExp(
         String.raw`as unknown as\s+${escapeRegex(contractName)}\b`,
       );
-      assert.doesNotMatch(source, pattern, `${relativePath} casts into ${contractName}.`);
+      assert.doesNotMatch(
+        source,
+        pattern,
+        `${relativePath} casts into ${contractName}.`,
+      );
     }
   }
 });
@@ -491,7 +511,10 @@ test("deploy verification uses a cold app typecheck", () => {
     packageJson.scripts?.["verify:deploy"] ?? "",
     /typecheck:amplify/,
   );
-  assert.match(packageJson.scripts?.["typecheck:amplify"] ?? "", /typecheck-amplify/);
+  assert.match(
+    packageJson.scripts?.["typecheck:amplify"] ?? "",
+    /typecheck-amplify/,
+  );
   assert.match(
     packageJson.scripts?.["verify:deploy:sandbox"] ?? "",
     /typecheck:amplify:sandbox/,
@@ -529,13 +552,13 @@ test("app data access exposes explicit read endpoints and no generic model proxy
   );
 });
 
-test("auth controls pin the lite tier and relax the password policy", () => {
+test("auth controls pin the Essentials tier and relax the password policy", () => {
   const authControlsSource = readFileSync(
     join(repoRoot, "amplify", "_backend", "auth-controls.ts"),
     "utf8",
   );
 
-  assert.match(authControlsSource, /userPool\.userPoolTier = "LITE"/);
+  assert.match(authControlsSource, /userPool\.userPoolTier = "ESSENTIALS"/);
   assert.match(authControlsSource, /minimumLength: 6/);
   assert.match(authControlsSource, /requireLowercase: false/);
   assert.match(authControlsSource, /requireNumbers: false/);

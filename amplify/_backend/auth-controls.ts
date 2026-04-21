@@ -40,7 +40,7 @@ export function configureAuthControls(backend: AuthControlsBackend): void {
     ? existingPolicies.passwordPolicy
     : {};
 
-  userPool.userPoolTier = "LITE";
+  userPool.userPoolTier = "ESSENTIALS";
   userPool.policies = {
     ...existingPolicies,
     passwordPolicy: {
@@ -54,7 +54,7 @@ export function configureAuthControls(backend: AuthControlsBackend): void {
   };
 
   new CfnOutput(Stack.of(userPool), "CognitoUserPoolTier", {
-    value: "LITE",
-    description: "Pinned Cognito user pool tier for low-cost auth.",
+    value: "ESSENTIALS",
+    description: "Pinned Cognito user pool tier for managed login auth.",
   });
 }
