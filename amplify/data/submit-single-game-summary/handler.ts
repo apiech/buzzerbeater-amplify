@@ -18,6 +18,7 @@ export const handler: Handler = async (event) => {
     env,
     identity: event.identity,
     matchId: event.arguments.matchId,
+    qualityTier: event.arguments.qualityTier ?? null,
     stateMachineArn,
   });
 };

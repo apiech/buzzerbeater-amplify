@@ -40,6 +40,34 @@ export const envContract = {
         templateValue: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       },
       {
+        name: "GAME_DAY_RECAP_RETRY_MODEL_ID",
+        purpose:
+          "Retry-writer Bedrock model for the premium factuality pipeline. Premium recap submissions fail fast when neither this nor `GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM` is configured.",
+        defaultValue: "unset unless premium recap retry is enabled",
+        templateValue: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      },
+      {
+        name: "GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM",
+        purpose:
+          "Optional premium override for the retry-writer stage in the premium recap factuality pipeline.",
+        defaultValue: "unset",
+        templateValue: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      },
+      {
+        name: "GAME_DAY_RECAP_JUDGE_MODEL_ID",
+        purpose:
+          "Grounded judge Bedrock model for sentence-level recap fact-checking in the premium factuality pipeline. Premium recap submissions fail fast when neither this nor `GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM` is configured.",
+        defaultValue: "unset unless premium recap judging is enabled",
+        templateValue: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      },
+      {
+        name: "GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM",
+        purpose:
+          "Optional premium override for the grounded judge stage in the premium recap factuality pipeline.",
+        defaultValue: "unset",
+        templateValue: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      },
+      {
         name: "COGNITO_AUTH_CUSTOM_DOMAIN",
         purpose:
           "Optional branded Cognito auth hostname override. When unset but a hosted zone name is configured, runtime and synth default to `auth.<zone>`.",

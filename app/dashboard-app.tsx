@@ -731,7 +731,7 @@ function WorkspaceDashboard({
         leagueName: home.connection.leagueName,
         leagueTimeZone: home.connection.leagueTimeZone,
       },
-      recentMatches: home.recentMatches,
+      recentMatches: Array.isArray(home.recentMatches) ? home.recentMatches : [],
     }),
     [
       home.connection.countryId,
@@ -1411,17 +1411,11 @@ function WorkspaceDashboard({
       ) : null}
 
       {activeSection === "recaps" ? (
-        canUseLeagueWriteups ? (
-          <RecapPanel context={recapContext} />
-        ) : (
-          <PremiumFeatureGatePanel
-            billingSummary={billingSummary}
-            error={billingError}
-            featureName="League writeups"
-            isLoading={isLoadingBilling}
-            message="Generate game day recaps and league writeups with a premium subscription."
-          />
-        )
+        <RecapPanel
+          canUseLeagueWriteups={canUseLeagueWriteups}
+          context={recapContext}
+          isLoadingLeagueWriteupAccess={!commercialModeDisabled && isLoadingBilling}
+        />
       ) : null}
 
       {activeSection === "league" ? (

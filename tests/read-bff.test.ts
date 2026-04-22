@@ -448,6 +448,12 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
           nextToken: "more-game-days",
         }),
       },
+      LeagueGameDayPerformances: {
+        listLeagueGameDayPerformancesByUserAndRequestedAt: async () => ({
+          data: [],
+          nextToken: null,
+        }),
+      },
       LeagueGameDayRecap: {
         listLeagueGameDayRecapsByUserAndRequestedAt: async () => ({
           data: [
@@ -506,6 +512,134 @@ test("getRecapHistory merges owner-scoped recap streams and returns a continuati
   assert.equal(data.items[0]?.requestJson.mode, "SINGLE_GAME");
   assert.equal(data.items[1]?.requestJson.mode, "FULL_SLATE");
   assert.equal(typeof data.nextToken, "string");
+});
+
+test("getRecapHistory skips null legacy recap rows and still returns valid items", async (t) => {
+  installServerDataClient(t, {
+    models: {
+      GameDayRecap: {
+        listGameDayRecapsByUserAndRequestedAt: async () => ({
+          data: [
+            null,
+            {
+              userId: "user-1",
+              targetKey: "gd-1",
+              leagueId: "L1",
+              leagueName: "League",
+              gameDate: "2026-03-15",
+              status: "SUCCEEDED",
+              requestedAt: "2026-03-15T11:00:00.000Z",
+              requestJson: '{"leagueId":"L1","gameDate":"2026-03-15"}',
+              resultJson:
+                '{"games":[{"evidenceTags":["PACE"],"headline":"Top game","matchId":"g1","writeup":"Big win"}],"summary":{"headline":"Daily recap","lede":"League action"}}',
+              updatedAt: "2026-03-15T11:01:00.000Z",
+            },
+          ],
+          nextToken: null,
+        }),
+      },
+      LeagueGameDayPerformances: {
+        listLeagueGameDayPerformancesByUserAndRequestedAt: async () => ({
+          data: [],
+          nextToken: null,
+        }),
+      },
+      LeagueGameDayRecap: {
+        listLeagueGameDayRecapsByUserAndRequestedAt: async () => ({
+          data: [],
+          nextToken: null,
+        }),
+      },
+      SingleGameSummary: {
+        listSingleGameSummariesByUserAndRequestedAt: async () => ({
+          data: [],
+          nextToken: null,
+        }),
+      },
+    },
+  });
+
+  const result = await runReadOperation("getRecapHistory", "user-1", {
+    limit: 8,
+  });
+  const data = result.data as { items: Array<{ kind: string; targetKey: string }> };
+
+  assert.deepStrictEqual(
+    data.items.map((item) => [item.kind, item.targetKey]),
+    [["LEAGUE_DATE", "gd-1"]],
+  );
+});
+
+test("getRecapHistory merges deterministic performance reports alongside writeups", async (t) => {
+  installServerDataClient(t, {
+    models: {
+      GameDayRecap: {
+        listGameDayRecapsByUserAndRequestedAt: async () => ({
+          data: [],
+          nextToken: null,
+        }),
+      },
+      LeagueGameDayPerformances: {
+        listLeagueGameDayPerformancesByUserAndRequestedAt: async () => ({
+          data: [
+            {
+              userId: "user-1",
+              targetKey: "perf-1",
+              leagueId: "L1",
+              leagueName: "League",
+              gameDate: "2026-04-11",
+              gameDayNumber: 22,
+              season: 71,
+              status: "SUCCEEDED",
+              requestedAt: "2026-04-12T01:00:00.000Z",
+              requestJson:
+                '{"leagueId":"L1","gameDayNumber":22,"mode":"LEAGUE_GAME_DAY_PERFORMANCES","season":71}',
+              resultJson:
+                '{"gameDate":"2026-04-11","gameDayNumber":22,"games":[{"awayScore":81,"awayTeamName":"Delta","homeScore":91,"homeTeamName":"Gamma","matchId":"137828772"}],"leagueId":"L1","leagueName":"League","mvp":{"key":"mvp","label":"MVP","leaders":[{"efficiency":42,"minutes":40,"personalFouls":2,"playerName":"Paula Gamma","position":"PF","rating":18.7,"statLine":{"assists":1,"blocks":7,"points":22,"rebounds":22,"steals":1},"teamName":"Gamma","turnovers":2}],"value":42},"badPerformance":{"key":"bad-performance","label":"Bad performance","leaders":[{"efficiency":-9,"minutes":40,"personalFouls":0,"playerName":"Nico Beta","position":"PG","rating":0,"statLine":{"assists":2,"blocks":0,"points":6,"rebounds":6,"steals":1},"teamName":"Beta","turnovers":6}],"value":-9},"playerLeaders":[],"statCallouts":[],"teamLeaders":[],"topFive":[],"tripleDoubles":[]}',
+              updatedAt: "2026-04-12T01:02:00.000Z",
+            },
+          ],
+          nextToken: null,
+        }),
+      },
+      LeagueGameDayRecap: {
+        listLeagueGameDayRecapsByUserAndRequestedAt: async () => ({
+          data: [],
+          nextToken: null,
+        }),
+      },
+      SingleGameSummary: {
+        listSingleGameSummariesByUserAndRequestedAt: async () => ({
+          data: [],
+          nextToken: null,
+        }),
+      },
+    },
+  });
+
+  const result = await runReadOperation("getRecapHistory", "user-1", {
+    limit: 8,
+  });
+  const data = result.data as {
+    items: Array<{
+      gameDayNumber: number | null;
+      kind: string;
+      requestJson: { mode: string };
+      targetKey: string;
+    }>;
+  };
+
+  assert.deepStrictEqual(
+    data.items.map((item) => [item.kind, item.targetKey]),
+    [["LEAGUE_GAME_DAY_PERFORMANCES", "perf-1"]],
+  );
+  const [firstItem] = data.items;
+  assert.ok(firstItem);
+  assert.equal(firstItem.gameDayNumber, 22);
+  assert.equal(
+    firstItem.requestJson.mode,
+    "LEAGUE_GAME_DAY_PERFORMANCES",
+  );
 });
 
 test("removed lineup scenario reads are no longer exposed from the read surface", () => {

@@ -27,18 +27,23 @@ import {
 import { formatBuzzerBeaterLabel } from "../../../lib/buzzerbeater/rating-scale";
 import { TEAM_RATING_KEYS } from "../../../lib/buzzerbeater/team-ratings";
 import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../../_shared/game-day-recap-errors";
+import { RecapGenerationApproach } from "../schema-enums";
 import { resolveBbAccessKey } from "./credentials";
 import {
   buildGameDayRecapTargetKey,
   buildLeagueGameDayRecapTargetKey,
   buildSingleGameSummaryTargetKey,
   normalizeGameDayRecapRequest,
+  normalizeLeagueGameDayPerformancesRequest,
   normalizeLeagueGameDayRecapRequest,
   normalizeSingleGameSummaryRequest,
   parseGameDayRecapQueueMessage,
+  type RecapGenerationApproachValue,
   type RecapJobKind,
+  type RecapQualityTier,
   type RecapQueueMessage,
 } from "./game-day-recap-request";
+import { buildLeagueGameDayPerformancesResult } from "./league-game-day-performances";
 import {
   buildExecutionName,
   startStateMachineExecution,
@@ -46,11 +51,14 @@ import {
 import {
   getBbConnection,
   getGameDayRecap,
+  getLeagueGameDayPerformances,
   getLeagueGameDayRecap,
   getSingleGameSummary,
+  updateLeagueGameDayPerformances,
   updateLeagueGameDayRecap,
   updateGameDayRecap,
   updateSingleGameSummary,
+  upsertLeagueGameDayPerformances,
   upsertLeagueGameDayRecap,
   upsertGameDayRecap,
   upsertSingleGameSummary,
@@ -67,7 +75,9 @@ import {
   loadGameDayRecapPlayByPlayFacts,
   type GameDayRecapPlayByPlayFacts,
   type GameDayRecapPlayByPlayLoadResult,
+  type GameDayRecapPlayByPlayRun,
 } from "./game-day-recap-play-by-play";
+import { resolveCommercialModeEnabled } from "../../../lib/billing/commercial-mode";
 import type { PlanId } from "../../../lib/billing/plans";
 import type { Schema } from "../resource";
 
@@ -132,10 +142,83 @@ type GameDayRecapPromptQuarterFacts = {
   periods: GameDayRecapPromptPeriodFact[];
 };
 
+const FACT_LIBRARY_RATING_LABELS: Record<string, string> = {
+  insideDefense: "inside defense",
+  insideScoring: "inside scoring",
+  offensiveFlow: "offensive flow",
+  outsideDefense: "perimeter defense",
+  outsideScoring: "outside scoring",
+  rebounding: "rebounding",
+};
+
+type GameDayRecapFactsLibraryPeriodState = {
+  awayScore: number;
+  homeScore: number;
+  label: string;
+  margin: number;
+  period: number;
+  scoreFromLeaderPerspective: string;
+};
+
+type GameDayRecapFactsLibraryGameFlow = {
+  closingNote: string | null;
+  doNotEmphasize: string[];
+  highlightLeadChanges: string[];
+  highlightRuns: Array<{
+    playerBurst: string | null;
+    summary: string;
+  }>;
+  lastLeadByLoser: string | null;
+  scoringDroughts: string[];
+  tookLeadForGood: string | null;
+};
+
+type GameDayRecapFactsLibrary = {
+  headlineCandidates: string[];
+  matchupEdgeFacts: {
+    suppressed: string[];
+    supported: string[];
+  };
+  openingCandidates: string[];
+  periodStates: {
+    afterPeriods: GameDayRecapFactsLibraryPeriodState[];
+    throughThreeQuarters: GameDayRecapFactsLibraryPeriodState | null;
+  };
+  requiredContextSentences: string[];
+  storySignals: string[];
+  summaryFacts: string[];
+  winner: {
+    finalMargin: number;
+    finalScoreFromWinnerPerspective: string;
+    loserName: string;
+    winnerName: string;
+  };
+  gameFlow: GameDayRecapFactsLibraryGameFlow;
+};
+
+type GameDayRecapPromptInterviewCandidate = {
+  playerName: string;
+  selectionReason: string;
+  statLine: {
+    assists: number;
+    blocks: number;
+    minutes: number;
+    points: number;
+    rebounds: number;
+    steals: number;
+    turnovers: number;
+  };
+  supportedFacts: string[];
+  teamName: string;
+  teamSide: "away" | "home";
+};
+
 type GameDayRecapPromptGame = {
   effortDelta: number | null;
   effortSummary: string | null;
+  factsLibrary?: GameDayRecapFactsLibrary;
   gameDayPrepSummaries: string[];
+  requiredContextSentences: string[];
   rotationSummaries: string[];
   evidenceSignals: string[];
   finalMargin: number;
@@ -143,11 +226,13 @@ type GameDayRecapPromptGame = {
   neutral: boolean | null;
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   playByPlaySummaryLines: string[];
+  postgameInterviewCandidate?: GameDayRecapPromptInterviewCandidate | null;
   quarterFacts: GameDayRecapPromptQuarterFacts;
   quarterScores: {
     away: number[];
     home: number[];
   };
+  seriesContext?: GameDayRecapSeriesContext;
   standingsContext: string[];
   teams: {
     away: GameDayRecapPromptTeam;
@@ -156,20 +241,61 @@ type GameDayRecapPromptGame = {
   type: string | null;
 };
 
-type GameDayRecapPromptPayload = {
+type GameDayRecapRequestFacts = {
+  gameDate: string | null;
+  gameDayNumber: number | null;
+  generationApproach: RecapGenerationApproachValue;
+  kind: RecapJobKind;
+  label: string;
+  leagueId: string | null;
+  leagueName: string | null;
+  matchId: string | null;
+  season: number | null;
+  timeZone: string | null;
+};
+
+type GameDayRecapWriterPayload = {
   coverage: GameDayRecapCoveragePayload;
-  request: {
-    gameDate: string | null;
-    gameDayNumber: number | null;
-    kind: RecapJobKind;
-    label: string;
-    leagueId: string | null;
-    leagueName: string | null;
-    matchId: string | null;
-    season: number | null;
-    timeZone: string | null;
-  };
   games: GameDayRecapPromptGame[];
+  request: GameDayRecapRequestFacts;
+};
+
+type GameDayRecapPolishRequestPayload = {
+  gameFacts: GameDayRecapPromptGame;
+  recapGame: Pick<
+    GameDayRecapResultPayload["games"][number],
+    "headline" | "matchId" | "writeup"
+  >;
+  request: GameDayRecapRequestFacts;
+  task: "style_polish";
+};
+
+type GameDayRecapPostgameInterviewRequestPayload = {
+  candidate: GameDayRecapPromptInterviewCandidate;
+  gameFacts: GameDayRecapPromptGame;
+  recapGame: Pick<
+    GameDayRecapResultPayload["games"][number],
+    "headline" | "matchId" | "writeup"
+  >;
+  request: GameDayRecapRequestFacts;
+  task: "postgame_interview";
+};
+
+type GameDayRecapWriterRequestPayload =
+  | GameDayRecapPromptPayload
+  | GameDayRecapPolishRequestPayload
+  | GameDayRecapPostgameInterviewRequestPayload;
+
+type BestOfThreePlayoffStageKey = "finals" | "relegation";
+
+type GameDayRecapSeriesContext = {
+  isTerminal: boolean;
+  postgameWins: {
+    away: number;
+    home: number;
+  };
+  stageKey: BestOfThreePlayoffStageKey;
+  summaryLine: string;
 };
 
 type RotationContextForRecap = {
@@ -209,6 +335,83 @@ type GameDayRecapPromptTeam = {
     steals: number;
     turnovers: number;
   }>;
+};
+
+type GameDayRecapFactStorePeriodState = GameDayRecapFactsLibraryPeriodState & {
+  leaderName: string | null;
+  leaderSide: "away" | "home" | "tie";
+  trailerName: string | null;
+};
+
+type GameDayRecapFactStorePlayerLeader = {
+  playerName: string;
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"];
+  teamName: string;
+  teamSide: "away" | "home";
+  value: number;
+};
+
+type GameDayRecapFactStoreTeam = GameDayRecapPromptTeam & {
+  rawRatings: BBApiBoxScoreTeam["ratings"] | null;
+};
+
+type GameDayRecapWinnerFacts = {
+  loserName: string | null;
+  loserSide: "away" | "home" | null;
+  finalScoreHomeAway: string;
+  finalScoreWinnerFacing: string | null;
+  winnerName: string | null;
+  winnerSide: "away" | "home" | null;
+};
+
+type GameDayRecapGameFactStore = {
+  effortDelta: number | null;
+  effortSummary: string | null;
+  evidenceSignals: string[];
+  finalMargin: number;
+  gameDayPrepSummaries: string[];
+  isPlayoffGame: boolean;
+  matchId: string;
+  neutral: boolean | null;
+  overtime: boolean;
+  periodStates: {
+    afterPeriods: GameDayRecapFactStorePeriodState[];
+    halftime: GameDayRecapFactStorePeriodState | null;
+    throughThreeQuarters: GameDayRecapFactStorePeriodState | null;
+  };
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  playByPlaySummaryLines: string[];
+  playerLeaders: {
+    assists: GameDayRecapFactStorePlayerLeader | null;
+    bestAllAround: GameDayRecapFactStorePlayerLeader | null;
+    points: GameDayRecapFactStorePlayerLeader | null;
+    rebounds: GameDayRecapFactStorePlayerLeader | null;
+  };
+  postgameInterviewCandidate?: GameDayRecapPromptInterviewCandidate | null;
+  quarterFacts: GameDayRecapPromptQuarterFacts;
+  quarterScores: {
+    away: number[];
+    home: number[];
+  };
+  requiredContextSentences: string[];
+  rotationSummaries: string[];
+  seriesContext?: GameDayRecapSeriesContext;
+  standingsContext: string[];
+  teams: {
+    away: GameDayRecapFactStoreTeam;
+    home: GameDayRecapFactStoreTeam;
+  };
+  type: string | null;
+  winner: GameDayRecapWinnerFacts;
+};
+
+type GameDayRecapFactStore = {
+  games: GameDayRecapGameFactStore[];
+  request: GameDayRecapRequestFacts;
+};
+
+type GameDayRecapPromptPayload = GameDayRecapWriterPayload & {
+  factStore: GameDayRecapFactStore;
 };
 
 export type SlateGame = {
@@ -251,17 +454,63 @@ type BoxScoreLoadResult =
     };
 
 type ScheduleMatchInclusionPredicate = (match: BBApiScheduleMatch) => boolean;
+type StructuredGameDayRecapProviderStage = "writer" | "retry_writer" | "judge";
+type GameDayRecapRetryValidationContext = {
+  deterministicIssues: Array<{
+    feedback: string;
+    field: GameDayRecapSemanticValidationIssueField;
+    kind: GameDayRecapSemanticValidationIssueKind;
+    matchId: string;
+    sentence: string;
+    sentenceIndex: number;
+  }>;
+  judgeIssues: Array<{
+    contradictionType: GameDayRecapJudgeContradictionType;
+    field: GameDayRecapJudgeSentenceField;
+    matchId: string;
+    notes: string | null;
+    sentence: string;
+    sentenceIndex: number;
+    sourceField: string | null;
+    verdict: GameDayRecapJudgeSentenceVerdict;
+  }>;
+};
 type GameDayRecapGenerateOptions = {
+  candidateIndex?: number;
   validationFeedback?: string[];
+  validationContext?: GameDayRecapRetryValidationContext | null;
 };
 
-type GameDayRecapSemanticValidationIssueField = "headline" | "writeup";
+type GameDayRecapSemanticValidationIssueField =
+  | "headline"
+  | "postgameInterview"
+  | "writeup";
 type GameDayRecapSemanticValidationIssueKind =
+  | "banned_style_phrase"
   | "compact_streak_mismatch"
+  | "choppy_fact_stack"
+  | "duplicate_period_state_restatement"
+  | "explicit_streak_mismatch"
+  | "conflicting_series_summary_line"
+  | "duplicate_outcome_restatement"
+  | "missing_required_context_sentence"
+  | "missing_primary_run_mention"
+  | "missing_run_timing"
+  | "missing_decisive_ending_emphasis"
+  | "missing_series_summary_line"
+  | "one_game_streak_language"
+  | "playoff_record_language"
+  | "playoff_streak_language"
   | "quarter_score_mismatch"
   | "quarter_winner_score_mismatch"
+  | "repetitive_sentence_start"
   | "record_mismatch"
+  | "short_fact_sentence_cluster"
+  | "through_three_quarters_mismatch"
   | "tied_quarter_claim"
+  | "unsupported_interview_claim"
+  | "unsupported_lead_change_claim"
+  | "unsupported_run_claim"
   | "wrong_quarter_winner";
 type GameDayRecapSemanticValidationIssueSalvage =
   | "drop_only"
@@ -280,9 +529,115 @@ type GameDayRecapSemanticValidationIssue = {
   teamSide?: "away" | "home";
 };
 
+type GameDayRecapJudgeValidationIssue = {
+  contradictionType: GameDayRecapJudgeContradictionType;
+  feedback: string;
+  field: GameDayRecapJudgeSentenceField;
+  matchId: string;
+  notes: string | null;
+  sentence: string;
+  sentenceIndex: number;
+  sourceField: string | null;
+  verdict: GameDayRecapJudgeSentenceVerdict;
+};
+
+type GameDayRecapRepairAction =
+  | {
+      action: "drop_game";
+      matchId: string;
+      reason: string;
+    }
+  | {
+      action: "drop_postgame_interview";
+      matchId: string;
+      reason: string;
+    }
+  | {
+      action: "insert_sentence";
+      matchId: string;
+      reason: string;
+      sentence: string;
+      sentenceIndex: number;
+    }
+  | {
+      action: "rebuild_opener";
+      matchId: string;
+      reason: string;
+    }
+  | {
+      action: "replace_sentence";
+      matchId: string;
+      sentenceIndex: number;
+      reason: string;
+    }
+  | {
+      action: "trim_sentence";
+      matchId: string;
+      sentenceIndex: number;
+      reason: string;
+    };
+
+type GameDayRecapGameSalvageOutcome = {
+  game: GameDayRecapResultGame | null;
+  postPatchDeterministicIssues: GameDayRecapSemanticValidationIssue[];
+  postPatchJudgeIssues: GameDayRecapJudgeValidationIssue[];
+  postTrimDeterministicIssues: GameDayRecapSemanticValidationIssue[];
+  postTrimJudgeIssues: GameDayRecapJudgeValidationIssue[];
+  repairActions: GameDayRecapRepairAction[];
+};
+
 type GeneratedGameDayRecap = {
   coverageIssues: CoverageIssue[];
   result: GameDayRecapResultPayload;
+};
+
+type GameDayRecapGenerationLogContext = {
+  targetKey?: string;
+  userId?: string;
+};
+
+type GameDayRecapResultPostgameInterview = {
+  playerName: string;
+  qa: Array<{
+    answer: string;
+    question: string;
+  }>;
+  teamName: string;
+  teamSide: "away" | "home";
+  title: string;
+};
+
+type GameDayRecapNormalizationWarning = {
+  details: string[];
+  kind: "invalid_postgame_interview";
+  matchId: string;
+  reason: string;
+};
+
+type GameDayRecapNormalizedResult = {
+  result: GameDayRecapResultPayload;
+  warnings: GameDayRecapNormalizationWarning[];
+};
+
+type GameDayRecapJudgeContractIssueKind =
+  | "invalid_interestingness_shape"
+  | "invalid_sentence_chunk_shape"
+  | "invalid_sentence_verdict"
+  | "missing_slot_verdicts"
+  | "unexpected_slot_verdicts";
+
+type GameDayRecapJudgeContractIssue = {
+  candidateIndex: number | null;
+  expectedCandidateCount: number;
+  expectedSentenceCount: number;
+  kind: GameDayRecapJudgeContractIssueKind;
+  matchId: string | null;
+  missingKeys: string[];
+  notes: string;
+  returnedCandidateCount: number;
+  returnedSentenceCount: number;
+  chunkIndex: number | null;
+  unexpectedKeys: string[];
 };
 
 class RetryableCompletedSlateCoverageError extends Error {
@@ -314,6 +669,53 @@ class GameDayRecapSemanticValidationError extends Error {
   }
 }
 
+class GameDayRecapRepairFailureError extends Error {
+  readonly deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  readonly feedbackLines: string[];
+  readonly judgeIssues: GameDayRecapJudgeValidationIssue[];
+  readonly postPatchDeterministicIssues: GameDayRecapSemanticValidationIssue[];
+  readonly postPatchJudgeIssues: GameDayRecapJudgeValidationIssue[];
+  readonly postTrimDeterministicIssues: GameDayRecapSemanticValidationIssue[];
+  readonly postTrimJudgeIssues: GameDayRecapJudgeValidationIssue[];
+  readonly repairActions: GameDayRecapRepairAction[];
+
+  constructor(args: {
+    deterministicIssues: GameDayRecapSemanticValidationIssue[];
+    judgeIssues: GameDayRecapJudgeValidationIssue[];
+    postPatchDeterministicIssues?: GameDayRecapSemanticValidationIssue[];
+    postPatchJudgeIssues?: GameDayRecapJudgeValidationIssue[];
+    postTrimDeterministicIssues?: GameDayRecapSemanticValidationIssue[];
+    postTrimJudgeIssues?: GameDayRecapJudgeValidationIssue[];
+    repairActions?: GameDayRecapRepairAction[];
+  }) {
+    super(
+      "Game day recap response could not be safely repaired because every game summary still contained factual contradictions.",
+    );
+    this.name = "GameDayRecapRepairFailureError";
+    this.deterministicIssues = args.deterministicIssues;
+    this.judgeIssues = args.judgeIssues;
+    this.postPatchDeterministicIssues = args.postPatchDeterministicIssues ?? [];
+    this.postPatchJudgeIssues = args.postPatchJudgeIssues ?? [];
+    this.postTrimDeterministicIssues = args.postTrimDeterministicIssues ?? [];
+    this.postTrimJudgeIssues = args.postTrimJudgeIssues ?? [];
+    this.repairActions = args.repairActions ?? [];
+    this.feedbackLines = buildRecapValidationFeedbackLines({
+      deterministicIssues: this.deterministicIssues,
+      judgeIssues: this.judgeIssues,
+    });
+  }
+}
+
+class GameDayRecapJudgeContractError extends Error {
+  readonly issues: GameDayRecapJudgeContractIssue[];
+
+  constructor(issues: GameDayRecapJudgeContractIssue[]) {
+    super("Game day recap judge result did not satisfy the expected sentence coverage contract.");
+    this.name = "GameDayRecapJudgeContractError";
+    this.issues = issues;
+  }
+}
+
 type LeagueSlateResolutionDiagnostics = {
   exactMatchCount: number;
   leagueMatchCount: number;
@@ -331,13 +733,175 @@ type LeagueSlateResolutionDiagnostics = {
   timeZone: string | null;
 };
 
-type BedrockGameDayRecapProvider = {
+type StructuredGameDayRecapProvider = {
   generate: (
-    payload: GameDayRecapPromptPayload,
+    payload: unknown,
     options?: GameDayRecapGenerateOptions,
   ) => Promise<unknown>;
   modelId: string;
   providerName: "bedrock";
+  stage: StructuredGameDayRecapProviderStage;
+};
+
+type RecapStageModelIds = {
+  judgeModelId: string | null;
+  retryModelId: string | null;
+  writerModelId: string;
+};
+
+type GameDayRecapJudgeSentenceVerdict =
+  | "supported"
+  | "style_only"
+  | "uncertain"
+  | "unsupported";
+
+type GameDayRecapJudgeContradictionType =
+  | "final_score"
+  | "ending"
+  | "lead_change"
+  | "none"
+  | "other"
+  | "overtime"
+  | "quarter_outcome"
+  | "record"
+  | "run"
+  | "series_state"
+  | "winner";
+
+type GameDayRecapJudgeSentenceField =
+  | "headline"
+  | "postgameInterview"
+  | "writeup";
+
+type GameDayRecapJudgeSentenceInventoryEntry = {
+  field: GameDayRecapJudgeSentenceField;
+  key: string;
+  matchId: string;
+  sentence: string;
+  sentenceIndex: number;
+};
+
+type GameDayRecapJudgeSlotId =
+  | "slot0"
+  | "slot1"
+  | "slot2"
+  | "slot3"
+  | "slot4"
+  | "slot5";
+
+type GameDayRecapJudgeSentenceChunkEntry = GameDayRecapJudgeSentenceInventoryEntry & {
+  slotId: GameDayRecapJudgeSlotId;
+};
+
+type GameDayRecapJudgeSentenceChunk = {
+  candidateIndex: number;
+  chunkCount: number;
+  chunkIndex: number;
+  entries: GameDayRecapJudgeSentenceChunkEntry[];
+  matchId: string;
+};
+
+type GameDayRecapJudgeSentenceVerdictRecord = {
+  containsOutcomeClaim: boolean;
+  contradictionType: GameDayRecapJudgeContradictionType;
+  notes: string | null;
+  sourceField: string | null;
+  verdict: GameDayRecapJudgeSentenceVerdict;
+};
+
+type GameDayRecapJudgeFallbackMode = "chunk" | "single_sentence";
+
+type GameDayRecapJudgeGameFactPacket = {
+  evidenceSignals: string[];
+  effortDelta: number | null;
+  effortSummary: string | null;
+  finalMargin: number;
+  gameDayPrepSummaries: string[];
+  isPlayoffGame: boolean;
+  matchId: string;
+  overtime: boolean;
+  periodStates: GameDayRecapGameFactStore["periodStates"];
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  playerLeaders: GameDayRecapGameFactStore["playerLeaders"];
+  postgameInterviewCandidate: GameDayRecapPromptInterviewCandidate | null;
+  quarterFacts: GameDayRecapPromptQuarterFacts;
+  quarterScores: {
+    away: number[];
+    home: number[];
+  };
+  requiredContextSentences: string[];
+  rotationSummaries: string[];
+  seriesContext: GameDayRecapSeriesContext | null;
+  standingsContext: string[];
+  teams: {
+    away: Pick<GameDayRecapFactStoreTeam, "name" | "score" | "topPlayers">;
+    home: Pick<GameDayRecapFactStoreTeam, "name" | "score" | "topPlayers">;
+  };
+  winner: GameDayRecapWinnerFacts;
+};
+
+type GameDayRecapSentenceJudgeRequestPayload = {
+  candidateIndex: number;
+  chunkCount: number;
+  chunkIndex: number;
+  gameFacts: GameDayRecapJudgeGameFactPacket;
+  judgeKind: "sentence_factuality";
+  request: GameDayRecapRequestFacts;
+  sentenceChunk: Array<{
+    field: GameDayRecapJudgeSentenceField;
+    sentence: string;
+    sentenceIndex: number;
+    slotId: GameDayRecapJudgeSlotId;
+  }>;
+};
+
+type GameDayRecapInterestingnessJudgeRequestPayload = {
+  candidateIndex: number;
+  games: GameDayRecapJudgeGameFactPacket[];
+  judgeKind: "candidate_interestingness";
+  request: GameDayRecapRequestFacts;
+  result: GameDayRecapResultPayload;
+};
+
+type GameDayRecapJudgeRequestPayload =
+  | GameDayRecapSentenceJudgeRequestPayload
+  | GameDayRecapInterestingnessJudgeRequestPayload;
+
+type GameDayRecapJudgeSchemaBudget = {
+  serializedSchemaBytes: number;
+  sentenceVerdictCount: number;
+  unionParameterCount: number;
+};
+
+type GameDayRecapJudgeSentenceAssessment = {
+  containsOutcomeClaim: boolean;
+  contradictionType: GameDayRecapJudgeContradictionType;
+  field: GameDayRecapJudgeSentenceField;
+  matchId: string;
+  notes: string | null;
+  sentence: string;
+  sentenceIndex: number;
+  sourceField: string | null;
+  verdict: GameDayRecapJudgeSentenceVerdict;
+};
+
+type GameDayRecapJudgeCandidateAssessment = {
+  candidateIndex: number;
+  interestingnessScore: number;
+  sentences: GameDayRecapJudgeSentenceAssessment[];
+};
+
+type GameDayRecapJudgeFactStore = GameDayRecapFactStore;
+type GameDayRecapJudgeGameFactStore = GameDayRecapGameFactStore;
+
+type PremiumRecapCandidate = {
+  candidateIndex: number;
+  deterministicFailureMessage: string | null;
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  disagreementPenalty: number;
+  judgeAssessment: GameDayRecapJudgeCandidateAssessment | null;
+  normalizedResult: GameDayRecapResultPayload | null;
+  validatedResult: GameDayRecapResultPayload | null;
 };
 
 type PublicPlayByPlayFetcher = typeof fetchPublicMatchPlayByPlay;
@@ -351,12 +915,15 @@ type SubmitDependencies = {
   ) => Promise<string>;
   getGameDayRecap: typeof getGameDayRecap;
   getLeagueGameDayRecap: typeof getLeagueGameDayRecap;
+  getLeagueGameDayPerformances: typeof getLeagueGameDayPerformances;
   getSingleGameSummary: typeof getSingleGameSummary;
   now: () => Date;
   requireFeatureAccess: typeof requireFeatureAccess;
+  updateLeagueGameDayPerformances: typeof updateLeagueGameDayPerformances;
   updateLeagueGameDayRecap: typeof updateLeagueGameDayRecap;
   updateGameDayRecap: typeof updateGameDayRecap;
   updateSingleGameSummary: typeof updateSingleGameSummary;
+  upsertLeagueGameDayPerformances: typeof upsertLeagueGameDayPerformances;
   upsertLeagueGameDayRecap: typeof upsertLeagueGameDayRecap;
   upsertGameDayRecap: typeof upsertGameDayRecap;
   upsertSingleGameSummary: typeof upsertSingleGameSummary;
@@ -378,14 +945,17 @@ type ProcessDependencies = {
   createProvider: (args: {
     modelId: string;
     region: string | undefined;
-  }) => BedrockGameDayRecapProvider;
+    stage: StructuredGameDayRecapProviderStage;
+  }) => StructuredGameDayRecapProvider;
   fetchPublicMatchPlayByPlay: PublicPlayByPlayFetcher;
   getBbConnection: typeof getBbConnection;
   getGameDayRecap: typeof getGameDayRecap;
+  getLeagueGameDayPerformances: typeof getLeagueGameDayPerformances;
   getLeagueGameDayRecap: typeof getLeagueGameDayRecap;
   getSingleGameSummary: typeof getSingleGameSummary;
   now: () => Date;
   resolveBbAccessKey: typeof resolveBbAccessKey;
+  updateLeagueGameDayPerformances: typeof updateLeagueGameDayPerformances;
   updateLeagueGameDayRecap: typeof updateLeagueGameDayRecap;
   updateGameDayRecap: typeof updateGameDayRecap;
   updateSingleGameSummary: typeof updateSingleGameSummary;
@@ -394,10 +964,20 @@ type ProcessDependencies = {
 type SubmitDependencyOverrides = Partial<SubmitDependencies>;
 type ProcessDependencyOverrides = Partial<ProcessDependencies>;
 
-const GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v8";
+const LEGACY_GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v10";
+const FACT_LIBRARY_FIRST_GAME_DAY_RECAP_PROMPT_VERSION =
+  "gameday-recap-v12-fact-library-first";
+const GAME_DAY_RECAP_PROMPT_VERSION = LEGACY_GAME_DAY_RECAP_PROMPT_VERSION;
 const GAME_DAY_RECAP_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID";
 const GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID_PREMIUM";
+const GAME_DAY_RECAP_RETRY_MODEL_ENV_NAME = "GAME_DAY_RECAP_RETRY_MODEL_ID";
+const GAME_DAY_RECAP_RETRY_PREMIUM_MODEL_ENV_NAME =
+  "GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM";
+const GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME = "GAME_DAY_RECAP_JUDGE_MODEL_ID";
+const GAME_DAY_RECAP_JUDGE_PREMIUM_MODEL_ENV_NAME =
+  "GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM";
 const GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN = 8;
+const PREMIUM_RECAP_CANDIDATE_COUNT = 3;
 const TERMINAL_RECAP_STATUSES = new Set<GameDayRecapStatus>([
   "FAILED",
   "SUCCEEDED",
@@ -435,17 +1015,73 @@ const SUPPORTED_STRUCTURED_OUTPUT_MODEL_PATTERNS = [
   /^nvidia\.nemotron-nano-9b-v2$/i,
 ];
 const GAME_DAY_RECAP_EVIDENCE_TAGS = [
+  "back_and_forth",
   "blowout",
+  "buzzerbeater",
   "close_finish",
+  "comeback",
   "deemphasis_signal",
   "effort_gap",
+  "late_game_swing",
   "losing_streak",
+  "one_possession_finish",
   "quarter_turn",
   "recent_form",
   "standings_race",
   "top_performance",
   "winning_streak",
 ] as const;
+const BANNED_RECAP_STYLE_PHRASES = [
+  "at a key juncture",
+  "proved decisive",
+] as const;
+const COMEBACK_SUMMARY_THRESHOLD = 8;
+const GAME_DAY_RECAP_POSTGAME_INTERVIEW_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    playerName: {
+      type: "string",
+    },
+    qa: {
+      items: {
+        additionalProperties: false,
+        properties: {
+          answer: {
+            type: "string",
+          },
+          question: {
+            type: "string",
+          },
+        },
+        required: ["question", "answer"],
+        type: "object",
+      },
+      type: "array",
+    },
+    teamName: {
+      type: "string",
+    },
+    teamSide: {
+      enum: ["away", "home"],
+      type: "string",
+    },
+    title: {
+      type: "string",
+    },
+  },
+  required: ["playerName", "teamName", "teamSide", "title", "qa"],
+  type: "object",
+} as const;
+const GAME_DAY_RECAP_STYLE_POLISH_RESULT_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    writeup: {
+      type: "string",
+    },
+  },
+  required: ["writeup"],
+  type: "object",
+} as const;
 const GAME_DAY_RECAP_RESULT_SCHEMA = {
   additionalProperties: false,
   properties: {
@@ -469,6 +1105,7 @@ const GAME_DAY_RECAP_RESULT_SCHEMA = {
             minLength: 1,
             type: "string",
           },
+          postgameInterview: GAME_DAY_RECAP_POSTGAME_INTERVIEW_SCHEMA,
           writeup: {
             maxLength: 1400,
             minLength: 80,
@@ -502,6 +1139,67 @@ const GAME_DAY_RECAP_RESULT_SCHEMA = {
   required: ["summary", "games"],
   type: "object",
 } as const;
+const GAME_DAY_RECAP_JUDGE_SENTENCE_VERDICT_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    containsOutcomeClaim: {
+      type: "boolean",
+    },
+    contradictionType: {
+      enum: [
+        "none",
+        "winner",
+        "final_score",
+        "overtime",
+        "quarter_outcome",
+        "series_state",
+        "run",
+        "lead_change",
+        "ending",
+        "record",
+        "other",
+      ],
+      type: "string",
+    },
+    notes: {
+      type: "string",
+    },
+    sourceField: {
+      type: "string",
+    },
+    verdict: {
+      enum: ["supported", "unsupported", "uncertain", "style_only"],
+      type: "string",
+    },
+  },
+  required: [
+    "verdict",
+    "contradictionType",
+    "sourceField",
+    "notes",
+    "containsOutcomeClaim",
+  ],
+  type: "object",
+} as const;
+const GAME_DAY_RECAP_JUDGE_SLOT_IDS: readonly GameDayRecapJudgeSlotId[] = [
+  "slot0",
+  "slot1",
+  "slot2",
+  "slot3",
+  "slot4",
+  "slot5",
+] as const;
+const GAME_DAY_RECAP_JUDGE_SENTENCE_CHUNK_SIZE =
+  GAME_DAY_RECAP_JUDGE_SLOT_IDS.length;
+const BEDROCK_STRUCTURED_OUTPUT_SCHEMA_KEYS = new Set([
+  "additionalProperties",
+  "description",
+  "enum",
+  "items",
+  "properties",
+  "required",
+  "type",
+]);
 const GAME_DAY_RECAP_LOG_PREFIX = "[game-day-recap]";
 const GAME_DAY_RECAP_INFO_EVENTS = new Set([
   "submit.skipped_active_job",
@@ -509,6 +1207,58 @@ const GAME_DAY_RECAP_INFO_EVENTS = new Set([
   "submit.execution.succeeded",
   "process.completed",
 ]);
+
+function resolveGameDayRecapPromptVersion(
+  approach: RecapGenerationApproachValue,
+): string {
+  return approach === RecapGenerationApproach.FACT_LIBRARY_FIRST
+    ? FACT_LIBRARY_FIRST_GAME_DAY_RECAP_PROMPT_VERSION
+    : LEGACY_GAME_DAY_RECAP_PROMPT_VERSION;
+}
+
+function resolveRecapGenerationApproach(
+  requestJson:
+    | {
+        approach?: unknown;
+      }
+    | null
+    | undefined,
+): RecapGenerationApproachValue {
+  return requestJson?.approach === RecapGenerationApproach.FACT_LIBRARY_FIRST
+    ? RecapGenerationApproach.FACT_LIBRARY_FIRST
+    : RecapGenerationApproach.LEGACY;
+}
+
+function toBedrockStructuredOutputSchema(
+  schema: unknown,
+  contextKey: string | null = null,
+): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((entry) =>
+      toBedrockStructuredOutputSchema(entry, contextKey),
+    );
+  }
+
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+
+  const record = schema as Record<string, unknown>;
+  if (contextKey === "properties") {
+    return Object.fromEntries(
+      Object.entries(record).map(([key, value]) => [
+        key,
+        toBedrockStructuredOutputSchema(value),
+      ]),
+    );
+  }
+
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([key]) => BEDROCK_STRUCTURED_OUTPUT_SCHEMA_KEYS.has(key))
+      .map(([key, value]) => [key, toBedrockStructuredOutputSchema(value, key)]),
+  );
+}
 
 type GameDayRecapEvidenceTag = (typeof GAME_DAY_RECAP_EVIDENCE_TAGS)[number];
 
@@ -522,13 +1272,16 @@ const defaultSubmitDependencies: SubmitDependencies = {
     });
   },
   getGameDayRecap,
+  getLeagueGameDayPerformances,
   getLeagueGameDayRecap,
   getSingleGameSummary,
   now: () => new Date(),
   requireFeatureAccess,
+  updateLeagueGameDayPerformances,
   updateLeagueGameDayRecap,
   updateGameDayRecap,
   updateSingleGameSummary,
+  upsertLeagueGameDayPerformances,
   upsertLeagueGameDayRecap,
   upsertGameDayRecap,
   upsertSingleGameSummary,
@@ -537,18 +1290,21 @@ const defaultSubmitDependencies: SubmitDependencies = {
 const defaultProcessDependencies: ProcessDependencies = {
   assertMaintenanceInactive,
   createBbClient: (options) => new BBXmlApiClient(options),
-  createProvider: ({ modelId, region }) =>
+  createProvider: ({ modelId, region, stage }) =>
     createBedrockGameDayRecapProvider({
       modelId,
       region,
+      stage,
     }),
   fetchPublicMatchPlayByPlay,
   getBbConnection,
   getGameDayRecap,
+  getLeagueGameDayPerformances,
   getLeagueGameDayRecap,
   getSingleGameSummary,
   now: () => new Date(),
   resolveBbAccessKey,
+  updateLeagueGameDayPerformances,
   updateLeagueGameDayRecap,
   updateGameDayRecap,
   updateSingleGameSummary,
@@ -556,10 +1312,12 @@ const defaultProcessDependencies: ProcessDependencies = {
 
 export async function submitGameDayRecap(
   args: {
+    approach?: RecapGenerationApproachValue | null;
     env: GraphqlEnv;
     gameDate: string;
     identity: unknown;
     leagueId: string;
+    qualityTier?: RecapQualityTier | null;
     stateMachineArn: string;
   },
   dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
@@ -585,14 +1343,21 @@ export async function submitGameDayRecap(
     featureKey: "leagueWriteups",
     userId,
   });
-
   const request = normalizeGameDayRecapRequest({
+    approach: args.approach ?? undefined,
     gameDate: args.gameDate,
     leagueId: args.leagueId,
+    qualityTier: args.qualityTier ?? undefined,
   });
+  const qualityTier =
+    request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
+  const generationApproach =
+    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
   const targetKey = buildGameDayRecapTargetKey(
     request.leagueId,
     request.gameDate,
+    generationApproach,
+    request.qualityTier ?? null,
   );
   const existing = await deps.getGameDayRecap(args.env, userId, targetKey);
 
@@ -600,6 +1365,7 @@ export async function submitGameDayRecap(
     existingRequestedAt: existing?.requestedAt ?? null,
     existingStatus: existing?.status ?? null,
     gameDate: request.gameDate,
+    generationApproach,
     leagueId: request.leagueId,
     targetKey,
     userId,
@@ -618,12 +1384,17 @@ export async function submitGameDayRecap(
     };
   }
 
-  const modelId = resolveConfiguredRecapModelId(args.env, planId);
+  const stageModels = resolveConfiguredRecapStageModelIds(
+    args.env,
+    qualityTier,
+  );
+  const modelId = stageModels.writerModelId;
   const requestedAt = deps.now().toISOString();
 
   logGameDayRecapInfo("submit.persisting_job", {
     modelId,
     planId,
+    promptVersion: resolveGameDayRecapPromptVersion(generationApproach),
     requestedAt,
     targetKey,
     userId,
@@ -638,11 +1409,13 @@ export async function submitGameDayRecap(
     leagueName: existing?.leagueName ?? null,
     modelId,
     modelProvider: "bedrock",
-    promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+    promptVersion: resolveGameDayRecapPromptVersion(generationApproach),
     requestJson: {
+      approach: generationApproach,
       gameDate: request.gameDate,
       leagueId: request.leagueId,
       mode: "FULL_SLATE",
+      qualityTier,
     },
     requestedAt,
     resultJson: null,
@@ -668,6 +1441,7 @@ export async function submitGameDayRecap(
       {
         kind: "LEAGUE_DATE",
         modelId,
+        qualityTier,
         requestedAt,
         targetKey,
         userId,
@@ -706,10 +1480,12 @@ export async function submitGameDayRecap(
 
 export async function submitLeagueGameDayRecap(
   args: {
+    approach?: RecapGenerationApproachValue | null;
     env: GraphqlEnv;
     gameDayNumber: number;
     identity: unknown;
     leagueId: string;
+    qualityTier?: RecapQualityTier | null;
     stateMachineArn: string;
     season?: number | null;
   },
@@ -730,16 +1506,23 @@ export async function submitLeagueGameDayRecap(
     featureKey: "leagueWriteups",
     userId,
   });
-
   const request = normalizeLeagueGameDayRecapRequest({
+    approach: args.approach ?? undefined,
     gameDayNumber: args.gameDayNumber,
     leagueId: args.leagueId,
+    qualityTier: args.qualityTier ?? undefined,
     season: args.season ?? null,
   });
+  const qualityTier =
+    request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
+  const generationApproach =
+    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
   const targetKey = buildLeagueGameDayRecapTargetKey(
     request.leagueId,
     request.gameDayNumber,
     request.season,
+    generationApproach,
+    request.qualityTier ?? null,
   );
   const existing = await deps.getLeagueGameDayRecap(
     args.env,
@@ -753,7 +1536,11 @@ export async function submitLeagueGameDayRecap(
     };
   }
 
-  const modelId = resolveConfiguredRecapModelId(args.env, planId);
+  const stageModels = resolveConfiguredRecapStageModelIds(
+    args.env,
+    qualityTier,
+  );
+  const modelId = stageModels.writerModelId;
   const requestedAt = deps.now().toISOString();
   await deps.upsertLeagueGameDayRecap(args.env, {
     completedAt: null,
@@ -764,11 +1551,13 @@ export async function submitLeagueGameDayRecap(
     leagueName: existing?.leagueName ?? null,
     modelId,
     modelProvider: "bedrock",
-    promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+    promptVersion: resolveGameDayRecapPromptVersion(generationApproach),
     requestJson: {
+      approach: generationApproach,
       gameDayNumber: request.gameDayNumber,
       leagueId: request.leagueId,
       mode: "LEAGUE_GAME_DAY",
+      qualityTier,
       season: request.season,
     },
     requestedAt,
@@ -790,6 +1579,7 @@ export async function submitLeagueGameDayRecap(
       {
         kind: "LEAGUE_GAME_DAY",
         modelId,
+        qualityTier,
         requestedAt,
         targetKey,
         userId,
@@ -816,9 +1606,11 @@ export async function submitLeagueGameDayRecap(
 
 export async function submitSingleGameSummary(
   args: {
+    approach?: RecapGenerationApproachValue | null;
     env: GraphqlEnv;
     identity: unknown;
     matchId: string;
+    qualityTier?: RecapQualityTier | null;
     stateMachineArn: string;
   },
   dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
@@ -838,11 +1630,20 @@ export async function submitSingleGameSummary(
     featureKey: "leagueWriteups",
     userId,
   });
-
   const request = normalizeSingleGameSummaryRequest({
+    approach: args.approach ?? undefined,
     matchId: args.matchId,
+    qualityTier: args.qualityTier ?? undefined,
   });
-  const targetKey = buildSingleGameSummaryTargetKey(request.matchId);
+  const qualityTier =
+    request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
+  const generationApproach =
+    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
+  const targetKey = buildSingleGameSummaryTargetKey(
+    request.matchId,
+    generationApproach,
+    request.qualityTier ?? null,
+  );
   const existing = await deps.getSingleGameSummary(args.env, userId, targetKey);
   if (existing && !TERMINAL_RECAP_STATUSES.has(existing.status)) {
     return {
@@ -851,7 +1652,11 @@ export async function submitSingleGameSummary(
     };
   }
 
-  const modelId = resolveConfiguredRecapModelId(args.env, planId);
+  const stageModels = resolveConfiguredRecapStageModelIds(
+    args.env,
+    qualityTier,
+  );
+  const modelId = stageModels.writerModelId;
   const requestedAt = deps.now().toISOString();
   await deps.upsertSingleGameSummary(args.env, {
     completedAt: null,
@@ -863,10 +1668,12 @@ export async function submitSingleGameSummary(
     matchId: request.matchId,
     modelId,
     modelProvider: "bedrock",
-    promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+    promptVersion: resolveGameDayRecapPromptVersion(generationApproach),
     requestJson: {
+      approach: generationApproach,
       matchId: request.matchId,
       mode: "SINGLE_GAME",
+      qualityTier,
     },
     requestedAt,
     resultJson: null,
@@ -887,6 +1694,7 @@ export async function submitSingleGameSummary(
       {
         kind: "SINGLE_GAME",
         modelId,
+        qualityTier,
         requestedAt,
         targetKey,
         userId,
@@ -911,6 +1719,112 @@ export async function submitSingleGameSummary(
   }
 }
 
+export async function submitLeagueGameDayPerformances(
+  args: {
+    env: GraphqlEnv;
+    gameDayNumber: number;
+    identity: unknown;
+    leagueId: string;
+    stateMachineArn: string;
+    season?: number | null;
+  },
+  dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
+): Promise<{ executionArn: string | null; targetKey: string }> {
+  const deps: SubmitDependencies = {
+    ...defaultSubmitDependencies,
+    ...dependencies,
+  };
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+  await deps.assertMaintenanceInactive();
+
+  const request = normalizeLeagueGameDayPerformancesRequest({
+    gameDayNumber: args.gameDayNumber,
+    leagueId: args.leagueId,
+    season: args.season ?? null,
+  });
+  const targetKey = buildLeagueGameDayRecapTargetKey(
+    request.leagueId,
+    request.gameDayNumber,
+    request.season,
+  );
+  const existing = await deps.getLeagueGameDayPerformances(
+    args.env,
+    userId,
+    targetKey,
+  );
+  if (existing && !TERMINAL_RECAP_STATUSES.has(existing.status)) {
+    return {
+      executionArn: existing.executionArn ?? null,
+      targetKey,
+    };
+  }
+
+  const requestedAt = deps.now().toISOString();
+  await deps.upsertLeagueGameDayPerformances(args.env, {
+    completedAt: null,
+    coverageJson: null,
+    error: null,
+    executionArn: null,
+    gameDate: existing?.gameDate ?? null,
+    gameDayNumber: request.gameDayNumber,
+    leagueId: request.leagueId,
+    leagueName: existing?.leagueName ?? null,
+    modelId: null,
+    modelProvider: "deterministic",
+    promptVersion: null,
+    requestJson: {
+      gameDayNumber: request.gameDayNumber,
+      leagueId: request.leagueId,
+      mode: "LEAGUE_GAME_DAY_PERFORMANCES",
+      season: request.season,
+    },
+    requestedAt,
+    resultJson: null,
+    season: request.season,
+    status: "QUEUED",
+    targetKey,
+    userId,
+  });
+
+  try {
+    const executionArn = await deps.startWorkflowExecution(
+      args.stateMachineArn,
+      buildExecutionName(
+        "league-gameday-performances",
+        `${userId}:${targetKey}:${requestedAt}`,
+      ),
+      {
+        kind: "LEAGUE_GAME_DAY_PERFORMANCES",
+        qualityTier: "standard",
+        requestedAt,
+        targetKey,
+        userId,
+      },
+    );
+    await deps.updateLeagueGameDayPerformances(args.env, {
+      executionArn,
+      targetKey,
+      userId,
+    });
+    return { executionArn, targetKey };
+  } catch (error) {
+    await deps.updateLeagueGameDayPerformances(args.env, {
+      completedAt: deps.now().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      modelId: null,
+      modelProvider: "deterministic",
+      promptVersion: null,
+      status: "FAILED",
+      targetKey,
+      userId,
+    });
+    throw error;
+  }
+}
+
 export async function processGameDayRecap(
   args: {
     env: GraphqlEnv;
@@ -926,9 +1840,15 @@ export async function processGameDayRecap(
     ...dependencies,
   };
   const message = resolveRecapMessage(args);
-  const modelId = resolveQueuedRecapModelId(message, args.modelId);
+  const runtimeModels = resolveQueuedRecapStageModelIds({
+    env: args.env,
+    fallbackModelId: args.modelId,
+    message,
+  });
+  const modelId = runtimeModels.writerModelId;
   logGameDayRecapInfo("process.message.received", {
     modelId,
+    qualityTier: message.qualityTier,
     requestedAt: message.requestedAt,
     targetKey: message.targetKey,
     userId: message.userId,
@@ -946,6 +1866,7 @@ export async function processGameDayRecap(
 
   logGameDayRecapInfo("process.recap.loaded", {
     completedAt: recap.completedAt,
+    generationApproach: resolveRecapGenerationApproach(recap.requestJson),
     requestedAt: recap.requestedAt,
     status: recap.status,
     targetKey: recap.targetKey,
@@ -968,6 +1889,8 @@ export async function processGameDayRecap(
   }
 
   let coverage: GameDayRecapCoveragePayload | null = null;
+  const generationApproach = resolveRecapGenerationApproach(recap.requestJson);
+  const promptVersion = resolveGameDayRecapPromptVersion(generationApproach);
 
   try {
     await deps.assertMaintenanceInactive();
@@ -980,7 +1903,7 @@ export async function processGameDayRecap(
       error: null,
       modelId,
       modelProvider: "bedrock",
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      promptVersion,
       status: "RESOLVING_SLATE",
       targetKey: recap.targetKey,
       userId: recap.userId,
@@ -1043,6 +1966,7 @@ export async function processGameDayRecap(
       request: {
         gameDate: recap.gameDate,
         gameDayNumber: null,
+        generationApproach,
         kind: "LEAGUE_DATE",
         label: `${standings.league?.name ?? recap.leagueId} ${recap.gameDate}`,
         leagueId: recap.leagueId,
@@ -1090,19 +2014,40 @@ export async function processGameDayRecap(
     });
 
     await deps.assertMaintenanceInactive();
-    const provider = deps.createProvider({
+    const writerProvider = deps.createProvider({
       modelId,
       region: args.region,
+      stage: "writer",
     });
     logGameDayRecapInfo("process.provider.ready", {
-      modelId: provider.modelId,
-      providerName: provider.providerName,
+      modelId: writerProvider.modelId,
+      providerName: writerProvider.providerName,
+      qualityTier: message.qualityTier,
       targetKey: recap.targetKey,
       userId: recap.userId,
     });
-    const generatedRecap = await generateValidatedGameDayRecap({
+    const generatedRecap = await generateResolvedGameDayRecap({
       payload: promptPayload,
-      provider,
+      qualityTier: message.qualityTier,
+      retryProvider:
+        message.qualityTier === "premium" && runtimeModels.retryModelId
+          ? deps.createProvider({
+              modelId: runtimeModels.retryModelId,
+              region: args.region,
+              stage: "retry_writer",
+            })
+          : null,
+      judgeProvider:
+        runtimeModels.judgeModelId
+          ? deps.createProvider({
+              modelId: runtimeModels.judgeModelId,
+              region: args.region,
+              stage: "judge",
+            })
+          : null,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+      writerProvider,
     });
     coverage = mergeCoverageIssues(coverage, generatedRecap.coverageIssues);
     logGameDayRecapInfo("process.provider.succeeded", {
@@ -1117,9 +2062,9 @@ export async function processGameDayRecap(
       coverageJson: coverage,
       error: null,
       leagueName: promptPayload.request.leagueName,
-      modelId: provider.modelId,
-      modelProvider: provider.providerName,
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      modelId: writerProvider.modelId,
+      modelProvider: writerProvider.providerName,
+      promptVersion,
       resultJson: generatedRecap.result,
       season,
       status: "SUCCEEDED",
@@ -1149,7 +2094,7 @@ export async function processGameDayRecap(
       error: toMaintenanceAwareErrorMessage(error),
       modelId,
       modelProvider: "bedrock",
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      promptVersion,
       status: "FAILED",
       targetKey: recap.targetKey,
       userId: recap.userId,
@@ -1170,6 +2115,9 @@ export async function processQueuedRecapJob(
 ): Promise<void> {
   const message = resolveRecapMessage(args);
   switch (message.kind) {
+    case "LEAGUE_GAME_DAY_PERFORMANCES":
+      await processLeagueGameDayPerformances(args, dependencies);
+      return;
     case "LEAGUE_GAME_DAY":
       await processLeagueGameDayRecap(args, dependencies);
       return;
@@ -1197,7 +2145,12 @@ export async function processLeagueGameDayRecap(
     ...dependencies,
   };
   const message = resolveRecapMessage(args);
-  const modelId = resolveQueuedRecapModelId(message, args.modelId);
+  const runtimeModels = resolveQueuedRecapStageModelIds({
+    env: args.env,
+    fallbackModelId: args.modelId,
+    message,
+  });
+  const modelId = runtimeModels.writerModelId;
   const recap = await deps.getLeagueGameDayRecap(
     args.env,
     message.userId,
@@ -1216,6 +2169,8 @@ export async function processLeagueGameDayRecap(
   }
 
   let coverage: GameDayRecapCoveragePayload | null = null;
+  const generationApproach = resolveRecapGenerationApproach(recap.requestJson);
+  const promptVersion = resolveGameDayRecapPromptVersion(generationApproach);
 
   try {
     await deps.assertMaintenanceInactive();
@@ -1223,7 +2178,7 @@ export async function processLeagueGameDayRecap(
       error: null,
       modelId,
       modelProvider: "bedrock",
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      promptVersion,
       status: "RESOLVING_SLATE",
       targetKey: recap.targetKey,
       userId: recap.userId,
@@ -1283,6 +2238,7 @@ export async function processLeagueGameDayRecap(
       request: {
         gameDate: null,
         gameDayNumber: recap.gameDayNumber,
+        generationApproach,
         kind: "LEAGUE_GAME_DAY",
         label: `${standings.league?.name ?? recap.leagueId} game day ${recap.gameDayNumber}`,
         leagueId: recap.leagueId,
@@ -1314,13 +2270,33 @@ export async function processLeagueGameDayRecap(
     });
 
     await deps.assertMaintenanceInactive();
-    const provider = deps.createProvider({
+    const writerProvider = deps.createProvider({
       modelId,
       region: args.region,
+      stage: "writer",
     });
-    const generatedRecap = await generateValidatedGameDayRecap({
+    const generatedRecap = await generateResolvedGameDayRecap({
       payload: promptPayload,
-      provider,
+      qualityTier: message.qualityTier,
+      retryProvider:
+        message.qualityTier === "premium" && runtimeModels.retryModelId
+          ? deps.createProvider({
+              modelId: runtimeModels.retryModelId,
+              region: args.region,
+              stage: "retry_writer",
+            })
+          : null,
+      judgeProvider:
+        runtimeModels.judgeModelId
+          ? deps.createProvider({
+              modelId: runtimeModels.judgeModelId,
+              region: args.region,
+              stage: "judge",
+            })
+          : null,
+      targetKey: recap.targetKey,
+      userId: recap.userId,
+      writerProvider,
     });
     coverage = mergeCoverageIssues(coverage, generatedRecap.coverageIssues);
 
@@ -1329,9 +2305,9 @@ export async function processLeagueGameDayRecap(
       coverageJson: coverage,
       error: null,
       leagueName: promptPayload.request.leagueName,
-      modelId: provider.modelId,
-      modelProvider: provider.providerName,
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      modelId: writerProvider.modelId,
+      modelProvider: writerProvider.providerName,
+      promptVersion,
       resultJson: generatedRecap.result,
       season,
       status: "SUCCEEDED",
@@ -1354,10 +2330,204 @@ export async function processLeagueGameDayRecap(
       error: toMaintenanceAwareErrorMessage(error),
       modelId,
       modelProvider: "bedrock",
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      promptVersion,
       status: "FAILED",
       targetKey: recap.targetKey,
       userId: recap.userId,
+    });
+    throw error;
+  }
+}
+
+export async function processLeagueGameDayPerformances(
+  args: {
+    env: GraphqlEnv;
+    message?: RecapQueueMessage;
+    messageBody?: string;
+    modelId?: string;
+    region?: string;
+  },
+  dependencies: ProcessDependencyOverrides = defaultProcessDependencies,
+): Promise<void> {
+  const deps: ProcessDependencies = {
+    ...defaultProcessDependencies,
+    ...dependencies,
+  };
+  const message = resolveRecapMessage(args);
+  const performances = await deps.getLeagueGameDayPerformances(
+    args.env,
+    message.userId,
+    message.targetKey,
+  );
+  if (!performances || performances.userId !== message.userId) {
+    throw new Error(
+      "League game day performances request is missing or no longer belongs to the enqueued user.",
+    );
+  }
+  if (
+    performances.requestedAt !== message.requestedAt ||
+    (performances.status === "SUCCEEDED" && performances.completedAt)
+  ) {
+    return;
+  }
+
+  let coverage: GameDayRecapCoveragePayload | null = null;
+
+  try {
+    await deps.assertMaintenanceInactive();
+    await deps.updateLeagueGameDayPerformances(args.env, {
+      error: null,
+      modelId: null,
+      modelProvider: "deterministic",
+      promptVersion: null,
+      status: "RESOLVING_SLATE",
+      targetKey: performances.targetKey,
+      userId: performances.userId,
+    });
+
+    await deps.assertMaintenanceInactive();
+    const connection = await requireBbConnection(
+      args.env,
+      performances.userId,
+      deps,
+    );
+    const accessKey = await deps.resolveBbAccessKey(
+      args.env,
+      performances.userId,
+    );
+    const bb = deps.createBbClient({
+      securityCode: accessKey,
+      username: connection.bbLoginName,
+    });
+
+    const standings =
+      performances.season !== null && performances.season !== undefined
+        ? await bb.getStandings(performances.leagueId, performances.season)
+        : await bb.getStandings(performances.leagueId);
+    const season = standings.season ?? performances.season;
+    if (season === null || season === undefined) {
+      throw new Error(
+        `Unable to resolve a season for league ${performances.leagueId}.`,
+      );
+    }
+
+    const slate = await resolveLeagueGameDaySlate({
+      bb,
+      gameDayNumber: performances.gameDayNumber,
+      standings,
+    });
+    if (!slate.length) {
+      throw new Error(
+        `No regular-season league games were found for league ${performances.leagueId} on game day ${performances.gameDayNumber}.`,
+      );
+    }
+
+    coverage = {
+      availableGames: 0,
+      missingGames: [],
+      partial: false,
+      requestedGames: slate.length,
+    };
+    await deps.updateLeagueGameDayPerformances(args.env, {
+      coverageJson: coverage,
+      gameDate: null,
+      leagueName: standings.league?.name ?? performances.leagueName ?? null,
+      season,
+      status: "BUILDING_CONTEXT",
+      targetKey: performances.targetKey,
+      userId: performances.userId,
+    });
+
+    const boxScoreCache = new Map<string, Promise<BoxScoreLoadResult>>();
+    const loadedGames: Array<{
+      boxScore: BBApiBoxScore;
+      requestedGame: SlateGame;
+    }> = [];
+
+    for (const requestedGame of slate) {
+      const boxScoreResult = await loadBoxScore(
+        bb,
+        boxScoreCache,
+        requestedGame.matchId,
+      );
+      if (boxScoreResult.kind === "ok") {
+        loadedGames.push({
+          boxScore: boxScoreResult.boxScore,
+          requestedGame,
+        });
+        continue;
+      }
+
+      coverage = {
+        availableGames: loadedGames.length,
+        missingGames: [
+          {
+            awayTeamName: requestedGame.awayTeamName,
+            homeTeamName: requestedGame.homeTeamName,
+            matchId: requestedGame.matchId,
+            reason:
+              boxScoreResult.kind === "incomplete_boxscore"
+                ? "final box score was incomplete"
+                : boxScoreResult.kind === "parse_failed"
+                  ? "final box score could not be parsed"
+                  : "final box score was unavailable",
+          },
+        ],
+        partial: true,
+        requestedGames: slate.length,
+      };
+      throw new Error(
+        `League game day performances require a complete final slate. ${requestedGame.awayTeamName} at ${requestedGame.homeTeamName} could not be loaded.`,
+      );
+    }
+
+    const timeZone = resolveLeagueTimeZone(connection, standings);
+    const resolvedGameDate =
+      resolveCalendarDateKey(
+        loadedGames[0]?.boxScore.startTime ?? null,
+        timeZone,
+      ) ?? resolveCalendarDateKey(slate[0]?.startTime ?? null, timeZone);
+    const result = buildLeagueGameDayPerformancesResult({
+      gameDate: resolvedGameDate,
+      gameDayNumber: performances.gameDayNumber,
+      games: loadedGames,
+      leagueId: performances.leagueId,
+      leagueName: standings.league?.name ?? performances.leagueName ?? null,
+      season,
+    });
+    coverage = {
+      availableGames: loadedGames.length,
+      missingGames: [],
+      partial: false,
+      requestedGames: slate.length,
+    };
+
+    await deps.updateLeagueGameDayPerformances(args.env, {
+      completedAt: deps.now().toISOString(),
+      coverageJson: coverage,
+      error: null,
+      gameDate: resolvedGameDate ?? null,
+      leagueName: result.leagueName,
+      modelId: null,
+      modelProvider: "deterministic",
+      promptVersion: null,
+      resultJson: result,
+      season,
+      status: "SUCCEEDED",
+      targetKey: performances.targetKey,
+      userId: performances.userId,
+    });
+  } catch (error) {
+    await deps.updateLeagueGameDayPerformances(args.env, {
+      completedAt: deps.now().toISOString(),
+      coverageJson: coverage,
+      error: toMaintenanceAwareErrorMessage(error),
+      modelId: null,
+      modelProvider: "deterministic",
+      promptVersion: null,
+      status: "FAILED",
+      targetKey: performances.targetKey,
+      userId: performances.userId,
     });
     throw error;
   }
@@ -1378,7 +2548,12 @@ export async function processSingleGameSummary(
     ...dependencies,
   };
   const message = resolveRecapMessage(args);
-  const modelId = resolveQueuedRecapModelId(message, args.modelId);
+  const runtimeModels = resolveQueuedRecapStageModelIds({
+    env: args.env,
+    fallbackModelId: args.modelId,
+    message,
+  });
+  const modelId = runtimeModels.writerModelId;
   const summary = await deps.getSingleGameSummary(
     args.env,
     message.userId,
@@ -1397,6 +2572,10 @@ export async function processSingleGameSummary(
   }
 
   let coverage: GameDayRecapCoveragePayload | null = null;
+  const generationApproach = resolveRecapGenerationApproach(
+    summary.requestJson,
+  );
+  const promptVersion = resolveGameDayRecapPromptVersion(generationApproach);
 
   try {
     await deps.assertMaintenanceInactive();
@@ -1404,7 +2583,7 @@ export async function processSingleGameSummary(
       error: null,
       modelId,
       modelProvider: "bedrock",
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      promptVersion,
       status: "RESOLVING_SLATE",
       targetKey: summary.targetKey,
       userId: summary.userId,
@@ -1433,6 +2612,7 @@ export async function processSingleGameSummary(
       boxScore,
       connection,
       fetchPublicMatchPlayByPlay: dependencies.fetchPublicMatchPlayByPlay,
+      generationApproach,
       matchId: summary.matchId,
     });
     coverage = promptPayload.coverage;
@@ -1449,13 +2629,33 @@ export async function processSingleGameSummary(
     });
 
     await deps.assertMaintenanceInactive();
-    const provider = deps.createProvider({
+    const writerProvider = deps.createProvider({
       modelId,
       region: args.region,
+      stage: "writer",
     });
-    const generatedRecap = await generateValidatedGameDayRecap({
+    const generatedRecap = await generateResolvedGameDayRecap({
       payload: promptPayload,
-      provider,
+      qualityTier: message.qualityTier,
+      retryProvider:
+        message.qualityTier === "premium" && runtimeModels.retryModelId
+          ? deps.createProvider({
+              modelId: runtimeModels.retryModelId,
+              region: args.region,
+              stage: "retry_writer",
+            })
+          : null,
+      judgeProvider:
+        runtimeModels.judgeModelId
+          ? deps.createProvider({
+              modelId: runtimeModels.judgeModelId,
+              region: args.region,
+              stage: "judge",
+            })
+          : null,
+      targetKey: summary.targetKey,
+      userId: summary.userId,
+      writerProvider,
     });
     coverage = mergeCoverageIssues(coverage, generatedRecap.coverageIssues);
 
@@ -1466,9 +2666,9 @@ export async function processSingleGameSummary(
       gameDate: promptPayload.request.gameDate,
       leagueId: promptPayload.request.leagueId,
       leagueName: promptPayload.request.leagueName,
-      modelId: provider.modelId,
-      modelProvider: provider.providerName,
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      modelId: writerProvider.modelId,
+      modelProvider: writerProvider.providerName,
+      promptVersion,
       resultJson: generatedRecap.result,
       season: promptPayload.request.season,
       status: "SUCCEEDED",
@@ -1482,7 +2682,7 @@ export async function processSingleGameSummary(
       error: toMaintenanceAwareErrorMessage(error),
       modelId,
       modelProvider: "bedrock",
-      promptVersion: GAME_DAY_RECAP_PROMPT_VERSION,
+      promptVersion,
       status: "FAILED",
       targetKey: summary.targetKey,
       userId: summary.userId,
@@ -1502,6 +2702,57 @@ function resolveRecapMessage(args: {
     throw new Error("Game day recap payload was not provided.");
   }
   return parseGameDayRecapQueueMessage(args.messageBody);
+}
+
+function resolveRecapQualityTier(planId: PlanId): RecapQualityTier {
+  return planId === "premium" ? "premium" : "standard";
+}
+
+function resolveRequestedRecapQualityTier(
+  env: GraphqlEnv,
+  planId: PlanId,
+): RecapQualityTier {
+  if (!resolveCommercialModeEnabled(env)) {
+    return "premium";
+  }
+
+  return resolveRecapQualityTier(planId);
+}
+
+function resolveConfiguredRecapStageModelIds(
+  env: GraphqlEnv,
+  qualityTier: RecapQualityTier,
+): RecapStageModelIds {
+  const writerModelId = resolveConfiguredRecapModelId(
+    env,
+    qualityTier === "premium" ? "premium" : "free",
+  );
+  if (qualityTier === "standard") {
+    return {
+      judgeModelId:
+        normalizeConfiguredRecapModelId(
+          env[GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME],
+          GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME,
+          false,
+        ) ?? writerModelId,
+      retryModelId: null,
+      writerModelId,
+    };
+  }
+
+  return {
+    judgeModelId: resolvePremiumStageModelIdOrWriterFallback(env, {
+      defaultEnvName: GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME,
+      fallbackModelId: writerModelId,
+      overrideEnvName: GAME_DAY_RECAP_JUDGE_PREMIUM_MODEL_ENV_NAME,
+    }),
+    retryModelId: resolvePremiumStageModelIdOrWriterFallback(env, {
+      defaultEnvName: GAME_DAY_RECAP_RETRY_MODEL_ENV_NAME,
+      fallbackModelId: writerModelId,
+      overrideEnvName: GAME_DAY_RECAP_RETRY_PREMIUM_MODEL_ENV_NAME,
+    }),
+    writerModelId,
+  };
 }
 
 function resolveConfiguredRecapModelId(
@@ -1529,6 +2780,28 @@ function resolveConfiguredRecapModelId(
   }
 
   return defaultModelId;
+}
+
+function resolvePremiumStageModelIdOrWriterFallback(
+  env: GraphqlEnv,
+  args: {
+    defaultEnvName: string;
+    fallbackModelId: string;
+    overrideEnvName: string;
+  },
+): string {
+  const defaultModelId = normalizeConfiguredRecapModelId(
+    env[args.defaultEnvName],
+    args.defaultEnvName,
+    false,
+  );
+  const overrideModelId = normalizeConfiguredRecapModelId(
+    env[args.overrideEnvName],
+    args.overrideEnvName,
+    false,
+  );
+  const resolvedModelId = overrideModelId ?? defaultModelId;
+  return resolvedModelId ?? args.fallbackModelId;
 }
 
 function normalizeConfiguredRecapModelId(
@@ -1560,6 +2833,55 @@ function resolveQueuedRecapModelId(
   }
 
   return resolvedModelId;
+}
+
+function resolveQueuedRecapStageModelIds(args: {
+  env: GraphqlEnv;
+  fallbackModelId: string | undefined;
+  message: RecapQueueMessage;
+}): RecapStageModelIds {
+  const writerModelFallback =
+    args.message.qualityTier === "premium"
+      ? (normalizeConfiguredRecapModelId(
+          args.env[GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME] ??
+            args.env[GAME_DAY_RECAP_MODEL_ENV_NAME],
+          args.env[GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME]
+            ? GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME
+            : GAME_DAY_RECAP_MODEL_ENV_NAME,
+          false,
+        ) ?? args.fallbackModelId)
+      : args.fallbackModelId;
+  const writerModelId = resolveQueuedRecapModelId(
+    args.message,
+    writerModelFallback,
+  );
+
+  if (args.message.qualityTier !== "premium") {
+    return {
+      judgeModelId:
+        normalizeConfiguredRecapModelId(
+          args.env[GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME],
+          GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME,
+          false,
+        ) ?? writerModelId,
+      retryModelId: null,
+      writerModelId,
+    };
+  }
+
+  return {
+    judgeModelId: resolvePremiumStageModelIdOrWriterFallback(args.env, {
+      defaultEnvName: GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME,
+      fallbackModelId: writerModelId,
+      overrideEnvName: GAME_DAY_RECAP_JUDGE_PREMIUM_MODEL_ENV_NAME,
+    }),
+    retryModelId: resolvePremiumStageModelIdOrWriterFallback(args.env, {
+      defaultEnvName: GAME_DAY_RECAP_RETRY_MODEL_ENV_NAME,
+      fallbackModelId: writerModelId,
+      overrideEnvName: GAME_DAY_RECAP_RETRY_PREMIUM_MODEL_ENV_NAME,
+    }),
+    writerModelId,
+  };
 }
 
 export function resolveSeasonForDate(
@@ -1832,15 +3154,150 @@ function toSlateGameFromScheduleMatch(args: {
 
 export function buildGameDayRecapBedrockRequest(args: {
   modelId: string;
+  payload: GameDayRecapWriterRequestPayload;
+  validationFeedback?: string[];
+  validationContext?: GameDayRecapRetryValidationContext | null;
+}) {
+  if (isStylePolishRequestPayload(args.payload)) {
+    return buildGameDayRecapStylePolishBedrockRequest({
+      modelId: args.modelId,
+      payload: args.payload,
+    });
+  }
+
+  if (isPostgameInterviewRequestPayload(args.payload)) {
+    return buildGameDayRecapPostgameInterviewBedrockRequest({
+      modelId: args.modelId,
+      payload: args.payload,
+    });
+  }
+
+  return buildGameDayRecapWriterBedrockRequest({
+    modelId: args.modelId,
+    payload: args.payload,
+    validationFeedback: args.validationFeedback,
+    validationContext: args.validationContext,
+  });
+}
+
+function isStylePolishRequestPayload(
+  payload: GameDayRecapWriterRequestPayload,
+): payload is GameDayRecapPolishRequestPayload {
+  return "task" in payload && payload.task === "style_polish";
+}
+
+function isPostgameInterviewRequestPayload(
+  payload: GameDayRecapWriterRequestPayload,
+): payload is GameDayRecapPostgameInterviewRequestPayload {
+  return "task" in payload && payload.task === "postgame_interview";
+}
+
+function buildGameDayRecapWriterBedrockRequest(args: {
+  modelId: string;
   payload: GameDayRecapPromptPayload;
   validationFeedback?: string[];
+  validationContext?: GameDayRecapRetryValidationContext | null;
 }) {
   const validationFeedback = args.validationFeedback?.filter(Boolean) ?? [];
+  const validationContext = args.validationContext ?? null;
+  const promptPayload = sanitizePromptPayloadForWriter(args.payload);
+  const useFactsLibraryFirst =
+    args.payload.request.generationApproach ===
+    RecapGenerationApproach.FACT_LIBRARY_FIRST;
+  const writerGoals = [
+    "Write a concise headline and lede for the requested recap scope.",
+    "Write one reporter-style recap for each completed game in medium length.",
+    "Use the supplied final team scores and winner as the source of truth for every outcome claim.",
+    "If a game has only four periods, do not mention overtime. If it has more than four periods, mention overtime only when it helps the story and keep the count accurate.",
+    "If a game includes requiredContextSentences, include each supplied requiredContextSentence exactly once in the writeup and keep the wording intact.",
+    "If a game includes effortSummary or gameDayPrepSummaries, use the supplied requiredContextSentences rather than inventing a paraphrase or citing raw effortDelta or GDP focus codes.",
+    "If a game includes rotationSummaries, fold that short-handed or foul-trouble context into the writeup in natural language without guessing why a player sat.",
+    "If a one-possession game includes playByPlayFacts.endingFacts, lead with that decisive ending in the headline or the opening sentence instead of burying it under broader context.",
+    "If a game includes playByPlaySummaryLines, prefer those code-generated lines when mentioning supplied play-by-play context.",
+    "If a game includes playByPlayFacts.endingFacts, use those structured ending facts as the source of truth for buzzerbeaters, go-ahead shots, and last missed chances.",
+    "If a game includes playByPlayFacts.bestCompetitiveSwingRun or playByPlayFacts.leadChangeFacts, use those structured facts as the source of truth for runs, comebacks to the lead, and lead-change bursts.",
+    "If a game includes playByPlayFacts.primaryRun, mention that exact primaryRun somewhere in the writeup using the supplied run score and timing anchors.",
+    "If a game includes playByPlayFacts.secondaryRun, you may mention it when it meaningfully sharpens the story, but do not force it in.",
+    "If a game includes playByPlayFacts and its ending facts mark a buzzerbeater, use the word buzzerbeater in the headline or opening sentence.",
+    "If a game includes seriesContext.summaryLine, include that exact sentence once within the opening two writeup sentences and do not contradict it elsewhere.",
+    "If a game is decided by three points or fewer but the supplied play-by-play does not identify a final-possession detail, keep the finish grounded and do not invent a last shot, last miss, or last turnover.",
+    "If a game includes playByPlayFacts, use only those supplied facts and never infer unsupplied possession-by-possession detail.",
+    "Only mention a run when the supplied play-by-play facts support it, and include the supplied timing anchors when you do.",
+    "Only mention lead-change counts, rapid back-and-forth bursts, or comeback-to-the-lead claims when the supplied play-by-play facts support them, and keep the counts and timing exact.",
+    "In playoff games, do not mention regular-season records or any winning or losing streaks.",
+    "Keep each writeup flowing like sports-reporter prose rather than a checklist, bullet list, or stack of disconnected facts.",
+    "Use connective, polished sports-desk prose with varied sentence length instead of stacking short note-like fact sentences.",
+    "Do not restate the same winner-and-score outcome in a later throwaway sentence once the writeup has already established it.",
+    "Never use vague filler such as 'at a key juncture' or 'proved decisive'.",
+    "Do not call a one-game win or loss a streak.",
+    "When a supplied ending, buzzerbeater, comeback, or last-chance miss is the story, do not lead with effort or preparation context instead.",
+    "Do not include postgameInterview in this response. The interview is generated in a separate pass.",
+    "Use only the provided evidence and keep any strategic de-emphasis language cautious.",
+    "If validationContext is present, fix the flagged sentences and issues directly while leaving already-supported material intact.",
+    ...(useFactsLibraryFirst
+      ? [
+          "When factsLibrary is present for a game, treat it as the primary deterministic story source for headline, opener, period-state, and momentum claims.",
+          "Prefer factsLibrary.headlineCandidates and factsLibrary.openingCandidates before inventing a new framing angle.",
+          "When factsLibrary.requiredContextSentences is present, include each requiredContextSentence exactly once.",
+          "Use factsLibrary.periodStates.throughThreeQuarters for any through-three-quarters claim instead of estimating from other context.",
+          "Use only factsLibrary.matchupEdgeFacts.supported for why-the-winner-won explanations and avoid the suppressed explanations.",
+          "If factsLibrary.gameFlow.doNotEmphasize includes guidance, follow it and avoid those angles.",
+          "Only mention runs, lead-change bursts, last-lead, or took-the-lead-for-good angles when they are explicitly present in factsLibrary.gameFlow or playByPlayFacts.",
+        ]
+      : []),
+  ];
+  const systemInstructions = [
+    "You are writing basketball recaps for the requested game or slate in the voice of a polished professional sports reporter.",
+    "Use only supplied facts. Do not invent transfers, injuries, off-court news, or unsupplied play-by-play details.",
+    "Write in a natural sports-reporter voice with connected prose, not a checklist of facts.",
+    "Favor smooth, transitional sentences over stacked score-note fragments.",
+    "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
+    "When requiredContextSentences are present for a game, include each one exactly once in the writeup.",
+    "Never cite the raw effortDelta value or raw GDP focus codes.",
+    "When rotationSummaries are present for a game, mention that short-handed or foul-trouble context naturally and do not invent reasons such as injuries, load management, or discipline beyond the provided note.",
+    "When playByPlayFacts.endingFacts are present for a close game, treat those structured ending facts as the preferred source for the lede.",
+    "When playByPlaySummaryLines are present for a game, treat them as the preferred source for any supplied play-by-play mention.",
+    "When playByPlayFacts.endingFacts mark a buzzerbeater, use the word buzzerbeater in the headline or opening sentence.",
+    "When playByPlayFacts.primaryRun is present, mention that exact run in the writeup using the supplied score and timing anchors.",
+    "When playByPlayFacts.secondaryRun is present, use it only when it helps the story stay specific.",
+    "When seriesContext.summaryLine is present for a game, include that exact sentence once within the opening two writeup sentences and do not contradict it anywhere else.",
+    "If a game is decided by three points or fewer but the supplied play-by-play does not identify a final-possession detail, keep the finish grounded and do not invent a last shot, last miss, or last turnover.",
+    "When playByPlayFacts are present for a game, use them only as provided and do not embellish them into unsupplied sequences.",
+    "When playByPlayFacts.bestCompetitiveSwingRun or playByPlayFacts.leadChangeFacts are present, use them as the source of truth for runs and back-and-forth claims.",
+    "Only mention runs when the supplied play-by-play facts support them, and include the supplied timing anchors.",
+    "Only mention lead-change counts, rapid bursts, or comeback-to-the-lead claims when the supplied play-by-play facts support them, and keep the counts and timing exact.",
+    "Do not include postgameInterview in this response.",
+    "In playoff games, do not mention regular-season records or any winning or losing streaks.",
+    "Outside playoff games, unqualified team record, streak, and recent-form fields describe the postgame state after the final result.",
+    "Team context fields ending in EnteringGame describe the state before tipoff and should only appear when you are explicitly contrasting the pregame setup.",
+    "The final winner and final score are the source of truth for outcome language.",
+    "If a game has only four periods, do not call it overtime. If it has overtime periods, keep that claim accurate.",
+    "Use quarterFacts as the source of truth for period-by-period scoring. If a quarter is tied, do not say either team outscored, won, or took that quarter.",
+    "If you mention team ratings, use the supplied BuzzerBeater word labels rather than raw numeric scores.",
+    "Do not restate the exact same winner-and-score outcome in a later sentence once the game result is already clear.",
+    "Never use filler such as 'at a key juncture' or 'proved decisive'.",
+    "Never call a one-game win or loss a streak.",
+    "If a decisive late-game ending is supplied, do not bury it beneath effort or GDP context.",
+    "If validationContext is present, treat it as a surgical rewrite brief rather than a reason to rewrite the whole recap.",
+    "Headlines should be vivid but factual.",
+    ...(useFactsLibraryFirst
+      ? [
+          "When factsLibrary is present, treat it as the preferred deterministic source for headline candidates, opening candidates, matchup edges, and story-shape cues.",
+          "When factsLibrary.requiredContextSentences is present, keep those exact sentences intact.",
+          "Use factsLibrary.summaryFacts and factsLibrary.storySignals to guide the writeup, but keep the final prose connected and natural.",
+          "Honor any factsLibrary.matchupEdgeFacts.suppressed guidance and do not present those angles as reasons the winner won.",
+          "Honor any factsLibrary.gameFlow.doNotEmphasize guidance and do not force late-basket capper language when the payload warns against it.",
+        ]
+      : []),
+    validationFeedback.length > 0
+      ? `Previous draft issues to correct: ${validationFeedback.join(" ")}`
+      : "",
+  ];
 
   return {
     inferenceConfig: {
       maxTokens: 5000,
-      temperature: 0.8,
+      temperature: useFactsLibraryFirst ? 0.55 : 0.8,
     },
     messages: [
       {
@@ -1850,23 +3307,14 @@ export function buildGameDayRecapBedrockRequest(args: {
               {
                 instructions: {
                   evidenceTags: GAME_DAY_RECAP_EVIDENCE_TAGS,
-                  goals: [
-                    "Write a concise headline and lede for the requested recap scope.",
-                    "Write one reporter-style recap for each completed game in medium length.",
-                    "If a game includes effortSummary, fold that effort edge into the writeup in natural language instead of quoting the raw effortDelta number.",
-                    "If a game includes gameDayPrepSummaries, fold the defensive preparation angle into the writeup in natural language instead of quoting raw GDP focus codes.",
-                    "If a game includes rotationSummaries, fold that short-handed or foul-trouble context into the writeup in natural language without guessing why a player sat.",
-                    "If a game includes playByPlaySummaryLines, prefer those code-generated lines when mentioning supplied play-by-play context.",
-                    "If a game includes playByPlayFacts, use only those supplied facts and never infer unsupplied possession-by-possession detail.",
-                    "Keep each writeup flowing like sports-reporter prose rather than a checklist, bullet list, or stack of disconnected facts.",
-                    "Use only the provided evidence and keep any strategic de-emphasis language cautious.",
-                  ],
+                  goals: writerGoals,
                   validationFeedback:
                     validationFeedback.length > 0
                       ? validationFeedback
                       : undefined,
+                  validationContext: validationContext ?? undefined,
                 },
-                recapContext: args.payload,
+                recapContext: promptPayload,
               },
               null,
               2,
@@ -1885,7 +3333,80 @@ export function buildGameDayRecapBedrockRequest(args: {
             description:
               "Reporter-style basketball recap output for one requested scope.",
             name: "game_day_recap",
-            schema: JSON.stringify(GAME_DAY_RECAP_RESULT_SCHEMA),
+            schema: JSON.stringify(
+              toBedrockStructuredOutputSchema(GAME_DAY_RECAP_RESULT_SCHEMA),
+            ),
+          },
+        },
+        type: "json_schema" as const,
+      },
+    },
+    system: [
+      {
+        text: systemInstructions.join(" "),
+      },
+    ],
+  };
+}
+
+function buildGameDayRecapStylePolishBedrockRequest(args: {
+  modelId: string;
+  payload: GameDayRecapPolishRequestPayload;
+}) {
+  return {
+    inferenceConfig: {
+      maxTokens: 1800,
+      temperature: 0.2,
+    },
+    messages: [
+      {
+        content: [
+          {
+            text: JSON.stringify(
+              {
+                instructions: {
+                  goals: [
+                    "Rewrite only the writeup into smoother sports-desk prose.",
+                    "Preserve every supplied fact exactly.",
+                    "Keep the exact series summary line when present.",
+                    "Keep the exact supplied primary run mention and timing anchors.",
+                    "Keep every requiredContextSentence exactly once.",
+                    "Remove duplicate quarter or outcome restatements when they are redundant.",
+                    "Vary sentence openings and sentence length.",
+                    "Use cleaner transitions and more connected prose.",
+                  ],
+                  restrictions: [
+                    "Do not change the game result.",
+                    "Do not add or remove any supported factual claim unless you are removing a redundant repetition.",
+                    "Do not introduce any postgameInterview content.",
+                    "Return only the rewritten writeup.",
+                  ],
+                },
+                gameFacts: args.payload.gameFacts,
+                recapGame: args.payload.recapGame,
+                request: args.payload.request,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        role: "user" as const,
+      },
+    ],
+    modelId: args.modelId,
+    outputConfig: {
+      textFormat: {
+        structure: {
+          jsonSchema: {
+            description:
+              "Style-only rewrite of one basketball recap writeup.",
+            name: "game_day_recap_style_polish",
+            schema: JSON.stringify(
+              toBedrockStructuredOutputSchema(
+                GAME_DAY_RECAP_STYLE_POLISH_RESULT_SCHEMA,
+              ),
+            ),
           },
         },
         type: "json_schema" as const,
@@ -1894,27 +3415,564 @@ export function buildGameDayRecapBedrockRequest(args: {
     system: [
       {
         text: [
-          "You are writing basketball recaps for the requested game or slate.",
-          "Use only supplied facts. Do not invent transfers, injuries, off-court news, or unsupplied play-by-play details.",
-          "Write in a natural sports-reporter voice with connected prose, not a checklist of facts.",
-          "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
-          "When effortSummary is present for a game, mention it naturally in that game's writeup and never cite the raw effortDelta value.",
-          "When gameDayPrepSummaries are present for a game, mention that preparation naturally in the writeup and never cite raw GDP focus codes.",
-          "When rotationSummaries are present for a game, mention that short-handed or foul-trouble context naturally and do not invent reasons such as injuries, load management, or discipline beyond the provided note.",
-          "When playByPlaySummaryLines are present for a game, treat them as the preferred source for any supplied play-by-play mention.",
-          "When playByPlayFacts are present for a game, use them only as provided and do not embellish them into unsupplied sequences.",
-          "Unqualified team record, streak, and recent-form fields describe the postgame state after the final result.",
-          "Team context fields ending in EnteringGame describe the state before tipoff and should only appear when you are explicitly contrasting the pregame setup.",
-          "Use quarterFacts as the source of truth for period-by-period scoring. If a quarter is tied, do not say either team outscored, won, or took that quarter.",
-          "If you mention team ratings, use the supplied BuzzerBeater word labels rather than raw numeric scores.",
-          "Headlines should be vivid but factual.",
-          validationFeedback.length > 0
-            ? `Previous draft issues to correct: ${validationFeedback.join(" ")}`
-            : "",
+          "You are a sports-desk line editor polishing a grounded basketball recap.",
+          "Use only the supplied facts.",
+          "Keep required exact sentences intact.",
+          "Improve flow and readability without adding new information.",
+          "Return structured output only.",
         ].join(" "),
       },
     ],
   };
+}
+
+function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
+  modelId: string;
+  payload: GameDayRecapPostgameInterviewRequestPayload;
+}) {
+  return {
+    inferenceConfig: {
+      maxTokens: 1400,
+      temperature: 0.35,
+    },
+    messages: [
+      {
+        content: [
+          {
+            text: JSON.stringify(
+              {
+                instructions: {
+                  goals: [
+                    "Write a short grounded postgame interview for the supplied winning-team player.",
+                    "Use one or two short Q&A exchanges.",
+                    "Keep the tone plausible and lightly stylized.",
+                    "Ground every answer only in the supplied candidate facts and game facts.",
+                  ],
+                  restrictions: [
+                    "Use the exact supplied playerName, teamName, and teamSide.",
+                    "Do not invent exact shot-order details, streak counts, locker-room scenes, or coach quotes.",
+                    "Do not contradict the supplied writeup or game facts.",
+                    "Return only the postgameInterview object.",
+                  ],
+                },
+                candidate: args.payload.candidate,
+                gameFacts: args.payload.gameFacts,
+                recapGame: args.payload.recapGame,
+                request: args.payload.request,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        role: "user" as const,
+      },
+    ],
+    modelId: args.modelId,
+    outputConfig: {
+      textFormat: {
+        structure: {
+          jsonSchema: {
+            description:
+              "Grounded postgame interview for one basketball recap game.",
+            name: "game_day_recap_postgame_interview",
+            schema: JSON.stringify(
+              toBedrockStructuredOutputSchema(
+                GAME_DAY_RECAP_POSTGAME_INTERVIEW_SCHEMA,
+              ),
+            ),
+          },
+        },
+        type: "json_schema" as const,
+      },
+    },
+    system: [
+      {
+        text: [
+          "You are writing a grounded, plausible postgame interview snippet for a basketball recap.",
+          "Use only the supplied facts.",
+          "Keep the interview short and concrete.",
+          "Return structured output only.",
+        ].join(" "),
+      },
+    ],
+  };
+}
+
+function sanitizePromptPayloadForWriter(
+  payload: GameDayRecapPromptPayload,
+): GameDayRecapWriterPayload {
+  return {
+    coverage: payload.coverage,
+    request: payload.request,
+    games: payload.games.map((game) => {
+      if (!isPlayoffRecapGame(game)) {
+        return game;
+      }
+
+      return {
+        ...game,
+        teams: {
+          away: {
+            ...game.teams.away,
+            record: null,
+            recordEnteringGame: null,
+            streak: null,
+            streakEnteringGame: null,
+          },
+          home: {
+            ...game.teams.home,
+            record: null,
+            recordEnteringGame: null,
+            streak: null,
+            streakEnteringGame: null,
+          },
+        },
+      };
+    }),
+  };
+}
+
+function buildGameDayRecapFactStore(args: {
+  games: GameDayRecapGameFactStore[];
+  request: GameDayRecapRequestFacts;
+}): GameDayRecapFactStore {
+  return {
+    games: args.games,
+    request: args.request,
+  };
+}
+
+function buildGameDayRecapJudgeFactStore(args: {
+  expectedGames: GameDayRecapPromptGame[];
+  request: GameDayRecapPromptPayload["request"];
+}): GameDayRecapJudgeFactStore {
+  return buildGameDayRecapFactStore({
+    games: args.expectedGames.map((game) =>
+      buildGameDayRecapJudgeGameFactStore(game),
+    ),
+    request: args.request,
+  });
+}
+
+function buildGameDayRecapJudgeGameFactStore(
+  game: GameDayRecapPromptGame,
+): GameDayRecapJudgeGameFactStore {
+  const winner = buildGameDayRecapWinnerFacts({
+    awayTeam: game.teams.away,
+    homeTeam: game.teams.home,
+  });
+  const periodStates = buildGameDayRecapFactStorePeriodStates({
+    awayTeamName: game.teams.away.name,
+    homeTeamName: game.teams.home.name,
+    quarterScores: game.quarterScores,
+  });
+
+  return {
+    effortDelta: game.effortDelta,
+    effortSummary: game.effortSummary,
+    evidenceSignals: game.evidenceSignals,
+    finalMargin: game.finalMargin,
+    gameDayPrepSummaries: game.gameDayPrepSummaries,
+    isPlayoffGame: isPlayoffRecapGame(game),
+    matchId: game.matchId,
+    neutral: game.neutral,
+    overtime: hasGameOvertimeFromQuarterScores(game.quarterScores),
+    periodStates,
+    playByPlayFacts: game.playByPlayFacts,
+    playByPlaySummaryLines: game.playByPlaySummaryLines,
+    playerLeaders: {
+      assists: null,
+      bestAllAround: null,
+      points: null,
+      rebounds: null,
+    },
+    postgameInterviewCandidate: game.postgameInterviewCandidate ?? null,
+    quarterFacts: game.quarterFacts,
+    quarterScores: game.quarterScores,
+    requiredContextSentences: game.requiredContextSentences,
+    rotationSummaries: game.rotationSummaries,
+    ...(game.seriesContext ? { seriesContext: game.seriesContext } : {}),
+    standingsContext: game.standingsContext,
+    teams: {
+      away: {
+        ...game.teams.away,
+        rawRatings: null,
+      },
+      home: {
+        ...game.teams.home,
+        rawRatings: null,
+      },
+    },
+    type: game.type,
+    winner,
+  };
+}
+
+function collectPostgameInterviewJudgeSentences(
+  interview:
+    | {
+        qa: Array<{
+          answer: string;
+          question: string;
+        }>;
+        title: string;
+      }
+    | null
+    | undefined,
+): Array<{ sentence: string; sentenceIndex: number }> {
+  if (!interview) {
+    return [];
+  }
+
+  const sentences: Array<{ sentence: string; sentenceIndex: number }> = [
+    {
+      sentence: interview.title,
+      sentenceIndex: 0,
+    },
+  ];
+  let sentenceIndex = 1;
+  for (const exchange of interview.qa) {
+    sentences.push({
+      sentence: exchange.question,
+      sentenceIndex,
+    });
+    sentenceIndex += 1;
+    sentences.push({
+      sentence: exchange.answer,
+      sentenceIndex,
+    });
+    sentenceIndex += 1;
+  }
+
+  return sentences;
+}
+
+function buildGameDayRecapJudgeGameFactPacket(
+  game: GameDayRecapJudgeGameFactStore,
+): GameDayRecapJudgeGameFactPacket {
+  return {
+    evidenceSignals: game.evidenceSignals,
+    effortDelta: game.effortDelta,
+    effortSummary: game.effortSummary,
+    finalMargin: game.finalMargin,
+    gameDayPrepSummaries: game.gameDayPrepSummaries,
+    isPlayoffGame: game.isPlayoffGame,
+    matchId: game.matchId,
+    overtime: game.overtime,
+    periodStates: game.periodStates,
+    playByPlayFacts: game.playByPlayFacts,
+    playerLeaders: game.playerLeaders,
+    postgameInterviewCandidate: game.postgameInterviewCandidate ?? null,
+    quarterFacts: game.quarterFacts,
+    quarterScores: game.quarterScores,
+    requiredContextSentences: game.requiredContextSentences,
+    rotationSummaries: game.rotationSummaries,
+    seriesContext: game.seriesContext ?? null,
+    standingsContext: game.standingsContext,
+    teams: {
+      away: {
+        name: game.teams.away.name,
+        score: game.teams.away.score,
+        topPlayers: game.teams.away.topPlayers,
+      },
+      home: {
+        name: game.teams.home.name,
+        score: game.teams.home.score,
+        topPlayers: game.teams.home.topPlayers,
+      },
+    },
+    winner: game.winner,
+  };
+}
+
+function buildGameDayRecapJudgeSentenceFactualityResultSchema(args: {
+  activeSlotIds: readonly GameDayRecapJudgeSlotId[];
+}) {
+  const slotVerdictProperties = Object.fromEntries(
+    GAME_DAY_RECAP_JUDGE_SLOT_IDS.map((slotId) => [
+      slotId,
+      GAME_DAY_RECAP_JUDGE_SENTENCE_VERDICT_SCHEMA,
+    ]),
+  );
+
+  return {
+    additionalProperties: false,
+    properties: {
+      slotVerdicts: {
+        additionalProperties: false,
+        properties: slotVerdictProperties,
+        required: [...args.activeSlotIds],
+        type: "object",
+      },
+    },
+    required: ["slotVerdicts"],
+    type: "object",
+  };
+}
+
+function buildGameDayRecapJudgeInterestingnessResultSchema() {
+  return {
+    additionalProperties: false,
+    properties: {
+      candidateIndex: {
+        type: "integer",
+      },
+      interestingnessScore: {
+        type: "number",
+      },
+    },
+    required: ["candidateIndex", "interestingnessScore"],
+    type: "object",
+  };
+}
+
+function buildGameDayRecapJudgeBedrockRequest(args: {
+  modelId: string;
+  payload: GameDayRecapJudgeRequestPayload;
+}) {
+  if (args.payload.judgeKind === "sentence_factuality") {
+    const schema = toBedrockStructuredOutputSchema(
+      buildGameDayRecapJudgeSentenceFactualityResultSchema({
+        activeSlotIds: args.payload.sentenceChunk.map((entry) => entry.slotId),
+      }),
+    );
+
+    return {
+      inferenceConfig: {
+        maxTokens: 2000,
+        temperature: 0,
+      },
+      messages: [
+        {
+          content: [
+            {
+              text: JSON.stringify(
+                {
+                  instructions: {
+                    goals: [
+                      "Review each supplied sentence slot only against the supplied gameFacts.",
+                      "Return exactly one structured verdict for every active slot in sentenceChunk.",
+                      "Mark each sentence as supported, unsupported, uncertain, or style_only.",
+                      "Use unsupported when the sentence conflicts with or overreaches the supplied gameFacts.",
+                      "Use uncertain when the sentence appears factual but the supplied gameFacts do not fully support it.",
+                      "Use style_only when the sentence contains no checkable factual claim.",
+                      "Winner truth comes only from gameFacts.winner.",
+                      "Use gameFacts.periodStates, quarterFacts, quarterScores, and overtime as the source of truth for period-state and overtime claims.",
+                      "Use gameFacts.playByPlayFacts as the source of truth for ending, run, comeback, and lead-change claims.",
+                      "Use gameFacts.playerLeaders, teams[].topPlayers, and postgameInterviewCandidate as the source of truth for player-attribution claims.",
+                      "Set containsOutcomeClaim to true only for sentences that make a winner, final-score, overtime, or quarter-outcome claim.",
+                      "Use contradictionType winner, final_score, overtime, quarter_outcome, series_state, run, lead_change, ending, record, other, or none as appropriate.",
+                      "Judge postgameInterview title, questions, and answers sentence by sentence against the supplied winner-side interview candidate and supported facts.",
+                      "If the opening writeup sentence is the exact series summary line, a decisive ending in the second writeup sentence still counts as foregrounded rather than buried.",
+                    ],
+                    restrictions: [
+                      "Use no world knowledge.",
+                      "Do not rewrite any sentence.",
+                      "Do not compare this chunk to any other chunk.",
+                      "Only cite sourceField values that point back to the supplied gameFacts.",
+                    ],
+                  },
+                  candidateIndex: args.payload.candidateIndex,
+                  chunkCount: args.payload.chunkCount,
+                  chunkIndex: args.payload.chunkIndex,
+                  gameFacts: args.payload.gameFacts,
+                  request: args.payload.request,
+                  sentenceChunk: args.payload.sentenceChunk,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          role: "user" as const,
+        },
+      ],
+      modelId: args.modelId,
+      outputConfig: {
+        textFormat: {
+          structure: {
+            jsonSchema: {
+              description:
+                "Grounded sentence-level factuality review for one basketball recap chunk.",
+              name: "game_day_recap_sentence_judge",
+              schema: JSON.stringify(schema),
+            },
+          },
+          type: "json_schema" as const,
+        },
+      },
+      system: [
+        {
+          text: [
+            "You are a grounded factuality judge for basketball recap sentences.",
+            "Use only the supplied gameFacts.",
+            "Do not use world knowledge or outside basketball conventions.",
+            "Do not rewrite or improve the prose.",
+            "Judge each sentence independently against the gameFacts.",
+            "Return structured verdicts only.",
+          ].join(" "),
+        },
+      ],
+    };
+  }
+
+  const schema = toBedrockStructuredOutputSchema(
+    buildGameDayRecapJudgeInterestingnessResultSchema(),
+  );
+  return {
+    inferenceConfig: {
+      maxTokens: 1000,
+      temperature: 0,
+    },
+    messages: [
+      {
+        content: [
+          {
+            text: JSON.stringify(
+              {
+                instructions: {
+                  goals: [
+                    "Score the candidate on grounded vividness and specificity after factuality has already been checked.",
+                    "Reward candidates that foreground supplied ending facts instead of generic summary language.",
+                    "Reward candidates that use supplied run timing, lead-change counts, and comeback facts precisely instead of vague momentum filler.",
+                    "Reward smoother connected prose over stacked note-like sentences when factuality is otherwise equal.",
+                  ],
+                  restrictions: [
+                    "Use only the supplied result and gameFacts.",
+                    "Do not judge sentence-level factual correctness here.",
+                    "Do not compare against any other candidate.",
+                    "Return structured output only.",
+                  ],
+                },
+                candidateIndex: args.payload.candidateIndex,
+                gameFacts: args.payload.games,
+                request: args.payload.request,
+                result: args.payload.result,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        role: "user" as const,
+      },
+    ],
+    modelId: args.modelId,
+    outputConfig: {
+      textFormat: {
+        structure: {
+          jsonSchema: {
+            description:
+              "Grounded candidate-level interestingness score for one basketball recap candidate.",
+            name: "game_day_recap_candidate_interestingness",
+            schema: JSON.stringify(schema),
+          },
+        },
+        type: "json_schema" as const,
+      },
+    },
+    system: [
+      {
+        text: [
+          "You are a grounded style judge for basketball recap candidates.",
+          "Use only the supplied result and gameFacts.",
+          "Do not rewrite the prose.",
+          "Return structured output only.",
+        ].join(" "),
+      },
+    ],
+  };
+}
+
+function countBedrockSchemaUnionParameters(schema: unknown): number {
+  if (Array.isArray(schema)) {
+    return schema.reduce(
+      (total, entry) => total + countBedrockSchemaUnionParameters(entry),
+      0,
+    );
+  }
+
+  if (!schema || typeof schema !== "object") {
+    return 0;
+  }
+
+  const record = schema as Record<string, unknown>;
+  const localUnionCount =
+    (Array.isArray(record.type) ? 1 : 0) + ("anyOf" in record ? 1 : 0);
+  return (
+    localUnionCount +
+    Object.values(record).reduce<number>(
+      (total, value) => total + countBedrockSchemaUnionParameters(value),
+      0,
+    )
+  );
+}
+
+function computeJudgeSchemaBudget(args: {
+  schema: unknown;
+  sentenceVerdictCount: number;
+}): GameDayRecapJudgeSchemaBudget {
+  const serializedSchema = JSON.stringify(args.schema);
+  return {
+    serializedSchemaBytes: Buffer.byteLength(serializedSchema, "utf8"),
+    sentenceVerdictCount: args.sentenceVerdictCount,
+    unionParameterCount: countBedrockSchemaUnionParameters(args.schema),
+  };
+}
+
+function logJudgeSchemaBudget(args: {
+  budget: GameDayRecapJudgeSchemaBudget;
+  candidateIndex: number;
+  chunkCount: number | null;
+  chunkIndex: number | null;
+  chunkSentenceCount: number;
+  fallbackMode: GameDayRecapJudgeFallbackMode | null;
+  judgeKind: GameDayRecapJudgeRequestPayload["judgeKind"];
+  matchId: string | null;
+  stage:
+    | "premium-candidate-selection"
+    | "retry"
+    | "style-polish"
+    | "postgame-interview"
+    | "salvage-post-patch"
+    | "salvage-post-trim"
+    | "writer";
+  targetKey?: string;
+  userId?: string;
+}): void {
+  logGameDayRecapWarn("process.judge_schema_budget", {
+    candidateIndex: args.candidateIndex,
+    chunkCount: args.chunkCount,
+    chunkIndex: args.chunkIndex,
+    chunkSentenceCount: args.chunkSentenceCount,
+    fallbackMode: args.fallbackMode ?? "none",
+    judgeKind: args.judgeKind,
+    matchId: args.matchId,
+    sentenceVerdictCount: args.budget.sentenceVerdictCount,
+    serializedSchemaBytes: args.budget.serializedSchemaBytes,
+    stage: args.stage,
+    targetKey: args.targetKey ?? null,
+    unionParameterCount: args.budget.unionParameterCount,
+    userId: args.userId ?? null,
+  });
+}
+
+function isBedrockJudgeSchemaValidationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const record = error as Record<string, unknown>;
+  const name = asOptionalString(record.name)?.trim();
+  const message = asOptionalString(record.message)?.trim();
+  if (name !== "ValidationException" || !message) {
+    return false;
+  }
+
+  return /output_config\.format\.schema|json[_ -]?schema|schema(?:s)? contains too many parameters with union types|maxItems|minItems|minimum|maximum|minLength|maxLength|union types|compiled grammar is too large|grammar is too large|reduce the number of strict tools/i.test(
+    message,
+  );
 }
 
 function assertSupportedBedrockRecapModelId(
@@ -1982,7 +4040,7 @@ async function buildGameDayRecapPromptPayload(args: {
   >();
   const coverageIssues: CoverageIssue[] = [];
   const finalCoverageBlockers: CoverageIssue[] = [];
-  const promptGames: GameDayRecapPromptPayload["games"] = [];
+  const factStoreGames: GameDayRecapFactStore["games"] = [];
 
   for (const requestedGame of args.requestedGames) {
     const boxScoreResult = await loadBoxScore(
@@ -2093,6 +4151,7 @@ async function buildGameDayRecapPromptPayload(args: {
               matchId: requestedGame.matchId,
             })
           : Promise.resolve<GameDayRecapPlayByPlayLoadResult>({
+              debug: null,
               error: null,
               facts: null,
             }),
@@ -2111,6 +4170,12 @@ async function buildGameDayRecapPromptPayload(args: {
         },
       );
     }
+    logPlayByPlayEndingFactsDebug({
+      matchId: requestedGame.matchId,
+      playByPlayResult,
+      targetKey: args.targetKey,
+      userId: args.userId,
+    });
 
     const homeContext = buildTeamSeasonContext({
       boxScores: homeRecentBoxScores,
@@ -2136,9 +4201,19 @@ async function buildGameDayRecapPromptPayload(args: {
       enteringGameContext: awayContext,
       priorBoxScores: awayRecentBoxScores,
     });
+    const seriesContext =
+      args.request.kind === "LEAGUE_DATE"
+        ? resolvePlayoffSeriesContext({
+            awaySchedule,
+            boxScore,
+            homeSchedule,
+            requestedGame,
+            standings: args.standings,
+          })
+        : null;
 
-    promptGames.push(
-      buildPromptGame({
+    factStoreGames.push(
+      buildGameDayRecapGameFactStore({
         awayEnteringGameContext: awayContext,
         awayPostgameContext,
         boxScore,
@@ -2147,6 +4222,7 @@ async function buildGameDayRecapPromptPayload(args: {
         homePostgameContext,
         playByPlayFacts: playByPlayResult.facts,
         requestedGame,
+        seriesContext,
       }),
     );
   }
@@ -2158,7 +4234,7 @@ async function buildGameDayRecapPromptPayload(args: {
       : null) ??
     null;
   const coverage: GameDayRecapCoveragePayload = {
-    availableGames: promptGames.length,
+    availableGames: factStoreGames.length,
     missingGames: coverageIssues,
     partial: coverageIssues.length > 0,
     requestedGames: args.requestedGames.length,
@@ -2178,26 +4254,43 @@ async function buildGameDayRecapPromptPayload(args: {
     throw new RetryableCompletedSlateCoverageError(coverage);
   }
 
-  return {
-    coverage,
-    games: promptGames,
+  const factStore: GameDayRecapFactStore = {
+    games: factStoreGames,
     request: {
       ...args.request,
       leagueName,
       season: args.season,
     },
   };
+
+  return buildGameDayRecapWriterPayloadFromFactStore({
+    coverage,
+    factStore,
+  });
 }
 
 async function buildSingleGameSummaryPromptPayload(args: {
-  bb: Pick<BBXmlApiClient, "getBoxScore">;
+  bb: Pick<
+    BBXmlApiClient,
+    "getBoxScore" | "getSchedule" | "getSeasons" | "getStandings"
+  >;
   boxScore: BBApiBoxScore;
   connection: BbConnectionRecord;
   fetchPublicMatchPlayByPlay?: PublicPlayByPlayFetcher;
+  generationApproach: RecapGenerationApproachValue;
   matchId: string;
 }): Promise<GameDayRecapPromptPayload> {
   const requestedGame = toSlateGameFromBoxScore(args.boxScore);
-  const timeZone = resolveLeagueTimeZone(args.connection, null);
+  const playoffSeriesResolution = await resolveSingleGamePlayoffSeriesContext({
+    bb: args.bb,
+    boxScore: args.boxScore,
+    connection: args.connection,
+    requestedGame,
+  });
+  const timeZone = resolveLeagueTimeZone(
+    args.connection,
+    playoffSeriesResolution.standings,
+  );
   const gameDate = resolveCalendarDateKey(args.boxScore.startTime, timeZone);
   const homeEnteringGameContext = buildNeutralTeamSeasonContext(
     args.boxScore.homeTeam,
@@ -2213,6 +4306,7 @@ async function buildSingleGameSummaryPromptPayload(args: {
         matchId: args.matchId,
       })
     : {
+        debug: null,
         error: null,
         facts: null,
       };
@@ -2228,16 +4322,14 @@ async function buildSingleGameSummaryPromptPayload(args: {
       },
     );
   }
+  logPlayByPlayEndingFactsDebug({
+    matchId: args.matchId,
+    playByPlayResult,
+  });
 
-  return {
-    coverage: {
-      availableGames: 1,
-      missingGames: [],
-      partial: false,
-      requestedGames: 1,
-    },
+  const factStore: GameDayRecapFactStore = {
     games: [
-      buildPromptGame({
+      buildGameDayRecapGameFactStore({
         awayEnteringGameContext,
         awayPostgameContext: awayEnteringGameContext,
         boxScore: args.boxScore,
@@ -2246,23 +4338,119 @@ async function buildSingleGameSummaryPromptPayload(args: {
         homePostgameContext: homeEnteringGameContext,
         playByPlayFacts: playByPlayResult.facts,
         requestedGame,
+        seriesContext: playoffSeriesResolution.seriesContext,
       }),
     ],
     request: {
       gameDate,
       gameDayNumber: null,
+      generationApproach: args.generationApproach,
       kind: "SINGLE_GAME",
       label: `Match ${args.matchId}`,
       leagueId: args.connection.leagueId ?? null,
       leagueName: args.connection.leagueName ?? null,
       matchId: args.matchId,
-      season: null,
+      season: playoffSeriesResolution.season,
       timeZone,
     },
   };
+
+  return buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore,
+  });
 }
 
-function buildPromptGame(args: {
+async function resolveSingleGamePlayoffSeriesContext(args: {
+  bb: Pick<BBXmlApiClient, "getSchedule" | "getSeasons" | "getStandings">;
+  boxScore: BBApiBoxScore;
+  connection: BbConnectionRecord;
+  requestedGame: SlateGame;
+}): Promise<{
+  season: number | null;
+  seriesContext: GameDayRecapSeriesContext | null;
+  standings: BBApiStandings | null;
+}> {
+  if (!resolveBestOfThreePlayoffStageKey(args.boxScore.type)) {
+    return {
+      season: null,
+      seriesContext: null,
+      standings: null,
+    };
+  }
+
+  const leagueId = args.connection.leagueId?.trim();
+  const gameDate = resolveDateKey(args.boxScore.startTime);
+  if (!leagueId || !gameDate) {
+    return {
+      season: null,
+      seriesContext: null,
+      standings: null,
+    };
+  }
+
+  try {
+    const season = resolveSeasonForDate(await args.bb.getSeasons(), gameDate);
+    const standings = await args.bb.getStandings(leagueId, season);
+    const bracketSeriesContext = resolvePlayoffSeriesContext({
+      boxScore: args.boxScore,
+      requestedGame: args.requestedGame,
+      standings,
+    });
+    if (bracketSeriesContext) {
+      return {
+        season,
+        seriesContext: bracketSeriesContext,
+        standings,
+      };
+    }
+
+    const homeTeamId = args.boxScore.homeTeam.id?.trim();
+    const awayTeamId = args.boxScore.awayTeam.id?.trim();
+    if (!homeTeamId || !awayTeamId) {
+      return {
+        season,
+        seriesContext: null,
+        standings,
+      };
+    }
+
+    const [homeSchedule, awaySchedule] = await Promise.all([
+      args.bb.getSchedule(homeTeamId, season),
+      args.bb.getSchedule(awayTeamId, season),
+    ]);
+
+    return {
+      season,
+      seriesContext: resolvePlayoffSeriesContext({
+        awaySchedule,
+        boxScore: args.boxScore,
+        homeSchedule,
+        requestedGame: args.requestedGame,
+        standings,
+      }),
+      standings,
+    };
+  } catch (error) {
+    logGameDayRecapWarn("process.single_game_series_context_failed", {
+      leagueId,
+      matchId: args.requestedGame.matchId,
+      ...toLoggableError(error),
+    });
+    return {
+      season: null,
+      seriesContext: null,
+      standings: null,
+    };
+  }
+}
+
+function buildGameDayRecapGameFactStore(args: {
   awayEnteringGameContext: TeamSeasonContext;
   awayPostgameContext: TeamSeasonContext;
   boxScore: BBApiBoxScore;
@@ -2271,7 +4459,8 @@ function buildPromptGame(args: {
   homePostgameContext: TeamSeasonContext;
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   requestedGame: SlateGame;
-}): GameDayRecapPromptGame {
+  seriesContext?: GameDayRecapSeriesContext | null;
+}): GameDayRecapGameFactStore {
   const quarterFacts = buildQuarterFacts(args.boxScore);
   const awayRotationContext = analyzeRotationContextForRecap(
     args.boxScore.awayTeam,
@@ -2279,10 +4468,15 @@ function buildPromptGame(args: {
   const homeRotationContext = analyzeRotationContextForRecap(
     args.boxScore.homeTeam,
   );
+  const isPlayoffGame =
+    Boolean(args.seriesContext) ||
+    classifyCompetition(args.requestedGame.type).competitionKey === "PLAYOFFS";
   const evidenceSignals = buildEvidenceSignals({
     awayContext: args.awayPostgameContext,
     boxScore: args.boxScore,
     homeContext: args.homePostgameContext,
+    isPlayoffGame,
+    playByPlayFacts: args.playByPlayFacts ?? null,
     quarterFacts,
   });
   const standingsContext = args.hasHistoricalContext
@@ -2306,48 +4500,1535 @@ function buildPromptGame(args: {
     ...awayRotationContext.summaries,
   ];
   const playByPlayFacts = args.playByPlayFacts ?? null;
+  const quarterScores = {
+    away: args.boxScore.awayTeam.partialScores,
+    home: args.boxScore.homeTeam.partialScores,
+  };
+  const awayTeam = buildGameDayRecapFactStoreTeam({
+    enteringGameContext: args.awayEnteringGameContext,
+    hasHistoricalContext: args.hasHistoricalContext,
+    postgameContext: args.awayPostgameContext,
+    rotationContext: awayRotationContext,
+    team: args.boxScore.awayTeam,
+  });
+  const homeTeam = buildGameDayRecapFactStoreTeam({
+    enteringGameContext: args.homeEnteringGameContext,
+    hasHistoricalContext: args.hasHistoricalContext,
+    postgameContext: args.homePostgameContext,
+    rotationContext: homeRotationContext,
+    team: args.boxScore.homeTeam,
+  });
+  const winner = buildGameDayRecapWinnerFacts({
+    awayTeam,
+    homeTeam,
+  });
+  const periodStates = buildGameDayRecapFactStorePeriodStates({
+    awayTeamName: awayTeam.name,
+    homeTeamName: homeTeam.name,
+    quarterScores,
+  });
+  const postgameInterviewCandidate = buildPostgameInterviewCandidate({
+    boxScore: args.boxScore,
+    playByPlayFacts,
+    requestedGame: args.requestedGame,
+  });
+  const effortSummary = describeEffortDeltaForRecap({
+    awayTeamName: args.boxScore.awayTeam.teamName,
+    effortDelta: args.boxScore.effortDelta,
+    homeTeamName: args.boxScore.homeTeam.teamName,
+  });
+  const requiredContextSentences = buildRequiredContextSentencesForRecap({
+    effortSummary,
+    gameDayPrepSummaries,
+  });
 
   return {
     effortDelta: args.boxScore.effortDelta,
-    effortSummary: describeEffortDeltaForRecap({
-      awayTeamName: args.boxScore.awayTeam.teamName,
-      effortDelta: args.boxScore.effortDelta,
-      homeTeamName: args.boxScore.homeTeam.teamName,
-    }),
+    effortSummary,
     gameDayPrepSummaries,
     rotationSummaries,
     evidenceSignals,
     finalMargin: Math.abs(
       (args.boxScore.homeTeam.score ?? 0) - (args.boxScore.awayTeam.score ?? 0),
     ),
+    isPlayoffGame,
     matchId: args.requestedGame.matchId,
     neutral: args.boxScore.neutral,
+    overtime: hasGameOvertimeFromQuarterScores(quarterScores),
+    periodStates,
     playByPlayFacts,
     playByPlaySummaryLines: playByPlayFacts?.summaryLines ?? [],
+    playerLeaders: buildGameDayRecapPlayerLeaders({
+      boxScore: args.boxScore,
+      requestedGame: args.requestedGame,
+    }),
+    ...(postgameInterviewCandidate
+      ? { postgameInterviewCandidate }
+      : {}),
     quarterFacts,
-    quarterScores: {
-      away: args.boxScore.awayTeam.partialScores,
-      home: args.boxScore.homeTeam.partialScores,
-    },
+    quarterScores,
+    requiredContextSentences,
+    ...(args.seriesContext ? { seriesContext: args.seriesContext } : {}),
     standingsContext,
     teams: {
-      away: buildPromptTeam({
-        enteringGameContext: args.awayEnteringGameContext,
-        hasHistoricalContext: args.hasHistoricalContext,
-        postgameContext: args.awayPostgameContext,
-        rotationContext: awayRotationContext,
-        team: args.boxScore.awayTeam,
-      }),
-      home: buildPromptTeam({
-        enteringGameContext: args.homeEnteringGameContext,
-        hasHistoricalContext: args.hasHistoricalContext,
-        postgameContext: args.homePostgameContext,
-        rotationContext: homeRotationContext,
-        team: args.boxScore.homeTeam,
-      }),
+      away: awayTeam,
+      home: homeTeam,
     },
     type: args.boxScore.type ?? args.requestedGame.type,
+    winner,
   };
+}
+
+function buildGameDayRecapWriterPayloadFromFactStore(args: {
+  coverage: GameDayRecapCoveragePayload;
+  factStore: GameDayRecapFactStore;
+}): GameDayRecapPromptPayload {
+  // The writer only sees a projection of the canonical fact store.
+  // Any truth used by prompts, validation, or repair must already exist here.
+  return {
+    coverage: args.coverage,
+    factStore: args.factStore,
+    games: args.factStore.games.map((game) =>
+      buildGameDayRecapWriterGameFromFactStore({
+        game,
+        generationApproach: args.factStore.request.generationApproach,
+      }),
+    ),
+    request: args.factStore.request,
+  };
+}
+
+function buildGameDayRecapWriterGameFromFactStore(args: {
+  game: GameDayRecapGameFactStore;
+  generationApproach: RecapGenerationApproachValue;
+}): GameDayRecapPromptGame {
+  return {
+    effortDelta: args.game.effortDelta,
+    effortSummary: args.game.effortSummary,
+    ...(args.generationApproach === RecapGenerationApproach.FACT_LIBRARY_FIRST
+      ? {
+          factsLibrary: buildGameFactsLibraryFromFactStore(args.game),
+        }
+      : {}),
+    gameDayPrepSummaries: args.game.gameDayPrepSummaries,
+    requiredContextSentences: args.game.requiredContextSentences,
+    rotationSummaries: args.game.rotationSummaries,
+    evidenceSignals: args.game.evidenceSignals,
+    finalMargin: args.game.finalMargin,
+    matchId: args.game.matchId,
+    neutral: args.game.neutral,
+    playByPlayFacts: args.game.playByPlayFacts,
+    playByPlaySummaryLines: args.game.playByPlaySummaryLines,
+    ...(args.game.postgameInterviewCandidate
+      ? { postgameInterviewCandidate: args.game.postgameInterviewCandidate }
+      : {}),
+    quarterFacts: args.game.quarterFacts,
+    quarterScores: args.game.quarterScores,
+    ...(args.game.seriesContext ? { seriesContext: args.game.seriesContext } : {}),
+    standingsContext: args.game.standingsContext,
+    teams: {
+      away: toPromptTeamFromFactStoreTeam(args.game.teams.away),
+      home: toPromptTeamFromFactStoreTeam(args.game.teams.home),
+    },
+    type: args.game.type,
+  };
+}
+
+function buildGameDayRecapFactStoreTeam(args: {
+  enteringGameContext: TeamSeasonContext;
+  hasHistoricalContext: boolean;
+  postgameContext: TeamSeasonContext;
+  rotationContext: RotationContextForRecap;
+  team: BBApiBoxScoreTeam;
+}): GameDayRecapFactStoreTeam {
+  return {
+    ...buildPromptTeam(args),
+    rawRatings: args.team.ratings ?? null,
+  };
+}
+
+function toPromptTeamFromFactStoreTeam(
+  team: GameDayRecapFactStoreTeam,
+): GameDayRecapPromptTeam {
+  const { rawRatings: _rawRatings, ...promptTeam } = team;
+  return promptTeam;
+}
+
+function buildGameDayRecapWinnerFacts(args: {
+  awayTeam: Pick<GameDayRecapFactStoreTeam, "name" | "score">;
+  homeTeam: Pick<GameDayRecapFactStoreTeam, "name" | "score">;
+}): GameDayRecapWinnerFacts {
+  const winnerSide =
+    args.homeTeam.score === args.awayTeam.score
+      ? null
+      : args.homeTeam.score > args.awayTeam.score
+        ? "home"
+        : "away";
+  const loserSide =
+    winnerSide === "home" ? "away" : winnerSide === "away" ? "home" : null;
+  const finalScoreHomeAway = `${args.homeTeam.score}-${args.awayTeam.score}`;
+  const winnerName =
+    winnerSide === "home"
+      ? args.homeTeam.name
+      : winnerSide === "away"
+        ? args.awayTeam.name
+        : null;
+  const loserName =
+    loserSide === "home"
+      ? args.homeTeam.name
+      : loserSide === "away"
+        ? args.awayTeam.name
+        : null;
+
+  return {
+    loserName,
+    loserSide,
+    finalScoreHomeAway,
+    finalScoreWinnerFacing: winnerSide
+      ? winnerSide === "home"
+        ? `${args.homeTeam.score}-${args.awayTeam.score}`
+        : `${args.awayTeam.score}-${args.homeTeam.score}`
+      : null,
+    winnerName,
+    winnerSide,
+  };
+}
+
+function buildGameDayRecapFactStorePeriodStates(args: {
+  awayTeamName: string;
+  homeTeamName: string;
+  quarterScores: {
+    away: number[];
+    home: number[];
+  };
+}): GameDayRecapGameFactStore["periodStates"] {
+  const states: GameDayRecapFactStorePeriodState[] = [];
+  let homeScore = 0;
+  let awayScore = 0;
+  const periodCount = Math.min(
+    args.quarterScores.home.length,
+    args.quarterScores.away.length,
+  );
+
+  for (let period = 1; period <= periodCount; period += 1) {
+    homeScore += args.quarterScores.home[period - 1] ?? 0;
+    awayScore += args.quarterScores.away[period - 1] ?? 0;
+    const leaderSide =
+      homeScore === awayScore ? "tie" : homeScore > awayScore ? "home" : "away";
+    const leaderName =
+      leaderSide === "home"
+        ? args.homeTeamName
+        : leaderSide === "away"
+          ? args.awayTeamName
+          : null;
+    const trailerName =
+      leaderSide === "home"
+        ? args.awayTeamName
+        : leaderSide === "away"
+          ? args.homeTeamName
+          : null;
+
+    states.push({
+      awayScore,
+      homeScore,
+      label: formatFactsLibraryPeriodStateLabel(period, periodCount),
+      leaderName,
+      leaderSide,
+      margin: Math.abs(homeScore - awayScore),
+      period,
+      scoreFromLeaderPerspective:
+        leaderSide === "away"
+          ? `${awayScore}-${homeScore}`
+          : `${homeScore}-${awayScore}`,
+      trailerName,
+    });
+  }
+
+  return {
+    afterPeriods: states,
+    halftime: states.find((state) => state.period === 2) ?? null,
+    throughThreeQuarters: states.find((state) => state.period === 3) ?? null,
+  };
+}
+
+function hasGameOvertimeFromQuarterScores(quarterScores: {
+  away: number[];
+  home: number[];
+}): boolean {
+  return Math.min(quarterScores.home.length, quarterScores.away.length) > 4;
+}
+
+function buildGameDayRecapPlayerLeaders(args: {
+  boxScore: BBApiBoxScore;
+  requestedGame: SlateGame;
+}): GameDayRecapGameFactStore["playerLeaders"] {
+  const candidates = (["home", "away"] as const).flatMap((teamSide) => {
+    const team = teamSide === "home" ? args.boxScore.homeTeam : args.boxScore.awayTeam;
+    const teamName =
+      team.teamName ??
+      (teamSide === "home"
+        ? args.requestedGame.homeTeamName
+        : args.requestedGame.awayTeamName);
+
+    return team.players
+      .filter((player) => !player.didNotPlay)
+      .map((player) => ({
+        playerName: player.fullName,
+        statLine: extractInterviewStatLine(player),
+        teamName,
+        teamSide,
+      }));
+  });
+
+  const buildLeader = (
+    compare: (
+      left: GameDayRecapFactStorePlayerLeader,
+      right: GameDayRecapFactStorePlayerLeader,
+    ) => number,
+    valueFor: (
+      entry: Omit<GameDayRecapFactStorePlayerLeader, "value">,
+    ) => number,
+  ): GameDayRecapFactStorePlayerLeader | null => {
+    const ranked = candidates
+      .map((candidate) => ({
+        ...candidate,
+        value: valueFor(candidate),
+      }))
+      .filter((candidate) => candidate.value > 0)
+      .sort(compare);
+    return ranked[0] ?? null;
+  };
+
+  return {
+    assists: buildLeader(
+      (left, right) =>
+        right.value - left.value ||
+        compareFactStorePlayerLeaderEntries(left, right),
+      (entry) => entry.statLine.assists,
+    ),
+    bestAllAround: buildLeader(
+      (left, right) =>
+        right.value - left.value ||
+        compareFactStorePlayerLeaderEntries(left, right),
+      (entry) => scoreInterviewStatLine(entry.statLine),
+    ),
+    points: buildLeader(
+      (left, right) =>
+        right.value - left.value ||
+        compareFactStorePlayerLeaderEntries(left, right),
+      (entry) => entry.statLine.points,
+    ),
+    rebounds: buildLeader(
+      (left, right) =>
+        right.value - left.value ||
+        compareFactStorePlayerLeaderEntries(left, right),
+      (entry) => entry.statLine.rebounds,
+    ),
+  };
+}
+
+function compareFactStorePlayerLeaderEntries(
+  left: Pick<GameDayRecapFactStorePlayerLeader, "playerName" | "statLine">,
+  right: Pick<GameDayRecapFactStorePlayerLeader, "playerName" | "statLine">,
+): number {
+  const pointGap = right.statLine.points - left.statLine.points;
+  if (pointGap !== 0) {
+    return pointGap;
+  }
+
+  const allAroundGap =
+    scoreInterviewStatLine(right.statLine) - scoreInterviewStatLine(left.statLine);
+  if (allAroundGap !== 0) {
+    return allAroundGap;
+  }
+
+  return left.playerName.localeCompare(right.playerName);
+}
+
+function buildGameFactsLibraryFromFactStore(
+  game: GameDayRecapGameFactStore,
+): GameDayRecapFactsLibrary {
+  const winnerSide = game.winner.winnerSide ?? "home";
+  const loserSide = winnerSide === "home" ? "away" : "home";
+  const winnerName = game.winner.winnerName ?? game.teams[winnerSide].name;
+  const loserName = game.winner.loserName ?? game.teams[loserSide].name;
+  const winnerScore =
+    winnerSide === "home" ? game.teams.home.score : game.teams.away.score;
+  const loserScore =
+    winnerSide === "home" ? game.teams.away.score : game.teams.home.score;
+  const finalScoreFromWinnerPerspective = `${winnerScore}-${loserScore}`;
+  const periodStates = game.periodStates.afterPeriods;
+  const throughThreeQuarters = game.periodStates.throughThreeQuarters;
+  const matchupEdgeFacts = buildFactsLibraryMatchupEdgeFacts(game);
+  const gameFlow = buildFactsLibraryGameFlow({
+    finalMargin: game.finalMargin,
+    playByPlayFacts: game.playByPlayFacts,
+    seriesContext: game.seriesContext ?? null,
+  });
+  const summaryFacts = buildFactsLibrarySummaryFacts({
+    awayTeamName: game.teams.away.name,
+    finalMargin: game.finalMargin,
+    finalScoreFromWinnerPerspective,
+    gameFlow,
+    homeTeamName: game.teams.home.name,
+    loserName,
+    playByPlayFacts: game.playByPlayFacts,
+    quarterFacts: game.quarterFacts,
+    seriesContext: game.seriesContext ?? null,
+    throughThreeQuarters,
+    winnerName,
+  });
+  const storySignals = buildFactsLibraryStorySignals({
+    awayTeamName: game.teams.away.name,
+    finalMargin: game.finalMargin,
+    gameFlow,
+    homeTeamName: game.teams.home.name,
+    overtime: game.overtime,
+    playByPlayFacts: game.playByPlayFacts,
+    seriesContext: game.seriesContext ?? null,
+    throughThreeQuarters,
+    winnerName,
+  });
+  const openingCandidates = buildFactsLibraryOpeningCandidates({
+    awayTeamName: game.teams.away.name,
+    finalScoreFromWinnerPerspective,
+    gameFlow,
+    homeTeamName: game.teams.home.name,
+    loserName,
+    playByPlayFacts: game.playByPlayFacts,
+    seriesContext: game.seriesContext ?? null,
+    throughThreeQuarters,
+    winnerName,
+  });
+  const headlineCandidates = buildFactsLibraryHeadlineCandidates({
+    finalScoreFromWinnerPerspective,
+    gameFlow,
+    loserName,
+    playByPlayFacts: game.playByPlayFacts,
+    seriesContext: game.seriesContext ?? null,
+    winnerName,
+    winnerSide,
+  });
+
+  return {
+    gameFlow,
+    headlineCandidates,
+    matchupEdgeFacts,
+    openingCandidates,
+    periodStates: {
+      afterPeriods: periodStates,
+      throughThreeQuarters,
+    },
+    requiredContextSentences: game.requiredContextSentences,
+    storySignals,
+    summaryFacts,
+    winner: {
+      finalMargin: game.finalMargin,
+      finalScoreFromWinnerPerspective,
+      loserName,
+      winnerName,
+    },
+  };
+}
+
+function resolveBoxScoreWinnerSide(
+  boxScore: BBApiBoxScore,
+): "away" | "home" | null {
+  const homeScore = boxScore.homeTeam.score;
+  const awayScore = boxScore.awayTeam.score;
+  if (homeScore === null || awayScore === null || homeScore === awayScore) {
+    return null;
+  }
+
+  return homeScore > awayScore ? "home" : "away";
+}
+
+function buildPostgameInterviewCandidate(args: {
+  boxScore: BBApiBoxScore;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  requestedGame: SlateGame;
+}): GameDayRecapPromptInterviewCandidate | null {
+  const winnerSide = resolveBoxScoreWinnerSide(args.boxScore);
+  if (!winnerSide) {
+    return null;
+  }
+
+  const winnerTeam =
+    winnerSide === "home" ? args.boxScore.homeTeam : args.boxScore.awayTeam;
+  const winnerName =
+    winnerTeam.teamName ??
+    (winnerSide === "home"
+      ? args.requestedGame.homeTeamName
+      : args.requestedGame.awayTeamName);
+  const eligiblePlayers = winnerTeam.players.filter((player) => !player.didNotPlay);
+  if (!eligiblePlayers.length) {
+    return null;
+  }
+
+  const decisivePlayer = resolveInterviewDecisivePlayer({
+    players: eligiblePlayers,
+    playByPlayFacts: args.playByPlayFacts,
+    winnerSide,
+  });
+  const selectedPlayer =
+    decisivePlayer ?? [...eligiblePlayers].sort(compareInterviewPlayers)[0] ?? null;
+  if (!selectedPlayer) {
+    return null;
+  }
+
+  const statLine = extractInterviewStatLine(selectedPlayer);
+  const hasDecisiveMoment = decisivePlayer?.id === selectedPlayer.id;
+  if (!shouldGeneratePostgameInterview(statLine, hasDecisiveMoment)) {
+    return null;
+  }
+
+  return {
+    playerName: selectedPlayer.fullName,
+    selectionReason: buildPostgameInterviewSelectionReason({
+      playByPlayFacts: args.playByPlayFacts,
+      player: selectedPlayer,
+      statLine,
+      winnerName,
+      winnerSide,
+    }),
+    statLine,
+    supportedFacts: buildPostgameInterviewSupportedFacts({
+      playByPlayFacts: args.playByPlayFacts,
+      player: selectedPlayer,
+      statLine,
+      winnerName,
+      winnerSide,
+    }),
+    teamName: winnerName,
+    teamSide: winnerSide,
+  };
+}
+
+function resolveInterviewDecisivePlayer(args: {
+  players: BBApiBoxScorePlayer[];
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  winnerSide: "away" | "home";
+}): BBApiBoxScorePlayer | null {
+  const decisiveScore = args.playByPlayFacts?.endingFacts.decisiveScore;
+  const eventText = decisiveScore?.eventText?.trim();
+  if (
+    !eventText ||
+    !decisiveScore ||
+    decisiveScore.scoringTeamSide !== args.winnerSide
+  ) {
+    return null;
+  }
+
+  return (
+    [...args.players]
+      .filter((player) => eventTextMentionsPlayer(eventText, player))
+      .sort(compareInterviewPlayers)[0] ?? null
+  );
+}
+
+function eventTextMentionsPlayer(
+  eventText: string,
+  player: BBApiBoxScorePlayer,
+): boolean {
+  const lastName = player.lastName?.trim();
+  if (
+    player.fullName &&
+    new RegExp(`\\b${escapeRegExp(player.fullName)}\\b`, "i").test(eventText)
+  ) {
+    return true;
+  }
+
+  return Boolean(
+    lastName &&
+      lastName.length >= 3 &&
+      new RegExp(`\\b${escapeRegExp(lastName)}\\b`, "i").test(eventText),
+  );
+}
+
+function compareInterviewPlayers(
+  left: BBApiBoxScorePlayer,
+  right: BBApiBoxScorePlayer,
+): number {
+  const leftStatLine = extractInterviewStatLine(left);
+  const rightStatLine = extractInterviewStatLine(right);
+  if (rightStatLine.points !== leftStatLine.points) {
+    return rightStatLine.points - leftStatLine.points;
+  }
+
+  const performanceDiff =
+    scorePlayerPerformance(right) - scorePlayerPerformance(left);
+  if (performanceDiff !== 0) {
+    return performanceDiff;
+  }
+
+  const rightStocks = rightStatLine.steals + rightStatLine.blocks;
+  const leftStocks = leftStatLine.steals + leftStatLine.blocks;
+  if (rightStocks !== leftStocks) {
+    return rightStocks - leftStocks;
+  }
+
+  const rightPlaymaking = rightStatLine.rebounds + rightStatLine.assists;
+  const leftPlaymaking = leftStatLine.rebounds + leftStatLine.assists;
+  if (rightPlaymaking !== leftPlaymaking) {
+    return rightPlaymaking - leftPlaymaking;
+  }
+
+  return left.fullName.localeCompare(right.fullName);
+}
+
+function extractInterviewStatLine(
+  player: BBApiBoxScorePlayer,
+): GameDayRecapPromptInterviewCandidate["statLine"] {
+  const performanceStats = player.performanceStats ?? {};
+  return {
+    assists: asNumberFromUnknown(performanceStats.ast),
+    blocks: asNumberFromUnknown(performanceStats.blk),
+    minutes: playerTotalMinutes(player),
+    points: asNumberFromUnknown(performanceStats.pts),
+    rebounds: asNumberFromUnknown(performanceStats.reb),
+    steals: asNumberFromUnknown(performanceStats.stl),
+    turnovers: asNumberFromUnknown(performanceStats.to),
+  };
+}
+
+function shouldGeneratePostgameInterview(
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"],
+  hasDecisiveMoment: boolean,
+): boolean {
+  if (hasDecisiveMoment) {
+    return true;
+  }
+
+  return Boolean(
+    statLine.points >= 10 ||
+      scoreInterviewStatLine(statLine) >= 16 ||
+      statLine.rebounds >= 10 ||
+      statLine.assists >= 8 ||
+      statLine.steals + statLine.blocks >= 4,
+  );
+}
+
+function scoreInterviewStatLine(
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"],
+): number {
+  return (
+    statLine.points +
+    statLine.rebounds * 0.7 +
+    statLine.assists * 0.7 +
+    statLine.steals +
+    statLine.blocks -
+    statLine.turnovers * 0.5
+  );
+}
+
+function buildPostgameInterviewSelectionReason(args: {
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  player: BBApiBoxScorePlayer;
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"];
+  winnerName: string;
+  winnerSide: "away" | "home";
+}): string {
+  const decisiveScore = args.playByPlayFacts?.endingFacts.decisiveScore;
+  if (
+    decisiveScore &&
+    decisiveScore.scoringTeamSide === args.winnerSide &&
+    decisiveScore.eventText &&
+    eventTextMentionsPlayer(decisiveScore.eventText, args.player)
+  ) {
+    return decisiveScore.isBuzzerBeater
+      ? `Delivered ${args.winnerName}'s buzzerbeater.`
+      : decisiveScore.momentType === "go_ahead"
+        ? `Delivered ${args.winnerName}'s go-ahead basket.`
+        : `Delivered ${args.winnerName}'s decisive late bucket.`;
+  }
+
+  if (args.statLine.points >= 20) {
+    return `Led ${args.winnerName} in scoring.`;
+  }
+
+  return `Turned in ${args.winnerName}'s strongest all-around line.`;
+}
+
+function buildPostgameInterviewSupportedFacts(args: {
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  player: BBApiBoxScorePlayer;
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"];
+  winnerName: string;
+  winnerSide: "away" | "home";
+}): string[] {
+  const facts = new Set<string>();
+  const decisiveScore = args.playByPlayFacts?.endingFacts.decisiveScore;
+  if (
+    decisiveScore &&
+    decisiveScore.scoringTeamSide === args.winnerSide &&
+    decisiveScore.eventText &&
+    eventTextMentionsPlayer(decisiveScore.eventText, args.player)
+  ) {
+    facts.add(
+      decisiveScore.isBuzzerBeater
+        ? `${args.player.fullName} was tied to ${args.winnerName}'s buzzerbeater.`
+        : decisiveScore.momentType === "go_ahead"
+          ? `${args.player.fullName} was tied to ${args.winnerName}'s go-ahead basket.`
+          : `${args.player.fullName} was tied to ${args.winnerName}'s decisive late score.`,
+    );
+  }
+
+  facts.add(`${args.player.fullName} finished with ${args.statLine.points} points.`);
+
+  if (args.statLine.rebounds > 0 || args.statLine.assists > 0) {
+    facts.add(
+      `${args.player.fullName} added ${args.statLine.rebounds} rebounds and ${args.statLine.assists} assists.`,
+    );
+  }
+  if (args.statLine.steals > 0 || args.statLine.blocks > 0) {
+    facts.add(
+      `${args.player.fullName} chipped in ${args.statLine.steals} steals and ${args.statLine.blocks} blocks.`,
+    );
+  }
+
+  const winnerRun =
+    args.playByPlayFacts?.primaryRun?.teamSide === args.winnerSide
+      ? args.playByPlayFacts.primaryRun
+      : args.playByPlayFacts?.secondaryRun?.teamSide === args.winnerSide
+        ? args.playByPlayFacts.secondaryRun
+        : null;
+  if (winnerRun) {
+    const timeRange = formatInterviewRunTimeRange(winnerRun);
+    if (timeRange) {
+      facts.add(
+        `${args.winnerName}'s primary run was ${winnerRun.teamPoints}-${winnerRun.opponentPoints} ${timeRange}.`,
+      );
+    }
+  }
+
+  return Array.from(facts).slice(0, 4);
+}
+
+function formatInterviewRunTimeRange(
+  run: NonNullable<GameDayRecapPlayByPlayFacts["primaryRun"]>,
+): string | null {
+  if (run.startQuarter === null || !run.startClock) {
+    return null;
+  }
+
+  const start = `${run.startClock} left in ${formatPeriodLabel(run.startQuarter)}`;
+  if (
+    run.endQuarter !== null &&
+    run.endClock &&
+    (run.endQuarter !== run.startQuarter || run.endClock !== run.startClock)
+  ) {
+    return `from ${start} to ${run.endClock} left in ${formatPeriodLabel(run.endQuarter)}`;
+  }
+
+  return `starting at ${start}`;
+}
+
+function formatFactsLibraryPeriodStateLabel(
+  period: number,
+  totalPeriods: number,
+): string {
+  if (period === 2) {
+    return "At halftime";
+  }
+  if (period === 3) {
+    return "Through three quarters";
+  }
+  if (period === totalPeriods) {
+    return totalPeriods > 4 ? "Final after overtime" : "Final";
+  }
+  if (period <= 4) {
+    return `After the ${ordinal(period)} quarter`;
+  }
+
+  return `After ${formatPeriodLabel(period)}`;
+}
+
+function buildFactsLibraryMatchupEdgeFacts(
+  game: GameDayRecapGameFactStore,
+): GameDayRecapFactsLibrary["matchupEdgeFacts"] {
+  const winnerSide = game.winner.winnerSide ?? "home";
+  const loserSide = winnerSide === "home" ? "away" : "home";
+  const winnerTeam = game.teams[winnerSide];
+  const loserTeam = game.teams[loserSide];
+  const winnerRatingLabels = formatTeamRatingsForRecap(winnerTeam.rawRatings);
+  const loserRatingLabels = formatTeamRatingsForRecap(loserTeam.rawRatings);
+  const ratingComparisons = TEAM_RATING_KEYS.flatMap((key) => {
+    const winnerValue = winnerTeam.rawRatings?.[key];
+    const loserValue = loserTeam.rawRatings?.[key];
+    if (
+      typeof winnerValue !== "number" ||
+      !Number.isFinite(winnerValue) ||
+      typeof loserValue !== "number" ||
+      !Number.isFinite(loserValue)
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        gap: roundToOneDecimal(winnerValue - loserValue),
+        key,
+        label: FACT_LIBRARY_RATING_LABELS[key] ?? key,
+        loserLabel: loserRatingLabels[key] ?? String(roundToOneDecimal(loserValue)),
+        winnerLabel:
+          winnerRatingLabels[key] ?? String(roundToOneDecimal(winnerValue)),
+      },
+    ];
+  });
+
+  const supported = ratingComparisons
+    .filter((comparison) => comparison.gap >= 0.8)
+    .sort((left, right) => right.gap - left.gap)
+    .slice(0, 3)
+    .map(
+      (comparison) =>
+        `${game.winner.winnerName ?? winnerTeam.name} held the stronger ${comparison.label} rating (${comparison.winnerLabel} vs ${comparison.loserLabel}).`,
+    );
+  const suppressed = ratingComparisons
+    .filter((comparison) => comparison.gap <= -0.8)
+    .sort((left, right) => left.gap - right.gap)
+    .slice(0, 3)
+    .map(
+      (comparison) =>
+        `Do not say ${game.winner.winnerName ?? winnerTeam.name} won because of ${comparison.label}; ${game.winner.loserName ?? loserTeam.name} rated better there (${comparison.loserLabel} vs ${comparison.winnerLabel}).`,
+    );
+
+  return {
+    suppressed,
+    supported,
+  };
+}
+
+function buildFactsLibraryGameFlow(args: {
+  finalMargin: number;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  seriesContext: GameDayRecapSeriesContext | null;
+}): GameDayRecapFactsLibraryGameFlow {
+  const highlightRuns = buildFactsLibraryRunHighlights(args.playByPlayFacts);
+  const highlightLeadChanges =
+    buildFactsLibraryLeadChangeHighlights(args.playByPlayFacts);
+  const closingNote =
+    args.playByPlayFacts?.summaryLines.find((line) =>
+      /\b(?:Closing sequence|buzzerbeater|Late-game swing|Late-game swings)\b/i.test(
+        line,
+      ),
+    ) ?? null;
+  const doNotEmphasize: string[] = [];
+
+  if (args.seriesContext) {
+    doNotEmphasize.push(
+      "Prefer the current playoff series result over broader streak framing in the headline and opener.",
+    );
+  }
+  if (
+    args.finalMargin >= 8 &&
+    args.playByPlayFacts?.endingFacts.decisiveScore &&
+    args.playByPlayFacts.endingFacts.decisiveScore.momentType ===
+      "lead_extension" &&
+    !args.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater &&
+    !args.playByPlayFacts.endingFacts.opponentLastChance
+  ) {
+    doNotEmphasize.push(
+      "Do not frame the final scoring play as the decisive capper when the result was already in hand.",
+    );
+  }
+
+  return {
+    closingNote,
+    doNotEmphasize,
+    highlightLeadChanges,
+    highlightRuns,
+    lastLeadByLoser: null,
+    scoringDroughts: [],
+    tookLeadForGood: null,
+  };
+}
+
+function buildFactsLibraryRunHighlights(
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null,
+): GameDayRecapFactsLibraryGameFlow["highlightRuns"] {
+  return (playByPlayFacts?.summaryLines ?? [])
+    .filter((line) => /\brun\b/i.test(line))
+    .slice(0, 2)
+    .map((summary) => ({
+      playerBurst: null,
+      summary,
+    }));
+}
+
+function buildFactsLibraryLeadChangeHighlights(
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null,
+): string[] {
+  const summary =
+    playByPlayFacts?.summaryLines.find((line) =>
+      /\blead changed hands\b|\berased a \d+-point deficit and took the lead\b/i.test(
+        line,
+      ),
+    ) ?? null;
+  return summary ? [summary] : [];
+}
+
+function buildFactsLibrarySummaryFacts(args: {
+  awayTeamName: string;
+  finalMargin: number;
+  finalScoreFromWinnerPerspective: string;
+  gameFlow: GameDayRecapFactsLibraryGameFlow;
+  homeTeamName: string;
+  loserName: string;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  quarterFacts: GameDayRecapPromptQuarterFacts;
+  seriesContext: GameDayRecapSeriesContext | null;
+  throughThreeQuarters: GameDayRecapFactsLibraryPeriodState | null;
+  winnerName: string;
+}): string[] {
+  const facts = new Set<string>();
+  facts.add(
+    `${args.winnerName} beat ${args.loserName} ${args.finalScoreFromWinnerPerspective}.`,
+  );
+
+  if (args.seriesContext?.summaryLine) {
+    facts.add(args.seriesContext.summaryLine);
+  }
+  if (args.throughThreeQuarters) {
+    facts.add(
+      buildThroughThreeQuartersSentenceFromState(
+        args.throughThreeQuarters,
+        args.homeTeamName,
+        args.awayTeamName,
+      ),
+    );
+  }
+  if (args.quarterFacts.decisiveQuarter?.winningSide) {
+    const decisiveSide = args.quarterFacts.decisiveQuarter.winningSide;
+    const decisiveTeamName =
+      decisiveSide === "home" ? args.homeTeamName : args.awayTeamName;
+    facts.add(
+      `${decisiveTeamName} won the ${args.quarterFacts.decisiveQuarter.label} ${winnerFacingQuarterScore(
+        args.quarterFacts.decisiveQuarter,
+        decisiveSide,
+      )}.`,
+    );
+  }
+  if ((args.playByPlayFacts?.winnerComebackDeficit ?? 0) >= 8) {
+    facts.add(
+      `${args.winnerName} erased a ${args.playByPlayFacts!.winnerComebackDeficit}-point deficit to win.`,
+    );
+  }
+  if (
+    (args.playByPlayFacts?.largestLead.points ?? 0) >= 10 &&
+    args.playByPlayFacts?.largestLead.teamName
+  ) {
+    facts.add(
+      `${args.playByPlayFacts.largestLead.teamName} built the largest lead at ${args.playByPlayFacts.largestLead.points} points.`,
+    );
+  }
+  args.gameFlow.highlightRuns.forEach((highlight) => {
+    facts.add(highlight.summary);
+  });
+  if (args.gameFlow.highlightLeadChanges[0]) {
+    facts.add(args.gameFlow.highlightLeadChanges[0]);
+  }
+  if (args.gameFlow.closingNote) {
+    facts.add(args.gameFlow.closingNote);
+  }
+  if (args.finalMargin >= 15) {
+    facts.add(`${args.winnerName} won by ${args.finalMargin} points.`);
+  }
+
+  return Array.from(facts).slice(0, 8);
+}
+
+function buildFactsLibraryStorySignals(args: {
+  awayTeamName: string;
+  finalMargin: number;
+  gameFlow: GameDayRecapFactsLibraryGameFlow;
+  homeTeamName: string;
+  overtime: boolean;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  seriesContext: GameDayRecapSeriesContext | null;
+  throughThreeQuarters: GameDayRecapFactsLibraryPeriodState | null;
+  winnerName: string;
+}): string[] {
+  const signals = new Set<string>();
+
+  if (args.seriesContext) {
+    signals.add(
+      "This is a playoff series game, so the series state should anchor the opener more than broad streak framing.",
+    );
+  }
+  if (args.finalMargin <= 5) {
+    signals.add("This was a close finish.");
+  } else if (args.finalMargin >= 15) {
+    signals.add("The winner created clear final separation.");
+  }
+  if (
+    args.throughThreeQuarters &&
+    args.throughThreeQuarters.margin <= 6 &&
+    args.finalMargin >= 10 &&
+    (args.throughThreeQuarters.homeScore > args.throughThreeQuarters.awayScore
+      ? args.homeTeamName
+      : args.throughThreeQuarters.awayScore >
+            args.throughThreeQuarters.homeScore
+        ? args.awayTeamName
+        : null) === args.winnerName
+  ) {
+    signals.add(
+      `${args.winnerName} only led ${args.throughThreeQuarters.scoreFromLeaderPerspective} through three quarters before pulling away late.`,
+    );
+  } else if (
+    args.throughThreeQuarters &&
+    args.throughThreeQuarters.homeScore !== args.throughThreeQuarters.awayScore &&
+    args.finalMargin >= 10
+  ) {
+    const leaderName =
+      args.throughThreeQuarters.homeScore > args.throughThreeQuarters.awayScore
+        ? args.homeTeamName
+        : args.awayTeamName;
+    signals.add(
+      `${leaderName} held a ${args.throughThreeQuarters.scoreFromLeaderPerspective} edge through three quarters.`,
+    );
+  }
+  if (args.overtime) {
+    signals.add("The game went to overtime.");
+  }
+  if (args.playByPlayFacts?.winnerComebackDeficit) {
+    signals.add(
+      `${args.winnerName}'s comeback depth was ${args.playByPlayFacts.winnerComebackDeficit} points.`,
+    );
+  }
+  if (args.gameFlow.highlightLeadChanges[0]) {
+    signals.add(args.gameFlow.highlightLeadChanges[0]);
+  }
+  args.gameFlow.highlightRuns.forEach((highlight) => {
+    signals.add(highlight.summary);
+  });
+  if (args.gameFlow.doNotEmphasize.length > 0) {
+    args.gameFlow.doNotEmphasize.forEach((signal) => {
+      signals.add(signal);
+    });
+  }
+
+  return Array.from(signals).slice(0, 8);
+}
+
+function buildFactsLibraryOpeningCandidates(args: {
+  awayTeamName: string;
+  finalScoreFromWinnerPerspective: string;
+  gameFlow: GameDayRecapFactsLibraryGameFlow;
+  homeTeamName: string;
+  loserName: string;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  seriesContext: GameDayRecapSeriesContext | null;
+  throughThreeQuarters: GameDayRecapFactsLibraryPeriodState | null;
+  winnerName: string;
+}): string[] {
+  const candidates: string[] = [];
+
+  if (args.seriesContext?.summaryLine) {
+    candidates.push(args.seriesContext.summaryLine);
+  }
+  if (args.playByPlayFacts?.summaryLines[0]) {
+    candidates.push(args.playByPlayFacts.summaryLines[0]);
+  }
+  candidates.push(
+    `${args.winnerName} beat ${args.loserName} ${args.finalScoreFromWinnerPerspective}.`,
+  );
+  if (args.gameFlow.closingNote) {
+    candidates.push(args.gameFlow.closingNote);
+  }
+  if (args.throughThreeQuarters) {
+    candidates.push(
+      buildThroughThreeQuartersSentenceFromState(
+        args.throughThreeQuarters,
+        args.homeTeamName,
+        args.awayTeamName,
+      ),
+    );
+  }
+
+  return uniqueRecapLines(candidates).slice(0, 5);
+}
+
+function buildFactsLibraryHeadlineCandidates(args: {
+  finalScoreFromWinnerPerspective: string;
+  gameFlow: GameDayRecapFactsLibraryGameFlow;
+  loserName: string;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
+  seriesContext: GameDayRecapSeriesContext | null;
+  winnerName: string;
+  winnerSide: "away" | "home";
+}): string[] {
+  const candidates: string[] = [];
+  const seriesGameNumber = args.seriesContext
+    ? args.seriesContext.postgameWins.away + args.seriesContext.postgameWins.home
+    : null;
+  const winnerSeriesWins =
+    args.seriesContext?.summaryLine === "The series is tied 1-1."
+      ? 1
+      : Math.max(
+          args.seriesContext?.postgameWins.away ?? 0,
+          args.seriesContext?.postgameWins.home ?? 0,
+        );
+  const loserSeriesWins = Math.min(
+    args.seriesContext?.postgameWins.away ?? 0,
+    args.seriesContext?.postgameWins.home ?? 0,
+  );
+
+  if (args.seriesContext) {
+    if (args.seriesContext.isTerminal) {
+      candidates.push(
+        `${args.winnerName} wins series ${winnerSeriesWins}-${loserSeriesWins}`,
+      );
+    } else if (args.seriesContext.summaryLine === "The series is tied 1-1.") {
+      candidates.push(`${args.winnerName} evens series 1-1`);
+    } else if (seriesGameNumber === 1) {
+      candidates.push(`${args.winnerName} takes Game 1, leads series 1-0`);
+    } else if (seriesGameNumber) {
+      candidates.push(`${args.winnerName} takes Game ${seriesGameNumber}`);
+    }
+  }
+
+  if (args.playByPlayFacts?.endingFacts.decisiveScore?.isBuzzerBeater) {
+    candidates.push(`${args.winnerName} wins on buzzerbeater`);
+  }
+  if (
+    args.playByPlayFacts?.leadChangeFacts.bigComebackLeadChange
+      ?.scoringTeamSide === args.winnerSide
+  ) {
+    candidates.push(
+      `${args.winnerName} rallies from ${args.playByPlayFacts.leadChangeFacts.bigComebackLeadChange.deficitErased} down`,
+    );
+  } else if (args.playByPlayFacts?.leadChangeFacts.rapidLeadChangeBurst) {
+    candidates.push(
+      `${args.winnerName} survives ${args.playByPlayFacts.leadChangeFacts.rapidLeadChangeBurst.leadChangeCount}-swap finish`,
+    );
+  } else if (
+    args.playByPlayFacts?.leadChangeFacts.highVolumeLeadChangeGame.qualifies
+  ) {
+    candidates.push(
+      `${args.winnerName} wins ${args.playByPlayFacts.leadChangeFacts.highVolumeLeadChangeGame.leadChangeCount}-lead-change battle`,
+    );
+  }
+  candidates.push(
+    `${args.winnerName} beats ${args.loserName} ${args.finalScoreFromWinnerPerspective}`,
+  );
+  const winnerRun =
+    args.playByPlayFacts?.primaryRun?.teamSide === args.winnerSide
+      ? args.playByPlayFacts.primaryRun
+      : args.playByPlayFacts?.secondaryRun?.teamSide === args.winnerSide
+        ? args.playByPlayFacts.secondaryRun
+        : args.playByPlayFacts?.longestUnansweredRun.teamSide === args.winnerSide
+          ? args.playByPlayFacts.longestUnansweredRun
+          : args.playByPlayFacts?.bestCompetitiveSwingRun.teamSide === args.winnerSide
+            ? args.playByPlayFacts.bestCompetitiveSwingRun
+            : null;
+  if (winnerRun) {
+    candidates.push(
+      `${args.winnerName} uses ${winnerRun.teamPoints}-${winnerRun.opponentPoints} run`,
+    );
+  }
+
+  return uniqueRecapLines(candidates).slice(0, 4);
+}
+
+function buildThroughThreeQuartersSentenceFromState(
+  state: GameDayRecapFactsLibraryPeriodState,
+  homeTeamName: string,
+  awayTeamName: string,
+): string {
+  if (state.homeScore === state.awayScore) {
+    return `The game was tied ${state.homeScore}-${state.awayScore} through three quarters.`;
+  }
+
+  const homeLed = state.homeScore > state.awayScore;
+  const leaderName = homeLed ? homeTeamName : awayTeamName;
+  const trailerName = homeLed ? awayTeamName : homeTeamName;
+
+  return `${leaderName} led ${trailerName} ${state.scoreFromLeaderPerspective} through three quarters.`;
+}
+
+function uniqueRecapLines(lines: string[]): string[] {
+  return Array.from(
+    new Set(
+      lines
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+type CompletedBestOfThreeSeriesMatch = {
+  awayTeamId: string;
+  awayTeamName: string;
+  homeTeamId: string;
+  homeTeamName: string;
+  matchId: string;
+  startTime: string | null;
+  winnerTeamId: string;
+};
+
+type SeriesMatchCollection = {
+  currentMatchResolved: boolean;
+  matches: CompletedBestOfThreeSeriesMatch[];
+};
+
+function resolvePlayoffSeriesContext(args: {
+  awaySchedule?: BBApiSchedule | null;
+  boxScore: BBApiBoxScore;
+  homeSchedule?: BBApiSchedule | null;
+  requestedGame: SlateGame;
+  standings?: Pick<BBApiStandings, "brackets"> | null;
+}): GameDayRecapSeriesContext | null {
+  const stageKey = resolveBestOfThreePlayoffStageKey(
+    args.boxScore.type ?? args.requestedGame.type,
+  );
+  if (!stageKey) {
+    return null;
+  }
+
+  const currentMatch = toCompletedBestOfThreeSeriesMatchFromBoxScore({
+    boxScore: args.boxScore,
+    requestedGame: args.requestedGame,
+    stageKey,
+  });
+  if (!currentMatch) {
+    return null;
+  }
+
+  const pairKey = buildSeriesPairKey(
+    currentMatch.homeTeamId,
+    currentMatch.awayTeamId,
+  );
+  if (!pairKey) {
+    return null;
+  }
+  const bracketMatches = collectBestOfThreeSeriesMatchesFromBrackets({
+    currentMatchId: currentMatch.matchId,
+    pairKey,
+    stageKey,
+    standings: args.standings ?? null,
+  });
+  const seriesMatches = bracketMatches.currentMatchResolved
+    ? bracketMatches.matches
+    : collectBestOfThreeSeriesMatchesFromSchedules({
+        awaySchedule: args.awaySchedule ?? null,
+        currentMatch,
+        homeSchedule: args.homeSchedule ?? null,
+        pairKey,
+        stageKey,
+      });
+
+  return buildSeriesContextFromMatches({
+    currentMatch,
+    seriesMatches,
+    stageKey,
+  });
+}
+
+function resolveBestOfThreePlayoffStageKey(
+  type: string | null | undefined,
+): BestOfThreePlayoffStageKey | null {
+  const competition = classifyCompetition(type);
+  if (competition.competitionKey !== "PLAYOFFS") {
+    return null;
+  }
+
+  return normalizeBestOfThreePlayoffStageKey(competition.stageKey);
+}
+
+function normalizeBestOfThreePlayoffStageKey(
+  value: string | null | undefined,
+): BestOfThreePlayoffStageKey | null {
+  const normalized = value
+    ?.replace(/[^a-z0-9]+/g, "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "final" || normalized === "finals") {
+    return "finals";
+  }
+  if (normalized === "relegation" || normalized === "relegationseries") {
+    return "relegation";
+  }
+
+  return null;
+}
+
+function toCompletedBestOfThreeSeriesMatchFromBoxScore(args: {
+  boxScore: BBApiBoxScore;
+  requestedGame: SlateGame;
+  stageKey: BestOfThreePlayoffStageKey;
+}): CompletedBestOfThreeSeriesMatch | null {
+  if (
+    resolveBestOfThreePlayoffStageKey(
+      args.boxScore.type ?? args.requestedGame.type,
+    ) !== args.stageKey
+  ) {
+    return null;
+  }
+
+  const matchId =
+    args.boxScore.matchId?.trim() ?? args.requestedGame.matchId?.trim();
+  const homeTeamId =
+    args.boxScore.homeTeam.id?.trim() ?? args.requestedGame.homeTeamId.trim();
+  const awayTeamId =
+    args.boxScore.awayTeam.id?.trim() ?? args.requestedGame.awayTeamId.trim();
+  const homeScore = args.boxScore.homeTeam.score;
+  const awayScore = args.boxScore.awayTeam.score;
+
+  if (
+    !matchId ||
+    !homeTeamId ||
+    !awayTeamId ||
+    homeScore === null ||
+    awayScore === null ||
+    homeScore === awayScore
+  ) {
+    return null;
+  }
+
+  return {
+    awayTeamId,
+    awayTeamName:
+      args.boxScore.awayTeam.teamName ?? args.requestedGame.awayTeamName,
+    homeTeamId,
+    homeTeamName:
+      args.boxScore.homeTeam.teamName ?? args.requestedGame.homeTeamName,
+    matchId,
+    startTime: args.boxScore.startTime ?? args.requestedGame.startTime,
+    winnerTeamId: homeScore > awayScore ? homeTeamId : awayTeamId,
+  };
+}
+
+function collectBestOfThreeSeriesMatchesFromBrackets(args: {
+  currentMatchId: string;
+  pairKey: string;
+  stageKey: BestOfThreePlayoffStageKey;
+  standings: Pick<BBApiStandings, "brackets"> | null;
+}): SeriesMatchCollection {
+  const matchesById = new Map<string, CompletedBestOfThreeSeriesMatch>();
+  let currentMatchResolved = false;
+
+  for (const round of args.standings?.brackets ?? []) {
+    const roundStageKey = normalizeBestOfThreePlayoffStageKey(round.name);
+    for (const match of round.matches ?? []) {
+      const matchStageKey =
+        roundStageKey ??
+        resolveBestOfThreePlayoffStageKey(match.type ?? round.name);
+      if (matchStageKey !== args.stageKey) {
+        continue;
+      }
+
+      const currentBracketMatchId = match.id?.trim();
+      const pairMatchKey = buildSeriesPairKey(
+        match.homeTeam.id,
+        match.awayTeam.id,
+      );
+      if (pairMatchKey !== args.pairKey) {
+        continue;
+      }
+
+      const seriesMatch = toCompletedBestOfThreeSeriesMatchFromScheduleMatch({
+        match,
+        stageKey: args.stageKey,
+      });
+      if (seriesMatch) {
+        matchesById.set(seriesMatch.matchId, seriesMatch);
+      }
+      if (
+        currentBracketMatchId &&
+        currentBracketMatchId === args.currentMatchId &&
+        seriesMatch
+      ) {
+        currentMatchResolved = true;
+      }
+    }
+  }
+
+  return {
+    currentMatchResolved,
+    matches: sortBestOfThreeSeriesMatches(Array.from(matchesById.values())),
+  };
+}
+
+function collectBestOfThreeSeriesMatchesFromSchedules(args: {
+  awaySchedule: BBApiSchedule | null;
+  currentMatch: CompletedBestOfThreeSeriesMatch;
+  homeSchedule: BBApiSchedule | null;
+  pairKey: string;
+  stageKey: BestOfThreePlayoffStageKey;
+}): CompletedBestOfThreeSeriesMatch[] {
+  const matchesById = new Map<string, CompletedBestOfThreeSeriesMatch>();
+  let foundSeriesScheduleEntry = false;
+
+  for (const schedule of [args.homeSchedule, args.awaySchedule]) {
+    for (const match of schedule?.matches ?? []) {
+      if (
+        buildSeriesPairKey(match.homeTeam.id, match.awayTeam.id) !==
+        args.pairKey
+      ) {
+        continue;
+      }
+      if (resolveBestOfThreePlayoffStageKey(match.type) !== args.stageKey) {
+        continue;
+      }
+      foundSeriesScheduleEntry = true;
+
+      const seriesMatch = toCompletedBestOfThreeSeriesMatchFromScheduleMatch({
+        match,
+        stageKey: args.stageKey,
+      });
+      if (!seriesMatch) {
+        continue;
+      }
+
+      matchesById.set(seriesMatch.matchId, seriesMatch);
+    }
+  }
+
+  if (!foundSeriesScheduleEntry) {
+    return [];
+  }
+
+  matchesById.set(args.currentMatch.matchId, args.currentMatch);
+  return sortBestOfThreeSeriesMatches(Array.from(matchesById.values()));
+}
+
+function toCompletedBestOfThreeSeriesMatchFromScheduleMatch(args: {
+  match: BBApiScheduleMatch;
+  stageKey: BestOfThreePlayoffStageKey;
+}): CompletedBestOfThreeSeriesMatch | null {
+  if (resolveBestOfThreePlayoffStageKey(args.match.type) !== args.stageKey) {
+    return null;
+  }
+
+  const matchId = args.match.id?.trim();
+  const homeTeamId = args.match.homeTeam.id?.trim();
+  const awayTeamId = args.match.awayTeam.id?.trim();
+  const homeScore = args.match.homeTeam.score;
+  const awayScore = args.match.awayTeam.score;
+
+  if (
+    !matchId ||
+    !homeTeamId ||
+    !awayTeamId ||
+    homeScore === null ||
+    awayScore === null ||
+    homeScore === awayScore
+  ) {
+    return null;
+  }
+
+  return {
+    awayTeamId,
+    awayTeamName: args.match.awayTeam.teamName ?? "Away team",
+    homeTeamId,
+    homeTeamName: args.match.homeTeam.teamName ?? "Home team",
+    matchId,
+    startTime: args.match.startTime,
+    winnerTeamId: homeScore > awayScore ? homeTeamId : awayTeamId,
+  };
+}
+
+function sortBestOfThreeSeriesMatches(
+  matches: CompletedBestOfThreeSeriesMatch[],
+): CompletedBestOfThreeSeriesMatch[] {
+  return [...matches].sort((left, right) => {
+    const timeComparison = compareTimestamps(left.startTime, right.startTime);
+    if (timeComparison !== 0) {
+      return timeComparison;
+    }
+
+    return left.matchId.localeCompare(right.matchId);
+  });
+}
+
+function buildSeriesContextFromMatches(args: {
+  currentMatch: CompletedBestOfThreeSeriesMatch;
+  seriesMatches: CompletedBestOfThreeSeriesMatch[];
+  stageKey: BestOfThreePlayoffStageKey;
+}): GameDayRecapSeriesContext | null {
+  const currentMatchIndex = args.seriesMatches.findIndex(
+    (match) => match.matchId === args.currentMatch.matchId,
+  );
+  if (currentMatchIndex < 0) {
+    return null;
+  }
+
+  const matchesThroughCurrent = args.seriesMatches.slice(
+    0,
+    currentMatchIndex + 1,
+  );
+  if (matchesThroughCurrent.length < 1 || matchesThroughCurrent.length > 3) {
+    return null;
+  }
+
+  const homeWins = matchesThroughCurrent.filter(
+    (match) => match.winnerTeamId === args.currentMatch.homeTeamId,
+  ).length;
+  const awayWins = matchesThroughCurrent.filter(
+    (match) => match.winnerTeamId === args.currentMatch.awayTeamId,
+  ).length;
+  const leadingWins = Math.max(homeWins, awayWins);
+  const trailingWins = Math.min(homeWins, awayWins);
+
+  let summaryLine: string | null = null;
+  let isTerminal = false;
+
+  if (
+    matchesThroughCurrent.length === 1 &&
+    leadingWins === 1 &&
+    trailingWins === 0
+  ) {
+    summaryLine = `${
+      homeWins > awayWins
+        ? args.currentMatch.homeTeamName
+        : args.currentMatch.awayTeamName
+    } leads the series 1-0.`;
+  } else if (homeWins === 1 && awayWins === 1) {
+    summaryLine = "The series is tied 1-1.";
+  } else if (
+    leadingWins === 2 &&
+    (trailingWins === 0 || trailingWins === 1) &&
+    matchesThroughCurrent.length === leadingWins + trailingWins
+  ) {
+    summaryLine = `${
+      homeWins > awayWins
+        ? args.currentMatch.homeTeamName
+        : args.currentMatch.awayTeamName
+    } wins the series ${leadingWins}-${trailingWins}.`;
+    isTerminal = true;
+  }
+
+  if (!summaryLine) {
+    return null;
+  }
+
+  return {
+    isTerminal,
+    postgameWins: {
+      away: awayWins,
+      home: homeWins,
+    },
+    stageKey: args.stageKey,
+    summaryLine,
+  };
+}
+
+function buildSeriesPairKey(
+  homeTeamId: string | null | undefined,
+  awayTeamId: string | null | undefined,
+): string | null {
+  const homeId = homeTeamId?.trim();
+  const awayId = awayTeamId?.trim();
+  if (!homeId || !awayId) {
+    return null;
+  }
+
+  return [homeId, awayId].sort().join("#");
 }
 
 function describeEffortDeltaForRecap(args: {
@@ -2364,9 +6045,12 @@ function describeEffortDeltaForRecap(args: {
   const awayTeamName = args.awayTeamName?.trim() || "the away team";
   const strongerTeamName = effortDelta > 0 ? homeTeamName : awayTeamName;
   const weakerTeamName = effortDelta > 0 ? awayTeamName : homeTeamName;
-  const effortDegree = Math.abs(effortDelta) >= 2 ? "a lot" : "a bit";
+  const effortDegree =
+    Math.abs(effortDelta) >= 2
+      ? "held the clear effort edge"
+      : "held the effort edge";
 
-  return `${strongerTeamName} appeared to be trying ${effortDegree} harder than ${weakerTeamName}.`;
+  return `${strongerTeamName} ${effortDegree} over ${weakerTeamName}.`;
 }
 
 function describeGameDayPrepFocusForRecap(args: {
@@ -2381,20 +6065,60 @@ function describeGameDayPrepFocusForRecap(args: {
   const teamName = args.teamName?.trim() || "That team";
   switch (focus) {
     case "outside.hit":
-      return `${teamName} came out well prepared to guard the perimeter.`;
+      return `${teamName} read the perimeter focus correctly.`;
     case "outside.miss":
-      return `${teamName} looked surprised and disorganized on the defensive perimeter.`;
+      return `${teamName}'s perimeter focus missed the mark.`;
     case "inside.hit":
-      return `${teamName} came out well prepared to protect the paint.`;
+      return `${teamName} read the paint focus correctly.`;
     case "inside.miss":
-      return `${teamName} looked surprised and disorganized around the rim.`;
+      return `${teamName}'s interior focus missed the mark.`;
     case "balanced.hit":
-      return `${teamName} looked well prepared for a balanced attack.`;
+      return `${teamName} anticipated the balanced attack well.`;
     case "balanced.miss":
-      return `${teamName} looked a step behind against a more balanced attack.`;
+      return `${teamName} did not read the balanced attack well.`;
     default:
       return null;
   }
+}
+
+function buildRequiredContextSentencesForRecap(args: {
+  effortSummary: string | null;
+  gameDayPrepSummaries: string[];
+}): string[] {
+  const required: string[] = [];
+  const effortSummary = args.effortSummary?.trim() || null;
+  const prepSummaries = args.gameDayPrepSummaries
+    .map((summary) => summary.trim())
+    .filter(Boolean);
+
+  if (effortSummary) {
+    required.push(effortSummary);
+  }
+
+  if (prepSummaries.length === 1) {
+    required.push(ensureSentence(prepSummaries[0]!));
+  } else if (prepSummaries.length >= 2) {
+    required.push(
+      `${stripTrailingPunctuation(prepSummaries[0]!)} while ${stripTrailingPunctuation(
+        prepSummaries[1]!,
+      )}.`,
+    );
+  }
+
+  return required;
+}
+
+function ensureSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function stripTrailingPunctuation(text: string): string {
+  return text.trim().replace(/[.!?]+$/, "");
 }
 
 function analyzeRotationContextForRecap(
@@ -2566,6 +6290,8 @@ function buildEvidenceSignals(args: {
   awayContext: TeamSeasonContext;
   boxScore: BBApiBoxScore;
   homeContext: TeamSeasonContext;
+  isPlayoffGame: boolean;
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   quarterFacts: GameDayRecapPromptQuarterFacts;
 }): string[] {
   const signals = new Set<string>();
@@ -2575,6 +6301,9 @@ function buildEvidenceSignals(args: {
 
   if (finalMargin <= 5) {
     signals.add("close_finish");
+  }
+  if (finalMargin <= 3) {
+    signals.add("one_possession_finish");
   }
   if (finalMargin >= 18) {
     signals.add("blowout");
@@ -2590,21 +6319,41 @@ function buildEvidenceSignals(args: {
   ) {
     signals.add("possible_strategic_deemphasis");
   }
-  if (
-    args.homeContext.currentStreak.startsWith("W") ||
-    args.awayContext.currentStreak.startsWith("W")
-  ) {
-    signals.add("winning_streak_context");
-  }
-  if (
-    args.homeContext.currentStreak.startsWith("L") ||
-    args.awayContext.currentStreak.startsWith("L")
-  ) {
-    signals.add("losing_streak_context");
+  if (!args.isPlayoffGame) {
+    if (
+      args.homeContext.currentStreak.startsWith("W") ||
+      args.awayContext.currentStreak.startsWith("W")
+    ) {
+      signals.add("winning_streak_context");
+    }
+    if (
+      args.homeContext.currentStreak.startsWith("L") ||
+      args.awayContext.currentStreak.startsWith("L")
+    ) {
+      signals.add("losing_streak_context");
+    }
   }
 
   if (args.quarterFacts.decisiveQuarter) {
     signals.add("decisive_quarter_run");
+  }
+  if ((args.playByPlayFacts?.lateGameMoments.length ?? 0) > 0) {
+    signals.add("late_game_swing");
+  }
+  if (
+    args.playByPlayFacts?.leadChangeFacts.rapidLeadChangeBurst ||
+    args.playByPlayFacts?.leadChangeFacts.highVolumeLeadChangeGame.qualifies
+  ) {
+    signals.add("back_and_forth");
+  }
+  if (args.playByPlayFacts?.endingFacts.decisiveScore?.isBuzzerBeater) {
+    signals.add("buzzerbeater");
+  }
+  if (
+    (args.playByPlayFacts?.winnerComebackDeficit ?? 0) >=
+    COMEBACK_SUMMARY_THRESHOLD
+  ) {
+    signals.add("comeback");
   }
 
   return Array.from(signals);
@@ -3977,8 +7726,91 @@ function toLoggableError(error: unknown): Record<string, unknown> {
   if ("bodyPreview" in error && typeof error.bodyPreview === "string") {
     details.bodyPreview = error.bodyPreview;
   }
+  if (error instanceof GameDayRecapRepairFailureError) {
+    details.validationFeedbackLines = error.feedbackLines.slice(0, 10);
+    details.deterministicIssueCount = error.deterministicIssues.length;
+    details.deterministicIssues = summarizeGameDayRecapValidationIssuesForLog(
+      error.deterministicIssues,
+    );
+    details.judgeIssueCount = error.judgeIssues.length;
+    details.judgeIssues = summarizeGameDayRecapJudgeIssuesForLog(
+      error.judgeIssues,
+    );
+    details.postPatchDeterministicIssueCount =
+      error.postPatchDeterministicIssues.length;
+    details.postPatchDeterministicIssues =
+      summarizeGameDayRecapValidationIssuesForLog(
+        error.postPatchDeterministicIssues,
+      );
+    details.postPatchJudgeIssueCount = error.postPatchJudgeIssues.length;
+    details.postPatchJudgeIssues = summarizeGameDayRecapJudgeIssuesForLog(
+      error.postPatchJudgeIssues,
+    );
+    details.postTrimDeterministicIssueCount =
+      error.postTrimDeterministicIssues.length;
+    details.postTrimDeterministicIssues =
+      summarizeGameDayRecapValidationIssuesForLog(
+        error.postTrimDeterministicIssues,
+      );
+    details.postTrimJudgeIssueCount = error.postTrimJudgeIssues.length;
+    details.postTrimJudgeIssues = summarizeGameDayRecapJudgeIssuesForLog(
+      error.postTrimJudgeIssues,
+    );
+    details.repairActions = error.repairActions.slice(0, 20);
+    return details;
+  }
+  if (isGameDayRecapSemanticValidationError(error)) {
+    details.validationIssueCount = error.issues.length;
+    details.validationFeedbackLines = error.feedbackLines.slice(0, 10);
+    details.validationIssues = summarizeGameDayRecapValidationIssuesForLog(
+      error.issues,
+    );
+    if (error.issues.length > 10) {
+      details.validationIssueOverflowCount = error.issues.length - 10;
+    }
+  }
 
   return details;
+}
+
+function summarizeGameDayRecapValidationIssuesForLog(
+  issues: GameDayRecapSemanticValidationIssue[],
+): Array<Record<string, unknown>> {
+  return issues.slice(0, 10).map((issue) => ({
+    matchId: issue.matchId,
+    field: issue.field,
+    kind: issue.kind,
+    reason: issue.reason,
+    sentenceIndex: issue.sentenceIndex,
+    ...(issue.teamSide ? { teamSide: issue.teamSide } : {}),
+    ...(issue.period !== undefined ? { period: issue.period } : {}),
+    ...(issue.actualValue ? { actualValue: issue.actualValue } : {}),
+    sentence: summarizeGameDayRecapSentenceForLog(issue.sentence),
+  }));
+}
+
+function summarizeGameDayRecapJudgeIssuesForLog(
+  issues: GameDayRecapJudgeValidationIssue[],
+): Array<Record<string, unknown>> {
+  return issues.slice(0, 10).map((issue) => ({
+    contradictionType: issue.contradictionType,
+    field: issue.field,
+    matchId: issue.matchId,
+    sentence: summarizeGameDayRecapSentenceForLog(issue.sentence),
+    sentenceIndex: issue.sentenceIndex,
+    ...(issue.notes ? { notes: issue.notes } : {}),
+    ...(issue.sourceField ? { sourceField: issue.sourceField } : {}),
+    verdict: issue.verdict,
+  }));
+}
+
+function summarizeGameDayRecapSentenceForLog(sentence: string): string {
+  const normalized = sentence.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 180) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 177)}...`;
 }
 
 function resolveDateKey(value: string | null | undefined): string | null {
@@ -4109,7 +7941,8 @@ function resolveLeagueTimeZone(
 function createBedrockGameDayRecapProvider(args: {
   modelId: string;
   region: string | undefined;
-}): BedrockGameDayRecapProvider {
+  stage: StructuredGameDayRecapProviderStage;
+}): StructuredGameDayRecapProvider {
   assertSupportedBedrockRecapModel(args.modelId, args.region);
 
   const client = new BedrockRuntimeClient({
@@ -4118,15 +7951,19 @@ function createBedrockGameDayRecapProvider(args: {
 
   return {
     generate: async (payload, options) => {
-      const response = await client.send(
-        new ConverseCommand(
-          buildGameDayRecapBedrockRequest({
-            modelId: args.modelId,
-            payload,
-            validationFeedback: options?.validationFeedback,
-          }),
-        ),
-      );
+      const request =
+        args.stage === "judge"
+          ? buildGameDayRecapJudgeBedrockRequest({
+              modelId: args.modelId,
+              payload: requireJudgeRequestPayload(payload),
+            })
+          : buildGameDayRecapBedrockRequest({
+              modelId: args.modelId,
+              payload: requireWriterRequestPayload(payload),
+              validationFeedback: options?.validationFeedback,
+              validationContext: options?.validationContext ?? null,
+            });
+      const response = await client.send(new ConverseCommand(request));
 
       const output = response.output;
       const content =
@@ -4149,47 +7986,1789 @@ function createBedrockGameDayRecapProvider(args: {
     },
     modelId: args.modelId,
     providerName: "bedrock",
+    stage: args.stage,
   };
 }
 
-async function generateValidatedGameDayRecap(args: {
-  payload: GameDayRecapPromptPayload;
-  provider: BedrockGameDayRecapProvider;
-}): Promise<GeneratedGameDayRecap> {
-  const initialOutput = await args.provider.generate(args.payload);
+function requireWriterRequestPayload(
+  value: unknown,
+): GameDayRecapWriterRequestPayload {
+  return value as GameDayRecapWriterRequestPayload;
+}
 
-  try {
-    return {
-      coverageIssues: [],
-      result: validateGameDayRecapResult(initialOutput, args.payload.games),
-    };
-  } catch (error) {
-    if (!isGameDayRecapSemanticValidationError(error)) {
-      throw error;
+function resolvePayloadFactStore(
+  payload: GameDayRecapPromptPayload,
+): GameDayRecapFactStore {
+  // Runtime paths should carry the canonical fact store through once built.
+  // This rebuild path only exists for tests and older payload shapes.
+  return (
+    payload.factStore ??
+    buildGameDayRecapJudgeFactStore({
+      expectedGames: payload.games,
+      request: payload.request,
+    })
+  );
+}
+
+function requireJudgeRequestPayload(
+  value: unknown,
+): GameDayRecapJudgeRequestPayload {
+  const record = requireRecord(value, "Game day recap judge request");
+  const judgeKind = asOptionalString(record.judgeKind)?.trim();
+  if (
+    judgeKind !== "sentence_factuality" &&
+    judgeKind !== "candidate_interestingness"
+  ) {
+    throw new Error(
+      "Game day recap judge request must include a supported judgeKind.",
+    );
+  }
+
+  return record as unknown as GameDayRecapJudgeRequestPayload;
+}
+
+async function generateResolvedGameDayRecap(args: {
+  judgeProvider: StructuredGameDayRecapProvider | null;
+  payload: GameDayRecapPromptPayload;
+  qualityTier: RecapQualityTier;
+  retryProvider: StructuredGameDayRecapProvider | null;
+  targetKey?: string;
+  userId?: string;
+  writerProvider: StructuredGameDayRecapProvider;
+}): Promise<GeneratedGameDayRecap> {
+  const factStore = resolvePayloadFactStore(args.payload);
+  const logContext = {
+    targetKey: args.targetKey,
+    userId: args.userId,
+  };
+  const rewriteProvider =
+    args.qualityTier === "premium"
+      ? args.retryProvider ?? args.writerProvider
+      : args.writerProvider;
+
+  let generated: GeneratedGameDayRecap;
+  if (args.qualityTier === "premium") {
+    if (!args.retryProvider || !args.judgeProvider) {
+      throw new Error(
+        "Premium recap generation requires both retry and judge providers.",
+      );
     }
 
-    const retryOutput = await args.provider.generate(args.payload, {
-      validationFeedback: error.feedbackLines,
+    generated = await generatePremiumValidatedGameDayRecap({
+      judgeProvider: args.judgeProvider,
+      logContext,
+      payload: args.payload,
+      retryProvider: args.retryProvider,
+      writerProvider: args.writerProvider,
     });
+  } else {
+    if (!args.judgeProvider) {
+      throw new Error("Standard recap generation requires a judge provider.");
+    }
+
+    generated = await generateValidatedGameDayRecap({
+      judgeProvider: args.judgeProvider,
+      logContext,
+      payload: args.payload,
+      provider: args.writerProvider,
+    });
+  }
+
+  return finalizeGeneratedGameDayRecap({
+    factStore,
+    generated,
+    interviewProvider: rewriteProvider,
+    judgeProvider: args.judgeProvider,
+    logContext,
+    polishProvider: rewriteProvider,
+  });
+}
+
+async function finalizeGeneratedGameDayRecap(args: {
+  factStore: GameDayRecapFactStore;
+  generated: GeneratedGameDayRecap;
+  interviewProvider: StructuredGameDayRecapProvider;
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  polishProvider: StructuredGameDayRecapProvider;
+}): Promise<GeneratedGameDayRecap> {
+  const recapWithoutInterviews = stripPostgameInterviewsFromResult(
+    args.generated.result,
+  );
+  const polishedResult = await polishGeneratedGameDayRecapResult({
+    factStore: args.factStore,
+    judgeProvider: args.judgeProvider,
+    logContext: args.logContext,
+    provider: args.polishProvider,
+    result: recapWithoutInterviews,
+  });
+  const resultWithInterviews = await attachGuaranteedPostgameInterviews({
+    factStore: args.factStore,
+    judgeProvider: args.judgeProvider,
+    logContext: args.logContext,
+    provider: args.interviewProvider,
+    result: polishedResult,
+  });
+
+  return {
+    coverageIssues: args.generated.coverageIssues,
+    result: resultWithInterviews,
+  };
+}
+
+function buildSingleGameValidationResult(
+  game: GameDayRecapResultGame,
+): GameDayRecapResultPayload {
+  return {
+    games: [game],
+    summary: {
+      gameOfTheDayMatchId: null,
+      gameOfTheDaySurpriseFactor: null,
+      headline: game.headline,
+      lede:
+        "Single-game recap validation placeholder to recheck grounded recap content.",
+    },
+  };
+}
+
+async function validateStandaloneRecapGame(args: {
+  expectedGame: GameDayRecapGameFactStore;
+  game: GameDayRecapResultGame;
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  request: GameDayRecapRequestFacts;
+  stage:
+    | "style-polish"
+    | "postgame-interview"
+    | "salvage-post-patch"
+    | "salvage-post-trim"
+    | "writer";
+}): Promise<{
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  game: GameDayRecapResultGame;
+  judgeIssues: GameDayRecapJudgeValidationIssue[];
+}> {
+  const result = buildSingleGameValidationResult(args.game);
+  const deterministic = assessGameDayRecapDeterministicPayload(result, [
+    args.expectedGame,
+  ]);
+  const judged = await judgeGameDayRecapResult({
+    factStore: buildGameDayRecapFactStore({
+      games: [args.expectedGame],
+      request: args.request,
+    }),
+    logContext: args.logContext,
+    provider: args.judgeProvider,
+    result: deterministic.orderedResult,
+    stage: args.stage,
+  });
+
+  return {
+    deterministicIssues: deterministic.issues,
+    game: deterministic.orderedResult.games[0]!,
+    judgeIssues: judged.blockingIssues,
+  };
+}
+
+async function polishGeneratedGameDayRecapResult(args: {
+  factStore: GameDayRecapFactStore;
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  result: GameDayRecapResultPayload;
+}): Promise<GameDayRecapResultPayload> {
+  const expectedGamesByMatchId = new Map(
+    args.factStore.games.map((game) => [game.matchId, game]),
+  );
+  let games = [...args.result.games];
+
+  for (let index = 0; index < games.length; index += 1) {
+    const game = games[index];
+    if (!game) {
+      continue;
+    }
+
+    const expectedGame = expectedGamesByMatchId.get(game.matchId);
+    if (!expectedGame) {
+      continue;
+    }
 
     try {
-      return {
-        coverageIssues: [],
-        result: validateGameDayRecapResult(retryOutput, args.payload.games),
-      };
-    } catch (retryError) {
-      if (!isGameDayRecapSemanticValidationError(retryError)) {
-        throw retryError;
+      const polishedOutput = await args.provider.generate({
+        gameFacts: buildGameDayRecapWriterGameFromFactStore({
+          game: expectedGame,
+          generationApproach: args.factStore.request.generationApproach,
+        }),
+        recapGame: {
+          headline: game.headline,
+          matchId: game.matchId,
+          writeup: game.writeup,
+        },
+        request: args.factStore.request,
+        task: "style_polish",
+      });
+      const polishedWriteup = normalizeGameDayRecapStylePolishWriteup(
+        polishedOutput,
+      );
+      if (!polishedWriteup || polishedWriteup === game.writeup) {
+        continue;
       }
 
-      return salvageGameDayRecapResult({
-        expectedGames: args.payload.games,
-        issues: retryError.issues,
-        request: args.payload.request,
-        result: normalizeGameDayRecapResult(retryOutput),
+      const validated = await validateStandaloneRecapGame({
+        expectedGame,
+        game: {
+          ...game,
+          writeup: polishedWriteup,
+        },
+        judgeProvider: args.judgeProvider,
+        logContext: args.logContext,
+        request: args.factStore.request,
+        stage: "style-polish",
+      });
+      if (
+        validated.deterministicIssues.length > 0 ||
+        validated.judgeIssues.length > 0
+      ) {
+        logGameDayRecapWarn("process.style_polish_rejected", {
+          deterministicIssues: summarizeGameDayRecapValidationIssuesForLog(
+            validated.deterministicIssues,
+          ),
+          judgeIssues: summarizeGameDayRecapJudgeIssuesForLog(
+            validated.judgeIssues,
+          ),
+          matchId: game.matchId,
+          stage: "style-polish",
+          targetKey: args.logContext?.targetKey ?? null,
+          userId: args.logContext?.userId ?? null,
+        });
+        continue;
+      }
+
+      games[index] = validated.game;
+      logGameDayRecapInfo("process.style_polish_applied", {
+        matchId: game.matchId,
+        targetKey: args.logContext?.targetKey,
+        userId: args.logContext?.userId,
+      });
+    } catch (error) {
+      logGameDayRecapWarn("process.style_polish_skipped", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        matchId: game.matchId,
+        stage: "style-polish",
+        targetKey: args.logContext?.targetKey ?? null,
+        userId: args.logContext?.userId ?? null,
       });
     }
   }
+
+  return {
+    ...args.result,
+    games,
+  };
+}
+
+async function attachGuaranteedPostgameInterviews(args: {
+  factStore: GameDayRecapFactStore;
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  result: GameDayRecapResultPayload;
+}): Promise<GameDayRecapResultPayload> {
+  const expectedGamesByMatchId = new Map(
+    args.factStore.games.map((game) => [game.matchId, game]),
+  );
+  const games = await Promise.all(
+    args.result.games.map(async (game) => {
+      const expectedGame = expectedGamesByMatchId.get(game.matchId);
+      const candidate = expectedGame?.postgameInterviewCandidate ?? null;
+      if (!expectedGame || !candidate) {
+        return removePostgameInterview(game);
+      }
+
+      const interview = await generateGuaranteedPostgameInterview({
+        candidate,
+        expectedGame,
+        game,
+        judgeProvider: args.judgeProvider,
+        logContext: args.logContext,
+        provider: args.provider,
+        request: args.factStore.request,
+      });
+
+      return interview
+        ? {
+            ...game,
+            postgameInterview: interview,
+          }
+        : removePostgameInterview(game);
+    }),
+  );
+
+  return {
+    ...args.result,
+    games,
+  };
+}
+
+async function generateGuaranteedPostgameInterview(args: {
+  candidate: GameDayRecapPromptInterviewCandidate;
+  expectedGame: GameDayRecapGameFactStore;
+  game: GameDayRecapResultGame;
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  request: GameDayRecapRequestFacts;
+}): Promise<GameDayRecapResultPostgameInterview | null> {
+  const fallbackInterview = buildFallbackPostgameInterview({
+    candidate: args.candidate,
+    expectedGame: args.expectedGame,
+  });
+  const writerGameFacts = buildGameDayRecapWriterGameFromFactStore({
+    game: args.expectedGame,
+    generationApproach: args.request.generationApproach,
+  });
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const output = await args.provider.generate({
+        candidate: args.candidate,
+        gameFacts: writerGameFacts,
+        recapGame: {
+          headline: args.game.headline,
+          matchId: args.game.matchId,
+          writeup: args.game.writeup,
+        },
+        request: args.request,
+        task: "postgame_interview",
+      });
+      const parsed = parseGameDayRecapPostgameInterview({
+        input: output,
+        matchId: args.game.matchId,
+      });
+      if (!parsed.interview) {
+        logGameDayRecapWarn("process.postgame_interview_retry", {
+          attempt,
+          details: parsed.warning?.details ?? [],
+          matchId: args.game.matchId,
+          reason: parsed.warning?.reason ?? "Interview normalization failed.",
+          stage: "postgame-interview",
+          targetKey: args.logContext?.targetKey ?? null,
+          userId: args.logContext?.userId ?? null,
+        });
+        continue;
+      }
+
+      const validated = await validateStandaloneRecapGame({
+        expectedGame: args.expectedGame,
+        game: {
+          ...args.game,
+          postgameInterview: parsed.interview,
+        },
+        judgeProvider: args.judgeProvider,
+        logContext: args.logContext,
+        request: args.request,
+        stage: "postgame-interview",
+      });
+      if (
+        validated.deterministicIssues.length === 0 &&
+        validated.judgeIssues.length === 0
+      ) {
+        return parsed.interview;
+      }
+
+      logGameDayRecapWarn("process.postgame_interview_retry", {
+        attempt,
+        deterministicIssues: summarizeGameDayRecapValidationIssuesForLog(
+          validated.deterministicIssues,
+        ),
+        judgeIssues: summarizeGameDayRecapJudgeIssuesForLog(
+          validated.judgeIssues,
+        ),
+        matchId: args.game.matchId,
+        reason: "Generated interview did not pass validation.",
+        stage: "postgame-interview",
+        targetKey: args.logContext?.targetKey ?? null,
+        userId: args.logContext?.userId ?? null,
+      });
+    } catch (error) {
+      logGameDayRecapWarn("process.postgame_interview_retry", {
+        attempt,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        matchId: args.game.matchId,
+        reason: "Generated interview request failed.",
+        stage: "postgame-interview",
+        targetKey: args.logContext?.targetKey ?? null,
+        userId: args.logContext?.userId ?? null,
+      });
+    }
+  }
+
+  const validatedFallback = await validateStandaloneRecapGame({
+    expectedGame: args.expectedGame,
+    game: {
+      ...args.game,
+      postgameInterview: fallbackInterview,
+    },
+    judgeProvider: args.judgeProvider,
+    logContext: args.logContext,
+    request: args.request,
+    stage: "postgame-interview",
+  });
+  if (
+    validatedFallback.deterministicIssues.length === 0 &&
+    validatedFallback.judgeIssues.length === 0
+  ) {
+    logGameDayRecapWarn("process.postgame_interview_fallback_used", {
+      matchId: args.game.matchId,
+      stage: "postgame-interview",
+      targetKey: args.logContext?.targetKey ?? null,
+      userId: args.logContext?.userId ?? null,
+    });
+    return fallbackInterview;
+  }
+
+  logGameDayRecapWarn("process.postgame_interview_unavailable", {
+    deterministicIssues: summarizeGameDayRecapValidationIssuesForLog(
+      validatedFallback.deterministicIssues,
+    ),
+    judgeIssues: summarizeGameDayRecapJudgeIssuesForLog(
+      validatedFallback.judgeIssues,
+    ),
+    matchId: args.game.matchId,
+    stage: "postgame-interview",
+    targetKey: args.logContext?.targetKey ?? null,
+    userId: args.logContext?.userId ?? null,
+  });
+  return null;
+}
+
+function buildFallbackPostgameInterview(args: {
+  candidate: GameDayRecapPromptInterviewCandidate;
+  expectedGame: GameDayRecapGameFactStore;
+}): GameDayRecapResultPostgameInterview {
+  const winningRun =
+    args.expectedGame.playByPlayFacts?.primaryRun?.teamSide ===
+    args.candidate.teamSide
+      ? args.expectedGame.playByPlayFacts.primaryRun
+      : args.expectedGame.playByPlayFacts?.secondaryRun?.teamSide ===
+          args.candidate.teamSide
+        ? args.expectedGame.playByPlayFacts.secondaryRun
+        : null;
+  const qa: GameDayRecapResultPostgameInterview["qa"] = [
+    {
+      answer: buildFallbackInterviewStatAnswer(args.candidate),
+      question: "What was working for you tonight?",
+    },
+  ];
+
+  if (winningRun) {
+    qa.push({
+      answer: buildFallbackInterviewRunAnswer(winningRun),
+      question: "How did the key stretch change the game?",
+    });
+  }
+
+  return {
+    playerName: args.candidate.playerName,
+    qa,
+    teamName: args.candidate.teamName,
+    teamSide: args.candidate.teamSide,
+    title: `${args.candidate.playerName} on ${args.candidate.teamName}'s win`,
+  };
+}
+
+function buildFallbackInterviewStatAnswer(
+  candidate: GameDayRecapPromptInterviewCandidate,
+): string {
+  const statParts: string[] = [];
+  if (candidate.statLine.points > 0) {
+    statParts.push(`${candidate.statLine.points} points`);
+  }
+  if (candidate.statLine.rebounds > 0) {
+    statParts.push(`${candidate.statLine.rebounds} rebounds`);
+  }
+  if (candidate.statLine.assists > 0) {
+    statParts.push(`${candidate.statLine.assists} assists`);
+  }
+  if (candidate.statLine.steals > 0) {
+    statParts.push(`${candidate.statLine.steals} steals`);
+  }
+  if (candidate.statLine.blocks > 0) {
+    statParts.push(`${candidate.statLine.blocks} blocks`);
+  }
+
+  const statSummary =
+    statParts.length > 0
+      ? `I just tried to stay active and make the right play, and it ended up with ${joinNaturalLanguage(
+          statParts.slice(0, 4),
+        )}.`
+      : "I just tried to stay active and make the right play every trip.";
+
+  return ensureSentence(statSummary);
+}
+
+function buildFallbackInterviewRunAnswer(
+  run: NonNullable<GameDayRecapPlayByPlayFacts["primaryRun"]>,
+): string {
+  const timeRange = formatInterviewRunTimeRange(run);
+  if (!timeRange) {
+    return `We stayed patient and kept the pressure on during that ${run.teamPoints}-${run.opponentPoints} stretch.`;
+  }
+
+  return `We stayed patient and kept the pressure on during that ${run.teamPoints}-${run.opponentPoints} stretch ${timeRange}.`;
+}
+
+function joinNaturalLanguage(parts: string[]): string {
+  if (parts.length <= 1) {
+    return parts[0] ?? "";
+  }
+  if (parts.length === 2) {
+    return `${parts[0]} and ${parts[1]}`;
+  }
+
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+async function generateValidatedGameDayRecap(args: {
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  payload: GameDayRecapPromptPayload;
+  provider: StructuredGameDayRecapProvider;
+}): Promise<GeneratedGameDayRecap> {
+  const factStore = resolvePayloadFactStore(args.payload);
+  const initialOutput = await args.provider.generate(args.payload);
+  const initialNormalized = stripPostgameInterviewsFromResult(
+    normalizeGameDayRecapResultForStage({
+      input: initialOutput,
+      stage: "writer_initial",
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    }),
+  );
+  const initialDeterministic = assessGameDayRecapDeterministicPayload(
+    initialNormalized,
+    factStore.games,
+  );
+  const initialJudge = await judgeGameDayRecapResult({
+    factStore,
+    logContext: args.logContext,
+    provider: args.judgeProvider,
+    result: initialDeterministic.orderedResult,
+    stage: "writer",
+  });
+  if (
+    initialDeterministic.issues.length === 0 &&
+    initialJudge.blockingIssues.length === 0
+  ) {
+    return {
+      coverageIssues: [],
+      result: decorateGameDayRecapResultWithSurpriseMetadata(
+        initialDeterministic.orderedResult,
+        factStore.games,
+      ),
+    };
+  }
+
+  const retryValidationContext: GameDayRecapRetryValidationContext = {
+    deterministicIssues: initialDeterministic.issues.map((issue) => ({
+      feedback: issue.feedback,
+      field: issue.field,
+      kind: issue.kind,
+      matchId: issue.matchId,
+      sentence: issue.sentence,
+      sentenceIndex: issue.sentenceIndex,
+    })),
+    judgeIssues: initialJudge.retryableIssues.map((issue) => ({
+      contradictionType: issue.contradictionType,
+      field: issue.field,
+      matchId: issue.matchId,
+      notes: issue.notes,
+      sentence: issue.sentence,
+      sentenceIndex: issue.sentenceIndex,
+      sourceField: issue.sourceField,
+      verdict: issue.verdict,
+    })),
+  };
+  const retryOutput = await args.provider.generate(args.payload, {
+    validationContext: retryValidationContext,
+    validationFeedback: buildRecapValidationFeedbackLines({
+      deterministicIssues: initialDeterministic.issues,
+      judgeIssues: initialJudge.retryableIssues,
+    }),
+  });
+  const retryNormalized = stripPostgameInterviewsFromResult(
+    normalizeGameDayRecapResultForStage({
+      input: retryOutput,
+      stage: "writer_retry",
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    }),
+  );
+  const retryDeterministic = assessGameDayRecapDeterministicPayload(
+    retryNormalized,
+    factStore.games,
+  );
+  const retryJudge = await judgeGameDayRecapResult({
+    factStore,
+    logContext: args.logContext,
+    provider: args.judgeProvider,
+    result: retryDeterministic.orderedResult,
+    stage: "retry",
+  });
+  if (
+    retryDeterministic.issues.length === 0 &&
+    retryJudge.blockingIssues.length === 0
+  ) {
+    return {
+      coverageIssues: [],
+      result: decorateGameDayRecapResultWithSurpriseMetadata(
+        retryDeterministic.orderedResult,
+        factStore.games,
+      ),
+    };
+  }
+
+  return salvageGameDayRecapResult({
+    deterministicIssues: retryDeterministic.issues,
+    expectedGames: factStore.games,
+    judgeIssues: retryJudge.blockingIssues,
+    judgeProvider: args.judgeProvider,
+    logContext: args.logContext,
+    request: factStore.request,
+    result: retryDeterministic.orderedResult,
+  });
+}
+
+async function generatePremiumValidatedGameDayRecap(args: {
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  payload: GameDayRecapPromptPayload;
+  retryProvider: StructuredGameDayRecapProvider;
+  writerProvider: StructuredGameDayRecapProvider;
+}): Promise<GeneratedGameDayRecap> {
+  const factStore = resolvePayloadFactStore(args.payload);
+  const initialCandidates = await Promise.all(
+    Array.from(
+      { length: PREMIUM_RECAP_CANDIDATE_COUNT },
+      async (_value, index) =>
+        evaluatePremiumRecapCandidate({
+          candidateIndex: index,
+          logContext: args.logContext,
+          payload: args.payload,
+          provider: args.writerProvider,
+        }),
+    ),
+  );
+  await judgePremiumCandidates({
+    candidates: initialCandidates,
+    logContext: args.logContext,
+    payload: args.payload,
+    provider: args.judgeProvider,
+  });
+  applyPremiumCandidateDisagreementPenalties(
+    initialCandidates,
+    factStore.games,
+  );
+
+  const bestPassingCandidate =
+    selectBestPassingPremiumCandidate(initialCandidates);
+  if (bestPassingCandidate?.validatedResult) {
+    return {
+      coverageIssues: [],
+      result: bestPassingCandidate.validatedResult,
+    };
+  }
+
+  const retrySourceCandidate =
+    selectBestRetrySourcePremiumCandidate(initialCandidates);
+  const retryCandidate = await evaluatePremiumRecapCandidate({
+    candidateIndex: PREMIUM_RECAP_CANDIDATE_COUNT,
+    logContext: args.logContext,
+    payload: args.payload,
+    provider: args.retryProvider,
+    validationFeedback: buildPremiumRetryFeedback(retrySourceCandidate),
+  });
+  await judgePremiumCandidates({
+    candidates: [retryCandidate],
+    logContext: args.logContext,
+    payload: args.payload,
+    provider: args.judgeProvider,
+  });
+  if (
+    retryCandidate.validatedResult &&
+    candidateClearsFactualBar(retryCandidate)
+  ) {
+    return {
+      coverageIssues: [],
+      result: retryCandidate.validatedResult,
+    };
+  }
+
+  const fallbackCandidate = retryCandidate.normalizedResult
+    ? retryCandidate
+    : retrySourceCandidate;
+  if (fallbackCandidate.normalizedResult) {
+    return salvageGameDayRecapResult({
+      deterministicIssues: fallbackCandidate.deterministicIssues,
+      expectedGames: factStore.games,
+      judgeIssues: collectBlockingJudgeIssues(
+        fallbackCandidate.judgeAssessment,
+      ),
+      judgeProvider: args.judgeProvider,
+      logContext: args.logContext,
+      request: factStore.request,
+      result: fallbackCandidate.normalizedResult,
+    });
+  }
+
+  throw new Error(
+    fallbackCandidate.deterministicFailureMessage ??
+      "Premium recap generation failed before any candidate could be normalized.",
+  );
+}
+
+async function evaluatePremiumRecapCandidate(args: {
+  candidateIndex: number;
+  logContext?: GameDayRecapGenerationLogContext;
+  payload: GameDayRecapPromptPayload;
+  provider: StructuredGameDayRecapProvider;
+  validationFeedback?: string[];
+}): Promise<PremiumRecapCandidate> {
+  const factStore = resolvePayloadFactStore(args.payload);
+  try {
+    const rawOutput = await args.provider.generate(args.payload, {
+      candidateIndex: args.candidateIndex,
+      validationFeedback: args.validationFeedback,
+    });
+    const normalizedResult = stripPostgameInterviewsFromResult(
+      normalizeGameDayRecapResultForStage({
+        candidateIndex: args.candidateIndex,
+        input: rawOutput,
+        stage: `${args.provider.stage}_candidate`,
+        targetKey: args.logContext?.targetKey,
+        userId: args.logContext?.userId,
+      }),
+    );
+
+    try {
+      return {
+        candidateIndex: args.candidateIndex,
+        deterministicFailureMessage: null,
+        deterministicIssues: [],
+        disagreementPenalty: 0,
+        judgeAssessment: null,
+        normalizedResult,
+        validatedResult: validateGameDayRecapPayload(
+          normalizedResult,
+          factStore.games,
+        ),
+      };
+    } catch (error) {
+      if (!isGameDayRecapSemanticValidationError(error)) {
+        throw error;
+      }
+
+      return {
+        candidateIndex: args.candidateIndex,
+        deterministicFailureMessage: error.message,
+        deterministicIssues: error.issues,
+        disagreementPenalty: 0,
+        judgeAssessment: null,
+        normalizedResult,
+        validatedResult: null,
+      };
+    }
+  } catch (error) {
+    return {
+      candidateIndex: args.candidateIndex,
+      deterministicFailureMessage:
+        error instanceof Error ? error.message : String(error),
+      deterministicIssues: [],
+      disagreementPenalty: 0,
+      judgeAssessment: null,
+      normalizedResult: null,
+      validatedResult: null,
+    };
+  }
+}
+
+async function judgePremiumCandidates(args: {
+  candidates: PremiumRecapCandidate[];
+  logContext?: GameDayRecapGenerationLogContext;
+  payload: GameDayRecapPromptPayload;
+  provider: StructuredGameDayRecapProvider;
+}): Promise<void> {
+  const judgeableCandidates = args.candidates.filter(
+    (
+      candidate,
+    ): candidate is PremiumRecapCandidate & {
+      validatedResult: GameDayRecapResultPayload;
+    } => Boolean(candidate.validatedResult),
+  );
+  if (!judgeableCandidates.length) {
+    return;
+  }
+
+  const factStore = resolvePayloadFactStore(args.payload);
+  for (const candidate of judgeableCandidates) {
+    candidate.judgeAssessment = await judgeSingleRecapCandidate({
+      candidateIndex: candidate.candidateIndex,
+      factStore,
+      includeInterestingness: true,
+      logContext: args.logContext,
+      provider: args.provider,
+      result: candidate.validatedResult,
+      stage: "premium-candidate-selection",
+    });
+  }
+}
+
+function normalizeGameDayRecapJudgeSentenceVerdictRecord(
+  value: unknown,
+): GameDayRecapJudgeSentenceVerdictRecord {
+  const record = requireRecord(value, "Game day recap judge sentence verdict");
+  const containsOutcomeClaim =
+    typeof record.containsOutcomeClaim === "boolean"
+      ? record.containsOutcomeClaim
+      : null;
+  const contradictionType = asOptionalString(record.contradictionType)?.trim() as
+    | GameDayRecapJudgeContradictionType
+    | undefined;
+  const notesText = asOptionalString(record.notes);
+  const sourceFieldText = asOptionalString(record.sourceField);
+  const verdict = asOptionalString(record.verdict)?.trim() as
+    | GameDayRecapJudgeSentenceVerdict
+    | undefined;
+  if (
+    containsOutcomeClaim === null ||
+    !verdict ||
+    !contradictionType ||
+    notesText === null ||
+    sourceFieldText === null
+  ) {
+    throw new Error(
+      "The judge sentence verdict entry was incomplete.",
+    );
+  }
+  const normalizedNotes = notesText.trim();
+  const normalizedSourceField = sourceFieldText.trim();
+  if (
+    (verdict !== "supported" &&
+      verdict !== "unsupported" &&
+      verdict !== "uncertain" &&
+      verdict !== "style_only") ||
+    (contradictionType !== "none" &&
+      contradictionType !== "winner" &&
+      contradictionType !== "final_score" &&
+      contradictionType !== "overtime" &&
+      contradictionType !== "quarter_outcome" &&
+      contradictionType !== "series_state" &&
+      contradictionType !== "run" &&
+      contradictionType !== "lead_change" &&
+      contradictionType !== "ending" &&
+      contradictionType !== "record" &&
+      contradictionType !== "other")
+  ) {
+    throw new Error(
+      "The judge sentence verdict entry used an unsupported verdict or contradiction type.",
+    );
+  }
+
+  return {
+    containsOutcomeClaim,
+    contradictionType,
+    notes: normalizedNotes ? normalizedNotes : null,
+    sourceField: normalizedSourceField ? normalizedSourceField : null,
+    verdict,
+  };
+}
+
+function buildJudgeGameFactPacketIndex(
+  factStore: GameDayRecapFactStore,
+): Map<string, GameDayRecapJudgeGameFactPacket> {
+  return new Map(
+    factStore.games.map((game) => [
+      game.matchId,
+      buildGameDayRecapJudgeGameFactPacket(game),
+    ]),
+  );
+}
+
+function collectExpectedJudgeSentenceEntriesForGame(
+  game: GameDayRecapResultPayload["games"][number],
+): GameDayRecapJudgeSentenceInventoryEntry[] {
+  const headlineEntry = {
+    field: "headline" as const,
+    key: buildJudgeSentenceKey({
+      field: "headline",
+      matchId: game.matchId,
+      sentenceIndex: 0,
+    }),
+    matchId: game.matchId,
+    sentence: game.headline,
+    sentenceIndex: 0,
+  };
+  const writeupEntries = splitRecapText(game.writeup).map(
+    (sentence, sentenceIndex) => ({
+      field: "writeup" as const,
+      key: buildJudgeSentenceKey({
+        field: "writeup",
+        matchId: game.matchId,
+        sentenceIndex,
+      }),
+      matchId: game.matchId,
+      sentence,
+      sentenceIndex,
+    }),
+  );
+  const interviewEntries = collectPostgameInterviewJudgeSentences(
+    game.postgameInterview,
+  ).map((entry) => ({
+    field: "postgameInterview" as const,
+    key: buildJudgeSentenceKey({
+      field: "postgameInterview",
+      matchId: game.matchId,
+      sentenceIndex: entry.sentenceIndex,
+    }),
+    matchId: game.matchId,
+    sentence: entry.sentence,
+    sentenceIndex: entry.sentenceIndex,
+  }));
+
+  return [headlineEntry, ...writeupEntries, ...interviewEntries];
+}
+
+function buildJudgeSentenceChunks(args: {
+  candidateIndex: number;
+  result: GameDayRecapResultPayload;
+}): GameDayRecapJudgeSentenceChunk[] {
+  return args.result.games.flatMap((game) => {
+    const sentenceEntries = collectExpectedJudgeSentenceEntriesForGame(game);
+    const chunkCount = Math.ceil(
+      sentenceEntries.length / GAME_DAY_RECAP_JUDGE_SENTENCE_CHUNK_SIZE,
+    );
+    const chunks: GameDayRecapJudgeSentenceChunk[] = [];
+    for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      const entries = sentenceEntries
+        .slice(
+          chunkIndex * GAME_DAY_RECAP_JUDGE_SENTENCE_CHUNK_SIZE,
+          (chunkIndex + 1) * GAME_DAY_RECAP_JUDGE_SENTENCE_CHUNK_SIZE,
+        )
+        .map((entry, slotIndex) => ({
+          ...entry,
+          slotId: GAME_DAY_RECAP_JUDGE_SLOT_IDS[slotIndex]!,
+        }));
+      chunks.push({
+        candidateIndex: args.candidateIndex,
+        chunkCount,
+        chunkIndex,
+        entries,
+        matchId: game.matchId,
+      });
+    }
+
+    return chunks;
+  });
+}
+
+function normalizeSentenceJudgeChunkResult(args: {
+  chunk: GameDayRecapJudgeSentenceChunk;
+  input: unknown;
+}): GameDayRecapJudgeSentenceAssessment[] {
+  const record = requireRecord(args.input, "Game day recap judge sentence chunk");
+  let slotVerdictsRecord: JsonRecord;
+  try {
+    slotVerdictsRecord = requireRecord(
+      record.slotVerdicts,
+      "Game day recap judge slot verdicts",
+    );
+  } catch {
+    throw new GameDayRecapJudgeContractError([
+      {
+        candidateIndex: args.chunk.candidateIndex,
+        chunkIndex: args.chunk.chunkIndex,
+        expectedCandidateCount: 1,
+        expectedSentenceCount: args.chunk.entries.length,
+        kind: "invalid_sentence_chunk_shape",
+        matchId: args.chunk.matchId,
+        missingKeys: args.chunk.entries.map((entry) => entry.slotId),
+        notes:
+          "The judge result did not return a slotVerdicts object for the chunk.",
+        returnedCandidateCount: 1,
+        returnedSentenceCount: 0,
+        unexpectedKeys: [],
+      },
+    ]);
+  }
+
+  const expectedSlotIds = args.chunk.entries.map((entry) => entry.slotId);
+  const returnedSlotIds = Object.keys(slotVerdictsRecord);
+  const missingSlotIds = expectedSlotIds.filter(
+    (slotId) => !(slotId in slotVerdictsRecord),
+  );
+  const unexpectedSlotIds = returnedSlotIds.filter(
+    (slotId) => !expectedSlotIds.includes(slotId as GameDayRecapJudgeSlotId),
+  );
+  const issues: GameDayRecapJudgeContractIssue[] = [];
+  if (missingSlotIds.length > 0) {
+    issues.push({
+      candidateIndex: args.chunk.candidateIndex,
+      chunkIndex: args.chunk.chunkIndex,
+      expectedCandidateCount: 1,
+      expectedSentenceCount: args.chunk.entries.length,
+      kind: "missing_slot_verdicts",
+      matchId: args.chunk.matchId,
+      missingKeys: missingSlotIds,
+      notes:
+        "The judge omitted one or more expected slot verdicts for the chunk.",
+      returnedCandidateCount: 1,
+      returnedSentenceCount: returnedSlotIds.length,
+      unexpectedKeys: [],
+    });
+  }
+  if (unexpectedSlotIds.length > 0) {
+    issues.push({
+      candidateIndex: args.chunk.candidateIndex,
+      chunkIndex: args.chunk.chunkIndex,
+      expectedCandidateCount: 1,
+      expectedSentenceCount: args.chunk.entries.length,
+      kind: "unexpected_slot_verdicts",
+      matchId: args.chunk.matchId,
+      missingKeys: [],
+      notes:
+        "The judge returned one or more unexpected slot verdicts for the chunk.",
+      returnedCandidateCount: 1,
+      returnedSentenceCount: returnedSlotIds.length,
+      unexpectedKeys: unexpectedSlotIds,
+    });
+  }
+
+  const assessments: GameDayRecapJudgeSentenceAssessment[] = [];
+  for (const entry of args.chunk.entries) {
+    const verdictValue = slotVerdictsRecord[entry.slotId];
+    if (verdictValue === undefined) {
+      continue;
+    }
+
+    try {
+      const verdictRecord = normalizeGameDayRecapJudgeSentenceVerdictRecord(
+        verdictValue,
+      );
+      assessments.push({
+        containsOutcomeClaim: verdictRecord.containsOutcomeClaim,
+        contradictionType: verdictRecord.contradictionType,
+        field: entry.field,
+        matchId: entry.matchId,
+        notes: verdictRecord.notes,
+        sentence: entry.sentence,
+        sentenceIndex: entry.sentenceIndex,
+        sourceField: verdictRecord.sourceField,
+        verdict: verdictRecord.verdict,
+      });
+    } catch (error) {
+      issues.push({
+        candidateIndex: args.chunk.candidateIndex,
+        chunkIndex: args.chunk.chunkIndex,
+        expectedCandidateCount: 1,
+        expectedSentenceCount: args.chunk.entries.length,
+        kind: "invalid_sentence_verdict",
+        matchId: args.chunk.matchId,
+        missingKeys: [],
+        notes:
+          error instanceof Error
+            ? error.message
+            : "The judge sentence verdict was invalid.",
+        returnedCandidateCount: 1,
+        returnedSentenceCount: returnedSlotIds.length,
+        unexpectedKeys: [entry.slotId],
+      });
+    }
+  }
+
+  if (issues.length > 0) {
+    throw new GameDayRecapJudgeContractError(issues);
+  }
+
+  return assessments;
+}
+
+function normalizeInterestingnessJudgeResult(args: {
+  candidateIndex: number;
+  input: unknown;
+  matchId: string | null;
+}): number {
+  const record = requireRecord(
+    args.input,
+    "Game day recap candidate interestingness result",
+  );
+  const candidateIndex = asOptionalNumber(record.candidateIndex);
+  const interestingnessScore = asOptionalNumber(record.interestingnessScore);
+  if (
+    candidateIndex === null ||
+    !Number.isInteger(candidateIndex) ||
+    candidateIndex !== args.candidateIndex ||
+    interestingnessScore === null
+  ) {
+    throw new GameDayRecapJudgeContractError([
+      {
+        candidateIndex: args.candidateIndex,
+        chunkIndex: null,
+        expectedCandidateCount: 1,
+        expectedSentenceCount: 0,
+        kind: "invalid_interestingness_shape",
+        matchId: args.matchId,
+        missingKeys: [],
+        notes:
+          "The interestingness judge result was missing the expected candidateIndex or interestingnessScore.",
+        returnedCandidateCount: 1,
+        returnedSentenceCount: 0,
+        unexpectedKeys: [],
+      },
+    ]);
+  }
+
+  return interestingnessScore;
+}
+
+async function executeSentenceJudgeChunkWithRetry(args: {
+  chunk: GameDayRecapJudgeSentenceChunk;
+  factStore: GameDayRecapFactStore;
+  fallbackMode: GameDayRecapJudgeFallbackMode;
+  gameFacts: GameDayRecapJudgeGameFactPacket;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  stage:
+    | "premium-candidate-selection"
+    | "retry"
+    | "style-polish"
+    | "postgame-interview"
+    | "salvage-post-patch"
+    | "salvage-post-trim"
+    | "writer";
+}): Promise<GameDayRecapJudgeSentenceAssessment[]> {
+  const requestPayload: GameDayRecapSentenceJudgeRequestPayload = {
+    candidateIndex: args.chunk.candidateIndex,
+    chunkCount: args.chunk.chunkCount,
+    chunkIndex: args.chunk.chunkIndex,
+    gameFacts: args.gameFacts,
+    judgeKind: "sentence_factuality",
+    request: args.factStore.request,
+    sentenceChunk: args.chunk.entries.map((entry) => ({
+      field: entry.field,
+      sentence: entry.sentence,
+      sentenceIndex: entry.sentenceIndex,
+      slotId: entry.slotId,
+    })),
+  };
+  const schema = toBedrockStructuredOutputSchema(
+    buildGameDayRecapJudgeSentenceFactualityResultSchema({
+      activeSlotIds: requestPayload.sentenceChunk.map((entry) => entry.slotId),
+    }),
+  );
+  const budget = computeJudgeSchemaBudget({
+    schema,
+    sentenceVerdictCount: args.chunk.entries.length,
+  });
+  let firstContractFailure: GameDayRecapJudgeContractError | null = null;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    logJudgeSchemaBudget({
+      budget,
+      candidateIndex: args.chunk.candidateIndex,
+      chunkCount: args.chunk.chunkCount,
+      chunkIndex: args.chunk.chunkIndex,
+      chunkSentenceCount: args.chunk.entries.length,
+      fallbackMode: args.fallbackMode,
+      judgeKind: "sentence_factuality",
+      matchId: args.chunk.matchId,
+      stage: args.stage,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    });
+
+    const input = await args.provider.generate(requestPayload);
+    try {
+      const normalized = normalizeSentenceJudgeChunkResult({
+        chunk: args.chunk,
+        input,
+      });
+      if (firstContractFailure) {
+        logGameDayRecapWarn("process.judge_response_repaired", {
+          attempt,
+          candidateIndex: args.chunk.candidateIndex,
+          chunkCount: args.chunk.chunkCount,
+          chunkIndex: args.chunk.chunkIndex,
+          chunkSentenceCount: args.chunk.entries.length,
+          fallbackMode: args.fallbackMode,
+          issues: summarizeJudgeContractIssuesForLog(
+            firstContractFailure.issues,
+          ),
+          judgeKind: "sentence_factuality",
+          matchId: args.chunk.matchId,
+          stage: args.stage,
+          targetKey: args.logContext?.targetKey ?? null,
+          userId: args.logContext?.userId ?? null,
+        });
+      }
+      return normalized;
+    } catch (error) {
+      if (!(error instanceof GameDayRecapJudgeContractError)) {
+        throw error;
+      }
+
+      if (attempt === 1) {
+        firstContractFailure = error;
+        logGameDayRecapWarn("process.judge_contract_retry", {
+          attempt,
+          candidateIndex: args.chunk.candidateIndex,
+          chunkCount: args.chunk.chunkCount,
+          chunkIndex: args.chunk.chunkIndex,
+          chunkSentenceCount: args.chunk.entries.length,
+          fallbackMode: args.fallbackMode,
+          issues: summarizeJudgeContractIssuesForLog(error.issues),
+          judgeKind: "sentence_factuality",
+          matchId: args.chunk.matchId,
+          stage: args.stage,
+          targetKey: args.logContext?.targetKey ?? null,
+          userId: args.logContext?.userId ?? null,
+        });
+        continue;
+      }
+
+      logGameDayRecapWarn("process.judge_contract_failed", {
+        attempt,
+        candidateIndex: args.chunk.candidateIndex,
+        chunkCount: args.chunk.chunkCount,
+        chunkIndex: args.chunk.chunkIndex,
+        chunkSentenceCount: args.chunk.entries.length,
+        fallbackMode: args.fallbackMode,
+        issues: summarizeJudgeContractIssuesForLog(error.issues),
+        judgeKind: "sentence_factuality",
+        matchId: args.chunk.matchId,
+        stage: args.stage,
+        targetKey: args.logContext?.targetKey ?? null,
+        userId: args.logContext?.userId ?? null,
+      });
+      throw error;
+    }
+  }
+
+  throw new Error("Game day recap judge exhausted its retry budget.");
+}
+
+async function executeSentenceJudgeChunk(args: {
+  chunk: GameDayRecapJudgeSentenceChunk;
+  factStore: GameDayRecapFactStore;
+  gameFacts: GameDayRecapJudgeGameFactPacket;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  stage:
+    | "premium-candidate-selection"
+    | "retry"
+    | "style-polish"
+    | "postgame-interview"
+    | "salvage-post-patch"
+    | "salvage-post-trim"
+    | "writer";
+}): Promise<GameDayRecapJudgeSentenceAssessment[]> {
+  try {
+    return await executeSentenceJudgeChunkWithRetry({
+      chunk: args.chunk,
+      factStore: args.factStore,
+      fallbackMode: "chunk",
+      gameFacts: args.gameFacts,
+      logContext: args.logContext,
+      provider: args.provider,
+      stage: args.stage,
+    });
+  } catch (error) {
+    if (
+      args.chunk.entries.length <= 1 ||
+      !isBedrockJudgeSchemaValidationError(error)
+    ) {
+      throw error;
+    }
+
+    logGameDayRecapWarn("process.judge_schema_fallback_to_single_sentence", {
+      candidateIndex: args.chunk.candidateIndex,
+      chunkCount: args.chunk.chunkCount,
+      chunkIndex: args.chunk.chunkIndex,
+      chunkSentenceCount: args.chunk.entries.length,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      judgeKind: "sentence_factuality",
+      matchId: args.chunk.matchId,
+      stage: args.stage,
+      targetKey: args.logContext?.targetKey ?? null,
+      userId: args.logContext?.userId ?? null,
+    });
+
+    const assessments: GameDayRecapJudgeSentenceAssessment[] = [];
+    for (
+      let fallbackIndex = 0;
+      fallbackIndex < args.chunk.entries.length;
+      fallbackIndex += 1
+    ) {
+      const entry = args.chunk.entries[fallbackIndex]!;
+      const singleSentenceChunk: GameDayRecapJudgeSentenceChunk = {
+        candidateIndex: args.chunk.candidateIndex,
+        chunkCount: args.chunk.entries.length,
+        chunkIndex: fallbackIndex,
+        entries: [entry],
+        matchId: args.chunk.matchId,
+      };
+
+      assessments.push(
+        ...(await executeSentenceJudgeChunkWithRetry({
+          chunk: singleSentenceChunk,
+          factStore: args.factStore,
+          fallbackMode: "single_sentence",
+          gameFacts: args.gameFacts,
+          logContext: args.logContext,
+          provider: args.provider,
+          stage: args.stage,
+        })),
+      );
+    }
+
+    return assessments;
+  }
+}
+
+async function executeInterestingnessJudgeWithRetry(args: {
+  candidateIndex: number;
+  factStore: GameDayRecapFactStore;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  result: GameDayRecapResultPayload;
+}): Promise<number> {
+  const factPacketsByMatchId = buildJudgeGameFactPacketIndex(args.factStore);
+  const requestPayload: GameDayRecapInterestingnessJudgeRequestPayload = {
+    candidateIndex: args.candidateIndex,
+    games: args.result.games.map((game) => {
+      const gameFacts = factPacketsByMatchId.get(game.matchId);
+      if (!gameFacts) {
+        throw new Error(
+          `Game day recap judge was missing fact-store truth for match ${game.matchId}.`,
+        );
+      }
+      return gameFacts;
+    }),
+    judgeKind: "candidate_interestingness",
+    request: args.factStore.request,
+    result: args.result,
+  };
+  const schema = toBedrockStructuredOutputSchema(
+    buildGameDayRecapJudgeInterestingnessResultSchema(),
+  );
+  const budget = computeJudgeSchemaBudget({
+    schema,
+    sentenceVerdictCount: 0,
+  });
+  let firstContractFailure: GameDayRecapJudgeContractError | null = null;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    logJudgeSchemaBudget({
+      budget,
+      candidateIndex: args.candidateIndex,
+      chunkCount: null,
+      chunkIndex: null,
+      chunkSentenceCount: 0,
+      fallbackMode: null,
+      judgeKind: "candidate_interestingness",
+      matchId: args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+      stage: "premium-candidate-selection",
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    });
+
+    const input = await args.provider.generate(requestPayload);
+    try {
+      const interestingnessScore = normalizeInterestingnessJudgeResult({
+        candidateIndex: args.candidateIndex,
+        input,
+        matchId: args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+      });
+      if (firstContractFailure) {
+        logGameDayRecapWarn("process.judge_response_repaired", {
+          attempt,
+          candidateIndex: args.candidateIndex,
+          chunkCount: null,
+          chunkIndex: null,
+          chunkSentenceCount: 0,
+          fallbackMode: null,
+          issues: summarizeJudgeContractIssuesForLog(
+            firstContractFailure.issues,
+          ),
+          judgeKind: "candidate_interestingness",
+          matchId:
+            args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+          stage: "premium-candidate-selection",
+          targetKey: args.logContext?.targetKey ?? null,
+          userId: args.logContext?.userId ?? null,
+        });
+      }
+      return interestingnessScore;
+    } catch (error) {
+      if (!(error instanceof GameDayRecapJudgeContractError)) {
+        throw error;
+      }
+
+      if (attempt === 1) {
+        firstContractFailure = error;
+        logGameDayRecapWarn("process.judge_contract_retry", {
+          attempt,
+          candidateIndex: args.candidateIndex,
+          chunkCount: null,
+          chunkIndex: null,
+          chunkSentenceCount: 0,
+          fallbackMode: null,
+          issues: summarizeJudgeContractIssuesForLog(error.issues),
+          judgeKind: "candidate_interestingness",
+          matchId:
+            args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+          stage: "premium-candidate-selection",
+          targetKey: args.logContext?.targetKey ?? null,
+          userId: args.logContext?.userId ?? null,
+        });
+        continue;
+      }
+
+      logGameDayRecapWarn("process.judge_contract_failed", {
+        attempt,
+        candidateIndex: args.candidateIndex,
+        chunkCount: null,
+        chunkIndex: null,
+        chunkSentenceCount: 0,
+        fallbackMode: null,
+        issues: summarizeJudgeContractIssuesForLog(error.issues),
+        judgeKind: "candidate_interestingness",
+        matchId:
+          args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+        stage: "premium-candidate-selection",
+        targetKey: args.logContext?.targetKey ?? null,
+        userId: args.logContext?.userId ?? null,
+      });
+      throw error;
+    }
+  }
+
+  throw new Error("Game day recap judge exhausted its retry budget.");
+}
+
+async function judgeSingleRecapCandidate(args: {
+  candidateIndex: number;
+  factStore: GameDayRecapFactStore;
+  includeInterestingness: boolean;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  result: GameDayRecapResultPayload;
+  stage:
+    | "premium-candidate-selection"
+    | "retry"
+    | "style-polish"
+    | "postgame-interview"
+    | "salvage-post-patch"
+    | "salvage-post-trim"
+    | "writer";
+}): Promise<GameDayRecapJudgeCandidateAssessment> {
+  const factPacketsByMatchId = buildJudgeGameFactPacketIndex(args.factStore);
+  const sentenceAssessments: GameDayRecapJudgeSentenceAssessment[] = [];
+
+  for (const chunk of buildJudgeSentenceChunks({
+    candidateIndex: args.candidateIndex,
+    result: args.result,
+  })) {
+    const gameFacts = factPacketsByMatchId.get(chunk.matchId);
+    if (!gameFacts) {
+      throw new Error(
+        `Game day recap judge was missing fact-store truth for match ${chunk.matchId}.`,
+      );
+    }
+
+    sentenceAssessments.push(
+      ...(await executeSentenceJudgeChunk({
+        chunk,
+        factStore: args.factStore,
+        gameFacts,
+        logContext: args.logContext,
+        provider: args.provider,
+        stage: args.stage,
+      })),
+    );
+  }
+
+  sentenceAssessments.sort((left, right) => {
+    const comparisons = [
+      left.matchId.localeCompare(right.matchId),
+      left.field.localeCompare(right.field),
+      left.sentenceIndex - right.sentenceIndex,
+    ];
+    return comparisons.find((comparison) => comparison !== 0) ?? 0;
+  });
+
+  return {
+    candidateIndex: args.candidateIndex,
+    interestingnessScore: args.includeInterestingness
+      ? await executeInterestingnessJudgeWithRetry({
+          candidateIndex: args.candidateIndex,
+          factStore: args.factStore,
+          logContext: args.logContext,
+          provider: args.provider,
+          result: args.result,
+        })
+      : 0,
+    sentences: sentenceAssessments,
+  };
+}
+
+function summarizeJudgeContractIssuesForLog(
+  issues: GameDayRecapJudgeContractIssue[],
+): Array<Record<string, unknown>> {
+  return issues.map((issue) => ({
+    candidateIndex: issue.candidateIndex,
+    chunkIndex: issue.chunkIndex,
+    expectedCandidateCount: issue.expectedCandidateCount,
+    expectedSentenceCount: issue.expectedSentenceCount,
+    kind: issue.kind,
+    matchId: issue.matchId,
+    missingKeys: issue.missingKeys.slice(0, 8),
+    notes: issue.notes,
+    returnedCandidateCount: issue.returnedCandidateCount,
+    returnedSentenceCount: issue.returnedSentenceCount,
+    unexpectedKeys: issue.unexpectedKeys.slice(0, 8),
+  }));
+}
+
+function buildJudgeValidationIssueFeedback(
+  issue: Pick<
+    GameDayRecapJudgeValidationIssue,
+    | "contradictionType"
+    | "field"
+    | "matchId"
+    | "notes"
+    | "sentence"
+    | "sourceField"
+    | "verdict"
+  >,
+): string {
+  const sourceField = issue.sourceField
+    ? ` Source field: ${issue.sourceField}.`
+    : "";
+  const notes = issue.notes ? ` ${issue.notes}` : "";
+  return `For match ${issue.matchId}, the ${issue.field} sentence "${issue.sentence}" was judged ${issue.verdict} for ${issue.contradictionType}.${sourceField}${notes}`.trim();
+}
+
+function buildJudgeValidationIssue(
+  sentence: GameDayRecapJudgeSentenceAssessment,
+): GameDayRecapJudgeValidationIssue {
+  return {
+    contradictionType: sentence.contradictionType,
+    feedback: buildJudgeValidationIssueFeedback(sentence),
+    field: sentence.field,
+    matchId: sentence.matchId,
+    notes: sentence.notes,
+    sentence: sentence.sentence,
+    sentenceIndex: sentence.sentenceIndex,
+    sourceField: sentence.sourceField,
+    verdict: sentence.verdict,
+  };
+}
+
+function collectBlockingJudgeIssues(
+  assessment: GameDayRecapJudgeCandidateAssessment | null,
+): GameDayRecapJudgeValidationIssue[] {
+  return (assessment?.sentences ?? [])
+    .filter((sentence) => sentence.verdict === "unsupported")
+    .map(buildJudgeValidationIssue);
+}
+
+function collectRetryableJudgeIssues(
+  assessment: GameDayRecapJudgeCandidateAssessment | null,
+): GameDayRecapJudgeValidationIssue[] {
+  return (assessment?.sentences ?? [])
+    .filter(
+      (sentence) =>
+        sentence.verdict === "unsupported" || sentence.verdict === "uncertain",
+    )
+    .map(buildJudgeValidationIssue);
+}
+
+function buildRecapValidationFeedbackLines(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  judgeIssues: GameDayRecapJudgeValidationIssue[];
+}): string[] {
+  return Array.from(
+    new Set([
+      ...args.deterministicIssues.map((issue) => issue.feedback),
+      ...args.judgeIssues.map((issue) => issue.feedback),
+      "Use only supplied facts. If a detail is not supported by the payload, leave it out.",
+    ]),
+  );
+}
+
+async function judgeGameDayRecapResult(args: {
+  factStore: GameDayRecapFactStore;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  result: GameDayRecapResultPayload;
+  stage:
+    | "retry"
+    | "style-polish"
+    | "postgame-interview"
+    | "salvage-post-patch"
+    | "salvage-post-trim"
+    | "writer";
+}): Promise<{
+  assessment: GameDayRecapJudgeCandidateAssessment;
+  blockingIssues: GameDayRecapJudgeValidationIssue[];
+  retryableIssues: GameDayRecapJudgeValidationIssue[];
+}> {
+  const assessment = await judgeSingleRecapCandidate({
+    candidateIndex: 0,
+    factStore: args.factStore,
+    includeInterestingness: false,
+    logContext: args.logContext,
+    provider: args.provider,
+    result: args.result,
+    stage: args.stage,
+  });
+
+  return {
+    assessment,
+    blockingIssues: collectBlockingJudgeIssues(assessment),
+    retryableIssues: collectRetryableJudgeIssues(assessment),
+  };
+}
+
+function buildJudgeSentenceKey(args: {
+  field: GameDayRecapJudgeSentenceField;
+  matchId: string;
+  sentenceIndex: number;
+}): string {
+  return `${args.matchId}:${args.field}:${args.sentenceIndex}`;
+}
+
+function candidateClearsFactualBar(candidate: PremiumRecapCandidate): boolean {
+  return (
+    Boolean(candidate.validatedResult) &&
+    Boolean(candidate.judgeAssessment) &&
+    countPremiumCandidateAdjustedUnsupported(candidate) === 0 &&
+    countPremiumCandidateUnsupportedHeadlineOutcomeSentences(candidate) === 0
+  );
+}
+
+function countPremiumCandidateAdjustedUnsupported(
+  candidate: PremiumRecapCandidate,
+): number {
+  return (
+    countPremiumCandidateJudgeVerdicts(candidate, "unsupported") +
+    candidate.disagreementPenalty
+  );
+}
+
+function countPremiumCandidateJudgeVerdicts(
+  candidate: PremiumRecapCandidate,
+  verdict: GameDayRecapJudgeSentenceVerdict,
+): number {
+  return (
+    candidate.judgeAssessment?.sentences.filter(
+      (sentence) => sentence.verdict === verdict,
+    ).length ?? 0
+  );
+}
+
+function countPremiumCandidateUnsupportedHeadlineOutcomeSentences(
+  candidate: PremiumRecapCandidate,
+): number {
+  return (
+    candidate.judgeAssessment?.sentences.filter(
+      (sentence) =>
+        sentence.field === "headline" &&
+        sentence.containsOutcomeClaim &&
+        sentence.verdict === "unsupported",
+    ).length ?? 0
+  );
+}
+
+function premiumCandidateInterestingness(
+  candidate: PremiumRecapCandidate,
+): number {
+  return candidate.judgeAssessment?.interestingnessScore ?? 0;
+}
+
+function comparePremiumCandidates(
+  left: PremiumRecapCandidate,
+  right: PremiumRecapCandidate,
+): number {
+  const comparisons = [
+    countPremiumCandidateAdjustedUnsupported(left) -
+      countPremiumCandidateAdjustedUnsupported(right),
+    countPremiumCandidateJudgeVerdicts(left, "uncertain") -
+      countPremiumCandidateJudgeVerdicts(right, "uncertain"),
+    countPremiumCandidateUnsupportedHeadlineOutcomeSentences(left) -
+      countPremiumCandidateUnsupportedHeadlineOutcomeSentences(right),
+    premiumCandidateInterestingness(right) -
+      premiumCandidateInterestingness(left),
+    left.candidateIndex - right.candidateIndex,
+  ];
+
+  return comparisons.find((comparison) => comparison !== 0) ?? 0;
+}
+
+function selectBestPassingPremiumCandidate(
+  candidates: PremiumRecapCandidate[],
+): PremiumRecapCandidate | null {
+  return (
+    [...candidates]
+      .filter(candidateClearsFactualBar)
+      .sort(comparePremiumCandidates)[0] ?? null
+  );
+}
+
+function selectBestRetrySourcePremiumCandidate(
+  candidates: PremiumRecapCandidate[],
+): PremiumRecapCandidate {
+  return [...candidates].sort((left, right) => {
+    const comparisons = [
+      premiumCandidateHardFailureCount(left) -
+        premiumCandidateHardFailureCount(right),
+      comparePremiumCandidates(left, right),
+    ];
+
+    return comparisons.find((comparison) => comparison !== 0) ?? 0;
+  })[0]!;
+}
+
+function premiumCandidateHardFailureCount(
+  candidate: PremiumRecapCandidate,
+): number {
+  if (!candidate.normalizedResult) {
+    return 1000;
+  }
+
+  return candidate.deterministicIssues.length;
+}
+
+function buildPremiumRetryFeedback(candidate: PremiumRecapCandidate): string[] {
+  const judgeIssues = collectRetryableJudgeIssues(candidate.judgeAssessment);
+  const feedbackLines = buildRecapValidationFeedbackLines({
+    deterministicIssues: candidate.deterministicIssues,
+    judgeIssues,
+  });
+
+  if (feedbackLines.length === 1 && candidate.deterministicFailureMessage) {
+    feedbackLines.unshift(candidate.deterministicFailureMessage);
+  }
+
+  return feedbackLines;
+}
+
+function applyPremiumCandidateDisagreementPenalties(
+  candidates: PremiumRecapCandidate[],
+  expectedGames: GameDayRecapPromptGame[],
+): void {
+  void candidates;
+  void expectedGames;
 }
 
 function validateGameDayRecapResult(
@@ -4205,6 +9784,12 @@ function validateGameDayRecapResult(
 function normalizeGameDayRecapResult(
   input: unknown,
 ): GameDayRecapResultPayload {
+  return normalizeGameDayRecapResultWithWarnings(input).result;
+}
+
+function normalizeGameDayRecapResultWithWarnings(
+  input: unknown,
+): GameDayRecapNormalizedResult {
   const record = requireRecord(input, "Game day recap result");
   const summary = requireRecord(record.summary, "Game day recap summary");
   const games = Array.isArray(record.games) ? record.games : null;
@@ -4212,6 +9797,7 @@ function normalizeGameDayRecapResult(
     throw new Error("Game day recap result did not include any games.");
   }
 
+  const warnings: GameDayRecapNormalizationWarning[] = [];
   const validatedGames = games.map((game) => {
     const gameRecord = requireRecord(game, "Game day recap game");
     const matchId = asOptionalString(gameRecord.matchId)?.trim();
@@ -4236,11 +9822,21 @@ function normalizeGameDayRecapResult(
       }
       return tag as GameDayRecapEvidenceTag;
     });
+    const postgameInterviewResult = parseGameDayRecapPostgameInterview({
+      input: gameRecord.postgameInterview,
+      matchId,
+    });
+    if (postgameInterviewResult.warning) {
+      warnings.push(postgameInterviewResult.warning);
+    }
 
     return {
       evidenceTags: validatedTags,
       headline,
       matchId,
+      ...(postgameInterviewResult.interview
+        ? { postgameInterview: postgameInterviewResult.interview }
+        : {}),
       surpriseFactor: null,
       writeup,
     };
@@ -4253,14 +9849,224 @@ function normalizeGameDayRecapResult(
   }
 
   return {
-    games: validatedGames,
-    summary: {
-      gameOfTheDayMatchId: null,
-      gameOfTheDaySurpriseFactor: null,
-      headline,
-      lede,
+    result: {
+      games: validatedGames,
+      summary: {
+        gameOfTheDayMatchId: null,
+        gameOfTheDaySurpriseFactor: null,
+        headline,
+        lede,
+      },
     },
+    warnings,
   };
+}
+
+function parseGameDayRecapPostgameInterview(
+  args: {
+    input: unknown;
+    matchId: string;
+  },
+): {
+  interview: GameDayRecapResultPostgameInterview | null;
+  warning: GameDayRecapNormalizationWarning | null;
+} {
+  if (args.input == null) {
+    return {
+      interview: null,
+      warning: null,
+    };
+  }
+
+  if (
+    !args.input ||
+    typeof args.input !== "object" ||
+    Array.isArray(args.input)
+  ) {
+    return {
+      interview: null,
+      warning: buildInvalidPostgameInterviewWarning(args.matchId, [
+        "postgameInterview must be an object.",
+      ]),
+    };
+  }
+
+  const record = args.input as JsonRecord;
+  const details: string[] = [];
+  const playerName = readRequiredInterviewStringField(
+    record.playerName,
+    "playerName",
+    details,
+  );
+  const teamName = readRequiredInterviewStringField(
+    record.teamName,
+    "teamName",
+    details,
+  );
+  const rawTeamSide = asOptionalString(record.teamSide)?.trim();
+  const teamSide =
+    rawTeamSide === "away" || rawTeamSide === "home" ? rawTeamSide : null;
+  if (!teamSide) {
+    details.push('teamSide must be "away" or "home".');
+  }
+  const title = readRequiredInterviewStringField(
+    record.title,
+    "title",
+    details,
+  );
+  const normalizedQa: GameDayRecapResultPostgameInterview["qa"] = [];
+  if (!Array.isArray(record.qa)) {
+    details.push("qa was missing or not an array.");
+  } else {
+    if (record.qa.length < 1 || record.qa.length > 2) {
+      details.push(
+        `qa must contain 1 or 2 exchanges, received ${record.qa.length}.`,
+      );
+    }
+    for (let index = 0; index < record.qa.length; index += 1) {
+      const entry = record.qa[index];
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        details.push(`qa[${index}] must be an object.`);
+        continue;
+      }
+
+      const exchange = entry as JsonRecord;
+      const question = readRequiredInterviewStringField(
+        exchange.question,
+        `qa[${index}].question`,
+        details,
+      );
+      const answer = readRequiredInterviewStringField(
+        exchange.answer,
+        `qa[${index}].answer`,
+        details,
+      );
+      if (!question || !answer) {
+        continue;
+      }
+      normalizedQa.push({
+        answer,
+        question,
+      });
+    }
+  }
+
+  if (
+    details.length > 0 ||
+    !playerName ||
+    !teamName ||
+    !teamSide ||
+    !title ||
+    normalizedQa.length < 1 ||
+    normalizedQa.length > 2
+  ) {
+    return {
+      interview: null,
+      warning: buildInvalidPostgameInterviewWarning(args.matchId, details),
+    };
+  }
+
+  return {
+    interview: {
+      playerName,
+      qa: normalizedQa,
+      teamName,
+      teamSide,
+      title,
+    },
+    warning: null,
+  };
+}
+
+function readRequiredInterviewStringField(
+  value: unknown,
+  fieldName: string,
+  details: string[],
+): string | null {
+  const normalized = asOptionalString(value)?.trim();
+  if (!normalized) {
+    details.push(`${fieldName} was missing or empty.`);
+    return null;
+  }
+
+  return normalized;
+}
+
+function buildInvalidPostgameInterviewWarning(
+  matchId: string,
+  details: string[],
+): GameDayRecapNormalizationWarning {
+  return {
+    details,
+    kind: "invalid_postgame_interview",
+    matchId,
+    reason:
+      details[0] ??
+      "postgameInterview failed validation and was dropped from the recap.",
+  };
+}
+
+function normalizeGameDayRecapResultForStage(args: {
+  candidateIndex?: number;
+  input: unknown;
+  stage: string;
+  targetKey?: string;
+  userId?: string;
+}): GameDayRecapResultPayload {
+  const normalized = normalizeGameDayRecapResultWithWarnings(args.input);
+  logGameDayRecapNormalizationWarnings({
+    candidateIndex: args.candidateIndex,
+    stage: args.stage,
+    targetKey: args.targetKey,
+    userId: args.userId,
+    warnings: normalized.warnings,
+  });
+  return normalized.result;
+}
+
+function normalizeGameDayRecapStylePolishWriteup(input: unknown): string {
+  const record = requireRecord(input, "Game day recap style polish result");
+  const writeup = asOptionalString(record.writeup)?.trim();
+  if (!writeup || writeup.length < 80) {
+    throw new Error(
+      "Game day recap style polish result was missing a writeup.",
+    );
+  }
+
+  return writeup;
+}
+
+function stripPostgameInterviewsFromResult(
+  result: GameDayRecapResultPayload,
+): GameDayRecapResultPayload {
+  return {
+    ...result,
+    games: result.games.map(removePostgameInterview),
+  };
+}
+
+function logGameDayRecapNormalizationWarnings(args: {
+  candidateIndex?: number;
+  stage: string;
+  targetKey?: string;
+  userId?: string;
+  warnings: GameDayRecapNormalizationWarning[];
+}): void {
+  for (const warning of args.warnings) {
+    if (warning.kind !== "invalid_postgame_interview") {
+      continue;
+    }
+
+    logGameDayRecapWarn("process.postgame_interview_dropped", {
+      candidateIndex: args.candidateIndex ?? null,
+      details: warning.details,
+      matchId: warning.matchId,
+      reason: warning.reason,
+      stage: args.stage,
+      targetKey: args.targetKey ?? null,
+      userId: args.userId ?? null,
+    });
+  }
 }
 
 function validateGameDayRecapPayload(
@@ -4270,6 +10076,34 @@ function validateGameDayRecapPayload(
     allowPartial?: boolean;
   } = {},
 ): GameDayRecapResultPayload {
+  const assessed = assessGameDayRecapDeterministicPayload(
+    result,
+    expectedGames,
+    options,
+  );
+  if (assessed.issues.length > 0) {
+    throw new GameDayRecapSemanticValidationError(assessed.issues);
+  }
+
+  return decorateGameDayRecapResultWithSurpriseMetadata(
+    {
+      games: assessed.orderedResult.games,
+      summary: result.summary,
+    },
+    expectedGames,
+  );
+}
+
+function assessGameDayRecapDeterministicPayload(
+  result: GameDayRecapResultPayload,
+  expectedGames: GameDayRecapPromptGame[],
+  options: {
+    allowPartial?: boolean;
+  } = {},
+): {
+  issues: GameDayRecapSemanticValidationIssue[];
+  orderedResult: GameDayRecapResultPayload;
+} {
   const orderedGames = orderGameDayRecapGames(
     result.games,
     expectedGames,
@@ -4278,21 +10112,18 @@ function validateGameDayRecapPayload(
   const expectedGamesByMatchId = new Map(
     expectedGames.map((game) => [game.matchId, game]),
   );
-  const semanticIssues = orderedGames.flatMap((game) => {
+  const issues = orderedGames.flatMap((game) => {
     const expectedGame = expectedGamesByMatchId.get(game.matchId);
     return expectedGame ? validateRecapGameSemantics(game, expectedGame) : [];
   });
-  if (semanticIssues.length > 0) {
-    throw new GameDayRecapSemanticValidationError(semanticIssues);
-  }
 
-  return decorateGameDayRecapResultWithSurpriseMetadata(
-    {
+  return {
+    issues,
+    orderedResult: {
       games: orderedGames,
       summary: result.summary,
     },
-    expectedGames,
-  );
+  };
 }
 
 function decorateGameDayRecapResultWithSurpriseMetadata(
@@ -4420,6 +10251,10 @@ function resolveGameWinnerSide(
   }
 
   return game.teams.home.score > game.teams.away.score ? "home" : "away";
+}
+
+function formatGameFinalScore(game: GameDayRecapPromptGame): string {
+  return `${game.teams.home.score}-${game.teams.away.score}`;
 }
 
 function surpriseFactorMarginAdjustment(finalMargin: number): number {
@@ -4559,6 +10394,13 @@ function countOvertimePeriods(
   return game ? Math.max(0, game.quarterFacts.periods.length - 4) : 0;
 }
 
+function isPlayoffRecapGame(game: GameDayRecapPromptGame): boolean {
+  return (
+    Boolean(game.seriesContext) ||
+    classifyCompetition(game.type).competitionKey === "PLAYOFFS"
+  );
+}
+
 function parsePromptRecord(
   value: TeamSeasonContextPromptField,
 ): { losses: number; wins: number } | null {
@@ -4578,6 +10420,73 @@ function parsePromptRecord(
   }
 
   return { losses, wins };
+}
+
+function resolveThroughThreeQuartersState(expectedGame: GameDayRecapPromptGame): {
+  awayScore: number;
+  homeScore: number;
+  leadingSide: "away" | "home" | "tie";
+  margin: number;
+} | null {
+  if (
+    expectedGame.quarterScores.home.length < 3 ||
+    expectedGame.quarterScores.away.length < 3
+  ) {
+    return null;
+  }
+
+  const homeScore = expectedGame.quarterScores.home
+    .slice(0, 3)
+    .reduce((sum, value) => sum + value, 0);
+  const awayScore = expectedGame.quarterScores.away
+    .slice(0, 3)
+    .reduce((sum, value) => sum + value, 0);
+
+  return {
+    awayScore,
+    homeScore,
+    leadingSide:
+      homeScore === awayScore ? "tie" : homeScore > awayScore ? "home" : "away",
+    margin: Math.abs(homeScore - awayScore),
+  };
+}
+
+function buildSafeThroughThreeQuartersSentence(
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  const state = resolveThroughThreeQuartersState(expectedGame);
+  if (!state) {
+    return null;
+  }
+
+  return buildThroughThreeQuartersSentenceFromState(
+    {
+      awayScore: state.awayScore,
+      homeScore: state.homeScore,
+      label: "Through three quarters",
+      margin: state.margin,
+      period: 3,
+      scoreFromLeaderPerspective:
+        state.leadingSide === "away"
+          ? `${state.awayScore}-${state.homeScore}`
+          : `${state.homeScore}-${state.awayScore}`,
+    },
+    expectedGame.teams.home.name,
+    expectedGame.teams.away.name,
+  );
+}
+
+function resolveSingleMentionedTeamSide(
+  sentence: string,
+  expectedGame: GameDayRecapPromptGame,
+): "away" | "home" | null {
+  const mentionsHome = mentionsTeam(sentence, expectedGame.teams.home.name);
+  const mentionsAway = mentionsTeam(sentence, expectedGame.teams.away.name);
+  if (mentionsHome === mentionsAway) {
+    return null;
+  }
+
+  return mentionsHome ? "home" : "away";
 }
 
 function orderGameDayRecapGames(
@@ -4645,6 +10554,8 @@ function validateRecapGameSemantics(
       game.matchId,
       expectedGame,
     ),
+    ...validatePostgameInterview(game, expectedGame),
+    ...validateGameLevelStyle(game, expectedGame),
   ];
 }
 
@@ -4662,20 +10573,29 @@ function collectSemanticIssuesForField(
       field,
       sentenceIndex,
     ),
-    ...validateRecordSentence(
+    ...validateRunSentence(
       sentence,
       matchId,
       expectedGame,
       field,
       sentenceIndex,
     ),
-    ...validateCompactStreakSentence(
+    ...validatePlayoffRecordLanguage(
       sentence,
       matchId,
       expectedGame,
       field,
       sentenceIndex,
     ),
+    ...validatePlayoffStreakLanguage(
+      sentence,
+      matchId,
+      expectedGame,
+      field,
+      sentenceIndex,
+    ),
+    ...validateBannedStylePhrases(sentence, matchId, field, sentenceIndex),
+    ...validateOneGameStreakLanguage(sentence, matchId, field, sentenceIndex),
   ]);
 }
 
@@ -4699,7 +10619,7 @@ function validateQuarterSentence(
   }
 
   const quarterWinnerVerbMatch = sentence.match(
-    /\b(?:outscor(?:e|ed|es|ing)|won|take(?:s|n)?|took|claim(?:ed|s|ing))\b/i,
+    /\b(?:outscor(?:e|ed|es|ing)|won|take(?:s|n)?|took|claim(?:ed|s|ing)|domin(?:ate|ated|ates|ating)|control(?:led|ling|s)?)\b/i,
   );
   if (!quarterWinnerVerbMatch) {
     return [];
@@ -4817,155 +10737,1094 @@ function validateQuarterSentence(
   return issues;
 }
 
-function validateRecordSentence(
+function validateRunSentence(
   sentence: string,
   matchId: string,
   expectedGame: GameDayRecapPromptGame,
   field: GameDayRecapSemanticValidationIssueField,
   sentenceIndex: number,
 ): GameDayRecapSemanticValidationIssue[] {
-  if (hasPregameQualifier(sentence)) {
+  const runClaim = extractRunClaim(sentence, expectedGame);
+  if (!runClaim) {
     return [];
   }
 
-  const issues: GameDayRecapSemanticValidationIssue[] = [];
+  const supportedRuns = collectSupportedRuns(expectedGame);
+  const matchingRun = supportedRuns.find(
+    (run) =>
+      run.teamPoints === runClaim.teamPoints &&
+      run.opponentPoints === runClaim.opponentPoints &&
+      (!runClaim.teamSide || run.teamSide === runClaim.teamSide),
+  );
 
-  for (const side of ["home", "away"] as const) {
-    const team = expectedGame.teams[side];
-    if (!team.record) {
-      continue;
-    }
+  if (!matchingRun) {
+    return [];
+  }
 
-    const escapedName = escapeRegExp(team.name);
-    const parentheticalMatch = sentence.match(
-      new RegExp(`${escapedName}[^.!?]{0,20}\\((\\d{1,2})-(\\d{1,2})\\)`, "i"),
-    );
-    if (parentheticalMatch) {
-      const mentionedRecord = `${parentheticalMatch[1]}-${parentheticalMatch[2]}`;
-      if (mentionedRecord !== team.record) {
-        issues.push({
-          actualValue: team.record,
-          feedback: `For match ${matchId}, ${team.name}'s postgame record is ${team.record}. Do not use ${mentionedRecord}.`,
-          field,
-          kind: "record_mismatch",
-          matchId,
-          reason: `${team.name} was given a ${mentionedRecord} record instead of ${team.record}.`,
-          salvage: semanticIssueSalvageForField(field),
-          sentence,
-          sentenceIndex,
-          teamSide: side,
-        });
-      }
-      continue;
-    }
-
-    const directionalMatch = sentence.match(
-      new RegExp(
-        `${escapedName}[^.!?]{0,40}\\b(?:now\\s+at|at|to|improved\\s+to|moved\\s+to|fell\\s+to|dropped\\s+to)\\s+(\\d{1,2})-(\\d{1,2})\\b`,
-        "i",
-      ),
-    );
-    if (!directionalMatch) {
-      continue;
-    }
-
-    const mentionedRecord = `${directionalMatch[1]}-${directionalMatch[2]}`;
-    if (mentionedRecord !== team.record) {
-      issues.push({
-        actualValue: team.record,
-        feedback: `For match ${matchId}, ${team.name}'s postgame record is ${team.record}. Do not use ${mentionedRecord}.`,
+  if (!hasRequiredRunTimingAnchors(sentence, matchingRun)) {
+    return [
+      {
+        actualValue: formatRunTimingInstruction(matchingRun),
+        feedback: `For match ${matchId}, any mentioned run must include the supplied timing anchors. ${formatRunTimingInstruction(
+          matchingRun,
+        )}`,
         field,
-        kind: "record_mismatch",
+        kind: "missing_run_timing",
         matchId,
-        reason: `${team.name} was said to be ${mentionedRecord} instead of ${team.record}.`,
+        reason: "The recap mentioned a run without the required timing anchors.",
         salvage: semanticIssueSalvageForField(field),
         sentence,
         sentenceIndex,
-        teamSide: side,
-      });
+        teamSide: matchingRun.teamSide ?? undefined,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function collectSupportedRuns(
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapPlayByPlayRun[] {
+  const runs = [
+    expectedGame.playByPlayFacts?.primaryRun,
+    expectedGame.playByPlayFacts?.secondaryRun,
+    expectedGame.playByPlayFacts?.longestUnansweredRun,
+    expectedGame.playByPlayFacts?.bestCompetitiveSwingRun,
+  ].filter((run): run is GameDayRecapPlayByPlayRun => Boolean(run?.teamSide));
+
+  const deduped = new Map<string, GameDayRecapPlayByPlayRun>();
+  for (const run of runs) {
+    const key = [
+      run.teamSide,
+      run.teamPoints,
+      run.opponentPoints,
+      run.startQuarter,
+      run.startClock,
+      run.endQuarter,
+      run.endClock,
+    ].join("|");
+    if (!deduped.has(key)) {
+      deduped.set(key, run);
     }
+  }
+
+  return Array.from(deduped.values());
+}
+
+function validatePlayoffRecordLanguage(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  if (!isPlayoffRecapGame(expectedGame)) {
+    return [];
+  }
+  if (!containsPlayoffRecordLanguage(sentence, expectedGame)) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: "playoff regular-season record reference",
+      feedback: `For match ${matchId}, do not mention regular-season records in a playoff recap.`,
+      field,
+      kind: "playoff_record_language",
+      matchId,
+      reason: "Do not mention regular-season records in a playoff recap.",
+      salvage: semanticIssueSalvageForField(field),
+      sentence,
+      sentenceIndex,
+    },
+  ];
+}
+
+function validatePlayoffStreakLanguage(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  if (!isPlayoffRecapGame(expectedGame)) {
+    return [];
+  }
+  if (!containsPlayoffStreakLanguage(sentence)) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: "playoff streak reference",
+      feedback: `For match ${matchId}, do not mention winning or losing streaks in a playoff recap. Use the series state instead when relevant.`,
+      field,
+      kind: "playoff_streak_language",
+      matchId,
+      reason: "Do not mention winning or losing streaks in a playoff recap.",
+      salvage: semanticIssueSalvageForField(field),
+      sentence,
+      sentenceIndex,
+    },
+  ];
+}
+
+function extractRunClaim(
+  sentence: string,
+  expectedGame: GameDayRecapPromptGame,
+): { opponentPoints: number; teamPoints: number; teamSide: "away" | "home" | null } | null {
+  const match = sentence.match(/\b(\d{1,2})-(\d{1,2})\s+run\b/i);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    opponentPoints: Number.parseInt(match[2] ?? "", 10),
+    teamPoints: Number.parseInt(match[1] ?? "", 10),
+    teamSide: resolveSingleMentionedTeamSide(sentence, expectedGame),
+  };
+}
+
+function hasRequiredRunTimingAnchors(
+  sentence: string,
+  run: GameDayRecapPlayByPlayRun,
+): boolean {
+  if (run.startQuarter === null || !run.startClock) {
+    return true;
+  }
+
+  if (!buildRunAnchorRegex(run.startQuarter, run.startClock, "start").test(sentence)) {
+    return false;
+  }
+
+  if (
+    run.endQuarter === null ||
+    !run.endClock ||
+    (run.endQuarter === run.startQuarter && run.endClock === run.startClock)
+  ) {
+    return true;
+  }
+
+  return buildRunAnchorRegex(run.endQuarter, run.endClock, "end").test(
+    sentence,
+  );
+}
+
+function formatRunTimingInstruction(
+  run: GameDayRecapPlayByPlayRun,
+): string {
+  if (run.startQuarter !== null && run.startClock && run.endQuarter !== null && run.endClock) {
+    return `Use "from ${formatRunAnchor(run.startQuarter, run.startClock)} to ${formatRunAnchor(run.endQuarter, run.endClock)}".`;
+  }
+  if (run.startQuarter !== null && run.startClock) {
+    return `Use the supplied run start time at ${formatRunAnchor(run.startQuarter, run.startClock)}.`;
+  }
+  return "Use the supplied run timing anchors.";
+}
+
+function formatRunAnchor(quarter: number, clock: string): string {
+  return `${clock} left in the ${formatPeriodLabel(quarter)}`;
+}
+
+function buildRunAnchorRegex(
+  quarter: number,
+  clock: string,
+  position: "end" | "start",
+): RegExp {
+  const periodLabel = escapeRegExp(formatPeriodLabel(quarter));
+  const anchor = `${escapeRegExp(clock)}\\s+left\\s+in\\s+(?:the\\s+)?${periodLabel}`;
+  const prefix = position === "start" ? "(?:from|starting at)" : "to";
+  return new RegExp(`\\b${prefix}\\s+${anchor}\\b`, "i");
+}
+
+function containsPlayoffRecordLanguage(
+  sentence: string,
+  expectedGame: GameDayRecapPromptGame,
+): boolean {
+  for (const side of ["home", "away"] as const) {
+    const teamName = expectedGame.teams[side].name;
+    if (!mentionsTeam(sentence, teamName)) {
+      continue;
+    }
+
+    const escapedName = escapeRegExp(teamName);
+    if (
+      new RegExp(`${escapedName}[^.!?]{0,20}\\((\\d{1,2})-(\\d{1,2})\\)`, "i").test(
+        sentence,
+      )
+    ) {
+      return true;
+    }
+    if (
+      new RegExp(
+        `${escapedName}[^.!?]{0,50}\\b(?:now\\s+at|at|to|improved\\s+to|moved\\s+to|fell\\s+to|dropped\\s+to)\\s+\\d{1,2}-\\d{1,2}\\b`,
+        "i",
+      ).test(sentence)
+    ) {
+      return true;
+    }
+    if (
+      /\b\d{1,2}-\d{1,2}\s+on the season\b/i.test(sentence) ||
+      /\bseason record\b/i.test(sentence)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function containsPlayoffStreakLanguage(sentence: string): boolean {
+  return [
+    /\b(?:winning|losing)\s+streak\b/i,
+    /\b(?:won|lost)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)\s+straight\b/i,
+    /\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth)\s+straight\b/i,
+    /\b[WL]\d+\b/i,
+  ].some((pattern) => pattern.test(sentence));
+}
+
+function validateBannedStylePhrases(
+  sentence: string,
+  matchId: string,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  return BANNED_RECAP_STYLE_PHRASES.flatMap((phrase) => {
+    if (!sentence.toLowerCase().includes(phrase)) {
+      return [];
+    }
+
+    return [
+      {
+        actualValue: phrase,
+        feedback: `For match ${matchId}, remove the filler phrase "${phrase}" and replace it with a concrete basketball detail or drop the sentence.`,
+        field,
+        kind: "banned_style_phrase",
+        matchId,
+        reason: `The recap used the banned filler phrase "${phrase}".`,
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+      },
+    ];
+  });
+}
+
+function validateOneGameStreakLanguage(
+  sentence: string,
+  matchId: string,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  if (!/\bone-game\s+(winning|losing)\s+streak\b/i.test(sentence)) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: "one-game streak language",
+      feedback: `For match ${matchId}, do not describe a one-game win or loss as a streak.`,
+      field,
+      kind: "one_game_streak_language",
+      matchId,
+      reason: "The recap called a one-game result a streak.",
+      salvage: semanticIssueSalvageForField(field),
+      sentence,
+      sentenceIndex,
+    },
+  ];
+}
+
+function validateGameLevelStyle(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  return [
+    ...validateDuplicateOutcomeRestatement(game, expectedGame),
+    ...validateDecisiveEndingEmphasis(game, expectedGame),
+    ...validateRequiredContextSentences(game, expectedGame),
+    ...validateRequiredPrimaryRunMention(game, expectedGame),
+    ...validateRequiredSeriesSummaryLine(game, expectedGame),
+    ...validateChoppyFactStack(game),
+    ...validateDuplicatePeriodStateRestatement(game, expectedGame),
+    ...validateRepetitiveSentenceStarts(game),
+    ...validateShortFactSentenceCluster(game),
+  ];
+}
+
+function validateRequiredContextSentences(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const requiredContextSentences = expectedGame.requiredContextSentences ?? [];
+  if (!requiredContextSentences.length) {
+    return [];
+  }
+
+  const writeupSentences = splitRecapText(game.writeup);
+  return requiredContextSentences.flatMap((requiredSentence) => {
+    const occurrenceCount = writeupSentences.filter(
+      (sentence) => sentence === requiredSentence,
+    ).length;
+    if (occurrenceCount >= 1) {
+      return [];
+    }
+
+    return [
+      {
+        actualValue: requiredSentence,
+        feedback: `For match ${game.matchId}, include the required context sentence "${requiredSentence}" exactly once in the writeup.`,
+        field: "writeup",
+        kind: "missing_required_context_sentence",
+        matchId: game.matchId,
+        reason:
+          "The writeup omitted a required effort or game-day-prep context sentence.",
+        salvage: "patch_or_remove",
+        sentence: writeupSentences[0] ?? game.writeup,
+        sentenceIndex: Math.min(2, writeupSentences.length),
+      },
+    ];
+  });
+}
+
+function validatePostgameInterview(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const interview = game.postgameInterview;
+  if (!interview) {
+    return [];
+  }
+
+  const candidate = expectedGame.postgameInterviewCandidate;
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+  if (!candidate) {
+    issues.push({
+      actualValue: "no supported interview candidate",
+      feedback: `For match ${game.matchId}, omit postgameInterview unless the payload includes a supported winner-side interview candidate.`,
+      field: "postgameInterview",
+      kind: "unsupported_interview_claim",
+      matchId: game.matchId,
+      reason:
+        "The recap included a postgameInterview block even though no supported interview candidate was supplied.",
+      salvage: semanticIssueSalvageForField("postgameInterview"),
+      sentence: interview.title,
+      sentenceIndex: 0,
+    });
+    return issues;
+  }
+
+  if (
+    interview.playerName !== candidate.playerName ||
+    interview.teamName !== candidate.teamName ||
+    interview.teamSide !== candidate.teamSide
+  ) {
+    issues.push({
+      actualValue: `${candidate.playerName} (${candidate.teamName})`,
+      feedback: `For match ${game.matchId}, any postgameInterview must use the supplied candidate ${candidate.playerName} from ${candidate.teamName}.`,
+      field: "postgameInterview",
+      kind: "unsupported_interview_claim",
+      matchId: game.matchId,
+      reason:
+        "The postgameInterview block used a different player or team than the supplied candidate.",
+      salvage: semanticIssueSalvageForField("postgameInterview"),
+      sentence: interview.title,
+      sentenceIndex: 0,
+      teamSide: candidate.teamSide,
+    });
+  }
+
+  let sentenceIndexOffset = 0;
+  issues.push(
+    ...offsetSemanticIssueSentenceIndexes(
+      [
+        ...collectSemanticIssuesForField(
+          interview.title,
+          "postgameInterview",
+          game.matchId,
+          expectedGame,
+        ),
+        ...validateUnsupportedInterviewText(
+          interview.title,
+          game.matchId,
+          candidate.teamSide,
+          0,
+        ),
+      ],
+      sentenceIndexOffset,
+    ),
+  );
+  sentenceIndexOffset += 1;
+
+  for (const exchange of interview.qa) {
+    issues.push(
+      ...offsetSemanticIssueSentenceIndexes(
+        [
+          ...collectSemanticIssuesForField(
+            exchange.question,
+            "postgameInterview",
+            game.matchId,
+            expectedGame,
+          ),
+          ...validateUnsupportedInterviewText(
+            exchange.question,
+            game.matchId,
+            candidate.teamSide,
+            0,
+          ),
+        ],
+        sentenceIndexOffset,
+      ),
+    );
+    sentenceIndexOffset += 1;
+    issues.push(
+      ...offsetSemanticIssueSentenceIndexes(
+        [
+          ...collectSemanticIssuesForField(
+            exchange.answer,
+            "postgameInterview",
+            game.matchId,
+            expectedGame,
+          ),
+          ...validateUnsupportedInterviewText(
+            exchange.answer,
+            game.matchId,
+            candidate.teamSide,
+            0,
+          ),
+        ],
+        sentenceIndexOffset,
+      ),
+    );
+    sentenceIndexOffset += 1;
   }
 
   return issues;
 }
 
-function validateCompactStreakSentence(
-  sentence: string,
+function offsetSemanticIssueSentenceIndexes(
+  issues: GameDayRecapSemanticValidationIssue[],
+  offset: number,
+): GameDayRecapSemanticValidationIssue[] {
+  return issues.map((issue) => ({
+    ...issue,
+    sentenceIndex: issue.sentenceIndex + offset,
+  }));
+}
+
+function validateUnsupportedInterviewText(
+  text: string,
   matchId: string,
-  expectedGame: GameDayRecapPromptGame,
-  field: GameDayRecapSemanticValidationIssueField,
+  teamSide: "away" | "home",
   sentenceIndex: number,
 ): GameDayRecapSemanticValidationIssue[] {
-  if (hasPregameQualifier(sentence)) {
+  const unsupportedPatterns = [
+    /\b(?:first|last)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:shots?|threes?|free throws?)\b/i,
+    /\b(?:made|missed|hit)\s+(?:my|his|her|our)?\s*(?:first|last)?\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:shots?|threes?|free throws?)\s+(?:straight|in a row)\b/i,
+    /\b(?:locker room|halftime|pregame talk|coach(?:es)?\s+(?:said|told)|film room)\b/i,
+  ];
+  if (!unsupportedPatterns.some((pattern) => pattern.test(text))) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: "unsupported interview detail",
+      feedback: `For match ${matchId}, keep postgameInterview grounded in the supplied candidate facts. Do not invent exact shot sequences, streak counts, or locker-room details.`,
+      field: "postgameInterview",
+      kind: "unsupported_interview_claim",
+      matchId,
+      reason:
+        "The postgameInterview included unsupported sequence-level or behind-the-scenes detail.",
+      salvage: semanticIssueSalvageForField("postgameInterview"),
+      sentence: text,
+      sentenceIndex,
+      teamSide,
+    },
+  ];
+}
+
+function validateRequiredPrimaryRunMention(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const primaryRun = expectedGame.playByPlayFacts?.primaryRun;
+  if (!primaryRun?.teamSide) {
+    return [];
+  }
+
+  const writeupSentences = splitRecapText(game.writeup);
+  const hasPrimaryRunMention = writeupSentences.some((sentence) => {
+    const runClaim = extractRunClaim(sentence, expectedGame);
+    return Boolean(
+      runClaim &&
+        runClaim.teamPoints === primaryRun.teamPoints &&
+        runClaim.opponentPoints === primaryRun.opponentPoints &&
+        (!runClaim.teamSide || runClaim.teamSide === primaryRun.teamSide),
+    );
+  });
+  if (hasPrimaryRunMention) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: `${primaryRun.teamPoints}-${primaryRun.opponentPoints}`,
+      feedback: `For match ${game.matchId}, mention the supplied primary run ${primaryRun.teamPoints}-${primaryRun.opponentPoints} in the writeup and include its timing anchors.`,
+      field: "writeup",
+      kind: "missing_primary_run_mention",
+      matchId: game.matchId,
+      reason: "The writeup omitted the supplied primary run.",
+      salvage: "patch_or_remove",
+      sentence: writeupSentences[0] ?? game.writeup,
+      sentenceIndex: 0,
+      teamSide: primaryRun.teamSide,
+    },
+  ];
+}
+
+function validateChoppyFactStack(
+  game: GameDayRecapResultGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const sentences = splitRecapText(game.writeup);
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+
+  for (let index = 1; index < sentences.length; index += 1) {
+    const previousSentence = sentences[index - 1];
+    const currentSentence = sentences[index];
+    if (!previousSentence || !currentSentence) {
+      continue;
+    }
+    if (
+      !isNoteLikeQuarterFactSentence(previousSentence) ||
+      !isNoteLikeQuarterFactSentence(currentSentence)
+    ) {
+      continue;
+    }
+
+    issues.push({
+      actualValue: "connected sports-desk prose",
+      feedback: `For match ${game.matchId}, combine stacked short quarter-score fact sentences into smoother connected prose.`,
+      field: "writeup",
+      kind: "choppy_fact_stack",
+      matchId: game.matchId,
+      reason:
+        "The writeup stacked multiple short quarter-score fact sentences instead of flowing as connected prose.",
+      salvage: "patch_or_remove",
+      sentence: currentSentence,
+      sentenceIndex: index,
+    });
+  }
+
+  return issues;
+}
+
+function validateDuplicatePeriodStateRestatement(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const sentences = splitRecapText(game.writeup);
+  const seenSignatures = new Set<string>();
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+
+  sentences.forEach((sentence, sentenceIndex) => {
+    const signature = extractPeriodStateSignature(sentence, expectedGame);
+    if (!signature) {
+      return;
+    }
+    if (seenSignatures.has(signature)) {
+      issues.push({
+        actualValue: signature,
+        feedback: `For match ${game.matchId}, do not restate the same quarter or period-state scoring fact in multiple sentences.`,
+        field: "writeup",
+        kind: "duplicate_period_state_restatement",
+        matchId: game.matchId,
+        reason:
+          "The writeup repeated the same quarter or period-state fact without adding new detail.",
+        salvage: "patch_or_remove",
+        sentence,
+        sentenceIndex,
+      });
+      return;
+    }
+
+    seenSignatures.add(signature);
+  });
+
+  return issues;
+}
+
+function validateRepetitiveSentenceStarts(
+  game: GameDayRecapResultGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const sentences = splitRecapText(game.writeup);
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+
+  for (let index = 1; index < sentences.length; index += 1) {
+    const previousSentence = sentences[index - 1];
+    const currentSentence = sentences[index];
+    if (!previousSentence || !currentSentence) {
+      continue;
+    }
+
+    const previousStart = extractSentenceStartKey(previousSentence);
+    const currentStart = extractSentenceStartKey(currentSentence);
+    if (
+      !previousStart ||
+      previousStart !== currentStart ||
+      previousSentence.split(/\s+/).length > 18 ||
+      currentSentence.split(/\s+/).length > 18
+    ) {
+      continue;
+    }
+
+    issues.push({
+      actualValue: currentStart,
+      feedback: `For match ${game.matchId}, vary repetitive sentence openings so the writeup reads like connected prose instead of stacked notes.`,
+      field: "writeup",
+      kind: "repetitive_sentence_start",
+      matchId: game.matchId,
+      reason:
+        "The writeup repeated the same short sentence opening in consecutive sentences.",
+      salvage: "patch_or_remove",
+      sentence: currentSentence,
+      sentenceIndex: index,
+    });
+  }
+
+  return issues;
+}
+
+function validateShortFactSentenceCluster(
+  game: GameDayRecapResultGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const sentences = splitRecapText(game.writeup);
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+
+  for (let index = 2; index < sentences.length; index += 1) {
+    const cluster = sentences.slice(index - 2, index + 1);
+    if (
+      cluster.length !== 3 ||
+      !cluster.every((sentence) => isShortNoteLikeFactSentence(sentence))
+    ) {
+      continue;
+    }
+
+    issues.push({
+      actualValue: "connected sports-desk prose",
+      feedback: `For match ${game.matchId}, combine stacked short fact sentences into smoother connected prose.`,
+      field: "writeup",
+      kind: "short_fact_sentence_cluster",
+      matchId: game.matchId,
+      reason:
+        "The writeup stacked multiple short note-like fact sentences in a row.",
+      salvage: "patch_or_remove",
+      sentence: sentences[index]!,
+      sentenceIndex: index,
+    });
+  }
+
+  return issues;
+}
+
+function isNoteLikeQuarterFactSentence(sentence: string): boolean {
+  if (sentence.split(/\s+/).length > 16) {
+    return false;
+  }
+
+  if (!/\b(?:quarter|through three quarters|halftime)\b/i.test(sentence)) {
+    return false;
+  }
+
+  if (!/\b\d{1,3}-\d{1,3}\b/.test(sentence)) {
+    return false;
+  }
+
+  return !/\b(?:because|after|before|while|when|but|and|although|despite|as)\b/i.test(
+    sentence,
+  );
+}
+
+function extractPeriodStateSignature(
+  sentence: string,
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  const normalizedSentence = sentence.toLowerCase();
+  for (const period of expectedGame.quarterFacts.periods) {
+    const winnerFacingScore =
+      period.winningSide === "tie"
+        ? `${period.homeScore}-${period.awayScore}`
+        : winnerFacingQuarterScore(period, period.winningSide);
+    const signatures = [
+      `${period.label}:${period.homeScore}-${period.awayScore}`,
+      `${period.label}:${winnerFacingScore}`,
+    ];
+    if (
+      normalizedSentence.includes(period.label.toLowerCase()) &&
+      signatures.some((signature) =>
+        normalizedSentence.includes(signature.split(":")[1]!.toLowerCase()),
+      )
+    ) {
+      return signatures[0]!;
+    }
+  }
+
+  const periodStates = buildGameDayRecapFactStorePeriodStates({
+    awayTeamName: expectedGame.teams.away.name,
+    homeTeamName: expectedGame.teams.home.name,
+    quarterScores: expectedGame.quarterScores,
+  });
+  const throughThreeQuarters = periodStates.throughThreeQuarters;
+  if (
+    throughThreeQuarters &&
+    normalizedSentence.includes("through three quarters") &&
+    normalizedSentence.includes(
+      `${throughThreeQuarters.homeScore}-${throughThreeQuarters.awayScore}`,
+    )
+  ) {
+    return `through_three_quarters:${throughThreeQuarters.homeScore}-${throughThreeQuarters.awayScore}`;
+  }
+
+  const halftime = periodStates.halftime;
+  if (
+    halftime &&
+    normalizedSentence.includes("halftime") &&
+    normalizedSentence.includes(`${halftime.homeScore}-${halftime.awayScore}`)
+  ) {
+    return `halftime:${halftime.homeScore}-${halftime.awayScore}`;
+  }
+
+  return null;
+}
+
+function extractSentenceStartKey(sentence: string): string | null {
+  const tokens = sentence
+    .trim()
+    .split(/\s+/)
+    .map((token) => token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, ""))
+    .filter(Boolean);
+  if (tokens.length < 2) {
+    return null;
+  }
+
+  return `${tokens[0]!.toLowerCase()} ${tokens[1]!.toLowerCase()}`;
+}
+
+function isShortNoteLikeFactSentence(sentence: string): boolean {
+  if (sentence.split(/\s+/).length > 16) {
+    return false;
+  }
+
+  if (
+    /\b(?:because|after|before|while|when|but|and|although|despite|as)\b/i.test(
+      sentence,
+    )
+  ) {
+    return false;
+  }
+
+  return /\b\d{1,3}-\d{1,3}\b/.test(sentence)
+    || /\b(?:led|scored|added|finished with|won the|pulled down|held a)\b/i.test(
+      sentence,
+    );
+}
+
+function validateRequiredSeriesSummaryLine(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const expectedSummaryLine = expectedGame.seriesContext?.summaryLine;
+  if (!expectedSummaryLine) {
+    return [];
+  }
+
+  const canonicalExpectedSummaryLine =
+    canonicalizeSeriesSummaryLine(expectedSummaryLine);
+  if (!canonicalExpectedSummaryLine) {
     return [];
   }
 
   const issues: GameDayRecapSemanticValidationIssue[] = [];
+  const writeupSentences = splitRecapText(game.writeup);
+  const openingSentences = writeupSentences.slice(0, 2);
+  const hasOpeningSeriesSummaryLine = openingSentences.some(
+    (sentence) =>
+      canonicalizeSeriesSummaryLine(sentence) === canonicalExpectedSummaryLine,
+  );
 
-  for (const side of ["home", "away"] as const) {
-    const team = expectedGame.teams[side];
-    if (!team.streak) {
-      continue;
-    }
-
-    const compactStreakMatch = sentence.match(
-      new RegExp(
-        `${escapeRegExp(team.name)}[^.!?]{0,40}\\b([WL])(\\d{1,2})\\b`,
-        "i",
-      ),
-    );
-    if (!compactStreakMatch) {
-      continue;
-    }
-
-    const mentionedStreak = `${compactStreakMatch[1]?.toUpperCase() ?? ""}${compactStreakMatch[2]}`;
-    if (mentionedStreak !== team.streak) {
-      issues.push({
-        actualValue: team.streak,
-        feedback: `For match ${matchId}, ${team.name}'s postgame streak is ${team.streak}. Do not use ${mentionedStreak}.`,
-        field,
-        kind: "compact_streak_mismatch",
-        matchId,
-        reason: `${team.name} was given a ${mentionedStreak} streak instead of ${team.streak}.`,
-        salvage: semanticIssueSalvageForField(field),
-        sentence,
-        sentenceIndex,
-        teamSide: side,
-      });
-    }
+  if (!hasOpeningSeriesSummaryLine) {
+    issues.push({
+      actualValue: canonicalExpectedSummaryLine,
+      feedback: `For match ${game.matchId}, include the exact series sentence "${canonicalExpectedSummaryLine}" once within the opening two writeup sentences.`,
+      field: "writeup",
+      kind: "missing_series_summary_line",
+      matchId: game.matchId,
+      reason: `The writeup did not include the required series sentence "${canonicalExpectedSummaryLine}" within the opening two sentences.`,
+      salvage: "patch_or_remove",
+      sentence: writeupSentences[0] ?? game.writeup,
+      sentenceIndex: 0,
+    });
   }
 
+  const conflictingHeadlineClaim = extractSeriesSummaryClaim(game.headline);
+  if (
+    conflictingHeadlineClaim &&
+    conflictingHeadlineClaim !== canonicalExpectedSummaryLine
+  ) {
+    issues.push({
+      actualValue: canonicalExpectedSummaryLine,
+      feedback: `For match ${game.matchId}, the only valid series sentence is "${canonicalExpectedSummaryLine}". Do not use "${conflictingHeadlineClaim}" in the headline.`,
+      field: "headline",
+      kind: "conflicting_series_summary_line",
+      matchId: game.matchId,
+      reason: `The headline used the conflicting series sentence "${conflictingHeadlineClaim}".`,
+      salvage: "drop_only",
+      sentence: game.headline,
+      sentenceIndex: 0,
+    });
+  }
+
+  writeupSentences.forEach((sentence, sentenceIndex) => {
+    const claim = extractSeriesSummaryClaim(sentence);
+    if (!claim || claim === canonicalExpectedSummaryLine) {
+      return;
+    }
+
+    issues.push({
+      actualValue: canonicalExpectedSummaryLine,
+      feedback: `For match ${game.matchId}, the only valid series sentence is "${canonicalExpectedSummaryLine}". Do not use "${claim}".`,
+      field: "writeup",
+      kind: "conflicting_series_summary_line",
+      matchId: game.matchId,
+      reason: `The writeup used the conflicting series sentence "${claim}".`,
+      salvage: "patch_or_remove",
+      sentence,
+      sentenceIndex,
+    });
+  });
+
   return issues;
+}
+
+function extractSeriesSummaryClaim(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed.replace(/[.!?]+$/, "");
+  if (/^The series is tied 1-1$/i.test(normalized)) {
+    return "The series is tied 1-1.";
+  }
+
+  const leadMatch = /^(.+?) leads the series 1-0$/i.exec(normalized);
+  if (leadMatch?.[1]) {
+    return `${leadMatch[1]} leads the series 1-0.`;
+  }
+
+  const winMatch = /^(.+?) wins the series 2-(0|1)$/i.exec(normalized);
+  if (winMatch?.[1] && winMatch?.[2]) {
+    return `${winMatch[1]} wins the series 2-${winMatch[2]}.`;
+  }
+
+  return null;
+}
+
+function canonicalizeSeriesSummaryLine(line: string): string | null {
+  return extractSeriesSummaryClaim(line);
+}
+
+function validateDuplicateOutcomeRestatement(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  return splitRecapText(game.writeup).flatMap((sentence, sentenceIndex) => {
+    if (sentenceIndex === 0) {
+      return [];
+    }
+    if (!isPlainOutcomeRestatementSentence(sentence, expectedGame)) {
+      return [];
+    }
+
+    return [
+      {
+        actualValue: formatGameFinalScore(expectedGame),
+        feedback: `For match ${game.matchId}, do not add a later throwaway sentence that simply repeats the winner and final score once the outcome is already established.`,
+        field: "writeup",
+        kind: "duplicate_outcome_restatement",
+        matchId: game.matchId,
+        reason:
+          "The writeup repeated the outcome in a later sentence without adding new detail.",
+        salvage: "patch_or_remove",
+        sentence,
+        sentenceIndex,
+      },
+    ];
+  });
+}
+
+function validateDecisiveEndingEmphasis(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const endingFacts = expectedGame.playByPlayFacts?.endingFacts;
+  const decisiveScore = endingFacts?.decisiveScore;
+  if (!decisiveScore) {
+    return [];
+  }
+
+  const needsEndingEmphasis = Boolean(
+    decisiveScore.isBuzzerBeater ||
+    endingFacts?.opponentLastChance ||
+    expectedGame.finalMargin <= 3,
+  );
+  if (!needsEndingEmphasis) {
+    return [];
+  }
+
+  const openingSentences = splitRecapText(game.writeup).slice(0, 2);
+  const openingSentence = openingSentences[0] ?? "";
+  const hasRequiredBuzzerbeaterMention =
+    decisiveScore.isBuzzerBeater &&
+    (/\bbuzzerbeater\b/i.test(game.headline) ||
+      openingSentences.some((sentence) => /\bbuzzerbeater\b/i.test(sentence)));
+  if (hasRequiredBuzzerbeaterMention) {
+    return [];
+  }
+
+  if (
+    !decisiveScore.isBuzzerBeater &&
+    (isEndingFocusedText(game.headline) ||
+      openingSentences.some((sentence) => isEndingFocusedText(sentence)))
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: decisiveScore.isBuzzerBeater
+        ? "buzzerbeater ending"
+        : "decisive ending",
+      feedback: decisiveScore.isBuzzerBeater
+        ? `For match ${game.matchId}, the supplied ending facts show a buzzerbeater. Mention the buzzerbeater in the headline or opening sentence.`
+        : `For match ${game.matchId}, the supplied ending facts should be in the headline or opening sentence instead of being buried later in the recap.`,
+      field: "writeup",
+      kind: "missing_decisive_ending_emphasis",
+      matchId: game.matchId,
+      reason: decisiveScore.isBuzzerBeater
+        ? "The recap buried a supplied buzzerbeater instead of leading with it."
+        : "The recap buried the supplied decisive ending instead of leading with it.",
+      salvage: "patch_or_remove",
+      sentence: openingSentence || game.writeup,
+      sentenceIndex: 0,
+      teamSide: decisiveScore.scoringTeamSide,
+    },
+  ];
+}
+
+function isPlainOutcomeRestatementSentence(
+  sentence: string,
+  expectedGame: GameDayRecapPromptGame,
+): boolean {
+  const winnerSide = resolveGameWinnerSide(expectedGame);
+  if (!winnerSide) {
+    return false;
+  }
+
+  const loserSide = winnerSide === "home" ? "away" : "home";
+  const winnerName = expectedGame.teams[winnerSide].name;
+  const loserName = expectedGame.teams[loserSide].name;
+  if (
+    !mentionsTeam(sentence, winnerName) ||
+    !mentionsTeam(sentence, loserName)
+  ) {
+    return false;
+  }
+  const scorePair = findClosestScorePair(sentence, 0);
+  if (!scorePair) {
+    return false;
+  }
+  const actualHomeAway = formatGameFinalScore(expectedGame);
+  const actualAwayHome = `${expectedGame.teams.away.score}-${expectedGame.teams.home.score}`;
+  const mentionedScore = `${scorePair.first}-${scorePair.second}`;
+  if (mentionedScore !== actualHomeAway && mentionedScore !== actualAwayHome) {
+    return false;
+  }
+  if (
+    !new RegExp(
+      `${escapeRegExp(winnerName)}[^.!?]{0,80}\\b(?:beat|beats|beating|defeat(?:ed|s|ing)?|downed|edge(?:d|s|ing)?|hold(?:s|ing)? off|held off|outlast(?:ed|s|ing)?|toppl(?:ed|es|ing)|handle(?:d|s|ing)|surviv(?:ed|es|ing)|escape(?:d|s|ing)|rout(?:ed|es|ing)|bur(?:ied|ies|ying)|won|wins|prevail(?:ed|s|ing)|close(?:d|s|ing) out|finish(?:ed|es|ing) off|stun(?:ned|s|ning)|shock(?:ed|s|ing))\\b`,
+      "i",
+    ).test(sentence)
+  ) {
+    return false;
+  }
+  if (
+    /\b(?:buzzerbeater|at the buzzer|at the horn|no time left|00:00|go-ahead|tied it|last chance|comeback|run|quarter|overtime|missed)\b/i.test(
+      sentence,
+    )
+  ) {
+    return false;
+  }
+
+  return sentence.split(/\s+/).length <= 18;
+}
+
+function isEndingFocusedText(text: string): boolean {
+  return /\b(?:buzzerbeater|at the buzzer|at the horn|no time left|00:00|walk-off|go-ahead|went ahead|tied it|last chance|tying shot|go-ahead shot|missed a tying|missed the tying|missed a go-ahead)\b/i.test(
+    text,
+  );
+}
+
+function mentionsTeam(sentence: string, teamName: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(teamName)}\\b`, "i").test(sentence);
 }
 
 function semanticIssueSalvageForField(
   field: GameDayRecapSemanticValidationIssueField,
 ): GameDayRecapSemanticValidationIssueSalvage {
-  return field === "writeup" ? "patch_or_remove" : "drop_only";
+  return field === "headline" ? "drop_only" : "patch_or_remove";
 }
 
-function salvageGameDayRecapResult(args: {
-  expectedGames: GameDayRecapPromptGame[];
-  issues: GameDayRecapSemanticValidationIssue[];
+async function salvageGameDayRecapResult(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  expectedGames: GameDayRecapGameFactStore[];
+  judgeIssues: GameDayRecapJudgeValidationIssue[];
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
   request: GameDayRecapPromptPayload["request"];
   result: GameDayRecapResultPayload;
-}): GeneratedGameDayRecap {
+}): Promise<GeneratedGameDayRecap> {
   const orderedGames = orderGameDayRecapGames(
     args.result.games,
     args.expectedGames,
   );
-  const issuesByMatchId = new Map<
+  const deterministicIssuesByMatchId = new Map<
     string,
     GameDayRecapSemanticValidationIssue[]
   >();
+  const judgeIssuesByMatchId = new Map<string, GameDayRecapJudgeValidationIssue[]>();
+  const repairActions: GameDayRecapRepairAction[] = [];
+  const postPatchDeterministicIssues: GameDayRecapSemanticValidationIssue[] = [];
+  const postPatchJudgeIssues: GameDayRecapJudgeValidationIssue[] = [];
+  const postTrimDeterministicIssues: GameDayRecapSemanticValidationIssue[] = [];
+  const postTrimJudgeIssues: GameDayRecapJudgeValidationIssue[] = [];
 
-  for (const issue of args.issues) {
-    const issues = issuesByMatchId.get(issue.matchId);
+  for (const issue of args.deterministicIssues) {
+    const issues = deterministicIssuesByMatchId.get(issue.matchId);
     if (issues) {
       issues.push(issue);
       continue;
     }
-    issuesByMatchId.set(issue.matchId, [issue]);
+    deterministicIssuesByMatchId.set(issue.matchId, [issue]);
+  }
+  for (const issue of args.judgeIssues) {
+    const issues = judgeIssuesByMatchId.get(issue.matchId);
+    if (issues) {
+      issues.push(issue);
+      continue;
+    }
+    judgeIssuesByMatchId.set(issue.matchId, [issue]);
   }
 
   const retainedGames: GameDayRecapResultPayload["games"] = [];
@@ -4979,19 +11838,34 @@ function salvageGameDayRecapResult(args: {
       continue;
     }
 
-    const issues = issuesByMatchId.get(currentGame.matchId) ?? [];
-    if (!issues.length) {
+    const deterministicIssues =
+      deterministicIssuesByMatchId.get(currentGame.matchId) ?? [];
+    const judgeIssues = judgeIssuesByMatchId.get(currentGame.matchId) ?? [];
+    if (!deterministicIssues.length && !judgeIssues.length) {
       retainedGames.push(currentGame);
       continue;
     }
 
-    const salvagedGame = salvageGameDayRecapGame({
+    const salvageOutcome = await salvageGameDayRecapGame({
+      deterministicIssues,
       expectedGame,
       game: currentGame,
-      issues,
+      judgeIssues,
+      judgeProvider: args.judgeProvider,
+      logContext: args.logContext,
+      request: args.request,
     });
-    if (salvagedGame) {
-      retainedGames.push(salvagedGame);
+    repairActions.push(...salvageOutcome.repairActions);
+    postPatchDeterministicIssues.push(
+      ...salvageOutcome.postPatchDeterministicIssues,
+    );
+    postPatchJudgeIssues.push(...salvageOutcome.postPatchJudgeIssues);
+    postTrimDeterministicIssues.push(
+      ...salvageOutcome.postTrimDeterministicIssues,
+    );
+    postTrimJudgeIssues.push(...salvageOutcome.postTrimJudgeIssues);
+    if (salvageOutcome.game) {
+      retainedGames.push(salvageOutcome.game);
       continue;
     }
 
@@ -5001,12 +11875,23 @@ function salvageGameDayRecapResult(args: {
       matchId: currentGame.matchId,
       reason: "removed after factual validation could not be safely repaired",
     });
+    repairActions.push({
+      action: "drop_game",
+      matchId: currentGame.matchId,
+      reason: "remaining deterministic or judge issues after repair",
+    });
   }
 
   if (!retainedGames.length) {
-    throw new Error(
-      "Game day recap response could not be safely repaired because every game summary still contained factual contradictions.",
-    );
+    throw new GameDayRecapRepairFailureError({
+      deterministicIssues: args.deterministicIssues,
+      judgeIssues: args.judgeIssues,
+      postPatchDeterministicIssues,
+      postPatchJudgeIssues,
+      postTrimDeterministicIssues,
+      postTrimJudgeIssues,
+      repairActions,
+    });
   }
 
   const result = coverageIssues.length
@@ -5018,71 +11903,436 @@ function salvageGameDayRecapResult(args: {
           retainedGameCount: retainedGames.length,
         }),
       }
-    : {
+      : {
         games: retainedGames,
         summary: args.result.summary,
       };
+  const assessed = assessGameDayRecapDeterministicPayload(
+    result,
+    args.expectedGames,
+    {
+      allowPartial: coverageIssues.length > 0,
+    },
+  );
+  const blockingAssessedIssues = assessed.issues.filter(
+    (issue) => !isSoftStyleOnlyWriteupIssue(issue),
+  );
+  if (blockingAssessedIssues.length > 0) {
+    throw new GameDayRecapRepairFailureError({
+      deterministicIssues: args.deterministicIssues,
+      judgeIssues: args.judgeIssues,
+      postPatchDeterministicIssues,
+      postPatchJudgeIssues,
+      postTrimDeterministicIssues: assessed.issues,
+      postTrimJudgeIssues,
+      repairActions,
+    });
+  }
 
   return {
     coverageIssues,
-    result: validateGameDayRecapPayload(result, args.expectedGames, {
-      allowPartial: coverageIssues.length > 0,
-    }),
+    result: decorateGameDayRecapResultWithSurpriseMetadata(
+      assessed.orderedResult,
+      args.expectedGames,
+    ),
   };
 }
 
-function salvageGameDayRecapGame(args: {
-  expectedGame: GameDayRecapPromptGame;
+async function salvageGameDayRecapGame(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  expectedGame: GameDayRecapGameFactStore;
   game: GameDayRecapResultGame;
-  issues: GameDayRecapSemanticValidationIssue[];
-}): GameDayRecapResultGame | null {
+  judgeIssues: GameDayRecapJudgeValidationIssue[];
+  judgeProvider: StructuredGameDayRecapProvider;
+  logContext?: GameDayRecapGenerationLogContext;
+  request: GameDayRecapPromptPayload["request"];
+}): Promise<GameDayRecapGameSalvageOutcome> {
+  const repairActions: GameDayRecapRepairAction[] = [];
+  const factStore = buildGameDayRecapFactStore({
+    games: [args.expectedGame],
+    request: args.request,
+  });
   if (
-    args.issues.some(
+    args.deterministicIssues.some(
       (issue) => issue.field === "headline" || issue.salvage === "drop_only",
-    )
+    ) ||
+    args.judgeIssues.some((issue) => issue.field === "headline")
   ) {
-    return null;
+    return {
+      game: null,
+      postPatchDeterministicIssues: args.deterministicIssues,
+      postPatchJudgeIssues: args.judgeIssues,
+      postTrimDeterministicIssues: [],
+      postTrimJudgeIssues: [],
+      repairActions,
+    };
   }
 
-  const patchedGame = applyGameWriteupRepairs(
-    args.game,
+  const hasInterviewIssues =
+    args.deterministicIssues.some(
+      (issue) => issue.field === "postgameInterview",
+    ) || args.judgeIssues.some((issue) => issue.field === "postgameInterview");
+  const gameWithoutInterview = hasInterviewIssues
+    ? removePostgameInterview(args.game)
+    : args.game;
+  if (hasInterviewIssues) {
+    repairActions.push({
+      action: "drop_postgame_interview",
+      matchId: args.game.matchId,
+      reason: "unsupported or structurally invalid interview content",
+    });
+  }
+
+  const {
+    game: sentencePatchedGame,
+    replacedSentenceIndexes,
+  } = applyGameWriteupRepairs(
+    gameWithoutInterview,
     args.expectedGame,
-    args.issues,
+    args.deterministicIssues,
   );
-  const remainingAfterPatch = validateRecapGameSemantics(
-    patchedGame,
-    args.expectedGame,
+  for (const sentenceIndex of replacedSentenceIndexes) {
+    repairActions.push({
+      action: "replace_sentence",
+      matchId: args.game.matchId,
+      reason: "deterministic sentence repair",
+      sentenceIndex,
+    });
+  }
+
+  const postSentencePatchDeterministic = assessGameDayRecapDeterministicPayload(
+    {
+      games: [sentencePatchedGame],
+      summary: {
+        gameOfTheDayMatchId: null,
+        gameOfTheDaySurpriseFactor: null,
+        headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
+        lede: "Sentence-patched recap candidate",
+      },
+    },
+    [args.expectedGame],
   );
-  if (remainingAfterPatch.length === 0) {
-    return patchedGame;
+  const openerRebuiltGame = rebuildGameWriteupOpening({
+    deterministicIssues: postSentencePatchDeterministic.issues,
+    expectedGame: args.expectedGame,
+    game: sentencePatchedGame,
+    reason: "restore required opening structure after sentence repair",
+    repairActions,
+  });
+  const postOpenerDeterministic = assessGameDayRecapDeterministicPayload(
+    {
+      games: [openerRebuiltGame],
+      summary: {
+        gameOfTheDayMatchId: null,
+        gameOfTheDaySurpriseFactor: null,
+        headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
+        lede: "Patched recap candidate",
+      },
+    },
+    [args.expectedGame],
+  );
+  const postContextInsertGame = insertMissingRequiredContextSentences({
+    deterministicIssues: postOpenerDeterministic.issues,
+    expectedGame: args.expectedGame,
+    game: openerRebuiltGame,
+    reason: "restore required effort and preparation context after sentence repair",
+    repairActions,
+  });
+  const postPatchDeterministic = assessGameDayRecapDeterministicPayload(
+    {
+      games: [postContextInsertGame],
+      summary: {
+        gameOfTheDayMatchId: null,
+        gameOfTheDaySurpriseFactor: null,
+        headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
+        lede: "Patched recap candidate",
+      },
+    },
+    [args.expectedGame],
+  );
+  const postPatchJudge = await judgeGameDayRecapResult({
+    factStore,
+    logContext: args.logContext,
+    provider: args.judgeProvider,
+    result: postPatchDeterministic.orderedResult,
+    stage: "salvage-post-patch",
+  });
+  const postPatchBlockingDeterministicIssues =
+    postPatchDeterministic.issues.filter(
+      (issue) => !isSoftStyleOnlyWriteupIssue(issue),
+    );
+  if (
+    postPatchBlockingDeterministicIssues.length === 0 &&
+    postPatchJudge.blockingIssues.length === 0
+  ) {
+    return {
+      game: postContextInsertGame,
+      postPatchDeterministicIssues: [],
+      postPatchJudgeIssues: [],
+      postTrimDeterministicIssues: [],
+      postTrimJudgeIssues: [],
+      repairActions,
+    };
   }
   if (
-    remainingAfterPatch.some(
+    postPatchBlockingDeterministicIssues.some(
       (issue) => issue.field === "headline" || issue.salvage === "drop_only",
     )
   ) {
-    return null;
+    return {
+      game: null,
+      postPatchDeterministicIssues: postPatchDeterministic.issues,
+      postPatchJudgeIssues: postPatchJudge.blockingIssues,
+      postTrimDeterministicIssues: [],
+      postTrimJudgeIssues: [],
+      repairActions,
+    };
   }
 
   const trimmedGame = removeInvalidWriteupSentences(
-    patchedGame,
-    remainingAfterPatch,
+    openerRebuiltGame,
+    postPatchBlockingDeterministicIssues,
   );
   if (!trimmedGame) {
-    return null;
+    return {
+      game: null,
+      postPatchDeterministicIssues: postPatchDeterministic.issues,
+      postPatchJudgeIssues: postPatchJudge.blockingIssues,
+      postTrimDeterministicIssues: [],
+      postTrimJudgeIssues: [],
+      repairActions,
+    };
+  }
+  const invalidSentenceIndexes = collectTrimEligibleSentenceIndexes(
+    postPatchDeterministic.issues,
+  );
+  for (const sentenceIndex of Array.from(invalidSentenceIndexes)) {
+    repairActions.push({
+      action: "trim_sentence",
+      matchId: args.game.matchId,
+      reason: "remove remaining deterministic issue sentence",
+      sentenceIndex,
+    });
+  }
+  const postTrimPreOpenerDeterministic = assessGameDayRecapDeterministicPayload(
+    {
+      games: [trimmedGame],
+      summary: {
+        gameOfTheDayMatchId: null,
+        gameOfTheDaySurpriseFactor: null,
+        headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
+        lede: "Pre-opener-trimmed recap candidate",
+      },
+    },
+    [args.expectedGame],
+  );
+  const trimmedAndRebuiltGame = rebuildGameWriteupOpening({
+    deterministicIssues: postTrimPreOpenerDeterministic.issues,
+    expectedGame: args.expectedGame,
+    game: trimmedGame,
+    reason: "restore required opening structure after trimming",
+    repairActions,
+  });
+  const postTrimPreContextDeterministic = assessGameDayRecapDeterministicPayload(
+    {
+      games: [trimmedAndRebuiltGame],
+      summary: {
+        gameOfTheDayMatchId: null,
+        gameOfTheDaySurpriseFactor: null,
+        headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
+        lede: "Trimmed recap candidate",
+      },
+    },
+    [args.expectedGame],
+  );
+  const trimmedRebuiltAndContextInsertedGame = insertMissingRequiredContextSentences(
+    {
+      deterministicIssues: postTrimPreContextDeterministic.issues,
+      expectedGame: args.expectedGame,
+      game: trimmedAndRebuiltGame,
+      reason: "restore required effort and preparation context after trimming",
+      repairActions,
+    },
+  );
+  const postTrimDeterministic = assessGameDayRecapDeterministicPayload(
+    {
+      games: [trimmedRebuiltAndContextInsertedGame],
+      summary: {
+        gameOfTheDayMatchId: null,
+        gameOfTheDaySurpriseFactor: null,
+        headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
+        lede: "Trimmed recap candidate",
+      },
+    },
+    [args.expectedGame],
+  );
+  const postTrimJudge = await judgeGameDayRecapResult({
+    factStore,
+    logContext: args.logContext,
+    provider: args.judgeProvider,
+    result: postTrimDeterministic.orderedResult,
+    stage: "salvage-post-trim",
+  });
+  const postTrimBlockingDeterministicIssues =
+    postTrimDeterministic.issues.filter(
+      (issue) => !isSoftStyleOnlyWriteupIssue(issue),
+    );
+  if (
+    postTrimBlockingDeterministicIssues.length === 0 &&
+    postTrimJudge.blockingIssues.length === 0
+  ) {
+    return {
+      game: trimmedRebuiltAndContextInsertedGame,
+      postPatchDeterministicIssues: [],
+      postPatchJudgeIssues: [],
+      postTrimDeterministicIssues: [],
+      postTrimJudgeIssues: [],
+      repairActions,
+    };
   }
 
-  return validateRecapGameSemantics(trimmedGame, args.expectedGame).length === 0
-    ? trimmedGame
-    : null;
+  return {
+    game: null,
+    postPatchDeterministicIssues: postPatchDeterministic.issues,
+    postPatchJudgeIssues: postPatchJudge.blockingIssues,
+    postTrimDeterministicIssues: postTrimDeterministic.issues,
+    postTrimJudgeIssues: postTrimJudge.blockingIssues,
+    repairActions,
+  };
+}
+
+function rebuildGameWriteupOpening(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  expectedGame: GameDayRecapPromptGame;
+  game: GameDayRecapResultGame;
+  reason: string;
+  repairActions: GameDayRecapRepairAction[];
+}): GameDayRecapResultGame {
+  const needsSeriesSummary = args.deterministicIssues.some(
+    (issue) => issue.kind === "missing_series_summary_line",
+  );
+  const needsEndingEmphasis = args.deterministicIssues.some(
+    (issue) => issue.kind === "missing_decisive_ending_emphasis",
+  );
+  if (!needsSeriesSummary && !needsEndingEmphasis) {
+    return args.game;
+  }
+
+  const sentences = splitRecapText(args.game.writeup);
+  const rebuiltOpening: string[] = [];
+  const summaryLine = args.expectedGame.seriesContext?.summaryLine ?? null;
+  const endingSentence = buildSafeDecisiveEndingSentence(args.expectedGame);
+  const preserveExistingSeriesSummary =
+    summaryLine !== null && sentences.includes(summaryLine);
+
+  if (
+    summaryLine &&
+    (needsSeriesSummary ||
+      (needsEndingEmphasis && preserveExistingSeriesSummary))
+  ) {
+    rebuiltOpening.push(summaryLine);
+  }
+  if (needsEndingEmphasis && endingSentence) {
+    rebuiltOpening.push(endingSentence);
+  }
+  if (!rebuiltOpening.length) {
+    return args.game;
+  }
+
+  const remainder = sentences.filter((sentence) => {
+    if (rebuiltOpening.includes(sentence)) {
+      return false;
+    }
+    if (needsSeriesSummary && summaryLine && sentence === summaryLine) {
+      return false;
+    }
+    if (needsEndingEmphasis && endingSentence && sentence === endingSentence) {
+      return false;
+    }
+    return true;
+  });
+  args.repairActions.push({
+    action: "rebuild_opener",
+    matchId: args.game.matchId,
+    reason: args.reason,
+  });
+
+  return {
+    ...args.game,
+    writeup: [...rebuiltOpening, ...remainder].join(" "),
+  };
+}
+
+function insertMissingRequiredContextSentences(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  expectedGame: GameDayRecapPromptGame;
+  game: GameDayRecapResultGame;
+  reason: string;
+  repairActions: GameDayRecapRepairAction[];
+}): GameDayRecapResultGame {
+  const requiredContextSentences = args.expectedGame.requiredContextSentences ?? [];
+  if (!requiredContextSentences.length) {
+    return args.game;
+  }
+
+  const missingSentences = new Set(
+    args.deterministicIssues
+      .filter((issue) => issue.kind === "missing_required_context_sentence")
+      .map((issue) => issue.actualValue)
+      .filter((value): value is string => Boolean(value)),
+  );
+  if (!missingSentences.size) {
+    return args.game;
+  }
+
+  const sentences = splitRecapText(args.game.writeup);
+  const existingSentences = new Set(sentences);
+  const contextToInsert = requiredContextSentences.filter(
+    (sentence) =>
+      missingSentences.has(sentence) && !existingSentences.has(sentence),
+  );
+  if (!contextToInsert.length) {
+    return args.game;
+  }
+
+  const insertionIndex = Math.min(2, sentences.length);
+  contextToInsert.forEach((sentence, offset) => {
+    args.repairActions.push({
+      action: "insert_sentence",
+      matchId: args.game.matchId,
+      reason: args.reason,
+      sentence,
+      sentenceIndex: insertionIndex + offset,
+    });
+  });
+
+  return {
+    ...args.game,
+    writeup: [
+      ...sentences.slice(0, insertionIndex),
+      ...contextToInsert,
+      ...sentences.slice(insertionIndex),
+    ].join(" "),
+  };
+}
+
+function removePostgameInterview(
+  game: GameDayRecapResultGame,
+): GameDayRecapResultGame {
+  const { postgameInterview: _postgameInterview, ...rest } = game;
+  return rest;
 }
 
 function applyGameWriteupRepairs(
   game: GameDayRecapResultGame,
   expectedGame: GameDayRecapPromptGame,
   issues: GameDayRecapSemanticValidationIssue[],
-): GameDayRecapResultGame {
+): {
+  game: GameDayRecapResultGame;
+  replacedSentenceIndexes: number[];
+} {
   const sentences = splitRecapText(game.writeup);
+  const replacedSentenceIndexes: number[] = [];
   const issuesBySentence = new Map<
     number,
     GameDayRecapSemanticValidationIssue[]
@@ -5090,6 +12340,13 @@ function applyGameWriteupRepairs(
 
   for (const issue of issues) {
     if (issue.field !== "writeup") {
+      continue;
+    }
+    if (
+      issue.kind === "missing_series_summary_line" ||
+      issue.kind === "missing_decisive_ending_emphasis" ||
+      issue.kind === "missing_required_context_sentence"
+    ) {
       continue;
     }
     const sentenceIssues = issuesBySentence.get(issue.sentenceIndex);
@@ -5111,11 +12368,15 @@ function applyGameWriteupRepairs(
       continue;
     }
     sentences[sentenceIndex] = replacement;
+    replacedSentenceIndexes.push(sentenceIndex);
   }
 
   return {
-    ...game,
-    writeup: sentences.join(" "),
+    game: {
+      ...game,
+      writeup: sentences.join(" "),
+    },
+    replacedSentenceIndexes,
   };
 }
 
@@ -5123,12 +12384,32 @@ function choosePreferredRepairIssue(
   issues: GameDayRecapSemanticValidationIssue[],
 ): GameDayRecapSemanticValidationIssue {
   const priorities: Record<GameDayRecapSemanticValidationIssueKind, number> = {
+    banned_style_phrase: 10,
+    choppy_fact_stack: 11,
     compact_streak_mismatch: 1,
-    quarter_score_mismatch: 2,
-    quarter_winner_score_mismatch: 3,
+    conflicting_series_summary_line: 13,
+    duplicate_period_state_restatement: 12,
+    duplicate_outcome_restatement: 12,
+    explicit_streak_mismatch: 2,
+    missing_required_context_sentence: 7,
+    missing_primary_run_mention: 8,
+    missing_run_timing: 9,
+    missing_decisive_ending_emphasis: 9,
+    missing_series_summary_line: 8,
+    one_game_streak_language: 11,
+    playoff_record_language: 10,
+    playoff_streak_language: 10,
+    quarter_score_mismatch: 5,
+    quarter_winner_score_mismatch: 6,
+    repetitive_sentence_start: 11,
     record_mismatch: 0,
-    tied_quarter_claim: 4,
-    wrong_quarter_winner: 5,
+    short_fact_sentence_cluster: 11,
+    through_three_quarters_mismatch: 4,
+    tied_quarter_claim: 7,
+    unsupported_interview_claim: 9,
+    unsupported_lead_change_claim: 8,
+    unsupported_run_claim: 8,
+    wrong_quarter_winner: 8,
   };
 
   return (
@@ -5144,6 +12425,9 @@ function buildSafeReplacementSentence(
 ): string | null {
   switch (issue.kind) {
     case "record_mismatch": {
+      if (isPlayoffRecapGame(expectedGame)) {
+        return null;
+      }
       const team = issue.teamSide ? expectedGame.teams[issue.teamSide] : null;
       return team?.record
         ? `${team.name} finished the game at ${team.record}.`
@@ -5152,9 +12436,40 @@ function buildSafeReplacementSentence(
     case "compact_streak_mismatch": {
       const team = issue.teamSide ? expectedGame.teams[issue.teamSide] : null;
       return team?.streak
-        ? `${team.name}'s postgame streak is ${team.streak}.`
+        ? formatStreakSentenceForRecap(team.name, team.streak)
         : null;
     }
+    case "explicit_streak_mismatch": {
+      const team = issue.teamSide ? expectedGame.teams[issue.teamSide] : null;
+      return team?.streak
+        ? formatStreakSentenceForRecap(team.name, team.streak)
+        : null;
+    }
+    case "missing_series_summary_line":
+      return expectedGame.seriesContext?.summaryLine ?? null;
+    case "conflicting_series_summary_line":
+      return null;
+    case "missing_required_context_sentence":
+      return null;
+    case "missing_decisive_ending_emphasis":
+      return buildSafeDecisiveEndingSentence(expectedGame);
+    case "missing_primary_run_mention":
+      return buildSafePrimaryRunSentence(expectedGame);
+    case "missing_run_timing":
+    case "unsupported_lead_change_claim":
+    case "unsupported_run_claim":
+      return buildSafeMomentumSentence(expectedGame);
+    case "banned_style_phrase":
+    case "choppy_fact_stack":
+    case "duplicate_period_state_restatement":
+    case "duplicate_outcome_restatement":
+    case "one_game_streak_language":
+    case "playoff_record_language":
+    case "playoff_streak_language":
+    case "repetitive_sentence_start":
+    case "short_fact_sentence_cluster":
+    case "unsupported_interview_claim":
+      return null;
     case "quarter_score_mismatch":
     case "quarter_winner_score_mismatch":
     case "wrong_quarter_winner":
@@ -5175,9 +12490,182 @@ function buildSafeReplacementSentence(
 
       return `${expectedGame.teams[periodFact.winningSide].name} won the ${periodFact.label} ${winnerFacingQuarterScore(periodFact, periodFact.winningSide)}.`;
     }
+    case "through_three_quarters_mismatch":
+      return buildSafeThroughThreeQuartersSentence(expectedGame);
     default:
       return null;
   }
+}
+
+function formatStreakSentenceForRecap(
+  teamName: string,
+  streak: string,
+): string | null {
+  const trimmed = streak.trim();
+  const match = trimmed.match(/^([WL])(\d+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const direction = match[1]?.toUpperCase();
+  const length = Number.parseInt(match[2] ?? "", 10);
+  if (!direction || !Number.isInteger(length) || length <= 1) {
+    return null;
+  }
+
+  return direction === "W"
+    ? `${teamName} has won ${length} straight.`
+    : `${teamName} has lost ${length} straight.`;
+}
+
+function buildSafeMomentumSentence(
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  const prioritySummaryLine = expectedGame.playByPlayFacts?.summaryLines.find(
+    (line) =>
+      /\brun\b|\blead changed hands\b|\berased a \d+-point deficit and took the lead\b/i.test(
+        line,
+      ),
+  );
+  return prioritySummaryLine ?? null;
+}
+
+function buildSafePrimaryRunSentence(
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  return (
+    expectedGame.playByPlayFacts?.summaryLines.find((line) => /\brun\b/i.test(line)) ??
+    null
+  );
+}
+
+function buildSafeDecisiveEndingSentence(
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  const endingFacts = expectedGame.playByPlayFacts?.endingFacts;
+  const decisiveScore = endingFacts?.decisiveScore;
+  if (!decisiveScore) {
+    return null;
+  }
+
+  const winnerSide = decisiveScore.scoringTeamSide;
+  const winnerName = expectedGame.teams[winnerSide].name;
+  const loserSide = winnerSide === "home" ? "away" : "home";
+  const winnerScore =
+    winnerSide === "home" ? decisiveScore.homeScore : decisiveScore.awayScore;
+  const loserScore =
+    winnerSide === "home" ? decisiveScore.awayScore : decisiveScore.homeScore;
+  const score = `${winnerScore}-${loserScore}`;
+  const timePhrase = formatDecisiveEndingTimePhrase(
+    decisiveScore.clock,
+    decisiveScore.quarter,
+  );
+
+  if (decisiveScore.isBuzzerBeater) {
+    return `${winnerName} won it on a buzzerbeater, going ahead ${score} at the horn.`;
+  }
+
+  if (endingFacts?.opponentLastChance) {
+    return `${buildSafeDecisiveScoreClause(winnerName, decisiveScore, score, timePhrase)}, and ${buildSafeLastChanceClause(expectedGame.teams[loserSide].name, endingFacts.opponentLastChance)}.`;
+  }
+
+  return `${buildSafeDecisiveScoreClause(winnerName, decisiveScore, score, timePhrase)}.`;
+}
+
+function buildSafeDecisiveScoreClause(
+  winnerName: string,
+  decisiveScore: NonNullable<
+    NonNullable<
+      GameDayRecapPromptGame["playByPlayFacts"]
+    >["endingFacts"]["decisiveScore"]
+  >,
+  score: string,
+  timePhrase: string,
+): string {
+  if (decisiveScore.momentType === "go_ahead") {
+    return `${winnerName} went ahead ${score} ${timePhrase}`;
+  }
+
+  return `${winnerName} pushed the lead to ${score} ${timePhrase}`;
+}
+
+function buildSafeLastChanceClause(
+  loserName: string,
+  lastChance: NonNullable<
+    NonNullable<
+      GameDayRecapPromptGame["playByPlayFacts"]
+    >["endingFacts"]["opponentLastChance"]
+  >,
+): string {
+  const timePhrase = formatLastChanceRepairTimePhrase(
+    lastChance.clock,
+    lastChance.quarter,
+  );
+
+  switch (lastChance.outcomeType) {
+    case "missed_free_throw":
+      switch (lastChance.chanceType) {
+        case "go_ahead":
+          return `${loserName} missed a go-ahead free throw ${timePhrase}`;
+        case "tie":
+          return `${loserName} missed a free throw that would have tied it ${timePhrase}`;
+        case "tie_or_go_ahead":
+          return `${loserName} missed a free throw on its last chance to tie or go ahead ${timePhrase}`;
+      }
+    case "missed_shot":
+      switch (lastChance.chanceType) {
+        case "go_ahead":
+          return `${loserName} missed a go-ahead shot ${timePhrase}`;
+        case "tie":
+          return `${loserName} missed the tying shot ${timePhrase}`;
+        case "tie_or_go_ahead":
+          return `${loserName} missed its last chance to tie or go ahead ${timePhrase}`;
+      }
+    case "turnover":
+      switch (lastChance.chanceType) {
+        case "go_ahead":
+          return `${loserName} turned it over on its last chance to go ahead ${timePhrase}`;
+        case "tie":
+          return `${loserName} turned it over on its last chance to tie ${timePhrase}`;
+        case "tie_or_go_ahead":
+          return `${loserName} turned it over on its last chance to tie or go ahead ${timePhrase}`;
+      }
+  }
+
+  return `${loserName} could not convert its last chance ${timePhrase}`;
+}
+
+function formatDecisiveEndingTimePhrase(
+  clock: string | null,
+  period: number,
+): string {
+  const periodLabel = formatPeriodContextLabel(period);
+  if (clock === "00:00") {
+    return "with no time left";
+  }
+
+  return clock
+    ? `with ${clock} left in ${periodLabel}`
+    : `late in ${periodLabel}`;
+}
+
+function formatLastChanceRepairTimePhrase(
+  clock: string | null,
+  period: number,
+): string {
+  const periodLabel = formatPeriodContextLabel(period);
+  if (clock === "00:00") {
+    return "at the horn";
+  }
+
+  return clock
+    ? `with ${clock} left in ${periodLabel}`
+    : `late in ${periodLabel}`;
+}
+
+function formatPeriodContextLabel(period: number): string {
+  const periodLabel = formatPeriodLabel(period);
+  return period <= 4 ? `the ${periodLabel}` : periodLabel;
 }
 
 function removeInvalidWriteupSentences(
@@ -5185,11 +12673,7 @@ function removeInvalidWriteupSentences(
   issues: GameDayRecapSemanticValidationIssue[],
 ): GameDayRecapResultGame | null {
   const sentences = splitRecapText(game.writeup);
-  const invalidSentenceIndexes = new Set(
-    issues
-      .filter((issue) => issue.field === "writeup")
-      .map((issue) => issue.sentenceIndex),
-  );
+  const invalidSentenceIndexes = collectTrimEligibleSentenceIndexes(issues);
   const trimmedSentences = sentences.filter(
     (_sentence, sentenceIndex) => !invalidSentenceIndexes.has(sentenceIndex),
   );
@@ -5202,6 +12686,75 @@ function removeInvalidWriteupSentences(
     ...game,
     writeup: trimmedSentences.join(" "),
   };
+}
+
+function isOpenerStructureIssue(
+  issue: Pick<GameDayRecapSemanticValidationIssue, "field" | "kind">,
+): boolean {
+  return (
+    issue.field === "writeup" &&
+    (issue.kind === "missing_series_summary_line" ||
+      issue.kind === "missing_decisive_ending_emphasis")
+  );
+}
+
+function isInsertionOnlyWriteupIssue(
+  issue: Pick<GameDayRecapSemanticValidationIssue, "field" | "kind">,
+): boolean {
+  return (
+    issue.field === "writeup" &&
+    issue.kind === "missing_required_context_sentence"
+  );
+}
+
+function isSoftStyleOnlyWriteupIssue(
+  issue: Pick<GameDayRecapSemanticValidationIssue, "field" | "kind">,
+): boolean {
+  return (
+    issue.field === "writeup" &&
+    (issue.kind === "choppy_fact_stack" ||
+      issue.kind === "duplicate_period_state_restatement" ||
+      issue.kind === "repetitive_sentence_start" ||
+      issue.kind === "short_fact_sentence_cluster")
+  );
+}
+
+function collectTrimEligibleSentenceIndexes(
+  issues: GameDayRecapSemanticValidationIssue[],
+): Set<number> {
+  return new Set(
+    issues
+      .filter(
+        (issue) =>
+          issue.field === "writeup" &&
+          !isOpenerStructureIssue(issue) &&
+          !isInsertionOnlyWriteupIssue(issue) &&
+          !isSoftStyleOnlyWriteupIssue(issue),
+      )
+      .map((issue) => issue.sentenceIndex),
+  );
+}
+
+function logPlayByPlayEndingFactsDebug(args: {
+  matchId: string;
+  playByPlayResult: GameDayRecapPlayByPlayLoadResult;
+  targetKey?: string;
+  userId?: string;
+}): void {
+  const debug = args.playByPlayResult.debug;
+  if (!debug?.decisiveEndingQualificationReason) {
+    return;
+  }
+
+  logGameDayRecapWarn("process.play_by_play_decisive_ending_selected", {
+    decisiveEndingClock: debug.decisiveEndingClock,
+    decisiveEndingEventText: debug.decisiveEndingEventText,
+    decisiveEndingQualificationReason: debug.decisiveEndingQualificationReason,
+    decisiveEndingQuarter: debug.decisiveEndingQuarter,
+    matchId: args.matchId,
+    targetKey: args.targetKey ?? null,
+    userId: args.userId ?? null,
+  });
 }
 
 function buildSafePartialRecapSummary(args: {
@@ -5318,7 +12871,7 @@ function resolveExplicitQuarterWinnerSide(
     const teamName = expectedGame.teams[side].name;
     if (
       new RegExp(
-        `${escapeRegExp(teamName)}[^.!?]{0,80}\\b(?:outscor(?:e|ed|es|ing)|won|take(?:s|n)?|took|claim(?:ed|s|ing))\\b`,
+        `${escapeRegExp(teamName)}[^.!?]{0,80}\\b(?:outscor(?:e|ed|es|ing)|won|take(?:s|n)?|took|claim(?:ed|s|ing)|domin(?:ate|ated|ates|ating)|control(?:led|ling|s)?)\\b`,
         "i",
       ).test(sentence)
     ) {
@@ -5336,12 +12889,6 @@ function winnerFacingQuarterScore(
   return winnerSide === "home"
     ? `${periodFact.homeScore}-${periodFact.awayScore}`
     : `${periodFact.awayScore}-${periodFact.homeScore}`;
-}
-
-function hasPregameQualifier(sentence: string): boolean {
-  return /\b(enter(?:ed|ing)|came in|coming in|before tipoff|pregame|pre-game)\b/i.test(
-    sentence,
-  );
 }
 
 function escapeRegExp(value: string): string {
@@ -5365,11 +12912,17 @@ export {
 } from "./game-day-recap-request";
 
 export const __testing = {
+  assessGameDayRecapDeterministicPayload,
   GAME_DAY_RECAP_EVIDENCE_TAGS,
   GAME_DAY_RECAP_PROMPT_VERSION,
   GAME_DAY_RECAP_RESULT_SCHEMA,
   SUPPORTED_STRUCTURED_OUTPUT_MODEL_PATTERNS,
   buildGameDayRecapInfoLogEntry,
+  buildGameDayRecapJudgeBedrockRequest,
+  buildGameDayRecapJudgeInterestingnessResultSchema,
+  buildGameDayRecapJudgeSentenceFactualityResultSchema,
+  buildGameDayRecapJudgeFactStore,
+  buildJudgeSentenceChunks,
   computeSurpriseFactorForGame,
   buildQuarterFacts,
   buildEvidenceSignals,
@@ -5378,6 +12931,8 @@ export const __testing = {
   buildRotationSummariesForRecap,
   buildSafePartialRecapSummary,
   buildGameDayRecapTargetKey,
+  buildLeagueGameDayRecapTargetKey,
+  buildSingleGameSummaryTargetKey,
   buildTeamSeasonContext,
   describeGameDayPrepFocusForRecap,
   describeEffortDeltaForRecap,
@@ -5386,6 +12941,7 @@ export const __testing = {
   extractTopPlayers,
   formatCurrentStreak,
   formatLastFive,
+  generateResolvedGameDayRecap,
   isRegularSeasonLeagueContextMatch,
   listCompletedMatchesBefore,
   mergeCoverageIssues,
@@ -5393,13 +12949,18 @@ export const __testing = {
   normalizeGameDayRecapResult,
   parseGameDayRecapQueueMessage,
   removeInvalidWriteupSentences,
+  resolvePlayoffSeriesContext,
   resolveConfiguredRecapModelId,
+  resolveConfiguredRecapStageModelIds,
   resolveQueuedRecapModelId,
+  resolveQueuedRecapStageModelIds,
   resolveLeagueDaySlate,
   resolveLeagueGameDaySlate,
+  resolveRecapQualityTier,
   resolveSeasonCandidatesForDate,
   resolveSeasonForDate,
   salvageGameDayRecapResult,
   summarizeSeasonDiagnostics,
+  judgeGameDayRecapResult,
   validateGameDayRecapResult,
 };

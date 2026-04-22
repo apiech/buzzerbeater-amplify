@@ -17,6 +17,7 @@ type GameDayRecapBackend = {
   gameDayRecapSubmit: FunctionResource;
   gameDayRecapWorker: FunctionResource;
   submitLeagueGameDayRecap: FunctionResource;
+  submitLeagueGameDayPerformances: FunctionResource;
   submitSingleGameSummary: FunctionResource;
 };
 
@@ -25,6 +26,12 @@ export function configureGameDayRecapJobs(
   config: GameDayRecapSynthConfig,
   removalPolicy: RemovalPolicy,
 ): void {
+  const submitFunctions = [
+    backend.gameDayRecapSubmit,
+    backend.submitLeagueGameDayRecap,
+    backend.submitLeagueGameDayPerformances,
+    backend.submitSingleGameSummary,
+  ];
   const workflowStack = Stack.of(backend.gameDayRecapWorker.resources.lambda);
   const workflow = createSingleLambdaWorkflow(workflowStack, {
     idPrefix: "GameDayRecapJob",
@@ -38,55 +45,86 @@ export function configureGameDayRecapJobs(
     workerFunction: backend.gameDayRecapWorker.resources.lambda,
   });
 
-  backend.gameDayRecapSubmit.addEnvironment(
-    "GAME_DAY_RECAP_STATE_MACHINE_ARN",
-    workflow.stateMachineArn,
-  );
-  backend.gameDayRecapSubmit.addEnvironment(
-    "GAME_DAY_RECAP_MODEL_ID",
-    config.defaultModelId,
-  );
-  if (config.premiumModelId) {
-    backend.gameDayRecapSubmit.addEnvironment(
-      "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
-      config.premiumModelId,
+  for (const submitFunction of submitFunctions) {
+    submitFunction.addEnvironment(
+      "GAME_DAY_RECAP_STATE_MACHINE_ARN",
+      workflow.stateMachineArn,
     );
-  }
-  backend.submitLeagueGameDayRecap.addEnvironment(
-    "GAME_DAY_RECAP_STATE_MACHINE_ARN",
-    workflow.stateMachineArn,
-  );
-  backend.submitLeagueGameDayRecap.addEnvironment(
-    "GAME_DAY_RECAP_MODEL_ID",
-    config.defaultModelId,
-  );
-  if (config.premiumModelId) {
-    backend.submitLeagueGameDayRecap.addEnvironment(
-      "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
-      config.premiumModelId,
+    submitFunction.addEnvironment(
+      "GAME_DAY_RECAP_MODEL_ID",
+      config.defaultModelId,
     );
-  }
-  backend.submitSingleGameSummary.addEnvironment(
-    "GAME_DAY_RECAP_STATE_MACHINE_ARN",
-    workflow.stateMachineArn,
-  );
-  backend.submitSingleGameSummary.addEnvironment(
-    "GAME_DAY_RECAP_MODEL_ID",
-    config.defaultModelId,
-  );
-  if (config.premiumModelId) {
-    backend.submitSingleGameSummary.addEnvironment(
-      "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
-      config.premiumModelId,
-    );
+    if (config.premiumModelId) {
+      submitFunction.addEnvironment(
+        "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
+        config.premiumModelId,
+      );
+    }
+    if (config.retryModelId) {
+      submitFunction.addEnvironment(
+        "GAME_DAY_RECAP_RETRY_MODEL_ID",
+        config.retryModelId,
+      );
+    }
+    if (config.retryPremiumModelId) {
+      submitFunction.addEnvironment(
+        "GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM",
+        config.retryPremiumModelId,
+      );
+    }
+    if (config.judgeModelId) {
+      submitFunction.addEnvironment(
+        "GAME_DAY_RECAP_JUDGE_MODEL_ID",
+        config.judgeModelId,
+      );
+    }
+    if (config.judgePremiumModelId) {
+      submitFunction.addEnvironment(
+        "GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM",
+        config.judgePremiumModelId,
+      );
+    }
   }
   backend.gameDayRecapWorker.addEnvironment(
     "GAME_DAY_RECAP_MODEL_ID",
     config.defaultModelId,
   );
+  if (config.premiumModelId) {
+    backend.gameDayRecapWorker.addEnvironment(
+      "GAME_DAY_RECAP_MODEL_ID_PREMIUM",
+      config.premiumModelId,
+    );
+  }
+  if (config.retryModelId) {
+    backend.gameDayRecapWorker.addEnvironment(
+      "GAME_DAY_RECAP_RETRY_MODEL_ID",
+      config.retryModelId,
+    );
+  }
+  if (config.retryPremiumModelId) {
+    backend.gameDayRecapWorker.addEnvironment(
+      "GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM",
+      config.retryPremiumModelId,
+    );
+  }
+  if (config.judgeModelId) {
+    backend.gameDayRecapWorker.addEnvironment(
+      "GAME_DAY_RECAP_JUDGE_MODEL_ID",
+      config.judgeModelId,
+    );
+  }
+  if (config.judgePremiumModelId) {
+    backend.gameDayRecapWorker.addEnvironment(
+      "GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM",
+      config.judgePremiumModelId,
+    );
+  }
 
   workflow.grantStartExecution(backend.gameDayRecapSubmit.resources.lambda);
   workflow.grantStartExecution(backend.submitLeagueGameDayRecap.resources.lambda);
+  workflow.grantStartExecution(
+    backend.submitLeagueGameDayPerformances.resources.lambda,
+  );
   workflow.grantStartExecution(backend.submitSingleGameSummary.resources.lambda);
   const workerLambda = backend.gameDayRecapWorker.resources.lambda;
   workerLambda.addToRolePolicy(

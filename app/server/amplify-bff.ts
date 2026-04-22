@@ -51,6 +51,7 @@ type MutationName =
   | "submitGameDayRecap"
   | "submitLeagueHistoryBackfill"
   | "submitLeagueGameDayRecap"
+  | "submitLeagueGameDayPerformances"
   | "submitMyTeamHighlightsScan"
   | "submitNextGameRecommendationJob"
   | "submitOpponentForecastJob"
@@ -264,6 +265,12 @@ const mutationOperations = {
     (await runtime.getServerDataClient()).mutations.submitLeagueGameDayRecap(
       requiredInput(input),
     ),
+  submitLeagueGameDayPerformances: async (
+    input: QueryInput<"submitLeagueGameDayPerformances">,
+  ) =>
+    (
+      await runtime.getServerDataClient()
+    ).mutations.submitLeagueGameDayPerformances(requiredInput(input)),
   submitMyTeamHighlightsScan: async () =>
     (
       await runtime.getServerDataClient()

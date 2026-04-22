@@ -37,7 +37,9 @@ import type {
   PlayerLabPayload,
   PlayerTrendPayload,
   RepairOwnerRosterDataResult,
+  RecapGenerationApproach,
   RecapHistoryRecord,
+  SubmitLeagueGameDayPerformancesResult,
   RivalsWorkspacePayload,
   SalaryCalculatorSeed,
   SalaryCalculatorSkillsInput,
@@ -1051,10 +1053,110 @@ const leagueGameDayRecapStoredRequestSchema = z
   })
   .passthrough();
 
+const leagueGameDayPerformancesStoredRequestSchema = z
+  .object({
+    gameDayNumber: z.number(),
+    leagueId: z.string(),
+    mode: z.literal("LEAGUE_GAME_DAY_PERFORMANCES"),
+    season: nullableNumberSchema,
+  })
+  .passthrough();
+
 const singleGameSummaryStoredRequestSchema = z
   .object({
     matchId: z.string(),
     mode: z.literal("SINGLE_GAME"),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesStatLineSchema = z
+  .object({
+    assists: z.number(),
+    blocks: z.number(),
+    points: z.number(),
+    rebounds: z.number(),
+    steals: z.number(),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesPlayerEntrySchema = z
+  .object({
+    efficiency: z.number(),
+    minutes: z.number(),
+    personalFouls: z.number(),
+    playerId: nullableStringSchema,
+    playerName: z.string(),
+    position: z.string(),
+    rating: nullableNumberSchema,
+    statLine: leagueGameDayPerformancesStatLineSchema,
+    teamId: nullableStringSchema,
+    teamName: z.string(),
+    turnovers: z.number(),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesTeamEntrySchema = z
+  .object({
+    teamId: nullableStringSchema,
+    teamName: z.string(),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesGameSchema = z
+  .object({
+    awayScore: z.number(),
+    awayTeamName: z.string(),
+    homeScore: z.number(),
+    homeTeamName: z.string(),
+    matchId: z.string(),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesPlayerLeaderboardSchema = z
+  .object({
+    key: z.string(),
+    label: z.string(),
+    leaders: z.array(leagueGameDayPerformancesPlayerEntrySchema),
+    unit: nullableStringSchema,
+    value: z.number(),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesTeamLeaderboardSchema = z
+  .object({
+    key: z.string(),
+    label: z.string(),
+    leaders: z.array(leagueGameDayPerformancesTeamEntrySchema),
+    unit: nullableStringSchema,
+    value: z.number(),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesPositionLeaderboardSchema = z
+  .object({
+    key: z.string(),
+    label: z.string(),
+    leaders: z.array(leagueGameDayPerformancesPlayerEntrySchema),
+    position: z.string(),
+    value: z.number(),
+  })
+  .passthrough();
+
+const leagueGameDayPerformancesResultSchema = z
+  .object({
+    badPerformance: leagueGameDayPerformancesPlayerLeaderboardSchema,
+    gameDate: nullableStringSchema,
+    gameDayNumber: z.number(),
+    games: z.array(leagueGameDayPerformancesGameSchema),
+    leagueId: z.string(),
+    leagueName: nullableStringSchema,
+    mvp: leagueGameDayPerformancesPlayerLeaderboardSchema,
+    playerLeaders: z.array(leagueGameDayPerformancesPlayerLeaderboardSchema),
+    season: nullableNumberSchema,
+    statCallouts: z.array(leagueGameDayPerformancesPlayerLeaderboardSchema),
+    teamLeaders: z.array(leagueGameDayPerformancesTeamLeaderboardSchema),
+    topFive: z.array(leagueGameDayPerformancesPositionLeaderboardSchema),
+    tripleDoubles: z.array(leagueGameDayPerformancesPlayerEntrySchema),
   })
   .passthrough();
 
@@ -1072,6 +1174,7 @@ const gameDayRecapRecordSchema = z
       .union([
         gameDayRecapStoredRequestSchema,
         leagueGameDayRecapStoredRequestSchema,
+        leagueGameDayPerformancesStoredRequestSchema,
         singleGameSummaryStoredRequestSchema,
       ])
       .optional(),
@@ -1112,6 +1215,27 @@ const operationsActivitySchema = z
   .passthrough();
 
 const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      completedAt: nullableStringSchema,
+      coverageJson: gameDayRecapCoverageSchema.nullable(),
+      error: nullableStringSchema,
+      gameDate: nullableStringSchema,
+      gameDayNumber: z.number(),
+      kind: z.literal("LEAGUE_GAME_DAY_PERFORMANCES"),
+      leagueId: nullableStringSchema,
+      leagueName: nullableStringSchema,
+      matchId: z.null(),
+      requestJson: leagueGameDayPerformancesStoredRequestSchema,
+      requestedAt: z.string(),
+      resultJson: leagueGameDayPerformancesResultSchema.nullable(),
+      season: nullableNumberSchema,
+      selectionKey: z.string(),
+      status: nullableStringSchema,
+      targetKey: z.string(),
+      updatedAt: z.string(),
+    })
+    .passthrough(),
   z
     .object({
       completedAt: nullableStringSchema,
@@ -2768,9 +2892,11 @@ export async function submitRivalsBackfillMutation(): Promise<SubmitRivalsBackfi
 }
 
 export async function submitGameDayRecapMutation(input: {
+  approach?: RecapGenerationApproach;
   gameDate: string;
   leagueId: string;
   leagueTimeZone: string;
+  qualityTier?: "premium" | "standard";
 }): Promise<SubmitGameDayRecapResult> {
   const response = await client.mutations.submitGameDayRecap(input);
   return readAmplifyDataOrThrow(
@@ -2786,8 +2912,10 @@ export async function submitGameDayRecapMutation(input: {
 }
 
 export async function submitLeagueGameDayRecapMutation(input: {
+  approach?: RecapGenerationApproach;
   gameDayNumber: number;
   leagueId: string;
+  qualityTier?: "premium" | "standard";
   season?: number;
 }): Promise<SubmitLeagueGameDayRecapResult> {
   const response = await client.mutations.submitLeagueGameDayRecap(input);
@@ -2803,8 +2931,28 @@ export async function submitLeagueGameDayRecapMutation(input: {
   ) as SubmitLeagueGameDayRecapResult;
 }
 
+export async function submitLeagueGameDayPerformancesMutation(input: {
+  gameDayNumber: number;
+  leagueId: string;
+  season?: number;
+}): Promise<SubmitLeagueGameDayPerformancesResult> {
+  const response = await client.mutations.submitLeagueGameDayPerformances(input);
+  return readAmplifyDataOrThrow(
+    response,
+    z
+      .object({
+        executionArn: nullableStringSchema,
+        targetKey: z.string(),
+      })
+      .passthrough(),
+    "Unable to submit the league game-day performances request.",
+  ) as SubmitLeagueGameDayPerformancesResult;
+}
+
 export async function submitSingleGameSummaryMutation(input: {
+  approach?: RecapGenerationApproach;
   matchId: string;
+  qualityTier?: "premium" | "standard";
 }): Promise<SubmitSingleGameSummaryResult> {
   const response = await client.mutations.submitSingleGameSummary(input);
   return readAmplifyDataOrThrow(

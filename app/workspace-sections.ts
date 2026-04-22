@@ -89,7 +89,8 @@ export const workspaceSections = [
   {
     id: "recaps",
     label: "Recaps",
-    description: "Turn full league slates into reporter-style game stories.",
+    description:
+      "Generate premium writeups or free league game-day performances from the Recaps hub.",
     group: "Competition",
   },
   {

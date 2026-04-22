@@ -76,6 +76,7 @@ type MutationOperationName =
   | "submitRivalsBackfill"
   | "submitLeagueHistoryBackfill"
   | "submitLeagueGameDayRecap"
+  | "submitLeagueGameDayPerformances"
   | "submitMyTeamHighlightsScan"
   | "submitNextGameRecommendationJob"
   | "submitOpponentForecastJob"
@@ -270,6 +271,9 @@ export const client = {
     submitLeagueGameDayRecap: (
       input: OperationInput<"submitLeagueGameDayRecap">,
     ) => requestMutation("submitLeagueGameDayRecap", input),
+    submitLeagueGameDayPerformances: (
+      input: OperationInput<"submitLeagueGameDayPerformances">,
+    ) => requestMutation("submitLeagueGameDayPerformances", input),
     submitMyTeamHighlightsScan: () =>
       requestMutation("submitMyTeamHighlightsScan"),
     submitNextGameRecommendationJob: (

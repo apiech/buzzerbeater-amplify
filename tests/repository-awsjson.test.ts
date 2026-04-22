@@ -7,7 +7,10 @@ import {
   createOpponentForecastJob,
   createSyncRun,
   getBbConnection,
+  getGameDayRecap,
+  getLeagueGameDayRecap,
   getMatchBoxscore,
+  getSingleGameSummary,
   upsertNextGamePlannerArtifact,
   upsertNextGamePlannerArtifactRows,
   getRivalsBackfill,
@@ -1024,6 +1027,225 @@ test("getBbConnection suppresses legacy workspace cache coercion errors when the
     teamId: "123",
     workspaceCacheJson: null,
   });
+});
+
+test("getGameDayRecap tolerates legacy requestJson qualityTier coercion errors", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          GameDayRecap: {
+            get: async () => ({
+              data: {
+                userId: "u1",
+                targetKey: "100#2026-03-15",
+                leagueId: "100",
+                leagueName: "Elite League",
+                gameDate: "2026-03-15",
+                season: null,
+                status: "SUCCEEDED",
+                requestedAt: "2026-03-15T23:00:00.000Z",
+                requestJson: null,
+              },
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'RecapQualityTier' within parent 'GameDayRecapStoredRequest' (/getGameDayRecap/requestJson/qualityTier)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getGameDayRecap({} as any, "u1", "100#2026-03-15");
+
+  assert.deepStrictEqual(record?.requestJson, {
+    approach: "LEGACY",
+    gameDate: "2026-03-15",
+    leagueId: "100",
+    mode: "FULL_SLATE",
+    qualityTier: "standard",
+  });
+});
+
+test("getGameDayRecap returns null when a legacy qualityTier error comes back without data", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          GameDayRecap: {
+            get: async () => ({
+              data: null,
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'RecapQualityTier' within parent 'GameDayRecapStoredRequest' (/getGameDayRecap/requestJson/qualityTier)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getGameDayRecap({} as any, "u1", "100#2026-03-15");
+
+  assert.equal(record, null);
+});
+
+test("getLeagueGameDayRecap tolerates legacy requestJson qualityTier coercion errors", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          LeagueGameDayRecap: {
+            get: async () => ({
+              data: {
+                userId: "u1",
+                targetKey: "100#64#gameday-6",
+                leagueId: "100",
+                leagueName: "Elite League",
+                gameDayNumber: 6,
+                season: 64,
+                status: "SUCCEEDED",
+                requestedAt: "2026-03-15T23:00:00.000Z",
+                requestJson: null,
+              },
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'RecapQualityTier' within parent 'LeagueGameDayRecapStoredRequest' (/getLeagueGameDayRecap/requestJson/qualityTier)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getLeagueGameDayRecap(
+    {} as any,
+    "u1",
+    "100#64#gameday-6",
+  );
+
+  assert.deepStrictEqual(record?.requestJson, {
+    approach: "LEGACY",
+    gameDayNumber: 6,
+    leagueId: "100",
+    mode: "LEAGUE_GAME_DAY",
+    qualityTier: "standard",
+    season: 64,
+  });
+});
+
+test("getLeagueGameDayRecap returns null when a legacy qualityTier error comes back without data", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          LeagueGameDayRecap: {
+            get: async () => ({
+              data: null,
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'RecapQualityTier' within parent 'LeagueGameDayRecapStoredRequest' (/getLeagueGameDayRecap/requestJson/qualityTier)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getLeagueGameDayRecap(
+    {} as any,
+    "u1",
+    "100#64#gameday-6",
+  );
+
+  assert.equal(record, null);
+});
+
+test("getSingleGameSummary tolerates legacy requestJson qualityTier coercion errors", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          SingleGameSummary: {
+            get: async () => ({
+              data: {
+                userId: "u1",
+                targetKey: "137828772",
+                matchId: "137828772",
+                gameDate: "2026-03-15",
+                leagueId: "100",
+                leagueName: "Elite League",
+                season: 64,
+                status: "SUCCEEDED",
+                requestedAt: "2026-03-15T23:00:00.000Z",
+                requestJson: null,
+              },
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'RecapQualityTier' within parent 'SingleGameSummaryStoredRequest' (/getSingleGameSummary/requestJson/qualityTier)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getSingleGameSummary({} as any, "u1", "137828772");
+
+  assert.deepStrictEqual(record?.requestJson, {
+    approach: "LEGACY",
+    matchId: "137828772",
+    mode: "SINGLE_GAME",
+    qualityTier: "standard",
+  });
+});
+
+test("getSingleGameSummary returns null when a legacy qualityTier error comes back without data", async (t) => {
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          SingleGameSummary: {
+            get: async () => ({
+              data: null,
+              errors: [
+                {
+                  message:
+                    "Cannot return null for non-nullable type: 'RecapQualityTier' within parent 'SingleGameSummaryStoredRequest' (/getSingleGameSummary/requestJson/qualityTier)",
+                },
+              ],
+            }),
+          },
+        },
+      }) as any,
+  );
+
+  const record = await getSingleGameSummary({} as any, "u1", "137828772");
+
+  assert.equal(record, null);
 });
 
 test("listPlayerSkillObservations queries the user history index with a player prefix", async (t) => {

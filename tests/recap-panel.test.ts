@@ -6,6 +6,7 @@ import {
   hasActiveGameDayRecap,
   hasActiveRecapHistory,
   resolveDefaultRecapDate,
+  resolveRecapInputMaxDate,
   sortGameDayRecaps,
 } from "../app/recap-panel";
 import type {
@@ -90,6 +91,77 @@ test("resolveDefaultRecapDate uses the latest recent match date", () => {
   assert.equal(resolveDefaultRecapDate(createContext()), "2026-03-15");
 });
 
+test("resolveDefaultRecapDate tolerates missing recent matches and falls back to today", () => {
+  const context = {
+    ...createContext(),
+    recentMatches: undefined,
+  } as unknown as RecapPanelContext;
+
+  assert.equal(
+    resolveDefaultRecapDate(context),
+    resolveRecapInputMaxDate("America/New_York"),
+  );
+});
+
+test("recap submission stays blocked while the panel context is still hydrating", () => {
+  const context = {
+    ...createContext(),
+    recentMatches: undefined,
+  } as unknown as RecapPanelContext;
+
+  assert.equal(
+    recapTesting.resolveSubmissionBlockReason({
+      context,
+      gameDate: "2026-03-15",
+      gameDayNumber: "1",
+      historyLoaded: false,
+      leagueId: "100",
+      leagueTimeZone: "America/New_York",
+      matchId: "",
+      mode: "LEAGUE_DATE",
+    }),
+    "Recap tools are still loading. Try again in a moment.",
+  );
+});
+
+test("performances stay available when premium writeups are locked", () => {
+  assert.equal(
+    recapTesting.resolveSubmissionBlockReason({
+      branch: "WRITEUPS",
+      canUseLeagueWriteups: false,
+      context: createContext(),
+      gameDate: "2026-03-15",
+      gameDayNumber: "22",
+      historyLoaded: true,
+      isLoadingLeagueWriteupAccess: false,
+      leagueId: "100",
+      leagueTimeZone: "America/New_York",
+      matchId: "",
+      mode: "LEAGUE_GAME_DAY",
+      season: "",
+    }),
+    "AI writeups require Premium. Switch to Performances for the free league game-day report.",
+  );
+
+  assert.equal(
+    recapTesting.resolveSubmissionBlockReason({
+      branch: "PERFORMANCES",
+      canUseLeagueWriteups: false,
+      context: createContext(),
+      gameDate: "2026-03-15",
+      gameDayNumber: "22",
+      historyLoaded: true,
+      isLoadingLeagueWriteupAccess: false,
+      leagueId: "100",
+      leagueTimeZone: "America/New_York",
+      matchId: "",
+      mode: "LEAGUE_GAME_DAY",
+      season: "",
+    }),
+    null,
+  );
+});
+
 test("sortGameDayRecaps orders the most recent recap first", () => {
   const sorted = sortGameDayRecaps([
     createRecapRecord({
@@ -156,6 +228,54 @@ test("hasActiveRecapHistory detects non-terminal recap work", () => {
       }),
     ]),
     true,
+  );
+});
+
+test("history filtering keeps writeups and performances in separate lanes", () => {
+  const mixedHistory = [
+    createRecapHistoryRecord({
+      selectionKey: "LEAGUE_DATE:gd-1",
+      status: "SUCCEEDED",
+      targetKey: "gd-1",
+      updatedAt: "2026-03-15T22:00:00Z",
+    }),
+    {
+      completedAt: "2026-04-12T01:02:00.000Z",
+      coverageJson: null,
+      error: null,
+      gameDate: "2026-04-11",
+      gameDayNumber: 22,
+      kind: "LEAGUE_GAME_DAY_PERFORMANCES",
+      leagueId: "100",
+      leagueName: "Elite League",
+      matchId: null,
+      requestJson: {
+        gameDayNumber: 22,
+        leagueId: "100",
+        mode: "LEAGUE_GAME_DAY_PERFORMANCES",
+        season: 71,
+      },
+      requestedAt: "2026-04-12T01:00:00.000Z",
+      resultJson: null,
+      season: 71,
+      selectionKey: "LEAGUE_GAME_DAY_PERFORMANCES:perf-1",
+      status: "SUCCEEDED",
+      targetKey: "perf-1",
+      updatedAt: "2026-04-12T01:02:00.000Z",
+    } satisfies RecapHistoryRecord,
+  ];
+
+  assert.deepStrictEqual(
+    recapTesting
+      .filterRecapHistoryForBranch(mixedHistory, "WRITEUPS")
+      .map((record) => record.kind),
+    ["LEAGUE_DATE"],
+  );
+  assert.deepStrictEqual(
+    recapTesting
+      .filterRecapHistoryForBranch(mixedHistory, "PERFORMANCES")
+      .map((record) => record.kind),
+    ["LEAGUE_GAME_DAY_PERFORMANCES"],
   );
 });
 
@@ -246,7 +366,7 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
   });
 
   assert.match(forumPost, /^\[b]Elite League roundup\[\/b]/);
-  assert.match(forumPost, /\[i]Elite League .+ 2026-03-15\[\/i]/);
+  assert.match(forumPost, /\[i]Elite League .*2026-03-15.*\[\/i]/);
   assert.match(
     forumPost,
     /\[quote]Two games gave the forum plenty to discuss\.\[\/quote]/,
@@ -263,6 +383,160 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
   assert.match(forumPost, /\[i]Surprise factor: 2\.1\/10\[\/i]/);
   assert.match(forumPost, /Match: \[match=137828772]/);
   assert.match(forumPost, /Match: scrim-like/);
+});
+
+test("performances forum formatter builds the planned sections, ties, and match links", () => {
+  const record = {
+    completedAt: "2026-04-12T01:02:00.000Z",
+    coverageJson: null,
+    error: null,
+    gameDate: "2026-04-11",
+    gameDayNumber: 22,
+    kind: "LEAGUE_GAME_DAY_PERFORMANCES",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    requestJson: {
+      gameDayNumber: 22,
+      leagueId: "100",
+      mode: "LEAGUE_GAME_DAY_PERFORMANCES",
+      season: 71,
+    },
+    requestedAt: "2026-04-12T01:00:00.000Z",
+    resultJson: null,
+    season: 71,
+    selectionKey: "LEAGUE_GAME_DAY_PERFORMANCES:perf-1",
+    status: "SUCCEEDED",
+    targetKey: "perf-1",
+    updatedAt: "2026-04-12T01:02:00.000Z",
+  } as const;
+
+  const playerA = {
+    efficiency: 31,
+    minutes: 38,
+    personalFouls: 2,
+    playerId: "p-a",
+    playerName: "Jules Alpha",
+    position: "PG",
+    rating: 14.5,
+    statLine: {
+      assists: 10,
+      blocks: 0,
+      points: 12,
+      rebounds: 14,
+      steals: 3,
+    },
+    teamId: "alpha",
+    teamName: "Alpha",
+    turnovers: 2,
+  } as const;
+  const playerB = {
+    efficiency: 36,
+    minutes: 36,
+    personalFouls: 1,
+    playerId: "p-b",
+    playerName: "Drew Delta",
+    position: "SG",
+    rating: 20.5,
+    statLine: {
+      assists: 2,
+      blocks: 0,
+      points: 44,
+      rebounds: 5,
+      steals: 1,
+    },
+    teamId: "delta",
+    teamName: "Delta",
+    turnovers: 6,
+  } as const;
+
+  const forumPost = recapTesting.formatLeagueGameDayPerformancesForumPost(
+    record,
+    {
+      badPerformance: {
+        key: "bad-performance",
+        label: "Bad performance",
+        leaders: [playerA],
+        value: -9,
+      },
+      gameDate: "2026-04-11",
+      gameDayNumber: 22,
+      games: [
+        {
+          awayScore: 81,
+          awayTeamName: "Delta",
+          homeScore: 91,
+          homeTeamName: "Gamma",
+          matchId: "137828772",
+        },
+      ],
+      leagueId: "100",
+      leagueName: "Elite League",
+      mvp: {
+        key: "mvp",
+        label: "MVP",
+        leaders: [playerB],
+        value: 36,
+      },
+      playerLeaders: [
+        {
+          key: "points",
+          label: "Points",
+          leaders: [playerA, playerB],
+          value: 44,
+        },
+      ],
+      season: 71,
+      statCallouts: [
+        {
+          key: "turnovers",
+          label: "Most turnovers",
+          leaders: [playerA, playerB],
+          value: 6,
+        },
+      ],
+      teamLeaders: [
+        {
+          key: "offense",
+          label: "Offense",
+          leaders: [
+            { teamId: "gamma", teamName: "Gamma" },
+            { teamId: "delta", teamName: "Delta" },
+          ],
+          value: 91,
+        },
+      ],
+      topFive: [
+        {
+          key: "pg",
+          label: "Point Guard",
+          leaders: [playerA],
+          position: "PG",
+          value: 31,
+        },
+      ],
+      tripleDoubles: [playerA],
+    },
+  );
+
+  assert.match(
+    forumPost,
+    /^\[u]\[b]Game day 22 \(2026-04-11\) performances\[\/b]\[\/u]/,
+  );
+  assert.match(forumPost, /\[b]Night results\[\/b]/);
+  assert.match(forumPost, /\[b]Best team performances of the evening\[\/b]/);
+  assert.match(forumPost, /\[b]Best player performances of the evening\[\/b]/);
+  assert.match(forumPost, /\[b]Top five of the evening\[\/b]/);
+  assert.match(forumPost, /\[b]MVP of the evening\[\/b]/);
+  assert.match(forumPost, /\[b]Bad performance of the evening\[\/b]/);
+  assert.match(forumPost, /\[b]Triple-doubles of the evening\[\/b]/);
+  assert.match(forumPost, /\[b]All kinds of statistics\[\/b]/);
+  assert.match(forumPost, /\[match=137828772]/);
+  assert.match(
+    forumPost,
+    /Jules Alpha \(Alpha\) - PG, Drew Delta \(Delta\) - SG/,
+  );
+  assert.doesNotMatch(forumPost, /buzzer-manager\.com/i);
 });
 
 test("recap capability copy mentions public play-by-play availability", () => {

@@ -4,6 +4,7 @@ import { partitionLegacyWorkspaceCacheCoercionErrors } from "@/amplify/data/_bac
 import { getServerDataClient } from "@/app/server/amplify-server";
 import {
   adaptLeagueDateRecap,
+  adaptLeagueGameDayPerformances,
   adaptLeagueGameDayRecap,
   adaptSingleGameSummary,
   decodeRecapHistoryToken,
@@ -11,6 +12,7 @@ import {
   hasMoreRecapHistory,
   mergeRecapHistoryStreams,
   normalizeGameDayRecapRecord,
+  normalizeLeagueGameDayPerformancesRecord,
   normalizeLeagueGameDayRecapRecord,
   normalizeSingleGameSummaryRecord,
   type RecapHistoryCursor,
@@ -245,6 +247,7 @@ async function getRecapHistory(
   const serverDataClient = await runtime.getServerDataClient();
   const state: RecapHistoryCursor = cursor ?? {
     gameDay: { buffer: [], nextToken: undefined },
+    performances: { buffer: [], nextToken: undefined },
     leagueGameDay: { buffer: [], nextToken: undefined },
     singleGame: { buffer: [], nextToken: undefined },
   };
@@ -263,7 +266,7 @@ async function getRecapHistory(
           );
         return {
           nextToken: result.nextToken ?? null,
-          items: toArray(result.data)
+          items: toPresentArray(result.data)
             .map(normalizeGameDayRecapRecord)
             .map(adaptLeagueDateRecap),
           errors: result.errors,
@@ -281,9 +284,27 @@ async function getRecapHistory(
           );
         return {
           nextToken: result.nextToken ?? null,
-          items: toArray(result.data)
+          items: toPresentArray(result.data)
             .map(normalizeLeagueGameDayRecapRecord)
             .map(adaptLeagueGameDayRecap),
+          errors: result.errors,
+        };
+      }),
+      fillRecapHistoryBuffer(state.performances, limit, async (nextToken) => {
+        const result =
+          await serverDataClient.models.LeagueGameDayPerformances.listLeagueGameDayPerformancesByUserAndRequestedAt(
+            { userId },
+            {
+              limit,
+              nextToken,
+              sortDirection: "DESC",
+            },
+          );
+        return {
+          nextToken: result.nextToken ?? null,
+          items: toPresentArray(result.data)
+            .map(normalizeLeagueGameDayPerformancesRecord)
+            .map(adaptLeagueGameDayPerformances),
           errors: result.errors,
         };
       }),
@@ -299,7 +320,7 @@ async function getRecapHistory(
           );
         return {
           nextToken: result.nextToken ?? null,
-          items: toArray(result.data)
+          items: toPresentArray(result.data)
             .map(normalizeSingleGameSummaryRecord)
             .map(adaptSingleGameSummary),
           errors: result.errors,
@@ -411,6 +432,12 @@ function readToken(input: Record<string, unknown> | undefined): string | null {
 
 function toArray<TItem>(value: ReadonlyArray<TItem> | null | undefined): TItem[] {
   return value ? [...value] : [];
+}
+
+function toPresentArray<TItem>(
+  value: ReadonlyArray<TItem | null | undefined> | null | undefined,
+): TItem[] {
+  return toArray(value).filter((item): item is TItem => item != null);
 }
 
 function normalizeCurrentBbConnectionRecord(

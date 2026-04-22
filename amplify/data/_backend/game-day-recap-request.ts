@@ -1,4 +1,5 @@
 import type { Schema } from "../resource";
+import { RecapGenerationApproach } from "../schema-enums";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -12,15 +13,29 @@ export type LeagueGameDayRecapSubmissionRequest = NonNullable<
   season: number | null;
 };
 
+export type LeagueGameDayPerformancesSubmissionRequest = NonNullable<
+  Schema["submitLeagueGameDayPerformances"]["args"]
+> & {
+  season: number | null;
+};
+
 export type SingleGameSummarySubmissionRequest = NonNullable<
   Schema["submitSingleGameSummary"]["args"]
 >;
 
-export type RecapJobKind = "LEAGUE_DATE" | "LEAGUE_GAME_DAY" | "SINGLE_GAME";
+export type RecapGenerationApproachValue = RecapGenerationApproach;
+
+export type RecapJobKind =
+  | "LEAGUE_DATE"
+  | "LEAGUE_GAME_DAY"
+  | "LEAGUE_GAME_DAY_PERFORMANCES"
+  | "SINGLE_GAME";
+export type RecapQualityTier = "standard" | "premium";
 
 export type RecapQueueMessage = {
   kind: RecapJobKind;
   modelId?: string;
+  qualityTier: RecapQualityTier;
   requestedAt: string;
   targetKey: string;
   userId: string;
@@ -30,8 +45,13 @@ export function normalizeGameDayRecapRequest(
   input: unknown,
 ): GameDayRecapSubmissionRequest {
   const record = requireRecord(input, "Game day recap request");
+  const approach = normalizeRecapGenerationApproach(
+    record.approach,
+    RecapGenerationApproach.FACT_LIBRARY_FIRST,
+  );
   const leagueId = asOptionalString(record.leagueId)?.trim();
   const gameDate = asOptionalString(record.gameDate)?.trim();
+  const qualityTier = normalizeRequestedRecapQualityTier(record.qualityTier);
 
   if (!leagueId) {
     throw new Error("Game day recap requests require a leagueId.");
@@ -44,8 +64,10 @@ export function normalizeGameDayRecapRequest(
   }
 
   return {
+    approach,
     gameDate,
     leagueId,
+    ...(qualityTier ? { qualityTier } : {}),
   };
 }
 
@@ -53,8 +75,13 @@ export function normalizeLeagueGameDayRecapRequest(
   input: unknown,
 ): LeagueGameDayRecapSubmissionRequest {
   const record = requireRecord(input, "League game day recap request");
+  const approach = normalizeRecapGenerationApproach(
+    record.approach,
+    RecapGenerationApproach.FACT_LIBRARY_FIRST,
+  );
   const leagueId = asOptionalString(record.leagueId)?.trim();
   const gameDayNumber = asOptionalNumber(record.gameDayNumber);
+  const qualityTier = normalizeRequestedRecapQualityTier(record.qualityTier);
   const season = asOptionalNumber(record.season);
 
   if (!leagueId) {
@@ -75,9 +102,22 @@ export function normalizeLeagueGameDayRecapRequest(
   }
 
   return {
+    approach,
     gameDayNumber,
     leagueId,
+    ...(qualityTier ? { qualityTier } : {}),
     season,
+  };
+}
+
+export function normalizeLeagueGameDayPerformancesRequest(
+  input: unknown,
+): LeagueGameDayPerformancesSubmissionRequest {
+  const request = normalizeLeagueGameDayRecapRequest(input);
+  return {
+    gameDayNumber: request.gameDayNumber,
+    leagueId: request.leagueId,
+    season: request.season,
   };
 }
 
@@ -85,31 +125,60 @@ export function normalizeSingleGameSummaryRequest(
   input: unknown,
 ): SingleGameSummarySubmissionRequest {
   const record = requireRecord(input, "Single game summary request");
+  const approach = normalizeRecapGenerationApproach(
+    record.approach,
+    RecapGenerationApproach.FACT_LIBRARY_FIRST,
+  );
   const matchId = asOptionalString(record.matchId)?.trim();
+  const qualityTier = normalizeRequestedRecapQualityTier(record.qualityTier);
   if (!matchId || !/^\d+$/.test(matchId)) {
     throw new Error("Single game summaries require a numeric matchId.");
   }
 
-  return { matchId };
+  return {
+    approach,
+    matchId,
+    ...(qualityTier ? { qualityTier } : {}),
+  };
 }
 
 export function buildGameDayRecapTargetKey(
   leagueId: string,
   gameDate: string,
+  approach: RecapGenerationApproachValue = RecapGenerationApproach.LEGACY,
+  qualityTier: RecapQualityTier | null = null,
 ): string {
-  return `${leagueId}#${gameDate}`;
+  return appendQualityTierSuffix(
+    appendApproachSuffix(`${leagueId}#${gameDate}`, approach),
+    qualityTier,
+  );
 }
 
 export function buildLeagueGameDayRecapTargetKey(
   leagueId: string,
   gameDayNumber: number,
   season: number | null,
+  approach: RecapGenerationApproachValue = RecapGenerationApproach.LEGACY,
+  qualityTier: RecapQualityTier | null = null,
 ): string {
-  return `${leagueId}#${season ?? "current"}#gameday-${gameDayNumber}`;
+  return appendQualityTierSuffix(
+    appendApproachSuffix(
+      `${leagueId}#${season ?? "current"}#gameday-${gameDayNumber}`,
+      approach,
+    ),
+    qualityTier,
+  );
 }
 
-export function buildSingleGameSummaryTargetKey(matchId: string): string {
-  return matchId;
+export function buildSingleGameSummaryTargetKey(
+  matchId: string,
+  approach: RecapGenerationApproachValue = RecapGenerationApproach.LEGACY,
+  qualityTier: RecapQualityTier | null = null,
+): string {
+  return appendQualityTierSuffix(
+    appendApproachSuffix(matchId, approach),
+    qualityTier,
+  );
 }
 
 export function parseGameDayRecapQueueMessage(
@@ -121,10 +190,12 @@ export function parseGameDayRecapQueueMessage(
   );
   const rawKind = asOptionalString(payload.kind)?.trim();
   const modelId = asOptionalString(payload.modelId)?.trim();
+  const rawQualityTier = asOptionalString(payload.qualityTier)?.trim();
   const userId = asOptionalString(payload.userId)?.trim();
   const targetKey = asOptionalString(payload.targetKey)?.trim();
   const requestedAt = asOptionalString(payload.requestedAt)?.trim();
   const kind = rawKind ?? "LEAGUE_DATE";
+  const qualityTier = rawQualityTier ?? "standard";
 
   if (
     !userId ||
@@ -132,16 +203,19 @@ export function parseGameDayRecapQueueMessage(
     !requestedAt ||
     (kind !== "LEAGUE_DATE" &&
       kind !== "LEAGUE_GAME_DAY" &&
-      kind !== "SINGLE_GAME")
+      kind !== "LEAGUE_GAME_DAY_PERFORMANCES" &&
+      kind !== "SINGLE_GAME") ||
+    (qualityTier !== "standard" && qualityTier !== "premium")
   ) {
     throw new Error(
-      "Game day recap queue message must include kind, userId, targetKey, and requestedAt.",
+      "Game day recap queue message must include kind, qualityTier, userId, targetKey, and requestedAt.",
     );
   }
 
   return {
     kind,
     ...(modelId ? { modelId } : {}),
+    qualityTier,
     requestedAt,
     targetKey,
     userId,
@@ -154,6 +228,52 @@ function requireRecord(value: unknown, context: string): JsonRecord {
   }
 
   return value as JsonRecord;
+}
+
+export function normalizeStoredRecapGenerationApproach(
+  value: unknown,
+): RecapGenerationApproachValue {
+  return normalizeRecapGenerationApproach(value, RecapGenerationApproach.LEGACY);
+}
+
+export function normalizeSubmittedRecapGenerationApproach(
+  value: unknown,
+): RecapGenerationApproachValue {
+  return normalizeRecapGenerationApproach(
+    value,
+    RecapGenerationApproach.FACT_LIBRARY_FIRST,
+  );
+}
+
+function normalizeRecapGenerationApproach(
+  value: unknown,
+  fallback: RecapGenerationApproachValue,
+): RecapGenerationApproachValue {
+  const approach = asOptionalString(value)?.trim();
+  if (approach === RecapGenerationApproach.LEGACY) {
+    return RecapGenerationApproach.LEGACY;
+  }
+  if (approach === RecapGenerationApproach.FACT_LIBRARY_FIRST) {
+    return RecapGenerationApproach.FACT_LIBRARY_FIRST;
+  }
+
+  return fallback;
+}
+
+function appendApproachSuffix(
+  baseTargetKey: string,
+  approach: RecapGenerationApproachValue,
+): string {
+  return approach === RecapGenerationApproach.FACT_LIBRARY_FIRST
+    ? `${baseTargetKey}#fact-library-first`
+    : baseTargetKey;
+}
+
+function appendQualityTierSuffix(
+  baseTargetKey: string,
+  qualityTier: RecapQualityTier | null,
+): string {
+  return qualityTier ? `${baseTargetKey}#quality-${qualityTier}` : baseTargetKey;
 }
 
 function asOptionalString(value: unknown): string | null {
@@ -173,6 +293,17 @@ function asOptionalNumber(value: unknown): number | null {
 
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function normalizeRequestedRecapQualityTier(
+  value: unknown,
+): RecapQualityTier | null {
+  const qualityTier = asOptionalString(value)?.trim();
+  if (qualityTier === "standard" || qualityTier === "premium") {
+    return qualityTier;
   }
 
   return null;

@@ -3,6 +3,9 @@ import type {
   GameDayRecapCoveragePayload,
   GameDayRecapResultPayload,
   LeagueDateRecapHistoryRecord,
+  LeagueGameDayPerformancesHistoryRecord,
+  LeagueGameDayPerformancesRecord,
+  LeagueGameDayPerformancesResultPayload,
   LeagueGameDayRecapHistoryRecord,
   LeagueGameDayRecapRecord,
   RecapHistoryKind,
@@ -10,6 +13,7 @@ import type {
   SingleGameRecapHistoryRecord,
   SingleGameSummaryRecord,
 } from "@/app/types";
+import { RecapGenerationApproach } from "@/amplify/data/schema-enums";
 import { safeJsonParse } from "@/lib/json-parsing";
 
 export type RecapStreamState = {
@@ -19,6 +23,7 @@ export type RecapStreamState = {
 
 export type RecapHistoryCursor = {
   gameDay: RecapStreamState;
+  performances: RecapStreamState;
   leagueGameDay: RecapStreamState;
   singleGame: RecapStreamState;
 };
@@ -30,6 +35,7 @@ export function mergeRecapHistoryStreams(
   const items: RecapHistoryRecord[] = [];
   const buffers = {
     gameDay: state.gameDay.buffer,
+    performances: state.performances.buffer,
     leagueGameDay: state.leagueGameDay.buffer,
     singleGame: state.singleGame.buffer,
   };
@@ -37,6 +43,7 @@ export function mergeRecapHistoryStreams(
   while (items.length < limit) {
     const candidates = [
       buffers.gameDay[0],
+      buffers.performances[0],
       buffers.leagueGameDay[0],
       buffers.singleGame[0],
     ].filter((value): value is RecapHistoryRecord => Boolean(value));
@@ -56,6 +63,11 @@ export function mergeRecapHistoryStreams(
       continue;
     }
 
+    if (buffers.performances[0]?.selectionKey === nextItem.selectionKey) {
+      buffers.performances.shift();
+      continue;
+    }
+
     if (buffers.leagueGameDay[0]?.selectionKey === nextItem.selectionKey) {
       buffers.leagueGameDay.shift();
       continue;
@@ -70,6 +82,7 @@ export function mergeRecapHistoryStreams(
 export function hasMoreRecapHistory(state: RecapHistoryCursor): boolean {
   return [
     state.gameDay,
+    state.performances,
     state.leagueGameDay,
     state.singleGame,
   ].some((stream) => stream.buffer.length || stream.nextToken !== null);
@@ -96,6 +109,7 @@ export function decodeRecapHistoryToken(
 
     return {
       gameDay: normalizeRecapStreamState(parsed.gameDay),
+      performances: normalizeRecapStreamState(parsed.performances),
       leagueGameDay: normalizeRecapStreamState(parsed.leagueGameDay),
       singleGame: normalizeRecapStreamState(parsed.singleGame),
     };
@@ -195,6 +209,34 @@ export function adaptLeagueGameDayRecap(
   };
 }
 
+export function adaptLeagueGameDayPerformances(
+  record: LeagueGameDayPerformancesRecord,
+): LeagueGameDayPerformancesHistoryRecord {
+  const normalized = normalizeLeagueGameDayPerformancesRecord(record);
+  return {
+    completedAt: normalized.completedAt ?? null,
+    coverageJson: normalized.coverageJson ?? null,
+    error: normalized.error ?? null,
+    gameDate: normalized.gameDate ?? null,
+    gameDayNumber: normalized.gameDayNumber,
+    kind: "LEAGUE_GAME_DAY_PERFORMANCES",
+    leagueId: normalized.leagueId,
+    leagueName: normalized.leagueName ?? null,
+    matchId: null,
+    requestJson: normalized.requestJson,
+    requestedAt: normalized.requestedAt,
+    resultJson: normalized.resultJson ?? null,
+    season: normalized.season ?? null,
+    selectionKey: toRecapSelectionKey(
+      "LEAGUE_GAME_DAY_PERFORMANCES",
+      normalized.targetKey,
+    ),
+    status: normalized.status,
+    targetKey: normalized.targetKey,
+    updatedAt: normalized.updatedAt,
+  };
+}
+
 export function adaptSingleGameSummary(
   record: SingleGameSummaryRecord,
 ): SingleGameRecapHistoryRecord {
@@ -227,9 +269,16 @@ export function normalizeGameDayRecapRecord(
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
     requestJson: {
+      approach:
+        readOptionalRecapGenerationApproach(
+          readLegacyField(record.requestJson)?.approach,
+        ) ?? RecapGenerationApproach.LEGACY,
       gameDate: normalizeDateString(readLegacyField(record.requestJson)?.gameDate) ?? record.gameDate,
       leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
       mode: "FULL_SLATE",
+      qualityTier: normalizeRecapQualityTier(
+        readLegacyField(record.requestJson)?.qualityTier,
+      ),
     },
     resultJson: normalizeRecapResult(record.resultJson),
   };
@@ -242,17 +291,47 @@ export function normalizeLeagueGameDayRecapRecord(
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
     requestJson: {
+      approach:
+        readOptionalRecapGenerationApproach(
+          readLegacyField(record.requestJson)?.approach,
+        ) ?? RecapGenerationApproach.LEGACY,
       gameDayNumber:
         asFiniteNumber(readLegacyField(record.requestJson)?.gameDayNumber) ??
         record.gameDayNumber,
       leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
       mode: "LEAGUE_GAME_DAY",
+      qualityTier: normalizeRecapQualityTier(
+        readLegacyField(record.requestJson)?.qualityTier,
+      ),
       season:
         asFiniteNumber(readLegacyField(record.requestJson)?.season) ??
         record.season ??
         null,
     },
     resultJson: normalizeRecapResult(record.resultJson),
+  };
+}
+
+export function normalizeLeagueGameDayPerformancesRecord(
+  record: LeagueGameDayPerformancesRecord,
+): LeagueGameDayPerformancesRecord {
+  return {
+    ...record,
+    coverageJson: normalizeRecapCoverage(record.coverageJson),
+    requestJson: {
+      gameDayNumber:
+        asFiniteNumber(readLegacyField(record.requestJson)?.gameDayNumber) ??
+        record.gameDayNumber,
+      leagueId:
+        asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ??
+        record.leagueId,
+      mode: "LEAGUE_GAME_DAY_PERFORMANCES",
+      season:
+        asFiniteNumber(readLegacyField(record.requestJson)?.season) ??
+        record.season ??
+        null,
+    },
+    resultJson: normalizeLeagueGameDayPerformancesResult(record.resultJson),
   };
 }
 
@@ -263,9 +342,16 @@ export function normalizeSingleGameSummaryRecord(
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
     requestJson: {
+      approach:
+        readOptionalRecapGenerationApproach(
+          readLegacyField(record.requestJson)?.approach,
+        ) ?? RecapGenerationApproach.LEGACY,
       matchId:
         asNonEmptyString(readLegacyField(record.requestJson)?.matchId) ?? record.matchId,
       mode: "SINGLE_GAME",
+      qualityTier: normalizeRecapQualityTier(
+        readLegacyField(record.requestJson)?.qualityTier,
+      ),
     },
     resultJson: normalizeRecapResult(record.resultJson),
   };
@@ -343,6 +429,9 @@ function normalizeRecapResult(
           const source = toRecord(entry);
           const headline = asNonEmptyString(source?.headline);
           const matchId = asNonEmptyString(source?.matchId);
+          const postgameInterview = normalizeRecapPostgameInterview(
+            source?.postgameInterview,
+          );
           const writeup = asNonEmptyString(source?.writeup);
           if (!headline || !matchId || !writeup) {
             return [];
@@ -352,6 +441,7 @@ function normalizeRecapResult(
             evidenceTags: toStringArray(source?.evidenceTags),
             headline,
             matchId,
+            ...(postgameInterview ? { postgameInterview } : {}),
             surpriseFactor: asFiniteNumber(source?.surpriseFactor),
             writeup,
           }];
@@ -375,6 +465,327 @@ function normalizeRecapResult(
   };
 }
 
+function normalizeRecapPostgameInterview(
+  value: unknown,
+): NonNullable<
+  GameDayRecapResultPayload["games"][number]["postgameInterview"]
+> | null {
+  const record = toRecord(readLegacyField(value));
+  const playerName = asNonEmptyString(record?.playerName);
+  const teamName = asNonEmptyString(record?.teamName);
+  const teamSide = record?.teamSide === "away" || record?.teamSide === "home"
+    ? record.teamSide
+    : null;
+  const title = asNonEmptyString(record?.title);
+  const qa = Array.isArray(record?.qa)
+    ? record.qa
+        .flatMap((entry) => {
+          const exchange = toRecord(entry);
+          const question = asNonEmptyString(exchange?.question);
+          const answer = asNonEmptyString(exchange?.answer);
+          return question && answer
+            ? [
+                {
+                  answer,
+                  question,
+                },
+              ]
+            : [];
+        })
+        .slice(0, 2)
+    : [];
+
+  if (!playerName || !teamName || !teamSide || !title || qa.length === 0) {
+    return null;
+  }
+
+  return {
+    playerName,
+    qa,
+    teamName,
+    teamSide,
+    title,
+  };
+}
+
+function normalizeLeagueGameDayPerformancesResult(
+  value: unknown,
+): LeagueGameDayPerformancesResultPayload | null {
+  const record = readLegacyField(value);
+  const gameDayNumber = asFiniteNumber(record?.gameDayNumber);
+  const leagueId = asNonEmptyString(record?.leagueId);
+  const games = Array.isArray(record?.games)
+    ? record.games
+        .map((entry) => normalizeLeagueGameDayPerformancesGame(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["games"][number] =>
+            Boolean(entry),
+        )
+    : [];
+  const playerLeaders = Array.isArray(record?.playerLeaders)
+    ? record.playerLeaders
+        .map((entry) => normalizeLeagueGameDayPerformancesPlayerLeaderboard(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["playerLeaders"][number] =>
+            Boolean(entry),
+        )
+    : [];
+  const statCallouts = Array.isArray(record?.statCallouts)
+    ? record.statCallouts
+        .map((entry) => normalizeLeagueGameDayPerformancesPlayerLeaderboard(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["statCallouts"][number] =>
+            Boolean(entry),
+        )
+    : [];
+  const teamLeaders = Array.isArray(record?.teamLeaders)
+    ? record.teamLeaders
+        .map((entry) => normalizeLeagueGameDayPerformancesTeamLeaderboard(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["teamLeaders"][number] =>
+            Boolean(entry),
+        )
+    : [];
+  const topFive = Array.isArray(record?.topFive)
+    ? record.topFive
+        .map((entry) => normalizeLeagueGameDayPerformancesPositionLeaderboard(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["topFive"][number] =>
+            Boolean(entry),
+        )
+    : [];
+  const mvp = normalizeLeagueGameDayPerformancesPlayerLeaderboard(record?.mvp);
+  const badPerformance = normalizeLeagueGameDayPerformancesPlayerLeaderboard(
+    record?.badPerformance,
+  );
+  const tripleDoubles = Array.isArray(record?.tripleDoubles)
+    ? record.tripleDoubles
+        .map((entry) => normalizeLeagueGameDayPerformancesPlayerEntry(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["tripleDoubles"][number] =>
+            Boolean(entry),
+        )
+    : [];
+
+  if (
+    gameDayNumber === null ||
+    !leagueId ||
+    games.length === 0 ||
+    !mvp ||
+    !badPerformance
+  ) {
+    return null;
+  }
+
+  return {
+    badPerformance,
+    gameDate: normalizeDateString(record?.gameDate),
+    gameDayNumber,
+    games,
+    leagueId,
+    leagueName: asNonEmptyString(record?.leagueName),
+    mvp,
+    playerLeaders,
+    season: asFiniteNumber(record?.season),
+    statCallouts,
+    teamLeaders,
+    topFive,
+    tripleDoubles,
+  };
+}
+
+function normalizeLeagueGameDayPerformancesGame(
+  value: unknown,
+): LeagueGameDayPerformancesResultPayload["games"][number] | null {
+  const record = toRecord(value);
+  const awayScore = asFiniteNumber(record?.awayScore);
+  const awayTeamName = asNonEmptyString(record?.awayTeamName);
+  const homeScore = asFiniteNumber(record?.homeScore);
+  const homeTeamName = asNonEmptyString(record?.homeTeamName);
+  const matchId = asNonEmptyString(record?.matchId);
+  if (
+    awayScore === null ||
+    !awayTeamName ||
+    homeScore === null ||
+    !homeTeamName ||
+    !matchId
+  ) {
+    return null;
+  }
+
+  return {
+    awayScore,
+    awayTeamName,
+    homeScore,
+    homeTeamName,
+    matchId,
+  };
+}
+
+function normalizeLeagueGameDayPerformancesPlayerEntry(
+  value: unknown,
+): LeagueGameDayPerformancesResultPayload["tripleDoubles"][number] | null {
+  const record = toRecord(value);
+  const efficiency = asFiniteNumber(record?.efficiency);
+  const minutes = asFiniteNumber(record?.minutes);
+  const personalFouls = asFiniteNumber(record?.personalFouls);
+  const playerName = asNonEmptyString(record?.playerName);
+  const position = asNonEmptyString(record?.position);
+  const statLine = toRecord(record?.statLine);
+  const assists = asFiniteNumber(statLine?.assists);
+  const blocks = asFiniteNumber(statLine?.blocks);
+  const points = asFiniteNumber(statLine?.points);
+  const rebounds = asFiniteNumber(statLine?.rebounds);
+  const steals = asFiniteNumber(statLine?.steals);
+  const teamName = asNonEmptyString(record?.teamName);
+  const turnovers = asFiniteNumber(record?.turnovers);
+  if (
+    efficiency === null ||
+    minutes === null ||
+    personalFouls === null ||
+    !playerName ||
+    !position ||
+    assists === null ||
+    blocks === null ||
+    points === null ||
+    rebounds === null ||
+    steals === null ||
+    !teamName ||
+    turnovers === null
+  ) {
+    return null;
+  }
+
+  return {
+    efficiency,
+    minutes,
+    personalFouls,
+    playerId: asNonEmptyString(record?.playerId),
+    playerName,
+    position,
+    rating: asFiniteNumber(record?.rating),
+    statLine: {
+      assists,
+      blocks,
+      points,
+      rebounds,
+      steals,
+    },
+    teamId: asNonEmptyString(record?.teamId),
+    teamName,
+    turnovers,
+  };
+}
+
+function normalizeLeagueGameDayPerformancesPlayerLeaderboard(
+  value: unknown,
+): LeagueGameDayPerformancesResultPayload["playerLeaders"][number] | null {
+  const record = toRecord(value);
+  const key = asNonEmptyString(record?.key);
+  const label = asNonEmptyString(record?.label);
+  const leaders = Array.isArray(record?.leaders)
+    ? record.leaders
+        .map((entry) => normalizeLeagueGameDayPerformancesPlayerEntry(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["playerLeaders"][number]["leaders"][number] =>
+            Boolean(entry),
+        )
+    : [];
+  const valueNumber = asFiniteNumber(record?.value);
+  if (!key || !label || valueNumber === null) {
+    return null;
+  }
+
+  return {
+    key,
+    label,
+    leaders,
+    unit: asNonEmptyString(record?.unit),
+    value: valueNumber,
+  };
+}
+
+function normalizeLeagueGameDayPerformancesTeamLeaderboard(
+  value: unknown,
+): LeagueGameDayPerformancesResultPayload["teamLeaders"][number] | null {
+  const record = toRecord(value);
+  const key = asNonEmptyString(record?.key);
+  const label = asNonEmptyString(record?.label);
+  const leaders = Array.isArray(record?.leaders)
+    ? record.leaders
+        .map((entry) => {
+          const source = toRecord(entry);
+          const teamName = asNonEmptyString(source?.teamName);
+          if (!teamName) {
+            return null;
+          }
+
+          return {
+            teamId: asNonEmptyString(source?.teamId),
+            teamName,
+          };
+        })
+        .filter(Boolean) as LeagueGameDayPerformancesResultPayload["teamLeaders"][number]["leaders"]
+    : [];
+  const valueNumber = asFiniteNumber(record?.value);
+  if (!key || !label || valueNumber === null) {
+    return null;
+  }
+
+  return {
+    key,
+    label,
+    leaders,
+    unit: asNonEmptyString(record?.unit),
+    value: valueNumber,
+  };
+}
+
+function normalizeLeagueGameDayPerformancesPositionLeaderboard(
+  value: unknown,
+): LeagueGameDayPerformancesResultPayload["topFive"][number] | null {
+  const record = toRecord(value);
+  const key = asNonEmptyString(record?.key);
+  const label = asNonEmptyString(record?.label);
+  const position = asNonEmptyString(record?.position);
+  const leaders = Array.isArray(record?.leaders)
+    ? record.leaders
+        .map((entry) => normalizeLeagueGameDayPerformancesPlayerEntry(entry))
+        .filter(
+          (
+            entry,
+          ): entry is LeagueGameDayPerformancesResultPayload["topFive"][number]["leaders"][number] =>
+            Boolean(entry),
+        )
+    : [];
+  const valueNumber = asFiniteNumber(record?.value);
+  if (!key || !label || !position || valueNumber === null) {
+    return null;
+  }
+
+  return {
+    key,
+    label,
+    leaders,
+    position,
+    value: valueNumber,
+  };
+}
+
 function readLegacyField(value: unknown): Record<string, unknown> | null {
   const raw =
     typeof value === "string"
@@ -393,12 +804,25 @@ function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function readOptionalRecapGenerationApproach(
+  value: unknown,
+): RecapGenerationApproach | null {
+  return value === RecapGenerationApproach.FACT_LIBRARY_FIRST ||
+    value === RecapGenerationApproach.LEGACY
+    ? value
+    : null;
+}
+
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function asBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function normalizeRecapQualityTier(value: unknown): "standard" | "premium" {
+  return value === "premium" ? "premium" : "standard";
 }
 
 function normalizeDateString(value: unknown): string | null {

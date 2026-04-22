@@ -16,7 +16,7 @@ const productionSourceRoots = [
 const approvedLargeDependencyBags = new Map<string, number>([
   ["app/game-prediction-state.ts", 10],
   ["amplify/data/_backend/billing.ts", 4],
-  ["amplify/data/_backend/game-day-recap.ts", 19],
+  ["amplify/data/_backend/game-day-recap.ts", 25],
   ["amplify/data/_backend/league-history.ts", 16],
   ["amplify/data/_backend/lineup-helper.ts", 4],
   ["amplify/data/_backend/match-store.ts", 5],

@@ -1,9 +1,9 @@
-import { env } from "$amplify/env/submit-league-game-day-recap";
+import { env } from "$amplify/env/submit-league-game-day-performances";
 
 import type { Schema } from "../resource";
-import { submitLeagueGameDayRecap } from "../_backend/game-day-recap";
+import { submitLeagueGameDayPerformances } from "../_backend/game-day-recap";
 
-type Handler = Schema["submitLeagueGameDayRecap"]["functionHandler"];
+type Handler = Schema["submitLeagueGameDayPerformances"]["functionHandler"];
 type RuntimeEnv = Record<string, string | undefined>;
 
 export const handler: Handler = async (event) => {
@@ -14,13 +14,12 @@ export const handler: Handler = async (event) => {
     );
   }
 
-  return submitLeagueGameDayRecap({
+  return submitLeagueGameDayPerformances({
     env,
     gameDayNumber: event.arguments.gameDayNumber,
     identity: event.identity,
     leagueId: event.arguments.leagueId,
-    qualityTier: event.arguments.qualityTier ?? null,
-    stateMachineArn,
     season: event.arguments.season ?? null,
+    stateMachineArn,
   });
 };

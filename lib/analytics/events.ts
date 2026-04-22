@@ -219,12 +219,14 @@ export type AnalyticsEventMap = {
   };
   recap_request_failed: {
     mode: string;
+    requested_quality_tier: string;
   };
   recap_requested: {
     has_custom_league_id: boolean;
     has_match_id: boolean;
     has_season_override: boolean;
     mode: string;
+    requested_quality_tier: string;
   };
   store_browse_requested: {
     source: "login_page";

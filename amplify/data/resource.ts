@@ -9,6 +9,7 @@ import {
 import {
   LineupHelperAlgorithm,
   PositionCode,
+  RecapGenerationApproach,
   TeamHighlightsPerspective,
 } from "./schema-enums";
 import { buildBbConnectionSecretFunctionEnvironment } from "../_shared/bb-connection-secret";
@@ -384,6 +385,14 @@ export const submitLeagueGameDayRecap = defineFunction({
   memoryMB: 512,
 });
 
+export const submitLeagueGameDayPerformances = defineFunction({
+  resourceGroupName: "data",
+  name: "submit-league-game-day-performances",
+  entry: "./submit-league-game-day-performances/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
 export const submitSingleGameSummary = defineFunction({
   resourceGroupName: "data",
   name: "submit-single-game-summary",
@@ -478,6 +487,7 @@ export const maintenanceProtectedFunctions = [
   listMyBillingPayments,
   getSalaryProjection,
   submitLeagueGameDayRecap,
+  submitLeagueGameDayPerformances,
   submitSingleGameSummary,
   setBbLeagueTimeZone,
   submitProductFeedback,
@@ -581,6 +591,7 @@ const schema = a
 
     PositionCode: a.enum(Object.values(PositionCode)),
     LineupHelperAlgorithm: a.enum(Object.values(LineupHelperAlgorithm)),
+    RecapGenerationApproach: a.enum(Object.values(RecapGenerationApproach)),
 
     TeamHighlightsPerspective: a.enum(Object.values(TeamHighlightsPerspective)),
     TeamHighlightsScanState: a.enum([
@@ -616,7 +627,13 @@ const schema = a
 
     RivalsMatchesCacheEncoding: a.enum(["BROTLI_BASE64_V1"]),
 
-    RecapRequestMode: a.enum(["FULL_SLATE", "LEAGUE_GAME_DAY", "SINGLE_GAME"]),
+    RecapRequestMode: a.enum([
+      "FULL_SLATE",
+      "LEAGUE_GAME_DAY",
+      "LEAGUE_GAME_DAY_PERFORMANCES",
+      "SINGLE_GAME",
+    ]),
+    RecapQualityTier: a.enum(["standard", "premium"]),
 
     BillingSummary: a.customType({
       planId: a.string().required(),
@@ -1890,12 +1907,23 @@ const schema = a
     }),
 
     GameDayRecapStoredRequest: a.customType({
+      approach: a.ref("RecapGenerationApproach"),
       gameDate: a.date().required(),
       leagueId: a.string().required(),
       mode: a.ref("RecapRequestMode").required(),
+      qualityTier: a.ref("RecapQualityTier").required(),
     }),
 
     LeagueGameDayRecapStoredRequest: a.customType({
+      approach: a.ref("RecapGenerationApproach"),
+      gameDayNumber: a.integer().required(),
+      leagueId: a.string().required(),
+      mode: a.ref("RecapRequestMode").required(),
+      qualityTier: a.ref("RecapQualityTier").required(),
+      season: a.integer(),
+    }),
+
+    LeagueGameDayPerformancesStoredRequest: a.customType({
       gameDayNumber: a.integer().required(),
       leagueId: a.string().required(),
       mode: a.ref("RecapRequestMode").required(),
@@ -1903,8 +1931,10 @@ const schema = a
     }),
 
     SingleGameSummaryStoredRequest: a.customType({
+      approach: a.ref("RecapGenerationApproach"),
       matchId: a.string().required(),
       mode: a.ref("RecapRequestMode").required(),
+      qualityTier: a.ref("RecapQualityTier").required(),
     }),
 
     GameDayRecapCoverageMissingGame: a.customType({
@@ -1929,8 +1959,26 @@ const schema = a
       evidenceTags: a.string().required().array().required(),
       headline: a.string().required(),
       matchId: a.string().required(),
+      postgameInterview: a.ref("GameDayRecapResultPostgameInterview"),
       surpriseFactor: a.float(),
       writeup: a.string().required(),
+    }),
+
+    GameDayRecapResultPostgameInterviewExchange: a.customType({
+      answer: a.string().required(),
+      question: a.string().required(),
+    }),
+
+    GameDayRecapResultPostgameInterview: a.customType({
+      playerName: a.string().required(),
+      qa: a
+        .ref("GameDayRecapResultPostgameInterviewExchange")
+        .required()
+        .array()
+        .required(),
+      teamName: a.string().required(),
+      teamSide: a.string().required(),
+      title: a.string().required(),
     }),
 
     GameDayRecapResultSummary: a.customType({
@@ -1943,6 +1991,115 @@ const schema = a
     GameDayRecapResult: a.customType({
       games: a.ref("GameDayRecapResultGame").required().array().required(),
       summary: a.ref("GameDayRecapResultSummary").required(),
+    }),
+
+    LeagueGameDayPerformancesStatLine: a.customType({
+      assists: a.integer().required(),
+      blocks: a.integer().required(),
+      points: a.integer().required(),
+      rebounds: a.integer().required(),
+      steals: a.integer().required(),
+    }),
+
+    LeagueGameDayPerformancesPlayerEntry: a.customType({
+      efficiency: a.integer().required(),
+      minutes: a.integer().required(),
+      personalFouls: a.integer().required(),
+      playerId: a.string(),
+      playerName: a.string().required(),
+      position: a.string().required(),
+      rating: a.float(),
+      statLine: a.ref("LeagueGameDayPerformancesStatLine").required(),
+      teamId: a.string(),
+      teamName: a.string().required(),
+      turnovers: a.integer().required(),
+    }),
+
+    LeagueGameDayPerformancesTeamEntry: a.customType({
+      teamId: a.string(),
+      teamName: a.string().required(),
+    }),
+
+    LeagueGameDayPerformancesGame: a.customType({
+      awayScore: a.integer().required(),
+      awayTeamName: a.string().required(),
+      homeScore: a.integer().required(),
+      homeTeamName: a.string().required(),
+      matchId: a.string().required(),
+    }),
+
+    LeagueGameDayPerformancesPlayerLeaderboard: a.customType({
+      key: a.string().required(),
+      label: a.string().required(),
+      leaders: a
+        .ref("LeagueGameDayPerformancesPlayerEntry")
+        .required()
+        .array()
+        .required(),
+      unit: a.string(),
+      value: a.float().required(),
+    }),
+
+    LeagueGameDayPerformancesTeamLeaderboard: a.customType({
+      key: a.string().required(),
+      label: a.string().required(),
+      leaders: a
+        .ref("LeagueGameDayPerformancesTeamEntry")
+        .required()
+        .array()
+        .required(),
+      unit: a.string(),
+      value: a.float().required(),
+    }),
+
+    LeagueGameDayPerformancesPositionLeaderboard: a.customType({
+      key: a.string().required(),
+      label: a.string().required(),
+      leaders: a
+        .ref("LeagueGameDayPerformancesPlayerEntry")
+        .required()
+        .array()
+        .required(),
+      position: a.string().required(),
+      value: a.float().required(),
+    }),
+
+    LeagueGameDayPerformancesResult: a.customType({
+      badPerformance: a
+        .ref("LeagueGameDayPerformancesPlayerLeaderboard")
+        .required(),
+      gameDate: a.date(),
+      gameDayNumber: a.integer().required(),
+      games: a.ref("LeagueGameDayPerformancesGame").required().array().required(),
+      leagueId: a.string().required(),
+      leagueName: a.string(),
+      mvp: a.ref("LeagueGameDayPerformancesPlayerLeaderboard").required(),
+      playerLeaders: a
+        .ref("LeagueGameDayPerformancesPlayerLeaderboard")
+        .required()
+        .array()
+        .required(),
+      season: a.integer(),
+      statCallouts: a
+        .ref("LeagueGameDayPerformancesPlayerLeaderboard")
+        .required()
+        .array()
+        .required(),
+      teamLeaders: a
+        .ref("LeagueGameDayPerformancesTeamLeaderboard")
+        .required()
+        .array()
+        .required(),
+      topFive: a
+        .ref("LeagueGameDayPerformancesPositionLeaderboard")
+        .required()
+        .array()
+        .required(),
+      tripleDoubles: a
+        .ref("LeagueGameDayPerformancesPlayerEntry")
+        .required()
+        .array()
+        .required(),
     }),
 
     AccessibleMatchSummary: a.customType({
@@ -3322,6 +3479,40 @@ const schema = a
       ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
+    LeagueGameDayPerformances: a
+      .model({
+        userId: a
+          .string()
+          .required()
+          .authorization((allow) => [
+            allow.ownerDefinedIn("userId").to(["read"]),
+          ]),
+        targetKey: a.string().required(),
+        leagueId: a.string().required(),
+        leagueName: a.string(),
+        gameDayNumber: a.integer().required(),
+        gameDate: a.date(),
+        season: a.integer(),
+        status: a.ref("GameDayRecapStatus").required(),
+        requestedAt: a.datetime().required(),
+        completedAt: a.datetime(),
+        requestJson: a.ref("LeagueGameDayPerformancesStoredRequest").required(),
+        coverageJson: a.ref("GameDayRecapCoverage"),
+        resultJson: a.ref("LeagueGameDayPerformancesResult"),
+        error: a.string(),
+        executionArn: a.string(),
+        modelProvider: a.string(),
+        modelId: a.string(),
+        promptVersion: a.string(),
+      })
+      .identifier(["userId", "targetKey"])
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listLeagueGameDayPerformancesByUserAndRequestedAt"),
+      ])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
     SingleGameSummary: a
       .model({
         userId: a
@@ -3753,8 +3944,10 @@ const schema = a
     submitGameDayRecap: a
       .mutation()
       .arguments({
+        approach: a.ref("RecapGenerationApproach"),
         leagueId: a.string().required(),
         gameDate: a.date().required(),
+        qualityTier: a.ref("RecapQualityTier"),
       })
       .returns(a.ref("GameDayRecapSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
@@ -3763,18 +3956,33 @@ const schema = a
     submitLeagueGameDayRecap: a
       .mutation()
       .arguments({
+        approach: a.ref("RecapGenerationApproach"),
         leagueId: a.string().required(),
         gameDayNumber: a.integer().required(),
+        qualityTier: a.ref("RecapQualityTier"),
         season: a.integer(),
       })
       .returns(a.ref("GameDayRecapSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(submitLeagueGameDayRecap)),
 
+    submitLeagueGameDayPerformances: a
+      .mutation()
+      .arguments({
+        leagueId: a.string().required(),
+        gameDayNumber: a.integer().required(),
+        season: a.integer(),
+      })
+      .returns(a.ref("GameDayRecapSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(submitLeagueGameDayPerformances)),
+
     submitSingleGameSummary: a
       .mutation()
       .arguments({
+        approach: a.ref("RecapGenerationApproach"),
         matchId: a.string().required(),
+        qualityTier: a.ref("RecapQualityTier"),
       })
       .returns(a.ref("GameDayRecapSubmitResult"))
       .authorization((allow) => [allow.authenticated()])

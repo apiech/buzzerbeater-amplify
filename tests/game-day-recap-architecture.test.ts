@@ -26,10 +26,12 @@ test("game day recap jobs wire routing env vars into recap submit lambdas", () =
     "utf8",
   );
 
-  assert.match(source, /gameDayRecapSubmit\.addEnvironment\(\s*"GAME_DAY_RECAP_MODEL_ID"/);
-  assert.match(source, /submitLeagueGameDayRecap\.addEnvironment\(\s*"GAME_DAY_RECAP_MODEL_ID"/);
-  assert.match(source, /submitSingleGameSummary\.addEnvironment\(\s*"GAME_DAY_RECAP_MODEL_ID"/);
+  assert.match(source, /submitFunction\.addEnvironment\(\s*"GAME_DAY_RECAP_MODEL_ID"/);
   assert.match(source, /GAME_DAY_RECAP_MODEL_ID_PREMIUM/);
+  assert.match(source, /GAME_DAY_RECAP_RETRY_MODEL_ID/);
+  assert.match(source, /GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM/);
+  assert.match(source, /GAME_DAY_RECAP_JUDGE_MODEL_ID/);
+  assert.match(source, /GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM/);
 });
 
 test("game day recap jobs retry the completed-slate coverage business error with bounded backoff", () => {

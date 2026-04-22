@@ -72,7 +72,11 @@ export type MaintenanceControlPlaneSynthConfig = {
 
 export type GameDayRecapSynthConfig = {
   defaultModelId: string;
+  judgeModelId: string | null;
+  judgePremiumModelId: string | null;
   premiumModelId: string | null;
+  retryModelId: string | null;
+  retryPremiumModelId: string | null;
 };
 
 export type OperationalRetentionSynthConfig = {
@@ -205,6 +209,20 @@ export function resolveGameDayRecapConfig(): GameDayRecapSynthConfig {
     premiumModelId:
       normalizeOptionalString(process.env.GAME_DAY_RECAP_MODEL_ID_PREMIUM) ??
       null,
+    retryModelId:
+      normalizeOptionalString(process.env.GAME_DAY_RECAP_RETRY_MODEL_ID) ??
+      null,
+    retryPremiumModelId:
+      normalizeOptionalString(
+        process.env.GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM,
+      ) ?? null,
+    judgeModelId:
+      normalizeOptionalString(process.env.GAME_DAY_RECAP_JUDGE_MODEL_ID) ??
+      null,
+    judgePremiumModelId:
+      normalizeOptionalString(
+        process.env.GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM,
+      ) ?? null,
   };
 }
 

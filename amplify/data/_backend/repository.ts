@@ -18,8 +18,12 @@ import {
 } from "../../../lib/owned-data/contracts";
 import type { PredictionInputShape } from "../../../lib/prediction/normalization";
 import type { Schema } from "../resource";
+import { RecapGenerationApproach } from "../schema-enums";
 
 type StoredTeamInfo = Schema["StoredTeamInfo"]["type"];
+type ErrorWithMessage = {
+  message?: string | null;
+};
 type RepositoryModel<TRecord extends { createdAt: string; updatedAt: string }> =
   Omit<TRecord, "createdAt" | "updatedAt"> & {
     createdAt?: string;
@@ -62,6 +66,9 @@ type GameDayRecapStoredRequest = NonNullable<
 type LeagueGameDayRecapStoredRequest = NonNullable<
   Schema["LeagueGameDayRecap"]["type"]["requestJson"]
 >;
+type LeagueGameDayPerformancesStoredRequest = NonNullable<
+  Schema["LeagueGameDayPerformances"]["type"]["requestJson"]
+>;
 type SingleGameSummaryStoredRequest = NonNullable<
   Schema["SingleGameSummary"]["type"]["requestJson"]
 >;
@@ -70,6 +77,9 @@ type GameDayRecapCoverage = NonNullable<
 >;
 type GameDayRecapResult = NonNullable<
   Schema["GameDayRecap"]["type"]["resultJson"]
+>;
+type LeagueGameDayPerformancesResult = NonNullable<
+  Schema["LeagueGameDayPerformances"]["type"]["resultJson"]
 >;
 type RivalsWorkspaceSummary = NonNullable<
   Schema["RivalsWorkspaceCache"]["type"]["summaryJson"]
@@ -435,6 +445,29 @@ export type LeagueGameDayRecapRecord = {
   requestJson: LeagueGameDayRecapStoredRequest;
   coverageJson?: GameDayRecapCoverage | null;
   resultJson?: GameDayRecapResult | null;
+  error?: string | null;
+  modelProvider?: string | null;
+  modelId?: string | null;
+  promptVersion?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type LeagueGameDayPerformancesRecord = {
+  userId: string;
+  targetKey: string;
+  leagueId: string;
+  leagueName?: string | null;
+  gameDayNumber: number;
+  gameDate?: string | null;
+  season?: number | null;
+  status: GameDayRecapStatus;
+  requestedAt: string;
+  executionArn?: string | null;
+  completedAt?: string | null;
+  requestJson: LeagueGameDayPerformancesStoredRequest;
+  coverageJson?: GameDayRecapCoverage | null;
+  resultJson?: LeagueGameDayPerformancesResult | null;
   error?: string | null;
   modelProvider?: string | null;
   modelId?: string | null;
@@ -1497,14 +1530,13 @@ export async function getGameDayRecap(
   userId: string,
   targetKey: string,
 ): Promise<GameDayRecapRecord | null> {
-  const record = await getModelRecord<GameDayRecapRecord>(
+  return getRecapRecordWithLegacyRequestFallback(
     env,
     "GameDayRecap",
     { userId, targetKey },
     "load game day recap",
+    normalizeGameDayRecapStoredRequest,
   );
-
-  return decodeAwsJsonFields("GameDayRecap", record);
 }
 
 export async function upsertGameDayRecap(
@@ -1531,14 +1563,13 @@ export async function getLeagueGameDayRecap(
   userId: string,
   targetKey: string,
 ): Promise<LeagueGameDayRecapRecord | null> {
-  const record = await getModelRecord<LeagueGameDayRecapRecord>(
+  return getRecapRecordWithLegacyRequestFallback(
     env,
     "LeagueGameDayRecap",
     { userId, targetKey },
     "load league game day recap",
+    normalizeLeagueGameDayRecapStoredRequest,
   );
-
-  return decodeAwsJsonFields("LeagueGameDayRecap", record);
 }
 
 export async function upsertLeagueGameDayRecap(
@@ -1568,19 +1599,64 @@ export async function updateLeagueGameDayRecap(
   );
 }
 
+export async function getLeagueGameDayPerformances(
+  env: RepositoryEnv,
+  userId: string,
+  targetKey: string,
+): Promise<LeagueGameDayPerformancesRecord | null> {
+  const model = await getModel<LeagueGameDayPerformancesRecord>(
+    env,
+    "LeagueGameDayPerformances",
+  );
+  const result = await model.get({ userId, targetKey });
+  if (result.errors?.length) {
+    throw new Error(
+      `load league game day performances failed: ${formatClientErrors(result.errors)}`,
+    );
+  }
+
+  return normalizeDecodedLeagueGameDayPerformancesRecord(result.data ?? null);
+}
+
+export async function upsertLeagueGameDayPerformances(
+  env: RepositoryEnv,
+  record: LeagueGameDayPerformancesRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "LeagueGameDayPerformances",
+    ["userId", "targetKey"],
+    record,
+  );
+}
+
+export async function updateLeagueGameDayPerformances(
+  env: RepositoryEnv,
+  input: Partial<LeagueGameDayPerformancesRecord> &
+    Pick<LeagueGameDayPerformancesRecord, "userId" | "targetKey">,
+): Promise<void> {
+  const model = await getModel<LeagueGameDayPerformancesRecord>(
+    env,
+    "LeagueGameDayPerformances",
+  );
+  await assertSuccessful(
+    model.update(prepareModelInput("LeagueGameDayPerformances", input)),
+    "update league game day performances",
+  );
+}
+
 export async function getSingleGameSummary(
   env: RepositoryEnv,
   userId: string,
   targetKey: string,
 ): Promise<SingleGameSummaryRecord | null> {
-  const record = await getModelRecord<SingleGameSummaryRecord>(
+  return getRecapRecordWithLegacyRequestFallback(
     env,
     "SingleGameSummary",
     { userId, targetKey },
     "load single game summary",
+    normalizeSingleGameSummaryStoredRequest,
   );
-
-  return decodeAwsJsonFields("SingleGameSummary", record);
 }
 
 export async function upsertSingleGameSummary(
@@ -2071,9 +2147,11 @@ async function upsertModelRecord(
       `load ${modelName} record`,
     );
   } catch (error) {
-    if (canOverwriteUnreadableMatchBoxscoreRecord(modelName, error)) {
+    if (canOverwriteUnreadableModelRecord(modelName, error)) {
       console.warn(
-        "[repository] Overwriting unreadable MatchBoxscore cache row during upsert.",
+        modelName === "MatchBoxscore"
+          ? "[repository] Overwriting unreadable MatchBoxscore cache row during upsert."
+          : `[repository] Overwriting unreadable ${modelName} row during upsert.`,
         {
           errorMessage: error instanceof Error ? error.message : String(error),
           identifier,
@@ -2384,14 +2462,249 @@ function isLegacyMatchBoxscoreCacheReadFailure(error: unknown): boolean {
   );
 }
 
-function canOverwriteUnreadableMatchBoxscoreRecord(
+function canOverwriteUnreadableModelRecord(
   modelName: string,
   error: unknown,
 ): boolean {
   return (
-    modelName === "MatchBoxscore" &&
-    isLegacyMatchBoxscoreCacheReadFailure(error)
+    (modelName === "MatchBoxscore" &&
+      isLegacyMatchBoxscoreCacheReadFailure(error)) ||
+    isLegacyRecapRequestQualityTierReadFailure(modelName, error)
   );
+}
+
+type LegacyCompatibleRecapModelName =
+  | "GameDayRecap"
+  | "LeagueGameDayRecap"
+  | "SingleGameSummary";
+
+const LEGACY_RECAP_REQUEST_QUALITY_TIER_PATHS: Record<
+  LegacyCompatibleRecapModelName,
+  string
+> = {
+  GameDayRecap: "/getGameDayRecap/requestJson/qualityTier",
+  LeagueGameDayRecap: "/getLeagueGameDayRecap/requestJson/qualityTier",
+  SingleGameSummary: "/getSingleGameSummary/requestJson/qualityTier",
+};
+
+async function getRecapRecordWithLegacyRequestFallback<
+  TRecord extends {
+    requestJson: Record<string, unknown>;
+  },
+>(
+  env: RepositoryEnv,
+  modelName: LegacyCompatibleRecapModelName,
+  input: Record<string, unknown>,
+  context: string,
+  normalizeRecord: (record: TRecord) => TRecord,
+): Promise<TRecord | null> {
+  const model = await getModel<TRecord>(env, modelName);
+  const result = await model.get(omitUndefinedValues(input));
+  const { legacyErrors, otherErrors } =
+    partitionLegacyRecapRequestCoercionErrors(modelName, result.errors);
+
+  if (!result.errors?.length) {
+    return normalizeDecodedRecapRecord(
+      modelName,
+      result.data ?? null,
+      normalizeRecord,
+    );
+  }
+
+  if (result.data && legacyErrors.length > 0 && otherErrors.length === 0) {
+    return normalizeDecodedRecapRecord(modelName, result.data, normalizeRecord);
+  }
+
+  if (!result.data && legacyErrors.length > 0 && otherErrors.length === 0) {
+    return null;
+  }
+
+  const errorsToReport =
+    result.data && legacyErrors.length > 0 ? otherErrors : result.errors;
+  throw new Error(`${context} failed: ${formatClientErrors(errorsToReport)}`);
+}
+
+function normalizeDecodedRecapRecord<
+  TRecord extends {
+    requestJson: Record<string, unknown>;
+  },
+>(
+  modelName: LegacyCompatibleRecapModelName,
+  record: TRecord | null,
+  normalizeRecord: (record: TRecord) => TRecord,
+): TRecord | null {
+  const decoded = decodeAwsJsonFields(modelName, record);
+  return decoded ? normalizeRecord(decoded) : null;
+}
+
+function isLegacyRecapRequestQualityTierReadFailure(
+  modelName: string,
+  error: unknown,
+): boolean {
+  const path = (
+    LEGACY_RECAP_REQUEST_QUALITY_TIER_PATHS as Record<string, string>
+  )[modelName];
+  if (!path) {
+    return false;
+  }
+
+  const errorMessage = readErrorMessage(error);
+  return (
+    errorMessage.includes(path) &&
+    errorMessage.includes("RecapQualityTier") &&
+    (errorMessage.includes("type mismatch error") ||
+      errorMessage.includes("Cannot return null for non-nullable type"))
+  );
+}
+
+function partitionLegacyRecapRequestCoercionErrors<TError extends ErrorWithMessage>(
+  modelName: LegacyCompatibleRecapModelName,
+  errors: readonly TError[] | null | undefined,
+): {
+  legacyErrors: TError[];
+  otherErrors: TError[];
+} {
+  const legacyErrors: TError[] = [];
+  const otherErrors: TError[] = [];
+
+  for (const error of errors ?? []) {
+    if (isLegacyRecapRequestQualityTierReadFailure(modelName, error)) {
+      legacyErrors.push(error);
+      continue;
+    }
+
+    otherErrors.push(error);
+  }
+
+  return {
+    legacyErrors,
+    otherErrors,
+  };
+}
+
+function normalizeGameDayRecapStoredRequest(
+  record: GameDayRecapRecord,
+): GameDayRecapRecord {
+  const requestJson = toPlainRecord(record.requestJson);
+  return {
+    ...record,
+    requestJson: {
+      approach:
+        readOptionalRecapGenerationApproach(requestJson?.approach) ??
+        RecapGenerationApproach.LEGACY,
+      gameDate: readOptionalString(requestJson?.gameDate) ?? record.gameDate,
+      leagueId: readOptionalString(requestJson?.leagueId) ?? record.leagueId,
+      mode: "FULL_SLATE",
+      qualityTier: normalizeLegacyRecapQualityTier(requestJson?.qualityTier),
+    },
+  };
+}
+
+function normalizeLeagueGameDayRecapStoredRequest(
+  record: LeagueGameDayRecapRecord,
+): LeagueGameDayRecapRecord {
+  const requestJson = toPlainRecord(record.requestJson);
+  return {
+    ...record,
+    requestJson: {
+      approach:
+        readOptionalRecapGenerationApproach(requestJson?.approach) ??
+        RecapGenerationApproach.LEGACY,
+      gameDayNumber:
+        readOptionalInteger(requestJson?.gameDayNumber) ?? record.gameDayNumber,
+      leagueId: readOptionalString(requestJson?.leagueId) ?? record.leagueId,
+      mode: "LEAGUE_GAME_DAY",
+      qualityTier: normalizeLegacyRecapQualityTier(requestJson?.qualityTier),
+      season: readOptionalInteger(requestJson?.season) ?? record.season ?? null,
+    },
+  };
+}
+
+function normalizeDecodedLeagueGameDayPerformancesRecord(
+  record: LeagueGameDayPerformancesRecord | null,
+): LeagueGameDayPerformancesRecord | null {
+  const decoded = decodeAwsJsonFields("LeagueGameDayPerformances", record);
+  return decoded ? normalizeLeagueGameDayPerformancesStoredRequest(decoded) : null;
+}
+
+function normalizeLeagueGameDayPerformancesStoredRequest(
+  record: LeagueGameDayPerformancesRecord,
+): LeagueGameDayPerformancesRecord {
+  const requestJson = toPlainRecord(record.requestJson);
+  return {
+    ...record,
+    requestJson: {
+      gameDayNumber:
+        readOptionalInteger(requestJson?.gameDayNumber) ?? record.gameDayNumber,
+      leagueId: readOptionalString(requestJson?.leagueId) ?? record.leagueId,
+      mode: "LEAGUE_GAME_DAY_PERFORMANCES",
+      season: readOptionalInteger(requestJson?.season) ?? record.season ?? null,
+    },
+  };
+}
+
+function normalizeSingleGameSummaryStoredRequest(
+  record: SingleGameSummaryRecord,
+): SingleGameSummaryRecord {
+  const requestJson = toPlainRecord(record.requestJson);
+  return {
+    ...record,
+    requestJson: {
+      approach:
+        readOptionalRecapGenerationApproach(requestJson?.approach) ??
+        RecapGenerationApproach.LEGACY,
+      matchId: readOptionalString(requestJson?.matchId) ?? record.matchId,
+      mode: "SINGLE_GAME",
+      qualityTier: normalizeLegacyRecapQualityTier(requestJson?.qualityTier),
+    },
+  };
+}
+
+function normalizeLegacyRecapQualityTier(
+  value: unknown,
+): "premium" | "standard" {
+  return value === "premium" ? "premium" : "standard";
+}
+
+function toPlainRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readOptionalRecapGenerationApproach(
+  value: unknown,
+): RecapGenerationApproach | null {
+  return value === RecapGenerationApproach.FACT_LIBRARY_FIRST ||
+    value === RecapGenerationApproach.LEGACY
+    ? value
+    : null;
+}
+
+function readOptionalInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function readErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof (error as ErrorWithMessage).message === "string"
+  ) {
+    return (error as ErrorWithMessage).message ?? "";
+  }
+
+  return String(error);
 }
 
 function omitUndefinedValues<TRecord extends Record<string, unknown>>(

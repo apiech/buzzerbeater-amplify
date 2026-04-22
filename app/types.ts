@@ -29,6 +29,8 @@ export type FeedbackSubmissionKind = FeedbackSubmissionRecord["kind"];
 export type GameDayRecapRecord = Schema["GameDayRecap"]["type"];
 export type GameDayRecapStatus = GameDayRecapRecord["status"];
 export type LeagueGameDayRecapRecord = Schema["LeagueGameDayRecap"]["type"];
+export type LeagueGameDayPerformancesRecord =
+  Schema["LeagueGameDayPerformances"]["type"];
 export type OpponentForecastJobRecord = Schema["OpponentForecastJob"]["type"];
 export type PredictionJobRecord = Schema["PredictionJob"]["type"];
 export type PredictionJobStatus = PredictionJobRecord["status"];
@@ -53,6 +55,7 @@ export type PaginatedResult<TItem> = {
 export type RecapHistoryKind =
   | "LEAGUE_DATE"
   | "LEAGUE_GAME_DAY"
+  | "LEAGUE_GAME_DAY_PERFORMANCES"
   | "SINGLE_GAME";
 
 export type GameDayRecapCoveragePayload = NonNullable<
@@ -60,6 +63,13 @@ export type GameDayRecapCoveragePayload = NonNullable<
 >;
 export type GameDayRecapResultPayload = NonNullable<
   GameDayRecapRecord["resultJson"]
+>;
+export type LeagueGameDayPerformancesResultPayload = NonNullable<
+  LeagueGameDayPerformancesRecord["resultJson"]
+>;
+export type RecapQualityTier = Exclude<
+  NonNullable<Schema["submitGameDayRecap"]["args"]>["qualityTier"],
+  null | undefined
 >;
 export type ConnectBbAccountInput = NonNullable<
   Schema["connectBbAccount"]["args"]
@@ -126,6 +136,15 @@ export type LeagueGameDayRecapHistoryRecord = RecapHistoryBase & {
   requestJson: NonNullable<LeagueGameDayRecapRecord["requestJson"]>;
   resultJson: GameDayRecapResultPayload | null;
 };
+export type LeagueGameDayPerformancesHistoryRecord = RecapHistoryBase & {
+  kind: "LEAGUE_GAME_DAY_PERFORMANCES";
+  coverageJson: GameDayRecapCoveragePayload | null;
+  gameDate: string | null;
+  gameDayNumber: number;
+  matchId: null;
+  requestJson: NonNullable<LeagueGameDayPerformancesRecord["requestJson"]>;
+  resultJson: LeagueGameDayPerformancesResultPayload | null;
+};
 export type SingleGameRecapHistoryRecord = RecapHistoryBase & {
   kind: "SINGLE_GAME";
   coverageJson: GameDayRecapCoveragePayload | null;
@@ -136,6 +155,7 @@ export type SingleGameRecapHistoryRecord = RecapHistoryBase & {
 export type RecapHistoryRecord =
   | LeagueDateRecapHistoryRecord
   | LeagueGameDayRecapHistoryRecord
+  | LeagueGameDayPerformancesHistoryRecord
   | SingleGameRecapHistoryRecord;
 
 export type ConnectBbAccountResult = NonNullable<
@@ -166,8 +186,14 @@ export type SubmitRivalsBackfillResult = NonNullable<
 export type SubmitLeagueGameDayRecapResult = NonNullable<
   Schema["submitLeagueGameDayRecap"]["returnType"]
 >;
+export type SubmitLeagueGameDayPerformancesResult = NonNullable<
+  Schema["submitLeagueGameDayPerformances"]["returnType"]
+>;
 export type SubmitSingleGameSummaryResult = NonNullable<
   Schema["submitSingleGameSummary"]["returnType"]
+>;
+export type RecapGenerationApproach = NonNullable<
+  NonNullable<Schema["submitGameDayRecap"]["args"]>["approach"]
 >;
 export type SubmitOpponentForecastJobResult = NonNullable<
   Schema["submitOpponentForecastJob"]["returnType"]

@@ -24,6 +24,7 @@ export const handler: Handler = async (event) => {
       gameDate: event.arguments.gameDate,
       identity: event.identity,
       leagueId: event.arguments.leagueId,
+      qualityTier: event.arguments.qualityTier ?? null,
       stateMachineArn,
     });
 

@@ -139,7 +139,6 @@ npm run check:hosted:shared-infra -- --app-id <amplify-app-id>
 This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/karey/projects/bb/bb-amplify/amplify).
 
 <!-- ENV-CONTRACT:START -->
-
 ### Required Plain Env
 
 - `APP_BASE_URL`
@@ -160,6 +159,18 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `GAME_DAY_RECAP_MODEL_ID_PREMIUM`
   - Premium recap override model. Premium recap jobs fall back to `GAME_DAY_RECAP_MODEL_ID` when this is unset.
   - Default or recommended value: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
+- `GAME_DAY_RECAP_RETRY_MODEL_ID`
+  - Retry-writer Bedrock model for the premium factuality pipeline. Premium recap submissions fail fast when neither this nor `GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM` is configured.
+  - Default or recommended value: unset unless premium recap retry is enabled.
+- `GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM`
+  - Optional premium override for the retry-writer stage in the premium recap factuality pipeline.
+  - Default or recommended value: `unset`.
+- `GAME_DAY_RECAP_JUDGE_MODEL_ID`
+  - Grounded judge Bedrock model for sentence-level recap fact-checking in the premium factuality pipeline. Premium recap submissions fail fast when neither this nor `GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM` is configured.
+  - Default or recommended value: unset unless premium recap judging is enabled.
+- `GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM`
+  - Optional premium override for the grounded judge stage in the premium recap factuality pipeline.
+  - Default or recommended value: `unset`.
 - `COGNITO_AUTH_CUSTOM_DOMAIN`
   - Optional branded Cognito auth hostname override. When unset but a hosted zone name is configured, runtime and synth default to `auth.<zone>`.
   - Default or recommended value: `unset`.

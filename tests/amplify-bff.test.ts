@@ -78,6 +78,44 @@ test("clearMyTeamHighlightsData is routed through the mutation BFF", async (t) =
   });
 });
 
+test("submitLeagueGameDayPerformances is routed through the mutation BFF", async (t) => {
+  let input: Record<string, unknown> | null = null;
+
+  installServerDataClient(t, {
+    mutations: {
+      submitLeagueGameDayPerformances: async (value: Record<string, unknown>) => {
+        input = value;
+        return {
+          data: {
+            executionArn:
+              "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:performances",
+            targetKey: "100#71#gameday-22",
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(isMutationName("submitLeagueGameDayPerformances"), true);
+
+  const result = await runMutationOperation("submitLeagueGameDayPerformances", {
+    gameDayNumber: 22,
+    leagueId: "100",
+    season: 71,
+  });
+
+  assert.deepStrictEqual(input, {
+    gameDayNumber: 22,
+    leagueId: "100",
+    season: 71,
+  });
+  assert.deepStrictEqual(result.data, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:performances",
+    targetKey: "100#71#gameday-22",
+  });
+});
+
 test("connectBbAccount BFF logs redact the access key while preserving useful metadata", async (t) => {
   const logs = installLoggerSpies(t);
 

@@ -19,6 +19,11 @@ test("dashboard app gates premium sections through the shared feature registry",
   assert.match(source, /const canUseTeamHighlights = commercialModeDisabled/);
   assert.match(source, /<BillingPanel/);
   assert.match(source, /<PremiumFeatureGatePanel/);
+  assert.match(source, /activeSection === "recaps" \? \(\s*<RecapPanel/);
+  assert.doesNotMatch(
+    source,
+    /activeSection === "recaps"[\s\S]{0,300}<PremiumFeatureGatePanel/,
+  );
 });
 
 test("billing panel keeps checkout available for environment-based premium access and exposes store links", () => {
