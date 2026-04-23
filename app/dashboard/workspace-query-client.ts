@@ -1045,6 +1045,51 @@ const gameDayRecapCostSchema = z
   })
   .passthrough();
 
+const gameDayRecapValidationIssueSchema = z
+  .object({
+    actualValue: nullableStringSchema.optional(),
+    feedback: nullableStringSchema.optional(),
+    field: z.string(),
+    kind: z.string(),
+    reason: z.string(),
+    sentence: z.string(),
+    sentenceIndex: z.number(),
+    source: z.string(),
+    sourceField: nullableStringSchema.optional(),
+    teamSide: nullableStringSchema.optional(),
+    verdict: nullableStringSchema.optional(),
+  })
+  .passthrough();
+
+const gameDayRecapGameValidationSchema = z
+  .object({
+    issueCount: z.number(),
+    issues: z.array(gameDayRecapValidationIssueSchema),
+    status: z.string(),
+  })
+  .passthrough();
+
+const gameDayRecapFailureSchema = z
+  .object({
+    errorName: nullableStringSchema.optional(),
+    failedGameCount: z.number(),
+    games: z.array(
+      z
+        .object({
+          awayTeamName: nullableStringSchema.optional(),
+          homeTeamName: nullableStringSchema.optional(),
+          issueCount: z.number(),
+          issues: z.array(gameDayRecapValidationIssueSchema),
+          matchId: nullableStringSchema.optional(),
+        })
+        .passthrough(),
+    ),
+    issueCount: z.number(),
+    message: z.string(),
+    repairActionCount: z.number(),
+  })
+  .passthrough();
+
 const gameDayRecapResultSchema = z
   .object({
     games: z.array(
@@ -1054,6 +1099,7 @@ const gameDayRecapResultSchema = z
           headline: z.string(),
           matchId: z.string(),
           surpriseFactor: nullableNumberSchema,
+          validation: gameDayRecapGameValidationSchema.nullable().optional(),
           writeup: z.string(),
         })
         .passthrough(),
@@ -1199,6 +1245,7 @@ const gameDayRecapRecordSchema = z
     coverageJson: gameDayRecapCoverageSchema.nullable().optional(),
     costJson: gameDayRecapCostSchema.nullable().optional(),
     error: nullableStringSchema,
+    failureJson: gameDayRecapFailureSchema.nullable().optional(),
     gameDate: nullableStringSchema,
     gameDayNumber: nullableNumberSchema,
     leagueId: nullableStringSchema,
@@ -1226,6 +1273,7 @@ const singleGameSummarySchema = z
     coverageJson: gameDayRecapCoverageSchema.nullable().optional(),
     costJson: gameDayRecapCostSchema.nullable().optional(),
     error: nullableStringSchema,
+    failureJson: gameDayRecapFailureSchema.nullable().optional(),
     gameDate: nullableStringSchema,
     leagueId: nullableStringSchema,
     leagueName: nullableStringSchema,
@@ -1256,6 +1304,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
       coverageJson: gameDayRecapCoverageSchema.nullable(),
       costJson: z.null().optional(),
       error: nullableStringSchema,
+      failureJson: z.null().optional(),
       gameDate: nullableStringSchema,
       gameDayNumber: z.number(),
       kind: z.literal("LEAGUE_GAME_DAY_PERFORMANCES"),
@@ -1278,6 +1327,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
       coverageJson: gameDayRecapCoverageSchema.nullable(),
       costJson: gameDayRecapCostSchema.nullable().optional(),
       error: nullableStringSchema,
+      failureJson: gameDayRecapFailureSchema.nullable().optional(),
       gameDate: z.string(),
       gameDayNumber: z.null(),
       kind: z.literal("LEAGUE_DATE"),
@@ -1300,6 +1350,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
       coverageJson: gameDayRecapCoverageSchema.nullable(),
       costJson: gameDayRecapCostSchema.nullable().optional(),
       error: nullableStringSchema,
+      failureJson: gameDayRecapFailureSchema.nullable().optional(),
       gameDate: z.null(),
       gameDayNumber: z.number(),
       kind: z.literal("LEAGUE_GAME_DAY"),
@@ -1322,6 +1373,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
       coverageJson: gameDayRecapCoverageSchema.nullable(),
       costJson: gameDayRecapCostSchema.nullable().optional(),
       error: nullableStringSchema,
+      failureJson: gameDayRecapFailureSchema.nullable().optional(),
       gameDate: nullableStringSchema,
       gameDayNumber: z.null(),
       kind: z.literal("SINGLE_GAME"),

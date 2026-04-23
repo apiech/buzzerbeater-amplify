@@ -129,6 +129,9 @@ export type GameDayRecapCoveragePayload = NonNullable<
 export type GameDayRecapCostPayload = NonNullable<
   Schema["GameDayRecap"]["type"]["costJson"]
 >;
+type GameDayRecapFailureDetailsPayload = NonNullable<
+  Schema["GameDayRecap"]["type"]["failureJson"]
+>;
 export type GameDayRecapResultPayload = NonNullable<
   Schema["GameDayRecap"]["type"]["resultJson"]
 >;
@@ -137,6 +140,11 @@ type CoverageIssue = GameDayRecapCoveragePayload["missingGames"][number];
 type GameDayRecapCostStagePayload = GameDayRecapCostPayload["stages"][number];
 type GameDayRecapResultGame = GameDayRecapResultPayload["games"][number];
 type GameDayRecapResultSummary = GameDayRecapResultPayload["summary"];
+type GameDayRecapGameValidationPayload = NonNullable<
+  GameDayRecapResultGame["validation"]
+>;
+type GameDayRecapValidationIssuePayload =
+  GameDayRecapGameValidationPayload["issues"][number];
 
 type GameDayRecapPromptPeriodFact = {
   awayScore: number;
@@ -188,12 +196,20 @@ type GameDayRecapFactsLibraryGameFlow = {
   tookLeadForGood: string | null;
 };
 
+type GameDayRecapFactsLibraryNarrativePlan = {
+  closingFacts: string[];
+  gameFlowFacts: string[];
+  paragraphOrder: string[];
+  setupFacts: string[];
+};
+
 type GameDayRecapFactsLibrary = {
   headlineCandidates: string[];
   matchupEdgeFacts: {
     suppressed: string[];
     supported: string[];
   };
+  narrativePlan: GameDayRecapFactsLibraryNarrativePlan;
   openingCandidates: string[];
   periodStates: {
     afterPeriods: GameDayRecapFactsLibraryPeriodState[];
@@ -236,6 +252,7 @@ type GameDayRecapPromptGame = {
   effortSummary: string | null;
   factsLibrary?: GameDayRecapFactsLibrary;
   gameDayPrepSummaries: string[];
+  gameScoringContext: "high_scoring_shootout" | "low_scoring_grind" | null;
   requiredContextSentences: string[];
   rotationSummaries: string[];
   evidenceSignals: string[];
@@ -387,6 +404,7 @@ type GameDayRecapGameFactStore = {
   effortSummary: string | null;
   evidenceSignals: string[];
   finalMargin: number;
+  gameScoringContext: "high_scoring_shootout" | "low_scoring_grind" | null;
   gameDayPrepSummaries: string[];
   isPlayoffGame: boolean;
   matchId: string;
@@ -519,6 +537,7 @@ type GameDayRecapSemanticValidationIssueKind =
   | "missing_required_context_sentence"
   | "missing_primary_run_mention"
   | "missing_run_timing"
+  | "overlapping_run_claims"
   | "missing_decisive_ending_emphasis"
   | "missing_series_summary_line"
   | "one_game_streak_language"
@@ -533,6 +552,7 @@ type GameDayRecapSemanticValidationIssueKind =
   | "tied_quarter_claim"
   | "unsupported_interview_claim"
   | "unsupported_lead_change_claim"
+  | "unsupported_scoring_context"
   | "unsupported_run_claim"
   | "wrong_quarter_winner";
 type GameDayRecapSemanticValidationIssueSalvage =
@@ -852,6 +872,7 @@ type GameDayRecapJudgeGameFactPacket = {
   effortDelta: number | null;
   effortSummary: string | null;
   finalMargin: number;
+  gameScoringContext: "high_scoring_shootout" | "low_scoring_grind" | null;
   gameDayPrepSummaries: string[];
   isPlayoffGame: boolean;
   matchId: string;
@@ -1460,6 +1481,7 @@ export async function submitGameDayRecap(
     coverageJson: null,
     costJson: null,
     error: null,
+    failureJson: null,
     gameDate: request.gameDate,
     leagueId: request.leagueId,
     leagueName: existing?.leagueName ?? null,
@@ -1603,6 +1625,7 @@ export async function submitLeagueGameDayRecap(
     coverageJson: null,
     costJson: null,
     error: null,
+    failureJson: null,
     gameDayNumber: request.gameDayNumber,
     leagueId: request.leagueId,
     leagueName: existing?.leagueName ?? null,
@@ -1720,6 +1743,7 @@ export async function submitSingleGameSummary(
     coverageJson: null,
     costJson: null,
     error: null,
+    failureJson: null,
     gameDate: existing?.gameDate ?? null,
     leagueId: existing?.leagueId ?? null,
     leagueName: existing?.leagueName ?? null,
@@ -1964,6 +1988,7 @@ export async function processGameDayRecap(
     });
     await deps.updateGameDayRecap(args.env, {
       error: null,
+      failureJson: null,
       modelId,
       modelProvider: "bedrock",
       promptVersion,
@@ -2143,6 +2168,7 @@ export async function processGameDayRecap(
         result: generatedRecap.result,
       }),
       error: null,
+      failureJson: null,
       leagueName: promptPayload.request.leagueName,
       modelId: writerProvider.modelId,
       modelProvider: writerProvider.providerName,
@@ -2178,6 +2204,7 @@ export async function processGameDayRecap(
         result: null,
       }),
       error: toMaintenanceAwareErrorMessage(error),
+      failureJson: buildGameDayRecapFailureDetails(error),
       modelId,
       modelProvider: "bedrock",
       promptVersion,
@@ -2454,6 +2481,7 @@ export async function processLeagueGameDayRecap(
     await deps.assertMaintenanceInactive();
     await deps.updateLeagueGameDayRecap(args.env, {
       error: null,
+      failureJson: null,
       modelId,
       modelProvider: "bedrock",
       promptVersion,
@@ -2601,6 +2629,7 @@ export async function processLeagueGameDayRecap(
         result: generatedRecap.result,
       }),
       error: null,
+      failureJson: null,
       leagueName: promptPayload.request.leagueName,
       modelId: writerProvider.modelId,
       modelProvider: writerProvider.providerName,
@@ -2629,6 +2658,7 @@ export async function processLeagueGameDayRecap(
         result: null,
       }),
       error: toMaintenanceAwareErrorMessage(error),
+      failureJson: buildGameDayRecapFailureDetails(error),
       modelId,
       modelProvider: "bedrock",
       promptVersion,
@@ -2887,6 +2917,7 @@ export async function processSingleGameSummary(
     await deps.assertMaintenanceInactive();
     await deps.updateSingleGameSummary(args.env, {
       error: null,
+      failureJson: null,
       modelId,
       modelProvider: "bedrock",
       promptVersion,
@@ -2988,6 +3019,7 @@ export async function processSingleGameSummary(
         result: generatedRecap.result,
       }),
       error: null,
+      failureJson: null,
       gameDate: promptPayload.request.gameDate,
       leagueId: promptPayload.request.leagueId,
       leagueName: promptPayload.request.leagueName,
@@ -3009,6 +3041,7 @@ export async function processSingleGameSummary(
         result: null,
       }),
       error: toMaintenanceAwareErrorMessage(error),
+      failureJson: buildGameDayRecapFailureDetails(error),
       modelId,
       modelProvider: "bedrock",
       promptVersion,
@@ -3557,6 +3590,7 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "If a game includes requiredContextSentences, include each supplied requiredContextSentence exactly once in the writeup and keep the wording intact.",
     "If a game includes effortSummary or gameDayPrepSummaries, use the supplied requiredContextSentences rather than inventing a paraphrase or citing raw effortDelta or GDP codes.",
     "If a game includes rotationSummaries, fold that short-handed or foul-trouble context into the writeup in natural language without guessing why a player sat.",
+    "Only call a game high-scoring or a shootout when gameScoringContext is high_scoring_shootout; only call it low-scoring or a defensive grind when gameScoringContext is low_scoring_grind.",
     "If a one-possession game includes playByPlayFacts.endingFacts, lead with that decisive ending in the headline or the opening sentence instead of burying it under broader context.",
     "If a game includes playByPlaySummaryLines, prefer those code-generated lines when mentioning supplied play-by-play context.",
     "If a game includes playByPlayFacts.endingFacts, use those structured ending facts as the source of truth for buzzerbeaters, go-ahead shots, and last missed chances.",
@@ -3564,10 +3598,11 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "If a game includes playByPlayFacts.primaryRun, mention that exact primaryRun somewhere in the writeup using the supplied run score and timing anchors.",
     "If a game includes playByPlayFacts.secondaryRun, you may mention it when it meaningfully sharpens the story, but do not force it in.",
     "If a game includes playByPlayFacts and its ending facts mark a buzzerbeater, use the word buzzerbeater in the headline or opening sentence.",
-    "If a game includes seriesContext.summaryLine, include that exact sentence once within the opening two writeup sentences and do not contradict it elsewhere.",
+    "If a game includes seriesContext.summaryLine, put the series state in the game headline and do not repeat the series-score sentence in the writeup.",
     "If a game is decided by three points or fewer but the supplied play-by-play does not identify a final-possession detail, keep the finish grounded and do not invent a last shot, last miss, or last turnover.",
     "If a game includes playByPlayFacts, use only those supplied facts and never infer unsupplied possession-by-possession detail.",
     "Only mention a run when the supplied play-by-play facts support it, and include the supplied timing anchors when you do.",
+    "If mentioning more than one run, use only non-overlapping run windows from the supplied facts.",
     "Only mention lead-change counts, rapid back-and-forth bursts, or comeback-to-the-lead claims when the supplied play-by-play facts support them, and keep the counts and timing exact.",
     "In playoff games, do not mention regular-season records or any winning or losing streaks.",
     "Keep each writeup flowing like sports-reporter prose rather than a checklist, bullet list, or stack of disconnected facts.",
@@ -3587,6 +3622,8 @@ function buildGameDayRecapWriterBedrockRequest(args: {
           "Use factsLibrary.periodStates.throughThreeQuarters for any through-three-quarters claim instead of estimating from other context.",
           "Use only factsLibrary.matchupEdgeFacts.supported for why-the-winner-won explanations and avoid the suppressed explanations.",
           "If factsLibrary.gameFlow.doNotEmphasize includes guidance, follow it and avoid those angles.",
+          "Use factsLibrary.narrativePlan to organize the writeup into paragraphs in this order: setup, chronological game flow, then player and team-rating explanation.",
+          "Separate writeup paragraphs with a blank line. Paragraph 1 should cover pregame tactics, effort, and game-day prep context; paragraph 2 should move through the game in time order; paragraph 3 should close with player stat lines and why the winner won.",
           "Only mention runs, lead-change bursts, last-lead, or took-the-lead-for-good angles when they are explicitly present in factsLibrary.gameFlow or playByPlayFacts.",
         ]
       : []),
@@ -3605,11 +3642,12 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "When playByPlayFacts.endingFacts mark a buzzerbeater, use the word buzzerbeater in the headline or opening sentence.",
     "When playByPlayFacts.primaryRun is present, mention that exact run in the writeup using the supplied score and timing anchors.",
     "When playByPlayFacts.secondaryRun is present, use it only when it helps the story stay specific.",
-    "When seriesContext.summaryLine is present for a game, include that exact sentence once within the opening two writeup sentences and do not contradict it anywhere else.",
+    "When seriesContext.summaryLine is present for a game, express the series state in the game headline and do not repeat the series-score sentence in the writeup.",
     "If a game is decided by three points or fewer but the supplied play-by-play does not identify a final-possession detail, keep the finish grounded and do not invent a last shot, last miss, or last turnover.",
     "When playByPlayFacts are present for a game, use them only as provided and do not embellish them into unsupplied sequences.",
     "When playByPlayFacts.bestCompetitiveSwingRun or playByPlayFacts.leadChangeFacts are present, use them as the source of truth for runs and back-and-forth claims.",
     "Only mention runs when the supplied play-by-play facts support them, and include the supplied timing anchors.",
+    "Do not mention overlapping run windows as separate game swings; if two supplied run facts overlap, keep the stronger primary run.",
     "Only mention lead-change counts, rapid bursts, or comeback-to-the-lead claims when the supplied play-by-play facts support them, and keep the counts and timing exact.",
     "Do not include postgameInterview in this response.",
     "In playoff games, do not mention regular-season records or any winning or losing streaks.",
@@ -3618,6 +3656,7 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "The final winner and final score are the source of truth for outcome language.",
     "If a game has only four periods, do not call it overtime. If it has overtime periods, keep that claim accurate.",
     "Use quarterFacts as the source of truth for period-by-period scoring. If a quarter is tied, do not say either team outscored, won, or took that quarter.",
+    "Only use high-scoring/shootout or low-scoring/defensive-grind framing when gameScoringContext explicitly supports it.",
     "If you mention team ratings, use the supplied BuzzerBeater word labels rather than raw numeric scores.",
     "Do not restate the exact same winner-and-score outcome in a later sentence once the game result is already clear.",
     "Prefer concrete basketball detail over filler such as 'at a key juncture' or 'proved decisive'.",
@@ -3632,6 +3671,7 @@ function buildGameDayRecapWriterBedrockRequest(args: {
           "Use factsLibrary.summaryFacts and factsLibrary.storySignals to guide the writeup, but keep the final prose connected and natural.",
           "Honor any factsLibrary.matchupEdgeFacts.suppressed guidance and do not present those angles as reasons the winner won.",
           "Honor any factsLibrary.gameFlow.doNotEmphasize guidance and do not force late-basket capper language when the payload warns against it.",
+          "Use factsLibrary.narrativePlan as the story outline and separate the setup, chronological game flow, and closing analysis with blank lines.",
         ]
       : []),
     validationFeedback.length > 0
@@ -3713,10 +3753,11 @@ function buildGameDayRecapStylePolishBedrockRequest(args: {
                   goals: [
                     "Rewrite only the writeup into smoother professional sportswriter prose.",
                     "Preserve every supplied fact exactly.",
-                    "Keep the exact series summary line when present.",
+                    "Keep playoff series-score language out of the writeup; that state belongs in the headline.",
                     "Keep the exact supplied primary run mention and timing anchors.",
                     "Keep every requiredContextSentence exactly once.",
                     "Remove duplicate quarter or outcome restatements when they are redundant.",
+                    "Keep or create paragraph breaks between setup, chronological game flow, and closing analysis.",
                     "Vary sentence openings and sentence length.",
                     "Use cleaner transitions and more connected prose.",
                   ],
@@ -3928,6 +3969,7 @@ function buildGameDayRecapJudgeGameFactStore(
     effortSummary: game.effortSummary,
     evidenceSignals: game.evidenceSignals,
     finalMargin: game.finalMargin,
+    gameScoringContext: game.gameScoringContext,
     gameDayPrepSummaries: game.gameDayPrepSummaries,
     isPlayoffGame: isPlayoffRecapGame(game),
     matchId: game.matchId,
@@ -4011,6 +4053,7 @@ function buildGameDayRecapJudgeGameFactPacket(
     effortDelta: game.effortDelta,
     effortSummary: game.effortSummary,
     finalMargin: game.finalMargin,
+    gameScoringContext: game.gameScoringContext,
     gameDayPrepSummaries: game.gameDayPrepSummaries,
     isPlayoffGame: game.isPlayoffGame,
     matchId: game.matchId,
@@ -4890,6 +4933,10 @@ function buildGameDayRecapGameFactStore(args: {
     effortSummary,
     gameDayPrepSummaries,
   });
+  const gameScoringContext = resolveGameScoringContext({
+    awayScore: awayTeam.score,
+    homeScore: homeTeam.score,
+  });
 
   return {
     effortDelta: args.boxScore.effortDelta,
@@ -4900,6 +4947,7 @@ function buildGameDayRecapGameFactStore(args: {
     finalMargin: Math.abs(
       (args.boxScore.homeTeam.score ?? 0) - (args.boxScore.awayTeam.score ?? 0),
     ),
+    gameScoringContext,
     isPlayoffGame,
     matchId: args.requestedGame.matchId,
     neutral: args.boxScore.neutral,
@@ -5028,6 +5076,7 @@ function buildGameDayRecapWriterGameFromFactStore(args: {
         }
       : {}),
     gameDayPrepSummaries: args.game.gameDayPrepSummaries,
+    gameScoringContext: args.game.gameScoringContext,
     requiredContextSentences: args.game.requiredContextSentences,
     rotationSummaries: args.game.rotationSummaries,
     evidenceSignals: args.game.evidenceSignals,
@@ -5286,18 +5335,19 @@ function buildGameFactsLibraryFromFactStore(
     awayTeamName: game.teams.away.name,
     finalMargin: game.finalMargin,
     finalScoreFromWinnerPerspective,
+    gameScoringContext: game.gameScoringContext,
     gameFlow,
     homeTeamName: game.teams.home.name,
     loserName,
     playByPlayFacts: game.playByPlayFacts,
     quarterFacts: game.quarterFacts,
-    seriesContext: game.seriesContext ?? null,
     throughThreeQuarters,
     winnerName,
   });
   const storySignals = buildFactsLibraryStorySignals({
     awayTeamName: game.teams.away.name,
     finalMargin: game.finalMargin,
+    gameScoringContext: game.gameScoringContext,
     gameFlow,
     homeTeamName: game.teams.home.name,
     overtime: game.overtime,
@@ -5313,7 +5363,6 @@ function buildGameFactsLibraryFromFactStore(
     homeTeamName: game.teams.home.name,
     loserName,
     playByPlayFacts: game.playByPlayFacts,
-    seriesContext: game.seriesContext ?? null,
     throughThreeQuarters,
     winnerName,
   });
@@ -5326,11 +5375,18 @@ function buildGameFactsLibraryFromFactStore(
     winnerName,
     winnerSide,
   });
+  const narrativePlan = buildFactsLibraryNarrativePlan({
+    game,
+    gameFlow,
+    matchupEdgeFacts,
+    summaryFacts,
+  });
 
   return {
     gameFlow,
     headlineCandidates,
     matchupEdgeFacts,
+    narrativePlan,
     openingCandidates,
     periodStates: {
       afterPeriods: periodStates,
@@ -5717,6 +5773,94 @@ function buildFactsLibraryMatchupEdgeFacts(
   };
 }
 
+function buildFactsLibraryNarrativePlan(args: {
+  game: GameDayRecapGameFactStore;
+  gameFlow: GameDayRecapFactsLibraryGameFlow;
+  matchupEdgeFacts: GameDayRecapFactsLibrary["matchupEdgeFacts"];
+  summaryFacts: string[];
+}): GameDayRecapFactsLibraryNarrativePlan {
+  const setupFacts = uniqueRecapLines([
+    buildTacticalSetupFact(args.game),
+    args.game.effortSummary,
+    ...args.game.gameDayPrepSummaries,
+    ...args.game.rotationSummaries,
+  ].filter((fact): fact is string => Boolean(fact)));
+  const gameFlowFacts = uniqueRecapLines([
+    args.game.periodStates.halftime
+      ? buildThroughPeriodSentenceFromState(args.game.periodStates.halftime)
+      : null,
+    args.game.periodStates.throughThreeQuarters
+      ? buildThroughPeriodSentenceFromState(args.game.periodStates.throughThreeQuarters)
+      : null,
+    ...args.gameFlow.highlightLeadChanges,
+    ...args.gameFlow.highlightRuns.map((highlight) => highlight.summary),
+    args.gameFlow.closingNote,
+    ...args.summaryFacts.filter((fact) =>
+      /\b(?:quarter|run|lead|comeback|largest lead|through three)\b/i.test(fact),
+    ),
+  ].filter((fact): fact is string => Boolean(fact)));
+  const closingFacts = uniqueRecapLines([
+    ...buildPlayerLeaderNarrativeFacts(args.game),
+    ...args.matchupEdgeFacts.supported,
+    `${args.game.winner.winnerName ?? args.game.teams.home.name} won by ${args.game.finalMargin} points.`,
+  ]);
+
+  return {
+    closingFacts,
+    gameFlowFacts,
+    paragraphOrder: [
+      "Paragraph 1: pregame tactics, effort, rotation, and game-day-prep context.",
+      "Paragraph 2: chronological game flow, period states, and approved non-overlapping runs.",
+      "Paragraph 3: player stat lines, team-rating edges, and why the winner won.",
+    ],
+    setupFacts,
+  };
+}
+
+function buildTacticalSetupFact(game: GameDayRecapGameFactStore): string | null {
+  const awayOffense = game.teams.away.offStrategy?.trim();
+  const homeOffense = game.teams.home.offStrategy?.trim();
+  const awayDefense = game.teams.away.defStrategy?.trim();
+  const homeDefense = game.teams.home.defStrategy?.trim();
+  const tacticParts = [
+    awayOffense ? `${game.teams.away.name} played ${awayOffense}` : null,
+    homeOffense ? `${game.teams.home.name} played ${homeOffense}` : null,
+    awayDefense ? `${game.teams.away.name} defended with ${awayDefense}` : null,
+    homeDefense ? `${game.teams.home.name} defended with ${homeDefense}` : null,
+  ].filter((part): part is string => Boolean(part));
+
+  return tacticParts.length ? `Tactical setup: ${tacticParts.join("; ")}.` : null;
+}
+
+function buildThroughPeriodSentenceFromState(
+  state: GameDayRecapFactStorePeriodState,
+): string {
+  if (state.leaderSide === "tie") {
+    return `${state.label}, the game was tied ${state.homeScore}-${state.awayScore}.`;
+  }
+
+  return `${state.label}, ${state.leaderName ?? "the leader"} led ${state.trailerName ?? "the opponent"} ${state.scoreFromLeaderPerspective}.`;
+}
+
+function buildPlayerLeaderNarrativeFacts(
+  game: GameDayRecapGameFactStore,
+): string[] {
+  const leaders = [
+    game.playerLeaders.points,
+    game.playerLeaders.rebounds,
+    game.playerLeaders.assists,
+    game.playerLeaders.bestAllAround,
+  ].filter((leader): leader is GameDayRecapFactStorePlayerLeader =>
+    Boolean(leader),
+  );
+  const facts = leaders.map((leader) => {
+    const line = leader.statLine;
+    return `${leader.playerName} led ${leader.teamName} with ${line.points} points, ${line.rebounds} rebounds, and ${line.assists} assists.`;
+  });
+
+  return uniqueRecapLines(facts);
+}
+
 function buildFactsLibraryGameFlow(args: {
   finalMargin: number;
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
@@ -5735,7 +5879,7 @@ function buildFactsLibraryGameFlow(args: {
 
   if (args.seriesContext) {
     doNotEmphasize.push(
-      "Prefer the current playoff series result over broader streak framing in the headline and opener.",
+      "Put the current playoff series result in the game headline rather than repeating the series score in the writeup.",
     );
   }
   if (
@@ -5790,12 +5934,12 @@ function buildFactsLibrarySummaryFacts(args: {
   awayTeamName: string;
   finalMargin: number;
   finalScoreFromWinnerPerspective: string;
+  gameScoringContext: "high_scoring_shootout" | "low_scoring_grind" | null;
   gameFlow: GameDayRecapFactsLibraryGameFlow;
   homeTeamName: string;
   loserName: string;
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   quarterFacts: GameDayRecapPromptQuarterFacts;
-  seriesContext: GameDayRecapSeriesContext | null;
   throughThreeQuarters: GameDayRecapFactsLibraryPeriodState | null;
   winnerName: string;
 }): string[] {
@@ -5803,10 +5947,16 @@ function buildFactsLibrarySummaryFacts(args: {
   facts.add(
     `${args.winnerName} beat ${args.loserName} ${args.finalScoreFromWinnerPerspective}.`,
   );
-
-  if (args.seriesContext?.summaryLine) {
-    facts.add(args.seriesContext.summaryLine);
+  if (args.gameScoringContext === "high_scoring_shootout") {
+    facts.add(
+      `Both teams topped 100 points, making it a high-scoring game.`,
+    );
+  } else if (args.gameScoringContext === "low_scoring_grind") {
+    facts.add(
+      `Both teams stayed below 80 points, making it a low-scoring game.`,
+    );
   }
+
   if (args.throughThreeQuarters) {
     facts.add(
       buildThroughThreeQuartersSentenceFromState(
@@ -5859,6 +6009,7 @@ function buildFactsLibrarySummaryFacts(args: {
 function buildFactsLibraryStorySignals(args: {
   awayTeamName: string;
   finalMargin: number;
+  gameScoringContext: "high_scoring_shootout" | "low_scoring_grind" | null;
   gameFlow: GameDayRecapFactsLibraryGameFlow;
   homeTeamName: string;
   overtime: boolean;
@@ -5871,13 +6022,18 @@ function buildFactsLibraryStorySignals(args: {
 
   if (args.seriesContext) {
     signals.add(
-      "This is a playoff series game, so the series state should anchor the opener more than broad streak framing.",
+      "This is a playoff series game, so the series state belongs in the headline rather than the writeup opener.",
     );
   }
   if (args.finalMargin <= 5) {
     signals.add("This was a close finish.");
   } else if (args.finalMargin >= 15) {
     signals.add("The winner created clear final separation.");
+  }
+  if (args.gameScoringContext === "high_scoring_shootout") {
+    signals.add("Both teams scored more than 100 points.");
+  } else if (args.gameScoringContext === "low_scoring_grind") {
+    signals.add("Both teams scored fewer than 80 points.");
   }
   if (
     args.throughThreeQuarters &&
@@ -5936,15 +6092,11 @@ function buildFactsLibraryOpeningCandidates(args: {
   homeTeamName: string;
   loserName: string;
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
-  seriesContext: GameDayRecapSeriesContext | null;
   throughThreeQuarters: GameDayRecapFactsLibraryPeriodState | null;
   winnerName: string;
 }): string[] {
   const candidates: string[] = [];
 
-  if (args.seriesContext?.summaryLine) {
-    candidates.push(args.seriesContext.summaryLine);
-  }
   if (args.playByPlayFacts?.summaryLines[0]) {
     candidates.push(args.playByPlayFacts.summaryLines[0]);
   }
@@ -6912,6 +7064,13 @@ function buildEvidenceSignals(args: {
   if (finalMargin >= 18) {
     signals.add("blowout");
   }
+  const gameScoringContext = resolveGameScoringContext({
+    awayScore: args.boxScore.awayTeam.score ?? 0,
+    homeScore: args.boxScore.homeTeam.score ?? 0,
+  });
+  if (gameScoringContext) {
+    signals.add(gameScoringContext);
+  }
   if (Math.abs(args.boxScore.effortDelta ?? 0) >= 2) {
     signals.add("effort_gap");
   }
@@ -6961,6 +7120,20 @@ function buildEvidenceSignals(args: {
   }
 
   return Array.from(signals);
+}
+
+function resolveGameScoringContext(args: {
+  awayScore: number;
+  homeScore: number;
+}): "high_scoring_shootout" | "low_scoring_grind" | null {
+  if (args.awayScore > 100 && args.homeScore > 100) {
+    return "high_scoring_shootout";
+  }
+  if (args.awayScore < 80 && args.homeScore < 80) {
+    return "low_scoring_grind";
+  }
+
+  return null;
 }
 
 function buildStandingsContext(args: {
@@ -8417,6 +8590,172 @@ function summarizeGameDayRecapSentenceForLog(sentence: string): string {
   return `${normalized.slice(0, 177)}...`;
 }
 
+function buildGameValidationPayload(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  judgeIssues: GameDayRecapJudgeValidationIssue[];
+}): GameDayRecapGameValidationPayload {
+  const issues = [
+    ...args.deterministicIssues.map(summarizeSemanticIssueForPayload),
+    ...args.judgeIssues.map(summarizeJudgeIssueForPayload),
+  ].slice(0, 8);
+  return {
+    issueCount: args.deterministicIssues.length + args.judgeIssues.length,
+    issues,
+    status: resolveGameValidationStatus(args),
+  };
+}
+
+function resolveGameValidationStatus(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  judgeIssues: GameDayRecapJudgeValidationIssue[];
+}): "SUSPECT" | "UNSAFE" | "VALID" {
+  if (!args.deterministicIssues.length && !args.judgeIssues.length) {
+    return "VALID";
+  }
+  const hasUnsafeIssue =
+    args.deterministicIssues.some(
+      (issue) => issue.field === "headline" || issue.salvage === "drop_only",
+    ) || args.judgeIssues.some((issue) => issue.field === "headline");
+  return hasUnsafeIssue ? "UNSAFE" : "SUSPECT";
+}
+
+function summarizeSemanticIssueForPayload(
+  issue: GameDayRecapSemanticValidationIssue,
+): GameDayRecapValidationIssuePayload {
+  return {
+    actualValue: issue.actualValue ?? null,
+    feedback: issue.feedback,
+    field: issue.field,
+    kind: issue.kind,
+    reason: issue.reason,
+    sentence: summarizeGameDayRecapSentenceForLog(issue.sentence),
+    sentenceIndex: issue.sentenceIndex,
+    source: "deterministic",
+    sourceField: null,
+    teamSide: issue.teamSide ?? null,
+    verdict: null,
+  };
+}
+
+function summarizeJudgeIssueForPayload(
+  issue: GameDayRecapJudgeValidationIssue,
+): GameDayRecapValidationIssuePayload {
+  return {
+    actualValue: issue.sourceField,
+    feedback: issue.feedback,
+    field: issue.field,
+    kind: issue.contradictionType,
+    reason:
+      issue.notes ??
+      `The judge marked this ${issue.field} sentence ${issue.verdict} for ${issue.contradictionType}.`,
+    sentence: summarizeGameDayRecapSentenceForLog(issue.sentence),
+    sentenceIndex: issue.sentenceIndex,
+    source: "judge",
+    sourceField: issue.sourceField,
+    teamSide: null,
+    verdict: issue.verdict,
+  };
+}
+
+function attachGameValidation(
+  game: GameDayRecapResultGame,
+  validation: GameDayRecapGameValidationPayload,
+): GameDayRecapResultGame {
+  return {
+    ...game,
+    validation,
+  };
+}
+
+function attachValidGameValidation(
+  game: GameDayRecapResultGame,
+): GameDayRecapResultGame {
+  return attachGameValidation(game, {
+    issueCount: 0,
+    issues: [],
+    status: "VALID",
+  });
+}
+
+function attachValidResultValidation(
+  result: GameDayRecapResultPayload,
+): GameDayRecapResultPayload {
+  return {
+    ...result,
+    games: result.games.map(attachValidGameValidation),
+  };
+}
+
+function buildGameDayRecapFailureDetails(
+  error: unknown,
+): GameDayRecapFailureDetailsPayload {
+  const message =
+    error instanceof Error ? error.message : String(error);
+  const errorName = error instanceof Error ? error.name : null;
+  if (error instanceof GameDayRecapRepairFailureError) {
+    const issuesByMatchId = new Map<
+      string,
+      {
+        deterministicIssues: GameDayRecapSemanticValidationIssue[];
+        judgeIssues: GameDayRecapJudgeValidationIssue[];
+      }
+    >();
+    for (const issue of [
+      ...error.deterministicIssues,
+      ...error.postPatchDeterministicIssues,
+      ...error.postTrimDeterministicIssues,
+    ]) {
+      const existing = issuesByMatchId.get(issue.matchId) ?? {
+        deterministicIssues: [],
+        judgeIssues: [],
+      };
+      existing.deterministicIssues.push(issue);
+      issuesByMatchId.set(issue.matchId, existing);
+    }
+    for (const issue of [
+      ...error.judgeIssues,
+      ...error.postPatchJudgeIssues,
+      ...error.postTrimJudgeIssues,
+    ]) {
+      const existing = issuesByMatchId.get(issue.matchId) ?? {
+        deterministicIssues: [],
+        judgeIssues: [],
+      };
+      existing.judgeIssues.push(issue);
+      issuesByMatchId.set(issue.matchId, existing);
+    }
+    const games = Array.from(issuesByMatchId.entries())
+      .slice(0, 12)
+      .map(([matchId, issues]) => {
+        const validation = buildGameValidationPayload(issues);
+        return {
+          awayTeamName: null,
+          homeTeamName: null,
+          issueCount: validation.issueCount,
+          issues: validation.issues,
+          matchId,
+        };
+      });
+    return {
+      errorName,
+      failedGameCount: games.length,
+      games,
+      issueCount: games.reduce((total, game) => total + game.issueCount, 0),
+      message,
+      repairActionCount: error.repairActions.length,
+    };
+  }
+
+  return {
+    errorName,
+    failedGameCount: 0,
+    games: [],
+    issueCount: 0,
+    message,
+    repairActionCount: 0,
+  };
+}
+
 function resolveDateKey(value: string | null | undefined): string | null {
   if (!value) {
     return null;
@@ -9631,9 +9970,11 @@ async function generateValidatedGameDayRecap(args: {
   ) {
     return {
       coverageIssues: [],
-      result: decorateGameDayRecapResultWithSurpriseMetadata(
-        initialDeterministic.orderedResult,
-        factStore.games,
+      result: attachValidResultValidation(
+        decorateGameDayRecapResultWithSurpriseMetadata(
+          initialDeterministic.orderedResult,
+          factStore.games,
+        ),
       ),
     };
   }
@@ -9693,9 +10034,11 @@ async function generateValidatedGameDayRecap(args: {
   ) {
     return {
       coverageIssues: [],
-      result: decorateGameDayRecapResultWithSurpriseMetadata(
-        retryDeterministic.orderedResult,
-        factStore.games,
+      result: attachValidResultValidation(
+        decorateGameDayRecapResultWithSurpriseMetadata(
+          retryDeterministic.orderedResult,
+          factStore.games,
+        ),
       ),
     };
   }
@@ -9750,7 +10093,7 @@ async function generatePremiumValidatedGameDayRecap(args: {
   if (bestPassingCandidate?.validatedResult) {
     return {
       coverageIssues: [],
-      result: bestPassingCandidate.validatedResult,
+      result: attachValidResultValidation(bestPassingCandidate.validatedResult),
     };
   }
 
@@ -9776,7 +10119,7 @@ async function generatePremiumValidatedGameDayRecap(args: {
   ) {
     return {
       coverageIssues: [],
-      result: retryCandidate.validatedResult,
+      result: attachValidResultValidation(retryCandidate.validatedResult),
     };
   }
 
@@ -11704,6 +12047,13 @@ function collectSemanticIssuesForField(
       field,
       sentenceIndex,
     ),
+    ...validateScoringContextLanguage(
+      sentence,
+      matchId,
+      expectedGame,
+      field,
+      sentenceIndex,
+    ),
     ...(options.enforceBannedStylePhrases
       ? validateBannedStylePhrases(sentence, matchId, field, sentenceIndex)
       : []),
@@ -11862,12 +12212,7 @@ function validateRunSentence(
   }
 
   const supportedRuns = collectSupportedRuns(expectedGame);
-  const matchingRun = supportedRuns.find(
-    (run) =>
-      run.teamPoints === runClaim.teamPoints &&
-      run.opponentPoints === runClaim.opponentPoints &&
-      (!runClaim.teamSide || run.teamSide === runClaim.teamSide),
-  );
+  const matchingRun = findMatchingSupportedRun(runClaim, supportedRuns);
 
   if (!matchingRun) {
     return [];
@@ -11883,7 +12228,9 @@ function validateRunSentence(
         field,
         kind: "missing_run_timing",
         matchId,
-        reason: "The recap mentioned a run without the required timing anchors.",
+        reason: `The recap mentioned a run without the required timing anchors. ${formatRunTimingInstruction(
+          matchingRun,
+        )}`,
         salvage: semanticIssueSalvageForField(field),
         sentence,
         sentenceIndex,
@@ -11893,6 +12240,80 @@ function validateRunSentence(
   }
 
   return [];
+}
+
+function validateOverlappingRunMentions(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const supportedRuns = collectSupportedRuns(expectedGame);
+  if (supportedRuns.length < 2) {
+    return [];
+  }
+
+  const mentionedRuns = splitRecapText(game.writeup).flatMap(
+    (sentence, sentenceIndex) => {
+      const runClaim = extractRunClaim(sentence, expectedGame);
+      const run = runClaim
+        ? findMatchingSupportedRun(runClaim, supportedRuns)
+        : null;
+      return run ? [{ run, sentence, sentenceIndex }] : [];
+    },
+  );
+  const uniqueMentions = new Map<string, (typeof mentionedRuns)[number]>();
+  for (const mention of mentionedRuns) {
+    const key = buildRunIdentityKey(mention.run);
+    if (!uniqueMentions.has(key)) {
+      uniqueMentions.set(key, mention);
+    }
+  }
+  const mentions = Array.from(uniqueMentions.values());
+
+  for (let leftIndex = 0; leftIndex < mentions.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < mentions.length; rightIndex += 1) {
+      const left = mentions[leftIndex]!;
+      const right = mentions[rightIndex]!;
+      if (!runsOverlapForRecapValidation(left.run, right.run)) {
+        continue;
+      }
+
+      return [
+        {
+          actualValue: `${formatRunScore(left.run)} and ${formatRunScore(right.run)}`,
+          feedback: `For match ${game.matchId}, do not mention overlapping run windows as separate swings. Keep the stronger primary run or choose only non-overlapping run facts.`,
+          field: "writeup",
+          kind: "overlapping_run_claims",
+          matchId: game.matchId,
+          reason:
+            "The writeup mentioned overlapping run windows as separate game swings.",
+          salvage: "patch_or_remove",
+          sentence: right.sentence,
+          sentenceIndex: right.sentenceIndex,
+          teamSide: right.run.teamSide ?? undefined,
+        },
+      ];
+    }
+  }
+
+  return [];
+}
+
+function findMatchingSupportedRun(
+  runClaim: {
+    opponentPoints: number;
+    teamPoints: number;
+    teamSide: "away" | "home" | null;
+  },
+  supportedRuns: GameDayRecapPlayByPlayRun[],
+): GameDayRecapPlayByPlayRun | null {
+  return (
+    supportedRuns.find(
+      (run) =>
+        run.teamPoints === runClaim.teamPoints &&
+        run.opponentPoints === runClaim.opponentPoints &&
+        (!runClaim.teamSide || run.teamSide === runClaim.teamSide),
+    ) ?? null
+  );
 }
 
 function collectSupportedRuns(
@@ -11922,6 +12343,84 @@ function collectSupportedRuns(
   }
 
   return Array.from(deduped.values());
+}
+
+function buildRunIdentityKey(run: GameDayRecapPlayByPlayRun): string {
+  return [
+    run.teamSide,
+    run.teamPoints,
+    run.opponentPoints,
+    run.startQuarter,
+    run.startClock,
+    run.endQuarter,
+    run.endClock,
+  ].join("|");
+}
+
+function formatRunScore(run: GameDayRecapPlayByPlayRun): string {
+  return `${run.teamPoints}-${run.opponentPoints}`;
+}
+
+function runsOverlapForRecapValidation(
+  left: GameDayRecapPlayByPlayRun,
+  right: GameDayRecapPlayByPlayRun,
+): boolean {
+  const leftInterval = resolveRunIntervalForRecapValidation(left);
+  const rightInterval = resolveRunIntervalForRecapValidation(right);
+  if (!leftInterval || !rightInterval) {
+    return false;
+  }
+
+  return leftInterval.start < rightInterval.end && rightInterval.start < leftInterval.end;
+}
+
+function resolveRunIntervalForRecapValidation(
+  run: GameDayRecapPlayByPlayRun,
+): { end: number; start: number } | null {
+  if (
+    run.startQuarter === null ||
+    !run.startClock ||
+    run.endQuarter === null ||
+    !run.endClock
+  ) {
+    return null;
+  }
+
+  const start = resolveRunAnchorOrderingForRecapValidation(
+    run.startQuarter,
+    run.startClock,
+  );
+  const end = resolveRunAnchorOrderingForRecapValidation(
+    run.endQuarter,
+    run.endClock,
+  );
+  return {
+    end: Math.max(start, end),
+    start: Math.min(start, end),
+  };
+}
+
+function resolveRunAnchorOrderingForRecapValidation(
+  quarter: number,
+  clock: string,
+): number {
+  const periodSeconds = quarter <= 4 ? 12 * 60 : 5 * 60;
+  const periodOffset =
+    quarter <= 4
+      ? (quarter - 1) * 12 * 60
+      : 4 * 12 * 60 + (quarter - 5) * 5 * 60;
+  const remainingSeconds = parseRunClockForRecapValidation(clock);
+  return periodOffset + Math.max(0, periodSeconds - remainingSeconds);
+}
+
+function parseRunClockForRecapValidation(clock: string): number {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(clock.trim());
+  if (!match) {
+    return 0;
+  }
+
+  return Number.parseInt(match[1] ?? "0", 10) * 60 +
+    Number.parseInt(match[2] ?? "0", 10);
 }
 
 function validatePlayoffRecordLanguage(
@@ -12087,6 +12586,54 @@ function containsPlayoffRecordLanguage(
   return false;
 }
 
+function validateScoringContextLanguage(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  const claimsHighScoring =
+    /\b(?:high-scoring|high scoring|shootout|offensive explosion|scoring barrage|points came easy)\b/i.test(
+      sentence,
+    );
+  const claimsLowScoring =
+    /\b(?:low-scoring|low scoring|defensive grind|defensive struggle|points were scarce|rock fight)\b/i.test(
+      sentence,
+    );
+  if (!claimsHighScoring && !claimsLowScoring) {
+    return [];
+  }
+
+  const context = expectedGame.gameScoringContext;
+  if (
+    (claimsHighScoring && context === "high_scoring_shootout") ||
+    (claimsLowScoring && context === "low_scoring_grind")
+  ) {
+    return [];
+  }
+
+  const actualValue = `${expectedGame.teams.home.name} ${expectedGame.teams.home.score}, ${expectedGame.teams.away.name} ${expectedGame.teams.away.score}`;
+  const requiredThreshold =
+    claimsHighScoring
+      ? "both teams must score more than 100"
+      : "both teams must score fewer than 80";
+
+  return [
+    {
+      actualValue,
+      feedback: `For match ${matchId}, only call the game ${claimsHighScoring ? "high-scoring" : "low-scoring"} when ${requiredThreshold}. Actual final: ${actualValue}.`,
+      field,
+      kind: "unsupported_scoring_context",
+      matchId,
+      reason: `The recap used ${claimsHighScoring ? "high-scoring" : "low-scoring"} framing without the configured scoring-context threshold.`,
+      salvage: semanticIssueSalvageForField(field),
+      sentence,
+      sentenceIndex,
+    },
+  ];
+}
+
 function containsPlayoffStreakLanguage(sentence: string): boolean {
   return [
     /\b(?:winning|losing)\s+streak\b/i,
@@ -12157,6 +12704,7 @@ function validateGameLevelStyle(
     ...validateDecisiveEndingEmphasis(game, expectedGame),
     ...validateRequiredContextSentences(game, expectedGame),
     ...validateRequiredPrimaryRunMention(game, expectedGame),
+    ...validateOverlappingRunMentions(game, expectedGame),
     ...validateRequiredSeriesSummaryLine(game, expectedGame),
     ...validateChoppyFactStack(game),
     ...validateDuplicatePeriodStateRestatement(game, expectedGame),
@@ -12687,38 +13235,28 @@ function validateRequiredSeriesSummaryLine(
 
   const issues: GameDayRecapSemanticValidationIssue[] = [];
   const writeupSentences = splitRecapText(game.writeup);
-  const openingSentences = writeupSentences.slice(0, 2);
-  const hasOpeningSeriesSummaryLine = openingSentences.some(
-    (sentence) =>
-      canonicalizeSeriesSummaryLine(sentence) === canonicalExpectedSummaryLine,
-  );
+  const headlineSeriesClaim = extractSeriesSummaryClaim(game.headline);
 
-  if (!hasOpeningSeriesSummaryLine) {
+  if (!headlineSeriesClaim) {
     issues.push({
       actualValue: canonicalExpectedSummaryLine,
-      feedback: `For match ${game.matchId}, include the exact series sentence "${canonicalExpectedSummaryLine}" once within the opening two writeup sentences.`,
-      field: "writeup",
+      feedback: `For match ${game.matchId}, include the series state "${canonicalExpectedSummaryLine}" in the game headline and do not repeat it in the writeup.`,
+      field: "headline",
       kind: "missing_series_summary_line",
       matchId: game.matchId,
-      reason: `The writeup did not include the required series sentence "${canonicalExpectedSummaryLine}" within the opening two sentences.`,
-      salvage: "patch_or_remove",
-      sentence: writeupSentences[0] ?? game.writeup,
+      reason: `The headline did not include the required series state "${canonicalExpectedSummaryLine}".`,
+      salvage: "drop_only",
+      sentence: game.headline,
       sentenceIndex: 0,
     });
-  }
-
-  const conflictingHeadlineClaim = extractSeriesSummaryClaim(game.headline);
-  if (
-    conflictingHeadlineClaim &&
-    conflictingHeadlineClaim !== canonicalExpectedSummaryLine
-  ) {
+  } else if (headlineSeriesClaim !== canonicalExpectedSummaryLine) {
     issues.push({
       actualValue: canonicalExpectedSummaryLine,
-      feedback: `For match ${game.matchId}, the only valid series sentence is "${canonicalExpectedSummaryLine}". Do not use "${conflictingHeadlineClaim}" in the headline.`,
+      feedback: `For match ${game.matchId}, the only valid series state is "${canonicalExpectedSummaryLine}". Do not use "${headlineSeriesClaim}" in the headline.`,
       field: "headline",
       kind: "conflicting_series_summary_line",
       matchId: game.matchId,
-      reason: `The headline used the conflicting series sentence "${conflictingHeadlineClaim}".`,
+      reason: `The headline used the conflicting series state "${headlineSeriesClaim}".`,
       salvage: "drop_only",
       sentence: game.headline,
       sentenceIndex: 0,
@@ -12727,17 +13265,17 @@ function validateRequiredSeriesSummaryLine(
 
   writeupSentences.forEach((sentence, sentenceIndex) => {
     const claim = extractSeriesSummaryClaim(sentence);
-    if (!claim || claim === canonicalExpectedSummaryLine) {
+    if (!claim) {
       return;
     }
 
     issues.push({
       actualValue: canonicalExpectedSummaryLine,
-      feedback: `For match ${game.matchId}, the only valid series sentence is "${canonicalExpectedSummaryLine}". Do not use "${claim}".`,
+      feedback: `For match ${game.matchId}, keep the series state in the headline only. Do not repeat "${claim}" in the writeup.`,
       field: "writeup",
       kind: "conflicting_series_summary_line",
       matchId: game.matchId,
-      reason: `The writeup used the conflicting series sentence "${claim}".`,
+      reason: `The writeup repeated "${claim}", a series-score sentence that belongs in the headline only.`,
       salvage: "patch_or_remove",
       sentence,
       sentenceIndex,
@@ -12758,9 +13296,26 @@ function extractSeriesSummaryClaim(text: string): string | null {
     return "The series is tied 1-1.";
   }
 
+  const evensMatch = /^(.+?) evens series 1-1$/i.exec(normalized);
+  if (evensMatch?.[1]) {
+    return "The series is tied 1-1.";
+  }
+
+  const gameOneLeadMatch = /^(.+?) takes Game 1, leads series 1-0$/i.exec(
+    normalized,
+  );
+  if (gameOneLeadMatch?.[1]) {
+    return `${gameOneLeadMatch[1]} leads the series 1-0.`;
+  }
+
   const leadMatch = /^(.+?) leads the series 1-0$/i.exec(normalized);
   if (leadMatch?.[1]) {
     return `${leadMatch[1]} leads the series 1-0.`;
+  }
+
+  const headlineWinMatch = /^(.+?) wins series 2-(0|1)$/i.exec(normalized);
+  if (headlineWinMatch?.[1] && headlineWinMatch?.[2]) {
+    return `${headlineWinMatch[1]} wins the series 2-${headlineWinMatch[2]}.`;
   }
 
   const winMatch = /^(.+?) wins the series 2-(0|1)$/i.exec(normalized);
@@ -12970,8 +13525,7 @@ async function salvageGameDayRecapResult(args: {
     judgeIssuesByMatchId.set(issue.matchId, [issue]);
   }
 
-  const retainedGames: GameDayRecapResultPayload["games"] = [];
-  const coverageIssues: CoverageIssue[] = [];
+  const gamesWithValidation: GameDayRecapResultPayload["games"] = [];
 
   for (const expectedGame of args.expectedGames) {
     const currentGame = orderedGames.find(
@@ -12985,7 +13539,7 @@ async function salvageGameDayRecapResult(args: {
       deterministicIssuesByMatchId.get(currentGame.matchId) ?? [];
     const judgeIssues = judgeIssuesByMatchId.get(currentGame.matchId) ?? [];
     if (!deterministicIssues.length && !judgeIssues.length) {
-      retainedGames.push(currentGame);
+      gamesWithValidation.push(attachValidGameValidation(currentGame));
       continue;
     }
 
@@ -13009,75 +13563,36 @@ async function salvageGameDayRecapResult(args: {
     );
     postTrimJudgeIssues.push(...salvageOutcome.postTrimJudgeIssues);
     if (salvageOutcome.game) {
-      retainedGames.push(salvageOutcome.game);
+      gamesWithValidation.push(attachValidGameValidation(salvageOutcome.game));
       continue;
     }
 
-    coverageIssues.push({
-      awayTeamName: expectedGame.teams.away.name,
-      homeTeamName: expectedGame.teams.home.name,
-      matchId: currentGame.matchId,
-      reason: "removed after factual validation could not be safely repaired",
-    });
-    repairActions.push({
-      action: "drop_game",
-      matchId: currentGame.matchId,
-      reason: "remaining deterministic or judge issues after repair",
-    });
-  }
-
-  if (!retainedGames.length) {
-    throw new GameDayRecapRepairFailureError({
-      deterministicIssues: args.deterministicIssues,
-      judgeIssues: args.judgeIssues,
-      postPatchDeterministicIssues,
-      postPatchJudgeIssues,
-      postTrimDeterministicIssues,
-      postTrimJudgeIssues,
-      repairActions,
-    });
-  }
-
-  const result = coverageIssues.length
-    ? {
-        games: retainedGames,
-        summary: buildSafePartialRecapSummary({
-          droppedGameCount: coverageIssues.length,
-          request: args.request,
-          retainedGameCount: retainedGames.length,
+    gamesWithValidation.push(
+      attachGameValidation(
+        currentGame,
+        buildGameValidationPayload({
+          deterministicIssues: [
+            ...deterministicIssues,
+            ...salvageOutcome.postPatchDeterministicIssues,
+            ...salvageOutcome.postTrimDeterministicIssues,
+          ],
+          judgeIssues: [
+            ...judgeIssues,
+            ...salvageOutcome.postPatchJudgeIssues,
+            ...salvageOutcome.postTrimJudgeIssues,
+          ],
         }),
-      }
-      : {
-        games: retainedGames,
-        summary: args.result.summary,
-      };
-  const assessed = assessGameDayRecapDeterministicPayload(
-    result,
-    args.expectedGames,
-    {
-      allowPartial: coverageIssues.length > 0,
-      enforceBannedStylePhrases: runtimeConfig.enforceBannedStylePhrases,
-    },
-  );
-  const blockingAssessedIssues = assessed.issues.filter(
-    (issue) => !isSoftStyleOnlyWriteupIssue(issue),
-  );
-  if (blockingAssessedIssues.length > 0) {
-    throw new GameDayRecapRepairFailureError({
-      deterministicIssues: args.deterministicIssues,
-      judgeIssues: args.judgeIssues,
-      postPatchDeterministicIssues,
-      postPatchJudgeIssues,
-      postTrimDeterministicIssues: assessed.issues,
-      postTrimJudgeIssues,
-      repairActions,
-    });
+      ),
+    );
   }
 
   return {
-    coverageIssues,
+    coverageIssues: [],
     result: decorateGameDayRecapResultWithSurpriseMetadata(
-      assessed.orderedResult,
+      {
+        games: gamesWithValidation,
+        summary: args.result.summary,
+      },
       args.expectedGames,
     ),
   };
@@ -13372,30 +13887,17 @@ function rebuildGameWriteupOpening(args: {
   reason: string;
   repairActions: GameDayRecapRepairAction[];
 }): GameDayRecapResultGame {
-  const needsSeriesSummary = args.deterministicIssues.some(
-    (issue) => issue.kind === "missing_series_summary_line",
-  );
   const needsEndingEmphasis = args.deterministicIssues.some(
     (issue) => issue.kind === "missing_decisive_ending_emphasis",
   );
-  if (!needsSeriesSummary && !needsEndingEmphasis) {
+  if (!needsEndingEmphasis) {
     return args.game;
   }
 
   const sentences = splitRecapText(args.game.writeup);
   const rebuiltOpening: string[] = [];
-  const summaryLine = args.expectedGame.seriesContext?.summaryLine ?? null;
   const endingSentence = buildSafeDecisiveEndingSentence(args.expectedGame);
-  const preserveExistingSeriesSummary =
-    summaryLine !== null && sentences.includes(summaryLine);
 
-  if (
-    summaryLine &&
-    (needsSeriesSummary ||
-      (needsEndingEmphasis && preserveExistingSeriesSummary))
-  ) {
-    rebuiltOpening.push(summaryLine);
-  }
   if (needsEndingEmphasis && endingSentence) {
     rebuiltOpening.push(endingSentence);
   }
@@ -13405,9 +13907,6 @@ function rebuildGameWriteupOpening(args: {
 
   const remainder = sentences.filter((sentence) => {
     if (rebuiltOpening.includes(sentence)) {
-      return false;
-    }
-    if (needsSeriesSummary && summaryLine && sentence === summaryLine) {
       return false;
     }
     if (needsEndingEmphasis && endingSentence && sentence === endingSentence) {
@@ -13561,6 +14060,7 @@ function choosePreferredRepairIssue(
     missing_decisive_ending_emphasis: 9,
     missing_series_summary_line: 8,
     one_game_streak_language: 11,
+    overlapping_run_claims: 8,
     playoff_record_language: 10,
     playoff_streak_language: 10,
     quarter_score_mismatch: 5,
@@ -13572,6 +14072,7 @@ function choosePreferredRepairIssue(
     tied_quarter_claim: 7,
     unsupported_interview_claim: 9,
     unsupported_lead_change_claim: 8,
+    unsupported_scoring_context: 8,
     unsupported_run_claim: 8,
     wrong_quarter_winner: 8,
   };
@@ -13610,7 +14111,7 @@ function buildSafeReplacementSentence(
         : null;
     }
     case "missing_series_summary_line":
-      return expectedGame.seriesContext?.summaryLine ?? null;
+      return null;
     case "conflicting_series_summary_line":
       return null;
     case "missing_required_context_sentence":
@@ -13620,6 +14121,9 @@ function buildSafeReplacementSentence(
     case "missing_primary_run_mention":
       return buildSafePrimaryRunSentence(expectedGame);
     case "missing_run_timing":
+    case "overlapping_run_claims":
+    case "unsupported_scoring_context":
+      return buildSafeFinalScoreSentence(expectedGame);
     case "unsupported_lead_change_claim":
     case "unsupported_run_claim":
       return buildSafeMomentumSentence(expectedGame);
@@ -13692,6 +14196,17 @@ function buildSafeMomentumSentence(
       ),
   );
   return prioritySummaryLine ?? null;
+}
+
+function buildSafeFinalScoreSentence(
+  expectedGame: GameDayRecapPromptGame,
+): string {
+  const winnerSide = resolveGameWinnerSide(expectedGame);
+  if (!winnerSide) {
+    return `${expectedGame.teams.home.name} and ${expectedGame.teams.away.name} finished tied ${expectedGame.teams.home.score}-${expectedGame.teams.away.score}.`;
+  }
+  const loserSide = winnerSide === "home" ? "away" : "home";
+  return `${expectedGame.teams[winnerSide].name} beat ${expectedGame.teams[loserSide].name} ${expectedGame.teams[winnerSide].score}-${expectedGame.teams[loserSide].score}.`;
 }
 
 function buildSafePrimaryRunSentence(

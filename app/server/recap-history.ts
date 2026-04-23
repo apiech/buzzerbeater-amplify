@@ -2,6 +2,7 @@ import type {
   GameDayRecapCostPayload,
   GameDayRecapRecord,
   GameDayRecapCoveragePayload,
+  GameDayRecapFailurePayload,
   GameDayRecapResultPayload,
   LeagueDateRecapHistoryRecord,
   LeagueGameDayPerformancesHistoryRecord,
@@ -169,6 +170,7 @@ export function adaptLeagueDateRecap(
     coverageJson: normalized.coverageJson ?? null,
     costJson: normalized.costJson ?? null,
     error: normalized.error ?? null,
+    failureJson: normalized.failureJson ?? null,
     gameDate: normalized.gameDate,
     gameDayNumber: null,
     kind: "LEAGUE_DATE",
@@ -195,6 +197,7 @@ export function adaptLeagueGameDayRecap(
     coverageJson: normalized.coverageJson ?? null,
     costJson: normalized.costJson ?? null,
     error: normalized.error ?? null,
+    failureJson: normalized.failureJson ?? null,
     gameDate: null,
     gameDayNumber: normalized.gameDayNumber,
     kind: "LEAGUE_GAME_DAY",
@@ -221,6 +224,7 @@ export function adaptLeagueGameDayPerformances(
     coverageJson: normalized.coverageJson ?? null,
     costJson: null,
     error: normalized.error ?? null,
+    failureJson: null,
     gameDate: normalized.gameDate ?? null,
     gameDayNumber: normalized.gameDayNumber,
     kind: "LEAGUE_GAME_DAY_PERFORMANCES",
@@ -250,6 +254,7 @@ export function adaptSingleGameSummary(
     coverageJson: normalized.coverageJson ?? null,
     costJson: normalized.costJson ?? null,
     error: normalized.error ?? null,
+    failureJson: normalized.failureJson ?? null,
     gameDate: normalized.gameDate ?? null,
     gameDayNumber: null,
     kind: "SINGLE_GAME",
@@ -274,6 +279,7 @@ export function normalizeGameDayRecapRecord(
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
     costJson: normalizeRecapCost(record.costJson),
+    failureJson: normalizeRecapFailure(record.failureJson),
     requestJson: {
       approach:
         readOptionalRecapGenerationApproach(
@@ -297,6 +303,7 @@ export function normalizeLeagueGameDayRecapRecord(
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
     costJson: normalizeRecapCost(record.costJson),
+    failureJson: normalizeRecapFailure(record.failureJson),
     requestJson: {
       approach:
         readOptionalRecapGenerationApproach(
@@ -349,6 +356,7 @@ export function normalizeSingleGameSummaryRecord(
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
     costJson: normalizeRecapCost(record.costJson),
+    failureJson: normalizeRecapFailure(record.failureJson),
     requestJson: {
       approach:
         readOptionalRecapGenerationApproach(
@@ -521,6 +529,7 @@ function normalizeRecapResult(
           const postgameInterview = normalizeRecapPostgameInterview(
             source?.postgameInterview,
           );
+          const validation = normalizeRecapGameValidation(source?.validation);
           const writeup = asNonEmptyString(source?.writeup);
           if (!headline || !matchId || !writeup) {
             return [];
@@ -532,6 +541,7 @@ function normalizeRecapResult(
             matchId,
             ...(postgameInterview ? { postgameInterview } : {}),
             surpriseFactor: asFiniteNumber(source?.surpriseFactor),
+            ...(validation ? { validation } : {}),
             writeup,
           }];
         })
@@ -552,6 +562,128 @@ function normalizeRecapResult(
       lede,
     },
   };
+}
+
+function normalizeRecapFailure(
+  value: unknown,
+): GameDayRecapFailurePayload | null {
+  const record = readLegacyField(value);
+  if (!record) {
+    return null;
+  }
+  const message = asNonEmptyString(record.message);
+  const failedGameCount = asFiniteNumber(record.failedGameCount);
+  const issueCount = asFiniteNumber(record.issueCount);
+  const repairActionCount = asFiniteNumber(record.repairActionCount);
+  const games = Array.isArray(record.games)
+    ? record.games
+        .flatMap((entry) => {
+          const source = toRecord(entry);
+          const entryIssueCount = asFiniteNumber(source?.issueCount);
+          if (entryIssueCount === null) {
+            return [];
+          }
+          const awayTeamName = asNonEmptyString(source?.awayTeamName);
+          const homeTeamName = asNonEmptyString(source?.homeTeamName);
+          const matchId = asNonEmptyString(source?.matchId);
+          return {
+            issueCount: entryIssueCount,
+            issues: normalizeRecapValidationIssues(source?.issues),
+            ...(awayTeamName ? { awayTeamName } : {}),
+            ...(homeTeamName ? { homeTeamName } : {}),
+            ...(matchId ? { matchId } : {}),
+          };
+        })
+    : [];
+
+  if (
+    !message ||
+    failedGameCount === null ||
+    issueCount === null ||
+    repairActionCount === null
+  ) {
+    return null;
+  }
+
+  return {
+    failedGameCount,
+    games,
+    issueCount,
+    message,
+    repairActionCount,
+    ...(asNonEmptyString(record.errorName)
+      ? { errorName: asNonEmptyString(record.errorName) }
+      : {}),
+  };
+}
+
+function normalizeRecapGameValidation(
+  value: unknown,
+): NonNullable<
+  GameDayRecapResultPayload["games"][number]["validation"]
+> | null {
+  const record = readLegacyField(value);
+  if (!record) {
+    return null;
+  }
+  const issueCount = asFiniteNumber(record.issueCount);
+  const status = asNonEmptyString(record.status);
+  if (issueCount === null || !status) {
+    return null;
+  }
+
+  return {
+    issueCount,
+    issues: normalizeRecapValidationIssues(record.issues),
+    status,
+  };
+}
+
+function normalizeRecapValidationIssues(
+  value: unknown,
+): NonNullable<
+  GameDayRecapResultPayload["games"][number]["validation"]
+>["issues"] {
+  return Array.isArray(value)
+    ? value
+        .flatMap((entry) => {
+          const source = toRecord(entry);
+          const field = asNonEmptyString(source?.field);
+          const kind = asNonEmptyString(source?.kind);
+          const reason = asNonEmptyString(source?.reason);
+          const sentence = asNonEmptyString(source?.sentence);
+          const sentenceIndex = asFiniteNumber(source?.sentenceIndex);
+          const issueSource = asNonEmptyString(source?.source);
+          if (
+            !field ||
+            !kind ||
+            !reason ||
+            !sentence ||
+            sentenceIndex === null ||
+            !issueSource
+          ) {
+            return [];
+          }
+          const actualValue = asNonEmptyString(source?.actualValue);
+          const feedback = asNonEmptyString(source?.feedback);
+          const sourceField = asNonEmptyString(source?.sourceField);
+          const teamSide = asNonEmptyString(source?.teamSide);
+          const verdict = asNonEmptyString(source?.verdict);
+          return {
+            field,
+            kind,
+            reason,
+            sentence,
+            sentenceIndex,
+            source: issueSource,
+            ...(actualValue ? { actualValue } : {}),
+            ...(feedback ? { feedback } : {}),
+            ...(sourceField ? { sourceField } : {}),
+            ...(teamSide ? { teamSide } : {}),
+            ...(verdict ? { verdict } : {}),
+          };
+        })
+    : [];
 }
 
 function normalizeRecapPostgameInterview(

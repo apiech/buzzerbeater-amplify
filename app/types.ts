@@ -64,6 +64,9 @@ export type GameDayRecapCoveragePayload = NonNullable<
 export type GameDayRecapCostPayload = NonNullable<
   GameDayRecapRecord["costJson"]
 >;
+export type GameDayRecapFailurePayload = NonNullable<
+  GameDayRecapRecord["failureJson"]
+>;
 export type GameDayRecapResultPayload = NonNullable<
   GameDayRecapRecord["resultJson"]
 >;
@@ -110,6 +113,7 @@ type RecapHistoryBase = {
   completedAt: string | null;
   costJson: GameDayRecapCostPayload | null;
   error: string | null;
+  failureJson: GameDayRecapFailurePayload | null;
   gameDate: string | null;
   gameDayNumber: number | null;
   leagueId: string | null;

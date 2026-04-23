@@ -58,6 +58,43 @@ function buildFacts(events: ReturnType<typeof createEvent>[]) {
   );
 }
 
+function createRunFact(args: {
+  endAwayScore: number;
+  endClock: string;
+  endHomeScore: number;
+  endQuarter: number;
+  opponentPoints: number;
+  startAwayScore: number;
+  startClock: string;
+  startHomeScore: number;
+  startQuarter: number;
+  teamPoints: number;
+}) {
+  return {
+    endAwayScore: args.endAwayScore,
+    endClock: args.endClock,
+    endMarginFromTeamPerspective: args.endHomeScore - args.endAwayScore,
+    endedBy: "game_end" as const,
+    endHomeScore: args.endHomeScore,
+    endQuarter: args.endQuarter,
+    marginSwing:
+      args.endHomeScore -
+      args.endAwayScore -
+      (args.startHomeScore - args.startAwayScore),
+    netMargin: args.teamPoints - args.opponentPoints,
+    opponentPoints: args.opponentPoints,
+    runType: "swing" as const,
+    startAwayScore: args.startAwayScore,
+    startClock: args.startClock,
+    startMarginFromTeamPerspective: args.startHomeScore - args.startAwayScore,
+    startHomeScore: args.startHomeScore,
+    startQuarter: args.startQuarter,
+    teamName: "Alpha",
+    teamPoints: args.teamPoints,
+    teamSide: "home" as const,
+  };
+}
+
 test("fetchPublicMatchPlayByPlay parses the public payload shape and ignores extra fields", async () => {
   const payload = {
     events: [
@@ -268,10 +305,10 @@ test("buildGameDayRecapPlayByPlayFacts captures a winning comeback and the bigge
     opponentPoints: 0,
     runType: "unanswered",
     startAwayScore: 10,
-    startClock: "11:35",
+    startClock: "09:40",
     startMarginFromTeamPerspective: -10,
     startHomeScore: 0,
-    startQuarter: 2,
+    startQuarter: 1,
     teamName: "Alpha",
     teamPoints: 14,
     teamSide: "home",
@@ -304,7 +341,7 @@ test("buildGameDayRecapPlayByPlayFacts captures a winning comeback and the bigge
   );
   assert.ok(
     facts.summaryLines.some((line) =>
-      /Alpha .*14-0 run from 11:35 left in the 2nd quarter to 09:00 left in the 2nd quarter/i.test(
+      /Alpha .*14-0 run from 09:40 left in the 1st quarter to 09:00 left in the 2nd quarter/i.test(
         line,
       ),
     ),
@@ -323,35 +360,35 @@ test("buildGameDayRecapPlayByPlayFacts captures a competitive answered swing run
     }),
     createEvent({
       awayScore: 2,
-      clock: "11:20",
+      clock: "08:40",
       eventText: "Beta opens in front.",
       homeScore: 0,
       id: 1,
-      quarter: 1,
+      quarter: 3,
       wallClock: 5,
     }),
     createEvent({
-      awayScore: 4,
-      clock: "10:50",
-      eventText: "Beta keeps the edge.",
+      awayScore: 2,
+      clock: "08:20",
+      eventText: "Alpha gets on the board.",
       homeScore: 2,
       id: 2,
-      quarter: 1,
+      quarter: 3,
       wallClock: 10,
     }),
     createEvent({
       awayScore: 4,
       clock: "08:00",
-      eventText: "Alpha starts the push.",
-      homeScore: 4,
+      eventText: "Beta keeps the edge.",
+      homeScore: 2,
       id: 3,
       quarter: 3,
       wallClock: 15,
     }),
     createEvent({
-      awayScore: 6,
+      awayScore: 4,
       clock: "07:40",
-      eventText: "Beta answers once.",
+      eventText: "Alpha starts the push.",
       homeScore: 4,
       id: 4,
       quarter: 3,
@@ -360,25 +397,25 @@ test("buildGameDayRecapPlayByPlayFacts captures a competitive answered swing run
     createEvent({
       awayScore: 6,
       clock: "07:10",
-      eventText: "Alpha drills a three.",
-      homeScore: 7,
+      eventText: "Beta answers once.",
+      homeScore: 4,
       id: 5,
       quarter: 3,
       wallClock: 25,
     }),
     createEvent({
       awayScore: 6,
-      clock: "06:20",
-      eventText: "Alpha adds two more.",
-      homeScore: 9,
+      clock: "06:40",
+      eventText: "Alpha drills a three.",
+      homeScore: 7,
       id: 6,
       quarter: 3,
       wallClock: 30,
     }),
     createEvent({
-      awayScore: 7,
-      clock: "05:55",
-      eventText: "Beta splits a pair.",
+      awayScore: 6,
+      clock: "06:10",
+      eventText: "Alpha adds two more.",
       homeScore: 9,
       id: 7,
       quarter: 3,
@@ -386,30 +423,39 @@ test("buildGameDayRecapPlayByPlayFacts captures a competitive answered swing run
     }),
     createEvent({
       awayScore: 7,
-      clock: "05:25",
-      eventText: "Alpha keeps coming.",
-      homeScore: 11,
+      clock: "05:45",
+      eventText: "Beta splits a pair.",
+      homeScore: 9,
       id: 8,
       quarter: 3,
       wallClock: 40,
     }),
     createEvent({
       awayScore: 7,
-      clock: "04:55",
-      eventText: "Alpha hits another three.",
-      homeScore: 14,
+      clock: "05:20",
+      eventText: "Alpha keeps coming.",
+      homeScore: 11,
       id: 9,
       quarter: 3,
       wallClock: 45,
     }),
     createEvent({
       awayScore: 7,
-      clock: "04:35",
-      eventText: "Alpha caps the run.",
-      homeScore: 16,
+      clock: "04:55",
+      eventText: "Alpha hits another three.",
+      homeScore: 14,
       id: 10,
       quarter: 3,
       wallClock: 50,
+    }),
+    createEvent({
+      awayScore: 7,
+      clock: "04:35",
+      eventText: "Alpha caps the run.",
+      homeScore: 16,
+      id: 11,
+      quarter: 3,
+      wallClock: 55,
     }),
   ]);
 
@@ -422,28 +468,184 @@ test("buildGameDayRecapPlayByPlayFacts captures a competitive answered swing run
     endQuarter: 3,
     marginSwing: 11,
     netMargin: 11,
-    opponentPoints: 3,
+    opponentPoints: 5,
     runType: "swing",
-    startAwayScore: 4,
-    startClock: "08:00",
+    startAwayScore: 2,
+    startClock: "08:40",
     startMarginFromTeamPerspective: -2,
-    startHomeScore: 2,
+    startHomeScore: 0,
     startQuarter: 3,
     teamName: "Alpha",
-    teamPoints: 14,
+    teamPoints: 16,
     teamSide: "home",
   });
   assert.ok(
     facts.summaryLines.some((line) =>
-      /14-3 run from 08:00 left in the 3rd quarter to 04:35 left in the 3rd quarter/i.test(
+      /16-5 run from 08:40 left in the 3rd quarter to 04:35 left in the 3rd quarter/i.test(
         line,
       ),
     ),
   );
   assert.equal(facts.primaryRun?.teamSide, "home");
   assert.ok(facts.primaryRun);
-  assert.equal(facts.primaryRun.teamPoints, 14);
-  assert.equal(facts.primaryRun.opponentPoints, 3);
+  assert.equal(facts.primaryRun.teamPoints, 16);
+  assert.equal(facts.primaryRun.opponentPoints, 5);
+});
+
+test("buildGameDayRecapPlayByPlayFacts anchors answered runs to the starting score event", () => {
+  const facts = buildFacts([
+    createEvent({
+      awayScore: 45,
+      clock: "2:06",
+      eventText: "The ball goes out of bounds.",
+      homeScore: 62,
+      id: 1,
+      isScoringPlay: false,
+      quarter: 4,
+      type: "REBOUND",
+      wallClock: 0,
+    }),
+    createEvent({
+      awayScore: 45,
+      clock: "1:52",
+      eventText: "Alpha stretches the lead.",
+      homeScore: 64,
+      id: 2,
+      quarter: 4,
+      wallClock: 14,
+    }),
+    createEvent({
+      awayScore: 47,
+      clock: "1:46",
+      eventText: "Beta starts climbing back.",
+      homeScore: 64,
+      id: 3,
+      quarter: 4,
+      wallClock: 20,
+    }),
+    createEvent({
+      awayScore: 50,
+      clock: "1:20",
+      eventText: "Beta hits a three.",
+      homeScore: 64,
+      id: 4,
+      quarter: 4,
+      wallClock: 46,
+    }),
+    createEvent({
+      awayScore: 52,
+      clock: "0:57",
+      eventText: "Beta adds another basket.",
+      homeScore: 64,
+      id: 5,
+      quarter: 4,
+      wallClock: 69,
+    }),
+    createEvent({
+      awayScore: 52,
+      clock: "0:37",
+      eventText: "Alpha makes the first free throw.",
+      homeScore: 65,
+      id: 6,
+      quarter: 4,
+      wallClock: 89,
+    }),
+    createEvent({
+      awayScore: 52,
+      clock: "0:37",
+      eventText: "Alpha makes the second free throw.",
+      homeScore: 66,
+      id: 7,
+      quarter: 4,
+      wallClock: 90,
+    }),
+    createEvent({
+      awayScore: 55,
+      clock: "0:23",
+      eventText: "Beta hits one more three.",
+      homeScore: 66,
+      id: 8,
+      quarter: 4,
+      wallClock: 104,
+    }),
+    createEvent({
+      awayScore: 55,
+      clock: "0:17",
+      eventText: "Alpha adds a free throw.",
+      homeScore: 67,
+      id: 9,
+      quarter: 4,
+      wallClock: 110,
+    }),
+  ]);
+
+  assert.ok(facts.primaryRun);
+  assert.equal(facts.primaryRun.teamSide, "away");
+  assert.equal(facts.primaryRun.teamPoints, 10);
+  assert.equal(facts.primaryRun.opponentPoints, 2);
+  assert.equal(facts.primaryRun.startClock, "1:52");
+  assert.equal(facts.primaryRun.startQuarter, 4);
+  assert.ok(
+    facts.summaryLines.some((line) =>
+      /10-2 run from 1:52 left in the 4th quarter to 0:23 left in the 4th quarter/i.test(
+        line,
+      ),
+    ),
+  );
+  assert.equal(
+    facts.summaryLines.some((line) =>
+      /10-2 run from 1:46 left in the 4th quarter/i.test(line),
+    ),
+    false,
+  );
+});
+
+test("secondary run selection rejects overlapping run windows", () => {
+  const primaryRun = createRunFact({
+    endAwayScore: 45,
+    endClock: "06:25",
+    endHomeScore: 60,
+    endQuarter: 4,
+    opponentPoints: 4,
+    startAwayScore: 41,
+    startClock: "11:04",
+    startHomeScore: 45,
+    startQuarter: 4,
+    teamPoints: 15,
+  });
+  const overlappingRun = createRunFact({
+    endAwayScore: 41,
+    endClock: "09:09",
+    endHomeScore: 56,
+    endQuarter: 4,
+    opponentPoints: 2,
+    startAwayScore: 39,
+    startClock: "02:52",
+    startHomeScore: 43,
+    startQuarter: 3,
+    teamPoints: 13,
+  });
+  const separatedRun = createRunFact({
+    endAwayScore: 39,
+    endClock: "00:40",
+    endHomeScore: 50,
+    endQuarter: 3,
+    opponentPoints: 2,
+    startAwayScore: 37,
+    startClock: "03:50",
+    startHomeScore: 37,
+    startQuarter: 3,
+    teamPoints: 13,
+  });
+
+  assert.equal(
+    __testing.isSupportedSecondaryRunCandidate(overlappingRun, primaryRun),
+    false,
+  );
+  assert.equal(
+    __testing.isSupportedSecondaryRunCandidate(separatedRun, primaryRun),
+    true,
+  );
 });
 
 test("buildGameDayRecapPlayByPlayFacts ignores swing runs that started after the game was no longer competitive", () => {
@@ -1292,6 +1494,86 @@ test("buildGameDayRecapPlayByPlayFacts treats explicit buzzerbeater commentary a
   assert.ok(decisiveScore);
   assert.equal(decisiveScore.isBuzzerBeater, true);
   assert.equal(decisiveScore.explicitBuzzerBeater, true);
+});
+
+test("buildGameDayRecapPlayByPlayFacts does not treat a 3rd-quarter horn score as a decisive ending", () => {
+  const facts = buildFacts([
+    createEvent({
+      awayScore: 0,
+      homeScore: 0,
+      id: -1,
+      isScoringPlay: false,
+      quarter: 1,
+      wallClock: 0,
+    }),
+    createEvent({
+      awayScore: 60,
+      clock: "00:05",
+      eventText: "Beta leads late in the third.",
+      homeScore: 59,
+      id: 1,
+      quarter: 3,
+      wallClock: 5,
+    }),
+    createEvent({
+      awayScore: 60,
+      clock: "0:00",
+      eventText: "Alpha hits at the third-quarter horn.",
+      homeScore: 62,
+      id: 2,
+      quarter: 3,
+      wallClock: 10,
+    }),
+  ]);
+
+  assert.equal(facts.endingFacts.decisiveScore, null);
+  assert.equal(facts.endingFacts.opponentLastChance, null);
+});
+
+test("buildGameDayRecapPlayByPlayFacts ignores explicit 3rd-quarter buzzerbeater commentary as a decisive ending", () => {
+  const facts = buildFacts([
+    createEvent({
+      awayScore: 0,
+      homeScore: 0,
+      id: -1,
+      isScoringPlay: false,
+      quarter: 1,
+      wallClock: 0,
+    }),
+    createEvent({
+      awayScore: 60,
+      clock: "00:05",
+      eventText: "Beta leads late in the third.",
+      homeScore: 59,
+      id: 1,
+      quarter: 3,
+      wallClock: 5,
+    }),
+    createEvent({
+      awayScore: 60,
+      clock: "0:00",
+      eventText: "Alpha hits at the third-quarter horn.",
+      homeScore: 62,
+      id: 2,
+      quarter: 3,
+      wallClock: 10,
+    }),
+    createEvent({
+      awayScore: 60,
+      clock: "0:00",
+      eventText: "A buzzerbeater for Alpha!",
+      homeScore: 62,
+      id: 3,
+      isHomePossession: true,
+      isScoringPlay: false,
+      quarter: 3,
+      type: "COMMENTARY",
+      wallClock: 11,
+    }),
+  ]);
+
+  assert.equal(facts.endingFacts.decisiveScore, null);
+  assert.equal(facts.endingFacts.opponentLastChance, null);
 });
 
 test("buildGameDayRecapPlayByPlayFacts falls back to the earlier go-ahead when a later insurance basket was not decisive", () => {

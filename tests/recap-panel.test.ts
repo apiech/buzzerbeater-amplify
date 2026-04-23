@@ -73,6 +73,7 @@ function createRecapHistoryRecord(args: {
     coverageJson: null,
     costJson: null,
     error: null,
+    failureJson: null,
     gameDate: "2026-03-15",
     gameDayNumber: null,
     kind: args.kind ?? "LEAGUE_DATE",
@@ -499,13 +500,16 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
     coverageJson: null,
     costJson: null,
     error: null,
+    failureJson: null,
     gameDate: "2026-03-15",
     gameDayNumber: null,
     kind: "LEAGUE_DATE",
     leagueId: "100",
     leagueName: "Elite League",
     matchId: null,
-    requestJson: {},
+    requestJson: {
+      approach: "FACT_LIBRARY_FIRST",
+    },
     requestedAt: "2026-03-15T23:00:00Z",
     resultJson: null,
     season: null,
@@ -521,8 +525,21 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
         evidenceTags: [],
         headline: "Alpha closes strong [late]",
         matchId: "137828772",
+        postgameInterview: {
+          playerName: "Ari Alpha",
+          qa: [
+            {
+              answer: "We stayed patient and trusted the defense.",
+              question: "What changed in the fourth quarter?",
+            },
+          ],
+          teamName: "Alpha",
+          teamSide: "home",
+          title: "Ari Alpha on Alpha's finish",
+        },
         surpriseFactor: 8.7,
-        writeup: "Alpha handled Beta in the fourth quarter.",
+        writeup:
+          "Alpha prepared well before tipoff.\n\nAlpha handled Beta in the fourth quarter.",
       },
       {
         evidenceTags: [],
@@ -556,8 +573,93 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
     /\[i]Surprise factor: 8\.7\/10 • Game of the day\[\/i]/,
   );
   assert.match(forumPost, /\[i]Surprise factor: 2\.1\/10\[\/i]/);
+  assert.match(
+    forumPost,
+    /Alpha prepared well before tipoff\.\n\nAlpha handled Beta in the fourth quarter\./,
+  );
+  assert.match(forumPost, /\[i]Ari Alpha • Alpha\[\/i]/);
+  assert.doesNotMatch(forumPost, /Fact library first/i);
+  assert.doesNotMatch(forumPost, /Classic recap engine/i);
+  assert.doesNotMatch(forumPost, /FACT_LIBRARY_FIRST/i);
   assert.match(forumPost, /Match: \[match=137828772]/);
   assert.match(forumPost, /Match: scrim-like/);
+});
+
+test("forum formatter omits suspect recaps from public copy", () => {
+  const record = {
+    completedAt: "2026-03-15T23:15:00Z",
+    coverageJson: null,
+    costJson: null,
+    error: null,
+    failureJson: null,
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    kind: "LEAGUE_DATE",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    requestJson: {
+      approach: "FACT_LIBRARY_FIRST",
+    },
+    requestedAt: "2026-03-15T23:00:00Z",
+    resultJson: null,
+    season: null,
+    selectionKey: "LEAGUE_DATE:100#2026-03-15",
+    status: "SUCCEEDED",
+    targetKey: "100#2026-03-15",
+    updatedAt: "2026-03-15T23:10:00Z",
+  } as const;
+
+  const forumPost = recapTesting.formatRecapForumPost(record, {
+    games: [
+      {
+        evidenceTags: [],
+        headline: "Alpha closes strong",
+        matchId: "137828772",
+        surpriseFactor: 4.2,
+        validation: {
+          issueCount: 0,
+          issues: [],
+          status: "VALID",
+        },
+        writeup: "Alpha handled Beta in the fourth quarter.",
+      },
+      {
+        evidenceTags: [],
+        headline: "Gamma wins with unsupported score",
+        matchId: "137828773",
+        surpriseFactor: 9.5,
+        validation: {
+          issueCount: 1,
+          issues: [
+            {
+              field: "writeup",
+              kind: "wrong_final_score",
+              reason: "The writeup used a final score that does not match the box score.",
+              sentence: "Gamma beat Delta 101-99.",
+              sentenceIndex: 0,
+              source: "deterministic",
+            },
+          ],
+          status: "SUSPECT",
+        },
+        writeup: "Gamma beat Delta 101-99.",
+      },
+    ],
+    summary: {
+      gameOfTheDayMatchId: "137828773",
+      gameOfTheDaySurpriseFactor: 9.5,
+      headline: "Elite League roundup",
+      lede: "One game is ready for public copy and one needs review.",
+    },
+  });
+
+  assert.match(forumPost, /\[b]Alpha closes strong\[\/b]/);
+  assert.doesNotMatch(forumPost, /Game of the day:/);
+  assert.doesNotMatch(forumPost, /Gamma wins with unsupported score/);
+  assert.doesNotMatch(forumPost, /101-99/);
+  assert.doesNotMatch(forumPost, /\[match=137828773]/);
+  assert.doesNotMatch(forumPost, /Fact library first/i);
 });
 
 test("performances forum formatter builds the planned sections, ties, and match links", () => {
@@ -566,6 +668,7 @@ test("performances forum formatter builds the planned sections, ties, and match 
     coverageJson: null,
     costJson: null,
     error: null,
+    failureJson: null,
     gameDate: "2026-04-11",
     gameDayNumber: 22,
     kind: "LEAGUE_GAME_DAY_PERFORMANCES",

@@ -27,6 +27,7 @@ import type {
   GameDayRecapCostPayload,
   GameDayRecapRecord,
   GameDayRecapCoveragePayload,
+  GameDayRecapFailurePayload,
   GameDayRecapResultPayload,
   LeagueGameDayPerformancesHistoryRecord,
   LeagueGameDayPerformancesResultPayload,
@@ -193,7 +194,7 @@ export function RecapPanel({
   const [recapError, setRecapError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{
     message: string;
-    tone: "error" | "success";
+    tone: "error" | "note" | "success";
   } | null>(null);
   const recapHistoryQuery = useQuery({
     ...recapHistoryQueryOptions({ limit: 8 }),
@@ -370,6 +371,13 @@ export function RecapPanel({
       }
 
       await copyTextToClipboard(forumPost);
+      const omittedUnsafeWriteups =
+        selectedRecap.kind !== "LEAGUE_GAME_DAY_PERFORMANCES" &&
+        selectedWriteupResult
+          ? selectedWriteupResult.games.some(
+              (game) => !isForumSafeRecapGame(game),
+            )
+          : false;
       captureAnalyticsEvent("recap_forum_post_copied", {
         mode: selectedRecap.kind.toLowerCase(),
         status: selectedRecap.status,
@@ -378,8 +386,10 @@ export function RecapPanel({
         message:
           selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
             ? "Forum-ready performances copied."
+            : omittedUnsafeWriteups
+              ? "Forum-ready recap copied without games that need fact review."
             : "Forum-ready recap copied.",
-        tone: "success",
+        tone: omittedUnsafeWriteups ? "note" : "success",
       });
     } catch {
       setCopyFeedback({
@@ -916,7 +926,7 @@ export function RecapPanel({
                     size="sm"
                     variant="secondary"
                   >
-                    {copyFeedback?.tone === "success"
+                    {copyFeedback && copyFeedback.tone !== "error"
                       ? "Copied"
                       : "Copy for forum"}
                   </Button>
@@ -995,7 +1005,7 @@ export function RecapPanel({
                     size="sm"
                     variant="secondary"
                   >
-                    {copyFeedback?.tone === "success"
+                    {copyFeedback && copyFeedback.tone !== "error"
                       ? "Copied"
                       : "Copy for forum"}
                   </Button>
@@ -1032,12 +1042,22 @@ export function RecapPanel({
                   {selectedWriteupResult.summary.lede}
                 </p>
                 <div className="grid gap-4">
-                  {selectedWriteupResult.games.map((game) => (
+                  {selectedWriteupResult.games.map((game) => {
+                    const validation = getRecapGameValidation(game);
+                    const hasValidationWarnings =
+                      validation.status !== "VALID" && validation.issueCount > 0;
+                    return (
                     <Panel as="article" key={game.matchId} padding="sm" variant="glass">
                       <SectionHeading title={game.headline} titleAs="h5" />
                       {game.surpriseFactor != null ||
-                      game.matchId === selectedGameOfTheDay?.matchId ? (
+                      game.matchId === selectedGameOfTheDay?.matchId ||
+                      hasValidationWarnings ? (
                         <div className="mb-3 flex flex-wrap gap-2">
+                          {hasValidationWarnings ? (
+                            <StatusBadge tone={validation.status === "UNSAFE" ? "danger" : "note"}>
+                              {formatRecapValidationStatus(validation.status)}
+                            </StatusBadge>
+                          ) : null}
                           {game.surpriseFactor != null ? (
                             <StatusBadge tone="neutral">
                               Surprise factor:{" "}
@@ -1059,9 +1079,29 @@ export function RecapPanel({
                           ) : null}
                         </div>
                       ) : null}
-                      <p className="text-ink text-sm leading-7">
-                        {game.writeup}
-                      </p>
+                      {hasValidationWarnings ? (
+                        <Alert className="mb-3" tone="note">
+                          <strong className="text-ink">
+                            What may be wrong?
+                          </strong>
+                          <ul className="mt-2 grid list-disc gap-1 pl-5">
+                            {validation.issues.map((issue, index) => (
+                              <li key={`${issue.source}:${issue.field}:${issue.sentenceIndex}:${index}`}>
+                                {formatRecapValidationIssue(issue)}
+                              </li>
+                            ))}
+                          </ul>
+                        </Alert>
+                      ) : null}
+                      <div className="grid gap-3">
+                        {splitRecapWriteupParagraphs(game.writeup).map(
+                          (paragraph, index) => (
+                            <p className="text-ink text-sm leading-7" key={index}>
+                              {paragraph}
+                            </p>
+                          ),
+                        )}
+                      </div>
                       {game.postgameInterview ? (
                         <div className="mt-4 grid gap-3 rounded-panel border border-black/8 bg-surface px-4 py-3">
                           <div className="grid gap-1">
@@ -1107,23 +1147,29 @@ export function RecapPanel({
                         </div>
                       ) : null}
                     </Panel>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             ) : (
-              <p className={statusCopyClassName}>
-                {selectedRecapTimedOut
-                  ? selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
-                    ? "The selected performances request timed out before a structured report was saved."
-                    : "The selected recap request timed out before a structured result was saved."
-                  : selectedRecap.status === "FAILED"
-                  ? selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
-                    ? "The selected performances request failed before a structured report was saved."
-                    : "The selected recap failed before a structured result was saved."
-                  : selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
-                    ? "Report details will appear here once the request finishes."
-                    : "Writeup details will appear here once the request finishes."}
-              </p>
+              selectedRecap.kind !== "LEAGUE_GAME_DAY_PERFORMANCES" &&
+              selectedRecap.failureJson ? (
+                <RecapFailureDiagnostics failure={selectedRecap.failureJson} />
+              ) : (
+                <p className={statusCopyClassName}>
+                  {selectedRecapTimedOut
+                    ? selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+                      ? "The selected performances request timed out before a structured report was saved."
+                      : "The selected recap request timed out before a structured result was saved."
+                    : selectedRecap.status === "FAILED"
+                    ? selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+                      ? "The selected performances request failed before a structured report was saved."
+                      : "The selected recap failed before a structured result was saved."
+                    : selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+                      ? "Report details will appear here once the request finishes."
+                      : "Writeup details will appear here once the request finishes."}
+                </p>
+              )
             )}
           </div>
         ) : (
@@ -1322,6 +1368,20 @@ function describeRecapRecord(record: RecapHistoryRecord): string {
     case "LEAGUE_DATE":
     default:
       return `${record.leagueName ?? "League"} • ${record.gameDate}${approachLabel ? ` • ${approachLabel}` : ""}`;
+  }
+}
+
+function describeRecapForumRecord(record: RecapHistoryRecord): string {
+  switch (record.kind) {
+    case "LEAGUE_GAME_DAY_PERFORMANCES":
+      return `${record.leagueName ?? "League"} • performances • game day ${record.gameDayNumber}${record.gameDate ? ` • ${record.gameDate}` : ""}${record.season ? ` • season ${record.season}` : ""}`;
+    case "LEAGUE_GAME_DAY":
+      return `${record.leagueName ?? "League"} • game day ${record.gameDayNumber}${record.season ? ` • season ${record.season}` : ""}`;
+    case "SINGLE_GAME":
+      return `${record.leagueName ?? "Single game"}${record.gameDate ? ` • ${record.gameDate}` : ""}`;
+    case "LEAGUE_DATE":
+    default:
+      return `${record.leagueName ?? "League"} • ${record.gameDate}`;
   }
 }
 
@@ -1984,10 +2044,14 @@ function formatRecapForumPost(
   record: RecapHistoryRecord,
   result: GameDayRecapResultPayload,
 ): string {
-  const gameOfTheDay = findGameOfTheDay(result);
+  const forumGames = result.games.filter(isForumSafeRecapGame);
+  const gameOfTheDay = findGameOfTheDay({
+    ...result,
+    games: forumGames,
+  });
   const lines = [
     `[b]${escapeForumText(result.summary.headline)}[/b]`,
-    `[i]${escapeForumText(describeRecapRecord(record))}[/i]`,
+    `[i]${escapeForumText(describeRecapForumRecord(record))}[/i]`,
     "",
     `[quote]${escapeForumText(result.summary.lede)}[/quote]`,
   ];
@@ -2000,7 +2064,7 @@ function formatRecapForumPost(
     );
   }
 
-  for (const game of result.games) {
+  for (const game of forumGames) {
     lines.push("");
     lines.push(`[b]${escapeForumText(game.headline)}[/b]`);
     if (game.surpriseFactor != null || game.matchId === gameOfTheDay?.matchId) {
@@ -2015,11 +2079,14 @@ function formatRecapForumPost(
       }
       lines.push(`[i]${escapeForumText(metadata.join(" • "))}[/i]`);
     }
-    lines.push(escapeForumText(game.writeup));
+    lines.push(formatForumWriteup(game.writeup));
     if (game.postgameInterview) {
       lines.push("");
       lines.push(
         `[i]${escapeForumText(game.postgameInterview.title)}[/i]`,
+      );
+      lines.push(
+        `[i]${escapeForumText(game.postgameInterview.playerName)} • ${escapeForumText(game.postgameInterview.teamName)}[/i]`,
       );
       for (const exchange of game.postgameInterview.qa) {
         lines.push(`[b]Q:[/b] ${escapeForumText(exchange.question)}`);
@@ -2034,6 +2101,118 @@ function formatRecapForumPost(
   }
 
   return lines.join("\n").trim();
+}
+
+function formatForumWriteup(writeup: string): string {
+  return splitRecapWriteupParagraphs(writeup)
+    .map((paragraph) => escapeForumText(paragraph))
+    .join("\n\n");
+}
+
+function getRecapGameValidation(
+  game: GameDayRecapResultPayload["games"][number],
+): NonNullable<GameDayRecapResultPayload["games"][number]["validation"]> {
+  return (
+    game.validation ?? {
+      issueCount: 0,
+      issues: [],
+      status: "VALID",
+    }
+  );
+}
+
+function isForumSafeRecapGame(
+  game: GameDayRecapResultPayload["games"][number],
+): boolean {
+  return getRecapGameValidation(game).status === "VALID";
+}
+
+function formatRecapValidationStatus(status: string): string {
+  if (status === "UNSAFE") {
+    return "Likely factual issue";
+  }
+  if (status === "SUSPECT") {
+    return "Needs fact review";
+  }
+
+  return "Validated";
+}
+
+function formatRecapValidationIssue(
+  issue: NonNullable<
+    GameDayRecapResultPayload["games"][number]["validation"]
+  >["issues"][number],
+): string {
+  const field = humanizeRecapValidationToken(issue.field);
+  const source =
+    issue.source === "judge" ? "model judge" : "deterministic check";
+  return `${field}: ${issue.reason} (${source}; "${issue.sentence}")`;
+}
+
+function humanizeRecapValidationToken(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function RecapFailureDiagnostics({
+  failure,
+}: {
+  failure: GameDayRecapFailurePayload;
+}) {
+  return (
+    <div className="grid gap-3">
+      <Alert tone="danger">
+        <strong className="text-ink">Writeup could not be saved safely.</strong>
+        <p className="mt-1">{failure.message}</p>
+        <p className="mt-1">
+          Validation found {failure.issueCount} issue
+          {failure.issueCount === 1 ? "" : "s"} across{" "}
+          {failure.failedGameCount} game
+          {failure.failedGameCount === 1 ? "" : "s"} before a structured
+          result was saved.
+        </p>
+      </Alert>
+      {failure.games.length ? (
+        <div className="grid gap-3">
+          {failure.games.map((game, index) => (
+            <Panel key={`${game.matchId ?? "game"}:${index}`} padding="sm" variant="glass">
+              <strong className="text-ink text-sm">
+                {formatFailureGameLabel(game)}
+              </strong>
+              <ul className="mt-2 grid list-disc gap-1 pl-5 text-sm leading-6 text-ink-muted">
+                {game.issues.map((issue, issueIndex) => (
+                  <li key={`${issue.source}:${issue.field}:${issue.sentenceIndex}:${issueIndex}`}>
+                    {formatRecapValidationIssue(issue)}
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatFailureGameLabel(
+  game: GameDayRecapFailurePayload["games"][number],
+): string {
+  if (game.homeTeamName && game.awayTeamName) {
+    return `${game.awayTeamName} at ${game.homeTeamName}`;
+  }
+  return game.matchId ? `Match ${game.matchId}` : "Generated game";
+}
+
+function splitRecapWriteupParagraphs(writeup: string): string[] {
+  const paragraphs = writeup
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  return paragraphs.length ? paragraphs : [writeup.trim()].filter(Boolean);
 }
 
 function formatLeagueGameDayPerformancesForumPost(

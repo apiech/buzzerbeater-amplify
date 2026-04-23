@@ -386,6 +386,7 @@ function createExpectedPromptGame(matchId: string) {
     rotationSummaries: [],
     evidenceSignals: [],
     finalMargin: 4,
+    gameScoringContext: null,
     matchId,
     neutral: false,
     playByPlayFacts: null,
@@ -3285,10 +3286,22 @@ test("buildGameDayRecapPromptPayload adds series context for league-date finals"
   assert.ok(finalsPromptGame.seriesContext);
   assert.ok(finalsPromptGame.factsLibrary);
   assert.equal(finalsPromptGame.seriesContext.summaryLine, "Alpha leads the series 1-0.");
-  assert.equal(finalsPromptGame.factsLibrary.openingCandidates[0], "Alpha leads the series 1-0.");
+  assert.notEqual(finalsPromptGame.factsLibrary.openingCandidates[0], "Alpha leads the series 1-0.");
   assert.match(
     finalsPromptGame.factsLibrary.headlineCandidates[0] ?? "",
     /takes Game 1, leads series 1-0/i,
+  );
+  assert.match(
+    finalsPromptGame.factsLibrary.storySignals.join(" "),
+    /series state belongs in the headline/i,
+  );
+  assert.deepStrictEqual(
+    finalsPromptGame.factsLibrary.narrativePlan.paragraphOrder,
+    [
+      "Paragraph 1: pregame tactics, effort, rotation, and game-day-prep context.",
+      "Paragraph 2: chronological game flow, period states, and approved non-overlapping runs.",
+      "Paragraph 3: player stat lines, team-rating edges, and why the winner won.",
+    ],
   );
 });
 
@@ -5307,7 +5320,7 @@ test("processGameDayRecap patches repeated semantic contradictions after the ret
   );
 });
 
-test("processGameDayRecap drops one invalid game and saves a partial result", async () => {
+test("processGameDayRecap keeps invalid generated games and marks validation warnings", async () => {
   const recapRecord = {
     gameDate: "2026-03-15",
     leagueId: "100",
@@ -5509,39 +5522,45 @@ test("processGameDayRecap drops one invalid game and saves a partial result", as
   const finalUpdate = expectPresent(updates.at(-1), "missing final update");
   assert.equal(finalUpdate.status, "SUCCEEDED");
   assert.deepStrictEqual(finalUpdate.coverageJson, {
-    availableGames: 1,
-    missingGames: [
-      {
-        awayTeamName: "Delta",
-        homeTeamName: "Gamma",
-        matchId: "m-2",
-        reason: "removed after factual validation could not be safely repaired",
-      },
-    ],
-    partial: true,
+    availableGames: 2,
+    missingGames: [],
+    partial: false,
     requestedGames: 2,
   });
   assert.deepStrictEqual(
     (
       finalUpdate.resultJson as {
-        games: Array<{ matchId: string }>;
+        games: Array<{
+          matchId: string;
+          validation?: { issueCount: number; status: string };
+        }>;
         summary: { headline: string; lede: string };
       }
     ).games.map((game) => game.matchId),
-    ["m-1"],
+    ["m-1", "m-2"],
   );
   assert.equal(
     (finalUpdate.resultJson as { summary: { headline: string } }).summary
       .headline,
-    "Elite League partial roundup",
+    "Elite League roundup",
   );
-  assert.match(
-    (finalUpdate.resultJson as { summary: { lede: string } }).summary.lede,
-    /1 validated game/i,
+  const failedGame = (
+    finalUpdate.resultJson as {
+      games: Array<{
+        matchId: string;
+        validation?: { issueCount: number; status: string };
+      }>;
+    }
+  ).games.find((game) => game.matchId === "m-2");
+  const failedGameValidation = expectPresent(
+    expectPresent(failedGame, "missing failed game").validation,
+    "missing failed game validation",
   );
+  assert.equal(failedGameValidation.status, "UNSAFE");
+  assert.ok(failedGameValidation.issueCount >= 1);
 });
 
-test("processGameDayRecap still fails when every invalid game must be dropped", async () => {
+test("processGameDayRecap saves a structured suspect result when every game has validation issues", async () => {
   const recapRecord = {
     gameDate: "2026-03-15",
     leagueId: "100",
@@ -5584,8 +5603,6 @@ test("processGameDayRecap still fails when every invalid game must be dropped", 
     ["D", createSchedule("D", [])],
   ]);
   const updates: Array<Record<string, unknown>> = [];
-  const capturedErrors: Array<[unknown, unknown]> = [];
-  const originalError = console.error;
   let providerCalls = 0;
   const boxScore = createBoxScore({
     awayScore: 81,
@@ -5599,225 +5616,119 @@ test("processGameDayRecap still fails when every invalid game must be dropped", 
   boxScore.awayTeam.partialScores = [20, 18, 24, 19];
   boxScore.homeTeam.partialScores = [18, 24, 24, 26];
 
-  console.error = ((message?: unknown, details?: unknown) => {
-    capturedErrors.push([message, details]);
-  }) as typeof console.error;
-
-  try {
-    await assert.rejects(
-      () =>
-        processGameDayRecap(
-          {
-            env: {},
-            messageBody: JSON.stringify({
-              requestedAt: recapRecord.requestedAt,
-              targetKey: recapRecord.targetKey,
-              userId: recapRecord.userId,
-            }),
-            modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-            region: "us-east-1",
-          },
-          {
-            createBbClient: () => ({
-              getBoxScore: async () => boxScore,
-              getSchedule: async (teamId) => {
-                const schedule = schedules.get(teamId ?? "");
-                if (!schedule) {
-                  throw new Error(`Missing schedule for ${teamId}`);
+  await processGameDayRecap(
+    {
+      env: {},
+      messageBody: JSON.stringify({
+        requestedAt: recapRecord.requestedAt,
+        targetKey: recapRecord.targetKey,
+        userId: recapRecord.userId,
+      }),
+      modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      region: "us-east-1",
+    },
+    {
+      createBbClient: () => ({
+        getBoxScore: async () => boxScore,
+        getSchedule: async (teamId) => {
+          const schedule = schedules.get(teamId ?? "");
+          if (!schedule) {
+            throw new Error(`Missing schedule for ${teamId}`);
+          }
+          return schedule;
+        },
+        getSeasons: async () => ({
+          seasons: [{ finish: "2026-05-01", id: 64, start: "2026-02-02" }],
+          version: "1",
+        }),
+        getStandings: async () => standings,
+        getTeamInfo: async () => ({
+          country: null,
+          fields: {},
+          isBot: false,
+          league: { id: "100", name: "Elite League" },
+          ownerName: "Owner",
+          retrievedAt: "2026-03-15T00:00:00Z",
+          rival: null,
+          shortName: "ALP",
+          teamId: "A",
+          teamName: "Alpha",
+          version: "1",
+        }),
+      }),
+      createProvider: ({ stage }) =>
+        stage === "judge"
+          ? createPassingJudgeProvider()
+          : {
+              generate: async (payload) => {
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
+                if (auxiliary) {
+                  return auxiliary.response;
                 }
-                return schedule;
-              },
-              getSeasons: async () => ({
-                seasons: [{ finish: "2026-05-01", id: 64, start: "2026-02-02" }],
-                version: "1",
-              }),
-              getStandings: async () => standings,
-              getTeamInfo: async () => ({
-                country: null,
-                fields: {},
-                isBot: false,
-                league: { id: "100", name: "Elite League" },
-                ownerName: "Owner",
-                retrievedAt: "2026-03-15T00:00:00Z",
-                rival: null,
-                shortName: "ALP",
-                teamId: "A",
-                teamName: "Alpha",
-                version: "1",
-              }),
-            }),
-            createProvider: ({ stage }) =>
-              stage === "judge"
-                ? createPassingJudgeProvider()
-                : {
-                    generate: async (payload) => {
-                      const auxiliary =
-                        maybeHandleAuxiliaryWriterPayloadForTest(payload);
-                      if (auxiliary) {
-                        return auxiliary.response;
-                      }
-                      if (!isMainRecapWriterPayloadForTest(payload)) {
-                        throw new Error("expected main recap writer payload");
-                      }
-                      providerCalls += 1;
-                      return {
-                        games: payload.games.map((game) => ({
-                          evidenceTags: ["recent_form"],
-                          headline: "Alpha won the third quarter 24-24",
-                          matchId: game.matchId,
-                          writeup:
-                            "Alpha eventually finished the job, but the contradictory headline remained in both attempts.",
-                        })),
-                        summary: {
-                          headline: "Elite League roundup",
-                          lede: "The remaining contradiction lived in the headline, so the worker should only fail after it has no valid game recap left to keep.",
-                        },
-                      };
-                    },
-                    modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-                    providerName: "bedrock",
-                    stage,
+                if (!isMainRecapWriterPayloadForTest(payload)) {
+                  throw new Error("expected main recap writer payload");
+                }
+                providerCalls += 1;
+                return {
+                  games: payload.games.map((game) => ({
+                    evidenceTags: ["recent_form"],
+                    headline: "Alpha won the third quarter 24-24",
+                    matchId: game.matchId,
+                    writeup:
+                      "Alpha eventually finished the job, but the contradictory headline remained in both attempts.",
+                  })),
+                  summary: {
+                    headline: "Elite League roundup",
+                    lede: "The remaining contradiction lived in the headline, so the worker should save the generated story with validation warnings.",
                   },
-            getBbConnection: async () => ({
-              bbLoginName: "coach-alpha",
-              leagueTimeZone: "America/New_York",
-              refreshSortAt: "2026-03-17T23:10:00.000Z",
-              status: "CONNECTED",
-              userId: "user-1",
-            }),
-            getGameDayRecap: async () => recapRecord,
-            now: () => new Date("2026-03-17T23:10:00Z"),
-            resolveBbAccessKey: async () => "secret",
-            updateGameDayRecap: async (_env, input) => {
-              updates.push(input);
+                };
+              },
+              modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+              providerName: "bedrock",
+              stage,
             },
-          },
-        ),
-      /could not be safely repaired/i,
-    );
-  } finally {
-    console.error = originalError;
-  }
+      getBbConnection: async () => ({
+        bbLoginName: "coach-alpha",
+        leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T23:10:00.000Z",
+        status: "CONNECTED",
+        userId: "user-1",
+      }),
+      getGameDayRecap: async () => recapRecord,
+      now: () => new Date("2026-03-17T23:10:00Z"),
+      resolveBbAccessKey: async () => "secret",
+      updateGameDayRecap: async (_env, input) => {
+        updates.push(input);
+      },
+    },
+  );
 
   assert.equal(providerCalls, 2);
-  assert.equal(updates.at(-1)?.status, "FAILED");
-  assert.match(
-    String(updates.at(-1)?.error ?? ""),
-    /could not be safely repaired/i,
+  const finalUpdate = expectPresent(updates.at(-1), "missing final update");
+  assert.equal(finalUpdate.status, "SUCCEEDED");
+  assert.equal(finalUpdate.error, null);
+  const resultJson = finalUpdate.resultJson as {
+    games: Array<{
+      validation?: {
+        issueCount: number;
+        issues: Array<{ kind: string; reason: string }>;
+        status: string;
+      };
+    }>;
+  };
+  assert.equal(resultJson.games.length, 1);
+  const suspectGameValidation = expectPresent(
+    expectPresent(resultJson.games[0], "missing suspect game").validation,
+    "missing suspect game validation",
   );
-  const processFailedLog = capturedErrors.find(
-    ([message]) =>
-      typeof message === "string" &&
-      message.includes("[game-day-recap] process.failed"),
-  );
+  assert.equal(suspectGameValidation.status, "UNSAFE");
+  assert.ok(suspectGameValidation.issueCount >= 1);
   assert.ok(
-    processFailedLog,
-    "expected process.failed to include contradiction details",
-  );
-  assert.ok(
-    Number(
-      (
-        processFailedLog[1] as {
-          deterministicIssueCount?: unknown;
-        }
-      ).deterministicIssueCount,
-    ) >= 1,
-  );
-  assert.equal(
-    (
-      processFailedLog[1] as {
-        judgeIssueCount?: unknown;
-      }
-    ).judgeIssueCount,
-    0,
-  );
-  const validationFeedbackLines = (
-    processFailedLog[1] as {
-      validationFeedbackLines?: unknown;
-    }
-  ).validationFeedbackLines;
-  assert.ok(Array.isArray(validationFeedbackLines));
-  assert.ok(validationFeedbackLines.length >= 1);
-  assert.ok(
-    validationFeedbackLines.some((line) => /3rd quarter/i.test(String(line))),
-  );
-  assert.ok(
-    validationFeedbackLines.some((line) => /tied 24-24/i.test(String(line))),
-  );
-  assert.ok(
-    validationFeedbackLines.some((line) =>
-      /do not say either team/i.test(String(line)),
+    suspectGameValidation.issues.some(
+      (issue) => issue.kind === "tied_quarter_claim",
     ),
   );
-
-  const deterministicIssues = (
-    processFailedLog[1] as {
-      deterministicIssues?: unknown;
-    }
-  ).deterministicIssues;
-  assert.ok(Array.isArray(deterministicIssues));
-  assert.ok(deterministicIssues.length >= 1);
-  const tiedQuarterIssue = deterministicIssues.find(
-    (issue) =>
-      issue &&
-      typeof issue === "object" &&
-      (issue as { kind?: unknown }).kind === "tied_quarter_claim",
-  );
-  assert.deepStrictEqual(tiedQuarterIssue, {
-    actualValue: "24-24",
-    field: "headline",
-    kind: "tied_quarter_claim",
-    matchId: "m-1",
-    period: 3,
-    reason: "3rd quarter was tied 24-24, so no team outscored the other.",
-    sentence: "Alpha won the third quarter 24-24",
-    sentenceIndex: 0,
-  });
-  assert.ok(
-    Number(
-      (
-        processFailedLog[1] as {
-          postPatchDeterministicIssueCount?: unknown;
-        }
-      ).postPatchDeterministicIssueCount,
-    ) >= 1,
-  );
-  assert.equal(
-    (
-      processFailedLog[1] as {
-        postPatchJudgeIssueCount?: unknown;
-      }
-    ).postPatchJudgeIssueCount,
-    0,
-  );
-  assert.equal(
-    (
-      processFailedLog[1] as {
-        postTrimDeterministicIssueCount?: unknown;
-      }
-    ).postTrimDeterministicIssueCount,
-    0,
-  );
-  assert.equal(
-    (
-      processFailedLog[1] as {
-        postTrimJudgeIssueCount?: unknown;
-      }
-    ).postTrimJudgeIssueCount,
-    0,
-  );
-  const repairActions = (
-    processFailedLog[1] as {
-      repairActions?: unknown;
-    }
-  ).repairActions;
-  assert.ok(Array.isArray(repairActions));
-  if (repairActions.length > 0) {
-    assert.equal(
-      (repairActions[0] as { matchId?: unknown }).matchId,
-      "m-1",
-    );
-  }
 });
 
 test("buildGameDayRecapPromptPayload logs BBXmlApiError details for failed box score fetches", async () => {
@@ -7736,9 +7647,9 @@ test("processSingleGameSummary adds series context for eligible playoff finals",
                 return {
                   games: payload.games.map((game) => ({
                     evidenceTags: ["close_finish"],
-                    headline: "Delta 9 evens the finals",
+                    headline: "Delta 9 evens series 1-1",
                     matchId: game.matchId,
-                    writeup: `The series is tied 1-1. ${game.teams.away.name} steadied late and never let ${game.teams.home.name} retake control after the margin flipped.`,
+                    writeup: `${game.requiredContextSentences.join(" ")}\n\n${game.teams.away.name} steadied late and never let ${game.teams.home.name} retake control after the margin flipped.`,
                   })),
                   summary: {
                     headline: "Finals split the first two",
@@ -7920,6 +7831,7 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
       request: {
         gameDate: "2026-03-15",
         gameDayNumber: null,
+        generationApproach: "FACT_LIBRARY_FIRST",
         kind: "LEAGUE_DATE",
         label: "Elite League 2026-03-15",
         leagueId: "100",
@@ -7971,6 +7883,8 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
     systemText,
     /Only mention runs when the supplied play-by-play facts support them/i,
   );
+  assert.match(systemText, /overlapping run windows/i);
+  assert.match(systemText, /separate the setup, chronological game flow, and closing analysis with blank lines/i);
   assert.match(
     systemText,
     /Only mention lead-change counts, rapid bursts, or comeback-to-the-lead claims/i,
@@ -8517,6 +8431,83 @@ test("validateGameDayRecapResult accepts valid structured output for the expecte
   assert.ok((secondGame.surpriseFactor ?? 10) <= 1.5);
 });
 
+test("validateGameDayRecapResult gates high- and low-scoring framing on scoring context", () => {
+  const shootout = createExpectedPromptGame("m-high");
+  shootout.gameScoringContext = "high_scoring_shootout";
+  shootout.teams.away.score = 108;
+  shootout.teams.home.score = 112;
+  assert.doesNotThrow(() =>
+    __testing.validateGameDayRecapResult(
+      {
+        games: [
+          {
+            evidenceTags: ["top_performance"],
+            headline: "Home wins a high-scoring shootout",
+            matchId: "m-high",
+            writeup:
+              "Home beat Away 112-108 in a high-scoring shootout where both teams topped 100 points.",
+          },
+        ],
+        summary: {
+          headline: "High-scoring night",
+          lede: "Home had enough late offense.",
+        },
+      },
+      [shootout],
+    ),
+  );
+
+  const grind = createExpectedPromptGame("m-low");
+  grind.gameScoringContext = "low_scoring_grind";
+  grind.teams.away.score = 72;
+  grind.teams.home.score = 76;
+  assert.doesNotThrow(() =>
+    __testing.validateGameDayRecapResult(
+      {
+        games: [
+          {
+            evidenceTags: ["top_performance"],
+            headline: "Home survives low-scoring grind",
+            matchId: "m-low",
+            writeup:
+              "Home beat Away 76-72 in a low-scoring defensive grind with both teams below 80 points.",
+          },
+        ],
+        summary: {
+          headline: "Low-scoring night",
+          lede: "Home had enough defense.",
+        },
+      },
+      [grind],
+    ),
+  );
+
+  const ordinary = createExpectedPromptGame("m-normal");
+  ordinary.teams.away.score = 88;
+  ordinary.teams.home.score = 92;
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: ["top_performance"],
+              headline: "Home wins a high-scoring shootout",
+              matchId: "m-normal",
+              writeup: "Home beat Away 92-88 in a high-scoring shootout.",
+            },
+          ],
+          summary: {
+            headline: "Normal night",
+            lede: "Home had enough offense.",
+          },
+        },
+        [ordinary],
+      ),
+    /high-scoring framing/i,
+  );
+});
+
 test("validateGameDayRecapResult does not treat losing-effort phrasing as a winner contradiction", () => {
   const result = createRecapCandidateResult({
     headline: "Home steadies late",
@@ -8785,7 +8776,7 @@ test("judgeGameDayRecapResult fails after retry when the judge keeps returning u
   assert.equal(judgeCalls, 2);
 });
 
-test("validateGameDayRecapResult allows the exact series line in sentence 1 and the decisive ending in sentence 2", () => {
+test("validateGameDayRecapResult allows the series state in the headline and the decisive ending in the opener", () => {
   const expectedGame = createExpectedPromptGame("m-1");
   expectedGame.finalMargin = 2;
   expectedGame.type = "league.finals";
@@ -8814,18 +8805,18 @@ test("validateGameDayRecapResult allows the exact series line in sentence 1 and 
   const result = {
     games: [
       {
-        evidenceTags: ["buzzerbeater", "close_finish", "one_possession_finish"],
-        headline: "Stark Contrast wins it on a buzzerbeater",
-        matchId: "m-1",
-        writeup:
-          "Stark Contrast leads the series 1-0. Adrian Diaz buried the buzzerbeater at the horn to lift Stark Contrast past LionPride.",
+          evidenceTags: ["buzzerbeater", "close_finish", "one_possession_finish"],
+          headline: "Stark Contrast takes Game 1, leads series 1-0",
+          matchId: "m-1",
+          writeup:
+            "Adrian Diaz buried the buzzerbeater at the horn to lift Stark Contrast past LionPride.",
+        },
+      ],
+      summary: {
+        headline: "League roundup",
+        lede: "The series state belongs in the headline while the decisive ending anchors the writeup.",
       },
-    ],
-    summary: {
-      headline: "League roundup",
-      lede: "The standardized series line should be allowed in sentence 1 when the decisive ending follows immediately after it.",
-    },
-  };
+    };
 
   const validated = __testing.validateGameDayRecapResult(result, [expectedGame]);
   assert.equal(validated.games[0]?.writeup, result.games[0]?.writeup);
@@ -9198,6 +9189,131 @@ test("validateGameDayRecapResult rejects run mentions without timing anchors", (
   );
 });
 
+test("validateGameDayRecapResult rejects run mentions with stale first-basket start times", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.teams.away.name = "Splash Gang";
+  expectedGame.teams.home.name = "Silverbacks";
+  const comebackRun = createRunFact({
+    endAwayScore: 55,
+    endClock: "0:23",
+    endHomeScore: 66,
+    endQuarter: 4,
+    opponentPoints: 2,
+    runType: "swing",
+    startAwayScore: 45,
+    startClock: "1:52",
+    startHomeScore: 64,
+    startQuarter: 4,
+    teamName: "Splash Gang",
+    teamPoints: 10,
+    teamSide: "away",
+  });
+  expectedGame.playByPlayFacts = {
+    ...createBuzzerBeaterPlayByPlayFacts(),
+    bestCompetitiveSwingRun: comebackRun,
+    longestUnansweredRun: createEmptyRunFact("unanswered"),
+    primaryRun: comebackRun,
+    summaryLines: [
+      "Splash Gang showed signs of life with a 10-2 run from 1:52 left in the 4th quarter to 0:23 left in the 4th quarter, but it was not enough.",
+    ],
+  };
+  expectedGame.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater = false;
+  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: ["recent_form"],
+              headline: "Silverbacks hold off Splash Gang",
+              matchId: "m-1",
+              writeup:
+                "Splash Gang showed signs of life with a 10-2 run from 1:46 left in the 4th quarter to 0:23 left in the 4th quarter, but it was not enough.",
+            },
+          ],
+          summary: {
+            headline: "League roundup",
+            lede: "Supported runs should use the score-baseline start time.",
+          },
+        },
+        [expectedGame],
+      ),
+    /1:52 left in the 4th quarter/i,
+  );
+});
+
+test("validateGameDayRecapResult rejects overlapping run mentions", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  const primaryRun = createRunFact({
+    endAwayScore: 45,
+    endClock: "06:25",
+    endHomeScore: 60,
+    endQuarter: 4,
+    opponentPoints: 4,
+    runType: "swing",
+    startAwayScore: 41,
+    startClock: "11:04",
+    startHomeScore: 45,
+    startQuarter: 4,
+    teamName: "Home",
+    teamPoints: 15,
+    teamSide: "home",
+  });
+  const overlappingRun = createRunFact({
+    endAwayScore: 41,
+    endClock: "09:09",
+    endHomeScore: 56,
+    endQuarter: 4,
+    opponentPoints: 2,
+    runType: "swing",
+    startAwayScore: 39,
+    startClock: "02:52",
+    startHomeScore: 43,
+    startQuarter: 3,
+    teamName: "Home",
+    teamPoints: 13,
+    teamSide: "home",
+  });
+  expectedGame.playByPlayFacts = {
+    ...createBuzzerBeaterPlayByPlayFacts(),
+    bestCompetitiveSwingRun: overlappingRun,
+    longestUnansweredRun: createEmptyRunFact("unanswered"),
+    primaryRun,
+    secondaryRun: overlappingRun,
+    summaryLines: [
+      "Home used a 15-4 run from 11:04 left in the 4th quarter to 06:25 left in the 4th quarter to put the game away.",
+      "Home used a 13-2 run from 02:52 left in the 3rd quarter to 09:09 left in the 4th quarter to seize control.",
+    ],
+  };
+  expectedGame.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater = false;
+  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: ["recent_form"],
+              headline: "Home turns the game late",
+              matchId: "m-1",
+              writeup:
+                "Home used a 15-4 run from 11:04 left in the 4th quarter to 06:25 left in the 4th quarter to put the game away. Home then cited a 13-2 run from 02:52 left in the 3rd quarter to 09:09 left in the 4th quarter as another separate swing.",
+            },
+          ],
+          summary: {
+            headline: "League roundup",
+            lede: "Overlapping run windows should not be stacked as separate story beats.",
+          },
+        },
+        [expectedGame],
+      ),
+    /overlapping run windows/i,
+  );
+});
+
 test("judgeGameDayRecapResult flags unsupported lead-change counts", async () => {
   const expectedGame = createExpectedPromptGame("m-1");
   expectedGame.playByPlayFacts = createBackAndForthPlayByPlayFacts();
@@ -9449,7 +9565,7 @@ test("validateGameDayRecapResult requires supplied buzzerbeaters to be foregroun
   );
 });
 
-test("validateGameDayRecapResult requires the standardized series line in the opener", () => {
+test("validateGameDayRecapResult requires the standardized series state in the headline", () => {
   const expectedGame = createExpectedPromptGame("m-1");
   expectedGame.teams.home.name = "Alpha";
   expectedGame.teams.away.name = "Beta";
@@ -9478,7 +9594,7 @@ test("validateGameDayRecapResult requires the standardized series line in the op
           ],
           summary: {
             headline: "League roundup",
-            lede: "Best-of-three finals recaps should always state the new series score in the opening two sentences.",
+            lede: "Best-of-three finals recaps should always state the new series score in the headline.",
           },
         },
         [expectedGame],
@@ -9508,7 +9624,7 @@ test("validateGameDayRecapResult rejects conflicting series lines", () => {
           games: [
             {
               evidenceTags: ["close_finish"],
-              headline: "Alpha closes the book",
+              headline: "Alpha wins series 2-1",
               matchId: "m-1",
               writeup:
                 "Alpha wins the series 2-1. Alpha stayed composed in the closing possessions and held Beta off after the lead changed hands in the fourth. Beta wins the series 2-0.",
@@ -9556,26 +9672,16 @@ test("removeInvalidWriteupSentences drops only the contradicted sentence", () =>
   );
 });
 
-test("removeInvalidWriteupSentences ignores opener-structure-only issues", () => {
+test("removeInvalidWriteupSentences ignores decisive-ending opener-structure-only issues", () => {
   const originalGame = {
     evidenceTags: ["recent_form"] as const,
     headline: "Home wins",
     matchId: "m-1",
     writeup:
-      "Home leads the series 1-0. The opener should still be rebuilt instead of trimmed.",
+      "The opener should still be rebuilt instead of trimmed. Home kept enough control to finish the win.",
   };
 
   const trimmedGame = __testing.removeInvalidWriteupSentences(originalGame, [
-    {
-      feedback: "restore the exact series line in the opener",
-      field: "writeup",
-      kind: "missing_series_summary_line",
-      matchId: "m-1",
-      reason: "series line missing from the opener",
-      salvage: "patch_or_remove",
-      sentence: "Home leads the series 1-0.",
-      sentenceIndex: 0,
-    },
     {
       feedback: "restore the decisive ending in the opener",
       field: "writeup",
@@ -9583,7 +9689,7 @@ test("removeInvalidWriteupSentences ignores opener-structure-only issues", () =>
       matchId: "m-1",
       reason: "decisive ending missing from the opener",
       salvage: "patch_or_remove",
-      sentence: "Home leads the series 1-0.",
+      sentence: "The opener should still be rebuilt instead of trimmed.",
       sentenceIndex: 0,
       teamSide: "home",
     },
@@ -10231,7 +10337,7 @@ test("salvageGameDayRecapResult rebuilds a playoff opener after sentence repairs
     games: [
       {
         evidenceTags: ["buzzerbeater", "close_finish", "one_possession_finish"],
-        headline: "Stark Contrast escapes late",
+        headline: "Stark Contrast takes Game 1, leads series 1-0",
         matchId: "m-1",
         writeup:
           "Stark Contrast leads the series 1-0. Stark Contrast won the 2nd quarter 19-18.",
@@ -10262,8 +10368,9 @@ test("salvageGameDayRecapResult rebuilds a playoff opener after sentence repairs
   ).writeup;
   assert.match(
     repairedWriteup,
-    /^Stark Contrast leads the series 1-0\. Stark Contrast won it on a buzzerbeater, going ahead 88-86 at the horn\./,
+    /^Stark Contrast won it on a buzzerbeater, going ahead 88-86 at the horn\./,
   );
+  assert.doesNotMatch(repairedWriteup, /leads the series 1-0/i);
   assert.ok(
     repairedWriteup.includes("Stark Contrast won the 2nd quarter 24-18."),
   );
@@ -10926,7 +11033,7 @@ test("premium recap fallback can foreground a supplied buzzerbeater", async () =
   );
 });
 
-test("premium recap fallback drops only the contradicted game when the retry headline is still wrong", async () => {
+test("premium recap fallback keeps the contradicted game with validation warnings", async () => {
   const payload = {
     coverage: {
       availableGames: 2,
@@ -11008,22 +11115,130 @@ test("premium recap fallback drops only the contradicted game when the retry hea
     },
   });
 
-  assert.deepStrictEqual(result.coverageIssues, [
-    {
-      awayTeamName: "Delta",
-      homeTeamName: "Gamma",
-      matchId: "m-2",
-      reason: "removed after factual validation could not be safely repaired",
-    },
-  ]);
+  assert.deepStrictEqual(result.coverageIssues, []);
   assert.deepStrictEqual(
     result.result.games.map((game) => game.matchId),
-    ["m-1"],
+    ["m-1", "m-2"],
   );
-  assert.equal(result.result.summary.headline, "Elite League partial roundup");
+  assert.equal(result.result.summary.headline, "Elite League roundup");
+  const validGame = expectPresent(result.result.games[0], "missing valid game");
+  const unsafeGame = expectPresent(result.result.games[1], "missing unsafe game");
+  assert.equal(validGame.validation?.status, "VALID");
+  const unsafeValidation = expectPresent(
+    unsafeGame.validation,
+    "missing unsafe game validation",
+  );
+  assert.equal(unsafeValidation.status, "UNSAFE");
+  assert.match(
+    expectPresent(
+      unsafeValidation.issues[0],
+      "missing unsafe game issue",
+    ).reason,
+    /headline contradiction|Gamma won|winner/i,
+  );
 });
 
-test("premium recap fallback still fails when every game must be dropped", async () => {
+test("premium recap fallback keeps all games in a large slate and marks only factual risks", async () => {
+  const games = Array.from({ length: 8 }, (_, index) =>
+    createExpectedPromptGame(`m-${index + 1}`),
+  );
+  const payload = {
+    coverage: {
+      availableGames: games.length,
+      missingGames: [],
+      partial: false,
+      requestedGames: games.length,
+    },
+    games,
+    request: {
+      gameDate: "2026-03-15",
+      gameDayNumber: null,
+      kind: "LEAGUE_DATE" as const,
+      label: "Elite League 2026-03-15",
+      leagueId: "100",
+      leagueName: "Elite League",
+      matchId: null,
+      season: 64,
+      timeZone: "America/New_York",
+    },
+  };
+  const largeSlateCandidate = {
+    games: games.map((game, index) => ({
+      evidenceTags: ["recent_form"] as const,
+      headline:
+        index === 7
+          ? "Away beats Home 81-85"
+          : `Home beats Away 85-81 in Game ${index + 1}`,
+      matchId: game.matchId,
+      writeup:
+        index === 7
+          ? "Away was incorrectly credited with the win, so this game should be kept with a warning instead of making the whole slate fail."
+          : "Home stayed organized late and closed the game without letting Away erase the final margin.",
+    })),
+    summary: {
+      headline: "Elite League roundup",
+      lede: "A large slate should preserve every generated game while flagging only the questionable one.",
+    },
+  };
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: createPassingJudgeProvider({
+      generate: async (judgePayload) => {
+        const supported = createSupportedJudgeResponseFromPayload(judgePayload);
+        return mapJudgeResponseSentenceVerdicts(
+          supported,
+          ({ sentenceKey, verdict }) =>
+            sentenceKey === "m-8:headline:0"
+              ? {
+                  ...verdict,
+                  contradictionType: "winner",
+                  notes: "Home won in the supplied fact store.",
+                  sourceField: "factStore.games[7].winner",
+                  verdict: "unsupported",
+                }
+              : verdict,
+        );
+      },
+    }),
+    payload,
+    qualityTier: "premium",
+    retryProvider: {
+      generate: async () => largeSlateCandidate,
+      modelId: DEFAULT_RECAP_RETRY_MODEL_ID,
+      providerName: "bedrock",
+      stage: "retry_writer",
+    },
+    writerProvider: {
+      generate: async () => largeSlateCandidate,
+      modelId: PREMIUM_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.equal(result.result.games.length, 8);
+  assert.deepStrictEqual(
+    result.result.games.map((game) => game.matchId),
+    games.map((game) => game.matchId),
+  );
+  assert.deepStrictEqual(
+    result.result.games.map((game) => game.validation?.status),
+    ["VALID", "VALID", "VALID", "VALID", "VALID", "VALID", "VALID", "UNSAFE"],
+  );
+  const largeSlateUnsafeGame = expectPresent(
+    result.result.games[7],
+    "missing large-slate unsafe game",
+  );
+  assert.match(
+    expectPresent(
+      largeSlateUnsafeGame.validation?.issues[0],
+      "missing large-slate unsafe issue",
+    ).reason,
+    /headline contradiction|winner|Home won|Away/i,
+  );
+});
+
+test("premium recap fallback saves a fully suspect structured result instead of failing", async () => {
   const payload = createSingleGameRecapPayload();
   const invalidHeadlineCandidate = createRecapCandidateResult({
     headline: "Away beats Home 81-85",
@@ -11031,45 +11246,50 @@ test("premium recap fallback still fails when every game must be dropped", async
       "Home actually won the game, so this headline contradiction should force a drop during the deterministic fallback.",
   });
 
-  await assert.rejects(
-    () =>
-      __testing.generateResolvedGameDayRecap({
-        judgeProvider: createPassingJudgeProvider({
-          generate: async (judgePayload) => {
-            const supported =
-              createSupportedJudgeResponseFromPayload(judgePayload);
-            return mapJudgeResponseSentenceVerdicts(
-              supported,
-              ({ sentenceKey, verdict }) =>
-                sentenceKey.endsWith(":headline:0")
-                  ? {
-                      ...verdict,
-                      contradictionType: "winner",
-                      notes: "Home won in the supplied fact store.",
-                      sourceField: "factStore.games[0].winner",
-                      verdict: "unsupported",
-                    }
-                  : verdict,
-            );
-          },
-        }),
-        payload,
-        qualityTier: "premium",
-        retryProvider: {
-          generate: async () => invalidHeadlineCandidate,
-          modelId: DEFAULT_RECAP_RETRY_MODEL_ID,
-          providerName: "bedrock",
-          stage: "retry_writer",
-        },
-        writerProvider: {
-          generate: async () => invalidHeadlineCandidate,
-          modelId: PREMIUM_RECAP_MODEL_ID,
-          providerName: "bedrock",
-          stage: "writer",
-        },
-      }),
-    /could not be safely repaired/i,
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: createPassingJudgeProvider({
+      generate: async (judgePayload) => {
+        const supported = createSupportedJudgeResponseFromPayload(judgePayload);
+        return mapJudgeResponseSentenceVerdicts(
+          supported,
+          ({ sentenceKey, verdict }) =>
+            sentenceKey.endsWith(":headline:0")
+              ? {
+                  ...verdict,
+                  contradictionType: "winner",
+                  notes: "Home won in the supplied fact store.",
+                  sourceField: "factStore.games[0].winner",
+                  verdict: "unsupported",
+                }
+              : verdict,
+        );
+      },
+    }),
+    payload,
+    qualityTier: "premium",
+    retryProvider: {
+      generate: async () => invalidHeadlineCandidate,
+      modelId: DEFAULT_RECAP_RETRY_MODEL_ID,
+      providerName: "bedrock",
+      stage: "retry_writer",
+    },
+    writerProvider: {
+      generate: async () => invalidHeadlineCandidate,
+      modelId: PREMIUM_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.deepStrictEqual(result.coverageIssues, []);
+  assert.equal(result.result.games.length, 1);
+  const fullySuspectValidation = expectPresent(
+    expectPresent(result.result.games[0], "missing fully suspect game")
+      .validation,
+    "missing fully suspect validation",
   );
+  assert.equal(fullySuspectValidation.status, "UNSAFE");
+  assert.ok(fullySuspectValidation.issueCount >= 1);
 });
 
 test("standard recap generation runs judge validation and keeps the single-candidate path", async () => {

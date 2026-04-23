@@ -81,6 +81,9 @@ type GameDayRecapResult = NonNullable<
 type GameDayRecapCost = NonNullable<
   Schema["GameDayRecap"]["type"]["costJson"]
 >;
+type GameDayRecapFailureDetails = NonNullable<
+  Schema["GameDayRecap"]["type"]["failureJson"]
+>;
 type LeagueGameDayPerformancesResult = NonNullable<
   Schema["LeagueGameDayPerformances"]["type"]["resultJson"]
 >;
@@ -426,6 +429,7 @@ export type GameDayRecapRecord = {
   requestJson: GameDayRecapStoredRequest;
   coverageJson?: GameDayRecapCoverage | null;
   costJson?: GameDayRecapCost | null;
+  failureJson?: GameDayRecapFailureDetails | null;
   resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
@@ -449,6 +453,7 @@ export type LeagueGameDayRecapRecord = {
   requestJson: LeagueGameDayRecapStoredRequest;
   coverageJson?: GameDayRecapCoverage | null;
   costJson?: GameDayRecapCost | null;
+  failureJson?: GameDayRecapFailureDetails | null;
   resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
@@ -496,6 +501,7 @@ export type SingleGameSummaryRecord = {
   requestJson: SingleGameSummaryStoredRequest;
   coverageJson?: GameDayRecapCoverage | null;
   costJson?: GameDayRecapCost | null;
+  failureJson?: GameDayRecapFailureDetails | null;
   resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;

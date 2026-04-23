@@ -2000,12 +2000,58 @@ const schema = a
       totalTokens: a.integer().required(),
     }),
 
+    GameDayRecapValidationIssue: a.customType({
+      actualValue: a.string(),
+      feedback: a.string(),
+      field: a.string().required(),
+      kind: a.string().required(),
+      reason: a.string().required(),
+      sentence: a.string().required(),
+      sentenceIndex: a.integer().required(),
+      source: a.string().required(),
+      sourceField: a.string(),
+      teamSide: a.string(),
+      verdict: a.string(),
+    }),
+
+    GameDayRecapGameValidation: a.customType({
+      issueCount: a.integer().required(),
+      issues: a
+        .ref("GameDayRecapValidationIssue")
+        .required()
+        .array()
+        .required(),
+      status: a.string().required(),
+    }),
+
+    GameDayRecapFailureGame: a.customType({
+      awayTeamName: a.string(),
+      homeTeamName: a.string(),
+      issueCount: a.integer().required(),
+      issues: a
+        .ref("GameDayRecapValidationIssue")
+        .required()
+        .array()
+        .required(),
+      matchId: a.string(),
+    }),
+
+    GameDayRecapFailureDetails: a.customType({
+      errorName: a.string(),
+      failedGameCount: a.integer().required(),
+      games: a.ref("GameDayRecapFailureGame").required().array().required(),
+      issueCount: a.integer().required(),
+      message: a.string().required(),
+      repairActionCount: a.integer().required(),
+    }),
+
     GameDayRecapResultGame: a.customType({
       evidenceTags: a.string().required().array().required(),
       headline: a.string().required(),
       matchId: a.string().required(),
       postgameInterview: a.ref("GameDayRecapResultPostgameInterview"),
       surpriseFactor: a.float(),
+      validation: a.ref("GameDayRecapGameValidation"),
       writeup: a.string().required(),
     }),
 
@@ -3479,6 +3525,7 @@ const schema = a
         requestJson: a.ref("GameDayRecapStoredRequest").required(),
         coverageJson: a.ref("GameDayRecapCoverage"),
         costJson: a.ref("GameDayRecapCost"),
+        failureJson: a.ref("GameDayRecapFailureDetails"),
         resultJson: a.ref("GameDayRecapResult"),
         error: a.string(),
         executionArn: a.string(),
@@ -3513,6 +3560,7 @@ const schema = a
         requestJson: a.ref("LeagueGameDayRecapStoredRequest").required(),
         coverageJson: a.ref("GameDayRecapCoverage"),
         costJson: a.ref("GameDayRecapCost"),
+        failureJson: a.ref("GameDayRecapFailureDetails"),
         resultJson: a.ref("GameDayRecapResult"),
         error: a.string(),
         executionArn: a.string(),
@@ -3582,6 +3630,7 @@ const schema = a
         requestJson: a.ref("SingleGameSummaryStoredRequest").required(),
         coverageJson: a.ref("GameDayRecapCoverage"),
         costJson: a.ref("GameDayRecapCost"),
+        failureJson: a.ref("GameDayRecapFailureDetails"),
         resultJson: a.ref("GameDayRecapResult"),
         error: a.string(),
         executionArn: a.string(),

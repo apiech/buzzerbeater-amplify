@@ -211,6 +211,14 @@ type ResolvedImpactfulRuns = {
   secondaryRun: GameDayRecapPlayByPlayRun | null;
 };
 
+type RunStartAnchor = {
+  awayScore: number;
+  clock: string | null;
+  gameSecondsElapsed: number | null;
+  homeScore: number;
+  quarter: number | null;
+};
+
 type InternalDecisiveEndingQualificationReason =
   | "buzzerbeater_or_walkoff"
   | "late_one_possession_score"
@@ -575,7 +583,7 @@ function resolveLongestUnansweredRun(
         index === scoringEvents.length - 1 ? "game_end" : "opponent_answer",
       opponentPoints: 0,
       runType: "unanswered",
-      startEvent: scoringEvents[currentRunStartIndex]!,
+      startAnchor: resolveRunStartAnchor(scoringEvents, currentRunStartIndex),
       teamNames,
       teamPoints: currentRunPoints,
       teamSide: currentRunSide,
@@ -694,7 +702,7 @@ function collectCompletedUnansweredRuns(
         endedBy: nextScoringEvent ? "opponent_answer" : "game_end",
         opponentPoints: 0,
         runType: "unanswered",
-        startEvent: scoringEvents[currentRunStartIndex]!,
+        startAnchor: resolveRunStartAnchor(scoringEvents, currentRunStartIndex),
         teamNames,
         teamPoints: currentRunPoints,
         teamSide: currentRunSide,
@@ -716,8 +724,9 @@ function collectSwingRunCandidates(
 
   for (let startIndex = 0; startIndex < scoringEvents.length; startIndex += 1) {
     const startEvent = scoringEvents[startIndex]!;
+    const startAnchor = resolveRunStartAnchor(scoringEvents, startIndex);
     const startMargin = Math.abs(
-      startEvent.beforeHomeScore - startEvent.beforeAwayScore,
+      startAnchor.homeScore - startAnchor.awayScore,
     );
     if (
       options?.requireCompetitiveStart &&
@@ -738,7 +747,7 @@ function collectSwingRunCandidates(
         opponentPoints +
         (endEvent.scoringTeamSide === teamSide ? 0 : endEvent.points);
       const combinedPoints = nextTeamPoints + nextOpponentPoints;
-      const elapsedSeconds = resolveRunElapsedSeconds(startEvent, endEvent);
+      const elapsedSeconds = resolveRunElapsedSeconds(startAnchor, endEvent);
       if (
         combinedPoints > SWING_RUN_MAX_COMBINED_POINTS ||
         (elapsedSeconds !== null && elapsedSeconds > SWING_RUN_MAX_ELAPSED_SECONDS)
@@ -763,7 +772,7 @@ function collectSwingRunCandidates(
               : "unknown",
           opponentPoints,
           runType: "swing",
-          startEvent,
+          startAnchor,
           teamNames,
           teamPoints,
           teamSide,
@@ -775,13 +784,44 @@ function collectSwingRunCandidates(
   return candidates;
 }
 
+function resolveRunStartAnchor(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  startIndex: number,
+): RunStartAnchor {
+  const startEvent = scoringEvents[startIndex]!;
+  const previousScoringEvent = scoringEvents[startIndex - 1] ?? null;
+  if (
+    previousScoringEvent &&
+    previousScoringEvent.afterAwayScore === startEvent.beforeAwayScore &&
+    previousScoringEvent.afterHomeScore === startEvent.beforeHomeScore
+  ) {
+    return {
+      awayScore: previousScoringEvent.afterAwayScore,
+      clock: previousScoringEvent.clock,
+      gameSecondsElapsed: previousScoringEvent.gameSecondsElapsed,
+      homeScore: previousScoringEvent.afterHomeScore,
+      quarter: previousScoringEvent.quarter,
+    };
+  }
+
+  return {
+    awayScore: startEvent.beforeAwayScore,
+    clock: startEvent.clock,
+    gameSecondsElapsed: startEvent.gameSecondsElapsed,
+    homeScore: startEvent.beforeHomeScore,
+    quarter: startEvent.quarter,
+  };
+}
+
 function resolveRunElapsedSeconds(
-  startEvent: EventContext,
+  startAnchor: RunStartAnchor,
   endEvent: EventContext,
 ): number | null {
   const startSeconds =
-    startEvent.gameSecondsElapsed ??
-    (startEvent.quarter > 0 ? resolveAnchorOrdering(startEvent.quarter, startEvent.clock) : null);
+    startAnchor.gameSecondsElapsed ??
+    (startAnchor.quarter !== null && startAnchor.quarter > 0
+      ? resolveAnchorOrdering(startAnchor.quarter, startAnchor.clock)
+      : null);
   const endSeconds =
     endEvent.gameSecondsElapsed ??
     (endEvent.quarter > 0 ? resolveAnchorOrdering(endEvent.quarter, endEvent.clock) : null);
@@ -797,15 +837,15 @@ function buildRunFact(args: {
   endedBy: RunEndedBy;
   opponentPoints: number;
   runType: RunType;
-  startEvent: EventContext;
+  startAnchor: RunStartAnchor;
   teamNames: TeamNameContext;
   teamPoints: number;
   teamSide: TeamSide;
 }): GameDayRecapPlayByPlayRun {
   const startMarginFromTeamPerspective =
     args.teamSide === "home"
-      ? args.startEvent.beforeHomeScore - args.startEvent.beforeAwayScore
-      : args.startEvent.beforeAwayScore - args.startEvent.beforeHomeScore;
+      ? args.startAnchor.homeScore - args.startAnchor.awayScore
+      : args.startAnchor.awayScore - args.startAnchor.homeScore;
   const endMarginFromTeamPerspective =
     args.teamSide === "home"
       ? args.endEvent.afterHomeScore - args.endEvent.afterAwayScore
@@ -822,11 +862,11 @@ function buildRunFact(args: {
     netMargin: args.teamPoints - args.opponentPoints,
     opponentPoints: args.opponentPoints,
     runType: args.runType,
-    startAwayScore: args.startEvent.beforeAwayScore,
-    startClock: args.startEvent.clock,
+    startAwayScore: args.startAnchor.awayScore,
+    startClock: args.startAnchor.clock,
     startMarginFromTeamPerspective,
-    startHomeScore: args.startEvent.beforeHomeScore,
-    startQuarter: args.startEvent.quarter,
+    startHomeScore: args.startAnchor.homeScore,
+    startQuarter: args.startAnchor.quarter,
     teamName: resolveTeamName(args.teamSide, args.teamNames),
     teamPoints: args.teamPoints,
     teamSide: args.teamSide,
@@ -952,7 +992,40 @@ function isSupportedSecondaryRunCandidate(
     candidate.marginSwing >=
       primaryRun.marginSwing - SECONDARY_RUN_CLOSE_GAP_THRESHOLD;
 
-  return materiallyStrong && (candidate.teamSide !== primaryRun.teamSide || separatedInTime);
+  return materiallyStrong && separatedInTime && !runsOverlap(candidate, primaryRun);
+}
+
+function runsOverlap(
+  left: GameDayRecapPlayByPlayRun,
+  right: GameDayRecapPlayByPlayRun,
+): boolean {
+  const leftInterval = resolveRunInterval(left);
+  const rightInterval = resolveRunInterval(right);
+  if (!leftInterval || !rightInterval) {
+    return false;
+  }
+
+  return leftInterval.start < rightInterval.end && rightInterval.start < leftInterval.end;
+}
+
+function resolveRunInterval(
+  run: GameDayRecapPlayByPlayRun,
+): { end: number; start: number } | null {
+  if (
+    run.startQuarter === null ||
+    !run.startClock ||
+    run.endQuarter === null ||
+    !run.endClock
+  ) {
+    return null;
+  }
+
+  const start = resolveAnchorOrdering(run.startQuarter, run.startClock);
+  const end = resolveAnchorOrdering(run.endQuarter, run.endClock);
+  return {
+    end: Math.max(start, end),
+    start: Math.min(start, end),
+  };
 }
 
 function resolveLeadChangeFacts(
@@ -1249,10 +1322,14 @@ function resolveDecisiveEndingQualificationReason(
     .slice(scoringEvent.rawIndex + 1)
     .some(isScoringEvent);
   const isWalkOffGoAhead =
+    isGameEndingPeriod(scoringEvent.quarter) &&
     beforeLeader !== winnerSide &&
     !laterScoringExists &&
     parseClockToRemainingSeconds(scoringEvent.clock) === 0;
-  if (explicitBuzzerBeater || isWalkOffGoAhead) {
+  if (
+    isGameEndingPeriod(scoringEvent.quarter) &&
+    (explicitBuzzerBeater || isWalkOffGoAhead)
+  ) {
     return "buzzerbeater_or_walkoff";
   }
 
@@ -1282,6 +1359,10 @@ function resolveDecisiveEndingQualificationReason(
     : null;
 }
 
+function isGameEndingPeriod(quarter: number): boolean {
+  return quarter >= 4;
+}
+
 function buildDecisiveScore(
   scoringEvent: EventContext & { scoringTeamSide: TeamSide },
   eventContexts: EventContext[],
@@ -1300,6 +1381,7 @@ function buildDecisiveScore(
     scoringEvent,
   );
   const isWalkOff =
+    isGameEndingPeriod(scoringEvent.quarter) &&
     !laterScoringExists &&
     parseClockToRemainingSeconds(scoringEvent.clock) === 0;
   const momentType =
@@ -1313,7 +1395,8 @@ function buildDecisiveScore(
     explicitBuzzerBeater,
     homeScore: scoringEvent.afterHomeScore,
     isBuzzerBeater:
-      explicitBuzzerBeater || (isWalkOff && momentType === "go_ahead"),
+      isGameEndingPeriod(scoringEvent.quarter) &&
+      (explicitBuzzerBeater || (isWalkOff && momentType === "go_ahead")),
     isWalkOff,
     momentType,
     points: scoringEvent.points,
@@ -1915,6 +1998,7 @@ export const __testing = {
   buildGameDayRecapPlayByPlayFacts,
   describeLateGameMoment,
   describeOpponentLastChance,
+  isSupportedSecondaryRunCandidate,
   summarizeEndingFacts,
   summarizeLateGameMoments,
 };
