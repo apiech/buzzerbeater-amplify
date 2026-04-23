@@ -21,6 +21,9 @@ type RecapJobMessage = {
 
 export const handler = async (
   event: RecapJobMessage,
+  context: {
+    getRemainingTimeInMillis(): number;
+  },
 ): Promise<{ ok: true }> => {
   const runtimeEnv = env as RuntimeEnv;
   const fallbackModelId = runtimeEnv["GAME_DAY_RECAP_MODEL_ID"];
@@ -40,6 +43,7 @@ export const handler = async (
     env,
     message,
     modelId: fallbackModelId,
+    remainingTimeInMillis: () => context.getRemainingTimeInMillis(),
     region: runtimeEnv.AWS_REGION,
   });
   return { ok: true };

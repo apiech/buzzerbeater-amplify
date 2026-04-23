@@ -63,6 +63,7 @@ import {
   rivalsWorker,
   revokeSharedPlayerCard,
   setBbLeagueTimeZone,
+  setTrackedPlayerInterviewPersonality,
   submitProductFeedback,
   submitRivalsBackfill,
   submitLeagueHistoryBackfill,
@@ -75,6 +76,7 @@ import {
 import { getAccessibleMatch } from "./get-accessible-match/resource.js";
 import { getAccessiblePlayByPlay } from "./get-accessible-play-by-play/resource.js";
 import { gameDayRecapSubmit } from "./game-day-recap-submit/resource.js";
+import { gameDayRecapFailureFinalizer } from "./game-day-recap-failure-finalizer/resource.js";
 import { gameDayRecapWorker } from "./game-day-recap-worker/resource.js";
 import { getMatchBoxscoreDetails } from "./get-match-boxscore-details/resource.js";
 import { listAccessibleMatches } from "./list-accessible-matches/resource.js";
@@ -127,12 +129,14 @@ const backend = defineBackend({
   nextGameRecommendationWorker,
   pruneOperationalData,
   setBbLeagueTimeZone,
+  setTrackedPlayerInterviewPersonality,
   submitProductFeedback,
   getAccessibleMatch,
   getAccessiblePlayByPlay,
   getMatchBoxscoreDetails,
   listAccessibleMatches,
   gameDayRecapSubmit,
+  gameDayRecapFailureFinalizer,
   gameDayRecapWorker,
   opponentForecastSubmit,
   opponentForecastWorker,
@@ -222,6 +226,7 @@ configureMaintenanceControlPlane(backend, [
   backend.submitLeagueGameDayPerformances,
   backend.submitSingleGameSummary,
   backend.setBbLeagueTimeZone,
+  backend.setTrackedPlayerInterviewPersonality,
   backend.submitProductFeedback,
   backend.listAccessibleMatches,
   backend.getAccessibleMatch,
@@ -234,6 +239,7 @@ configureMaintenanceControlPlane(backend, [
   backend.leagueHistoryWorker,
   backend.rivalsWorker,
   backend.gameDayRecapSubmit,
+  backend.gameDayRecapFailureFinalizer,
   backend.gameDayRecapWorker,
   backend.nextGameRecommendationSubmit,
   backend.nextGameRecommendationWorker,

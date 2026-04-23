@@ -6,7 +6,7 @@ export const gameDayRecapWorker = defineFunction({
   resourceGroupName: "data",
   name: "game-day-recap-worker",
   entry: "./handler.ts",
-  timeoutSeconds: 120,
+  timeoutSeconds: 900,
   memoryMB: 1024,
   environment: buildBbConnectionSecretFunctionEnvironment(),
 });

@@ -1236,6 +1236,44 @@ function createPassingJudgeProvider(args?: {
   };
 }
 
+function createUsageAwareProvider(args: {
+  generate?: (payload: unknown) => unknown | Promise<unknown>;
+  modelId: string;
+  stage: "judge" | "retry_writer" | "writer";
+  usage: {
+    cacheReadInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    inputTokens: number;
+    outputTokens: number;
+    requestCount: number;
+    totalTokens: number;
+  };
+}) {
+  return {
+    generate: async (payload: unknown) => {
+      if (args.generate) {
+        return args.generate(payload);
+      }
+
+      throw new Error("unexpected generate call");
+    },
+    getUsageSummary: () => ({
+      cacheReadInputTokens: args.usage.cacheReadInputTokens ?? 0,
+      cacheWriteInputTokens: args.usage.cacheWriteInputTokens ?? 0,
+      inputTokens: args.usage.inputTokens,
+      modelId: args.modelId,
+      outputTokens: args.usage.outputTokens,
+      providerName: "bedrock" as const,
+      requestCount: args.usage.requestCount,
+      stage: args.stage,
+      totalTokens: args.usage.totalTokens,
+    }),
+    modelId: args.modelId,
+    providerName: "bedrock" as const,
+    stage: args.stage,
+  };
+}
+
 async function judgeSingleGameResult(args: {
   assessment: ReturnType<typeof createJudgeCandidateAssessment>;
   expectedGame?: ReturnType<typeof createExpectedPromptGame>;
@@ -2614,8 +2652,8 @@ test("buildGameDayRecapPromptPayload uses postgame-first records and retains ent
     !firstGame.playByPlaySummaryLines.some((line) => /\b6-2 run\b/i.test(line)),
   );
   assert.deepStrictEqual(firstGame.gameDayPrepSummaries, [
-    "Alpha read the paint focus correctly.",
-    "Beta anticipated the balanced attack well.",
+    "Alpha prepared well for Inside looks; Beta prepared well for a Balanced attack.",
+    "On pace, Alpha prepared well for Fast pace; Beta prepared well for Normal pace.",
   ]);
 });
 
@@ -4934,7 +4972,7 @@ test("processGameDayRecap retries once after semantic validation fails", async (
   assert.equal(updates.at(-1)?.status, "SUCCEEDED");
 });
 
-test("processGameDayRecap retries after style validation failures", async () => {
+test("processGameDayRecap retries after remaining hard validation failures", async () => {
   const recapRecord = {
     gameDate: "2026-03-15",
     leagueId: "100",
@@ -5101,9 +5139,6 @@ test("processGameDayRecap retries after style validation failures", async () => 
     ),
   );
   assert.ok(
-    providerCalls[1]?.some((feedback) => feedback.includes("key juncture")),
-  );
-  assert.ok(
     providerCalls[1]?.some((feedback) =>
       feedback.includes("one-game win or loss as a streak"),
     ),
@@ -5268,7 +5303,7 @@ test("processGameDayRecap patches repeated semantic contradictions after the ret
   assert.equal(
     (finalUpdate.resultJson as { games: Array<{ writeup: string }> }).games[0]
       ?.writeup ?? "",
-    "The 3rd quarter ended tied at 24-24. Alpha read the paint focus correctly while Beta anticipated the balanced attack well.",
+    "The 3rd quarter ended tied at 24-24. Alpha prepared well for Inside looks; Beta prepared well for a Balanced attack. On pace, Alpha prepared well for Fast pace; Beta prepared well for Normal pace.",
   );
 });
 
@@ -7432,6 +7467,157 @@ test("processSingleGameSummary summarizes one finished match without standings o
   );
 });
 
+test("processSingleGameSummary persists estimated cost tracking for the generated summary", async () => {
+  const summaryRecord = {
+    matchId: "137828772",
+    requestJson: {
+      matchId: "137828772",
+      mode: "SINGLE_GAME",
+    },
+    requestedAt: "2026-03-17T10:49:14.585Z",
+    status: "QUEUED" as const,
+    targetKey: "137828772",
+    userId: "user-1",
+  };
+  const updates: Array<Record<string, unknown>> = [];
+
+  await processSingleGameSummary(
+    {
+      env: createRecapEnv(),
+      messageBody: JSON.stringify({
+        kind: "SINGLE_GAME",
+        qualityTier: "standard",
+        requestedAt: summaryRecord.requestedAt,
+        targetKey: summaryRecord.targetKey,
+        userId: summaryRecord.userId,
+      }),
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      region: "us-east-1",
+    },
+    {
+      assertMaintenanceInactive: async () => {},
+      createBbClient: () => ({
+        getBoxScore: async () =>
+          createBoxScore({
+            awayScore: 98,
+            awayTeamId: "D",
+            awayTeamName: "Delta 9",
+            homeScore: 114,
+            homeTeamId: "A",
+            homeTeamName: "Visionaries",
+            matchId: "137828772",
+            startTime: "2026-03-15T01:00:00Z",
+            type: "league.rs",
+          }),
+        getSchedule: async () => {
+          throw new Error("single-game summary should not fetch schedules");
+        },
+        getSeasons: async () => ({
+          seasons: [{ finish: "2026-05-01", id: 71, start: "2026-02-02" }],
+          version: "1",
+        }),
+        getStandings: async () => createStandings(71, "1"),
+        getTeamInfo: async () => ({
+          country: { id: "1", name: "USA" },
+          fields: {},
+          isBot: false,
+          league: { id: "1", name: "NBBA" },
+          ownerName: "Owner",
+          retrievedAt: "2026-03-17T10:49:23.000Z",
+          rival: null,
+          shortName: "VIS",
+          teamId: "A",
+          teamName: "Visionaries",
+          version: "1",
+        }),
+      }),
+      createProvider: ({ stage }) =>
+        stage === "judge"
+          ? createPassingJudgeProvider()
+          : createUsageAwareProvider({
+              generate: async (payload) => {
+                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
+                  payload,
+                );
+                if (auxiliary) {
+                  return auxiliary.response;
+                }
+                if (!isMainRecapWriterPayloadForTest(payload)) {
+                  throw new Error("expected main recap writer payload");
+                }
+
+                return createRecapCandidateResult({
+                  headline: "Visionaries pull away late",
+                  matchId: "137828772",
+                  writeup:
+                    "Visionaries built separation in the second half and kept Delta 9 from making the margin uncomfortable again.",
+                });
+              },
+              modelId: DEFAULT_RECAP_MODEL_ID,
+              stage,
+              usage: {
+                inputTokens: 2_000,
+                outputTokens: 400,
+                requestCount: 1,
+                totalTokens: 2_400,
+              },
+            }),
+      fetchPublicMatchPlayByPlay: async (matchId) =>
+        createPublicPlayByPlay({
+          matchId: String(matchId),
+        }),
+      getBbConnection: async () => ({
+        bbLoginName: "coach-alpha",
+        leagueId: "1",
+        leagueName: "NBBA",
+        leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T10:49:23.000Z",
+        status: "CONNECTED",
+        userId: "user-1",
+      }),
+      getSingleGameSummary: async () => summaryRecord,
+      now: () => new Date("2026-03-17T10:49:23.000Z"),
+      resolveBbAccessKey: async () => "secret",
+      updateSingleGameSummary: async (_env, input) => {
+        updates.push(input);
+      },
+    },
+  );
+
+  const finalUpdate = expectPresent(
+    updates.at(-1),
+    "expected a persisted single-game summary update",
+  );
+  assert.equal(finalUpdate.status, "SUCCEEDED");
+  assert.deepStrictEqual(finalUpdate.costJson, {
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    currency: "USD",
+    estimatedPerGameCostUsd: 0.004,
+    estimatedTotalCostUsd: 0.004,
+    generatedGameCount: 1,
+    inputTokens: 2_000,
+    outputTokens: 400,
+    pricingStatus: "estimated",
+    requestCount: 1,
+    stages: [
+      {
+        cacheReadInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        estimatedCostUsd: 0.004,
+        inputTokens: 2_000,
+        modelId: DEFAULT_RECAP_MODEL_ID,
+        outputTokens: 400,
+        providerName: "bedrock",
+        requestCount: 1,
+        stage: "writer",
+        totalTokens: 2_400,
+      },
+    ],
+    totalTokens: 2_400,
+  });
+});
+
 test("processSingleGameSummary adds series context for eligible playoff finals", async () => {
   const summaryRecord = {
     matchId: "137828773",
@@ -7760,7 +7946,7 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
   const systemText = request.system[0]?.text ?? "";
   const userText = request.messages[0]?.content[0]?.text ?? "";
   assert.match(systemText, /never cite the raw effortDelta value/i);
-  assert.match(systemText, /raw GDP focus codes/i);
+  assert.match(systemText, /raw GDP codes/i);
   assert.match(systemText, /not a checklist of facts/i);
   assert.match(
     systemText,
@@ -7774,7 +7960,7 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
   );
   assert.match(
     systemText,
-    /Never use filler such as 'at a key juncture' or 'proved decisive'/i,
+    /Prefer concrete basketball detail over filler such as 'at a key juncture' or 'proved decisive'/i,
   );
   assert.match(systemText, /Never call a one-game win or loss a streak/i);
   assert.match(
@@ -7851,6 +8037,65 @@ test("buildGameDayRecapBedrockRequest sanitizes playoff records from the writer 
     systemText,
     /do not mention regular-season records or any winning or losing streaks/i,
   );
+});
+
+test("buildGameDayRecapBedrockRequest keeps postgame interview questions in sportswriter tone and answers in player voice", () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  const gameFacts = payload.factStore.games[0]!;
+  const request = __testing.buildGameDayRecapBedrockRequest({
+    modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    payload: {
+      candidate: {
+        playerName: "Home Hero",
+        selectionReason: "top scorer for the winning team",
+        statLine: {
+          assists: 4,
+          blocks: 1,
+          minutes: 39,
+          points: 24,
+          rebounds: 8,
+          steals: 2,
+          turnovers: 3,
+        },
+        supportedFacts: ["Home Hero led the winners with 24 points."],
+        teamName: "Home",
+        teamSide: "home",
+        personalityType: "deadpan",
+        personalitySource: "user_override",
+      },
+      gameFacts,
+      recapGame: {
+        headline: "Home beats Away 85-81",
+        matchId: "m-1",
+        writeup:
+          "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+      },
+      request: payload.factStore.request,
+      task: "postgame_interview",
+    },
+  });
+
+  const systemText = request.system[0]?.text ?? "";
+  const userText = request.messages[0]?.content[0]?.text ?? "";
+
+  assert.match(systemText, /questions in professional sportswriter tone/i);
+  assert.match(
+    systemText,
+    /personality guidance only for the player's answers/i,
+  );
+  assert.match(
+    systemText,
+    /do not let the player's personality bleed into the title or reporter questions/i,
+  );
+  assert.match(
+    userText,
+    /Write the title and every question in polished professional sportswriter tone/i,
+  );
+  assert.match(
+    userText,
+    /Let the supplied personality type shape only the player's answers/i,
+  );
+  assert.match(userText, /dry and understated/i);
 });
 
 test("buildGameDayRecapJudgeBedrockRequest uses fixed-slot sentence chunks without Bedrock-hostile schema keywords", () => {
@@ -8001,28 +8246,28 @@ test("describeGameDayPrepFocusForRecap uses natural language for GDP focus hits 
       focus: "outside.hit",
       teamName: "LA Lions",
     }),
-    "LA Lions read the perimeter focus correctly.",
+    "LA Lions prepared well for Outside looks.",
   );
   assert.equal(
     __testing.describeGameDayPrepFocusForRecap({
       focus: "outside.miss",
       teamName: "LA Lions",
     }),
-    "LA Lions's perimeter focus missed the mark.",
+    "LA Lions missed on the Outside focus read.",
   );
   assert.equal(
     __testing.describeGameDayPrepFocusForRecap({
       focus: "Inside.hit",
       teamName: "LA Lions",
     }),
-    "LA Lions read the paint focus correctly.",
+    "LA Lions prepared well for Inside looks.",
   );
   assert.equal(
     __testing.describeGameDayPrepFocusForRecap({
       focus: "Balanced.miss",
       teamName: "LA Lions",
     }),
-    "LA Lions did not read the balanced attack well.",
+    "LA Lions missed on the Balanced focus read.",
   );
   assert.equal(
     __testing.describeGameDayPrepFocusForRecap({
@@ -8030,6 +8275,85 @@ test("describeGameDayPrepFocusForRecap uses natural language for GDP focus hits 
       teamName: "LA Lions",
     }),
     null,
+  );
+});
+
+test("buildGameDayPrepSummariesForRecap composes focus and pace hits and misses", () => {
+  const boxScore = createBoxScore({
+    awayScore: 55,
+    awayTeamId: "SG",
+    awayTeamName: "Splash Gang",
+    homeScore: 69,
+    homeTeamId: "SB",
+    homeTeamName: "Silverbacks",
+    matchId: "m-1",
+  });
+  boxScore.homeTeam.offStrategy = "Motion";
+  boxScore.awayTeam.offStrategy = "Run and Gun";
+  boxScore.homeTeam.gdp = { focus: "Outside.hit", pace: "N/A" };
+  boxScore.awayTeam.gdp = { focus: "Outside.hit", pace: "Fast.miss" };
+
+  assert.deepStrictEqual(
+    __testing.buildGameDayPrepSummariesForRecap({
+      awayTeam: boxScore.awayTeam,
+      homeTeam: boxScore.homeTeam,
+    }),
+    [
+      "Both teams prepared well for Outside looks.",
+      "On pace, Splash Gang prepared for Fast pace, but Silverbacks played Motion.",
+    ],
+  );
+
+  boxScore.homeTeam.gdp = { focus: "Inside.hit", pace: "Slow.hit" };
+  boxScore.awayTeam.gdp = { focus: "Balanced.miss", pace: "Fast.miss" };
+
+  assert.deepStrictEqual(
+    __testing.buildGameDayPrepSummariesForRecap({
+      awayTeam: boxScore.awayTeam,
+      homeTeam: boxScore.homeTeam,
+    }),
+    [
+      "Silverbacks prepared well for Inside looks; Splash Gang missed on the Balanced focus read.",
+      "On pace, Silverbacks prepared well for Slow pace; Splash Gang prepared for Fast pace, but Silverbacks played Motion.",
+    ],
+  );
+
+  boxScore.homeTeam.gdp = { focus: "Inside.miss", pace: "Normal.hit" };
+  boxScore.awayTeam.gdp = { focus: "Balanced.miss", pace: "Normal.hit" };
+
+  assert.deepStrictEqual(
+    __testing.buildGameDayPrepSummariesForRecap({
+      awayTeam: boxScore.awayTeam,
+      homeTeam: boxScore.homeTeam,
+    }),
+    [
+      "Silverbacks missed on the Inside focus read; Splash Gang missed on the Balanced focus read.",
+      "On pace, both teams prepared well for Normal pace.",
+    ],
+  );
+
+  boxScore.homeTeam.gdp = { focus: "N/A", pace: "Fast.miss" };
+  boxScore.awayTeam.gdp = { focus: "N/A", pace: "Fast.miss" };
+
+  assert.deepStrictEqual(
+    __testing.buildGameDayPrepSummariesForRecap({
+      awayTeam: boxScore.awayTeam,
+      homeTeam: boxScore.homeTeam,
+    }),
+    [
+      "On pace, Silverbacks prepared for Fast pace, but Splash Gang played Run and Gun; Splash Gang prepared for Fast pace, but Silverbacks played Motion.",
+    ],
+  );
+
+  boxScore.homeTeam.gdp = { focus: "N/A", pace: "--" };
+  boxScore.awayTeam.gdp = { focus: null, pace: "" };
+
+  assert.deepStrictEqual(
+    __testing.buildGameDayPrepSummariesForRecap({
+      awayTeam: boxScore.awayTeam,
+      homeTeam: boxScore.homeTeam,
+    }),
+    [],
   );
 });
 
@@ -8707,28 +9031,61 @@ test("validateGameDayRecapResult rejects duplicate late outcome restatements", (
   );
 });
 
-test("validateGameDayRecapResult rejects banned filler phrases", () => {
-  assert.throws(
-    () =>
-      __testing.validateGameDayRecapResult(
+test("validateGameDayRecapResult accepts composed game-day prep context sentences", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.requiredContextSentences = [
+    "Both teams prepared well for Outside looks.",
+    "On pace, Away prepared for Fast pace, but Home played Motion.",
+  ];
+
+  const result = __testing.validateGameDayRecapResult(
+    {
+      games: [
         {
-          games: [
-            {
-              evidenceTags: ["close_finish"],
-              headline: "Home survives the late push",
-              matchId: "m-1",
-              writeup:
-                "Home found one more basket at a key juncture and kept Away from flipping the last few possessions.",
-            },
-          ],
-          summary: {
-            headline: "League roundup",
-            lede: "Style validation should block empty filler even when the sentence is otherwise factual.",
-          },
+          evidenceTags: ["recent_form"],
+          headline: "Home beats Away 85-81",
+          matchId: "m-1",
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin. Both teams prepared well for Outside looks. On pace, Away prepared for Fast pace, but Home played Motion.",
         },
-        [createExpectedPromptGame("m-1")],
-      ),
-    /key juncture|filler phrase/i,
+      ],
+      summary: {
+        headline: "League roundup",
+        lede: "The preparation context should read naturally while staying deterministic.",
+      },
+    },
+    [expectedGame],
+  );
+
+  assert.equal(result.games[0]?.writeup.includes("Both teams"), true);
+});
+
+test("strict filler validation remains available for QA mode", () => {
+  const assessed = __testing.assessGameDayRecapDeterministicPayload(
+    {
+      games: [
+        {
+          evidenceTags: ["close_finish"],
+          headline: "Home survives the late push",
+          matchId: "m-1",
+          writeup:
+            "Home found one more basket at a key juncture and kept Away from flipping the last few possessions.",
+        },
+      ],
+      summary: {
+        headline: "League roundup",
+        lede: "Strict QA mode can still flag filler when explicitly enabled.",
+      },
+    },
+    [createExpectedPromptGame("m-1")],
+    {
+      enforceBannedStylePhrases: true,
+    },
+  );
+
+  assert.equal(
+    assessed.issues.some((issue) => issue.kind === "banned_style_phrase"),
+    true,
   );
 });
 
@@ -9422,6 +9779,8 @@ test("generateResolvedGameDayRecap falls back to a deterministic interview when 
     "expected canonical fact-store game",
   ).postgameInterviewCandidate = {
     playerName: "Home Hero",
+    personalitySource: "user_override",
+    personalityType: "curt",
     selectionReason: "top scorer for the winning team",
     statLine: {
       assists: 4,
@@ -9491,9 +9850,262 @@ test("generateResolvedGameDayRecap falls back to a deterministic interview when 
   const fallbackExchange = interview.qa[0]!;
   assert.equal(
     fallbackExchange.question,
-    "What was working for you tonight?",
+    "You finished with 24 points, 8 rebounds, and 4 assists. What was working for you out there tonight?",
   );
-  assert.match(fallbackExchange.answer, /points/i);
+  assert.match(fallbackExchange.answer, /^I stayed aggressive/i);
+});
+
+test("generateResolvedGameDayRecap skips polish and interview generation when remaining time is low", async () => {
+  const payload = createSingleGameRecapPayload();
+  expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  ).postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+
+  let interviewCalls = 0;
+  let stylePolishCalls = 0;
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: createPassingJudgeProvider(),
+    payload,
+    qualityTier: "standard",
+    remainingTimeInMillis: () => 20_000,
+    retryProvider: null,
+    writerProvider: {
+      generate: async (payload) => {
+        if (isPostgameInterviewPayloadForTest(payload)) {
+          interviewCalls += 1;
+          throw new Error("interview generation should be skipped on low budget");
+        }
+        if (isStylePolishPayloadForTest(payload)) {
+          stylePolishCalls += 1;
+          return {
+            writeup: payload.recapGame.writeup,
+          };
+        }
+        if (!isMainRecapWriterPayloadForTest(payload)) {
+          throw new Error("expected main recap writer payload");
+        }
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        });
+      },
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.equal(stylePolishCalls, 0);
+  assert.equal(interviewCalls, 0);
+  assert.equal(result.result.games[0]?.postgameInterview?.teamSide, "home");
+});
+
+test("validateGameDayRecapResult allows interviews to mention runs without timing anchors", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+
+  const validated = __testing.validateGameDayRecapResult(
+    {
+      games: [
+        {
+          evidenceTags: ["late_game_swing"],
+          headline: "Home beats Away 85-81",
+          matchId: "m-1",
+          postgameInterview: {
+            playerName: "Home Hero",
+            qa: [
+              {
+                answer: "That 15-4 run in the fourth gave us breathing room.",
+                question: "What changed in the fourth quarter?",
+              },
+            ],
+            teamName: "Home",
+            teamSide: "home",
+            title: "Home Hero on Home's win",
+          },
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        },
+      ],
+      summary: {
+        headline: "Home beats Away 85-81",
+        lede: "Home held off a late push and finished the night cleanly.",
+      },
+    },
+    [expectedGame],
+  );
+
+  assert.equal(
+    validated.games[0]?.postgameInterview?.qa[0]?.answer,
+    "That 15-4 run in the fourth gave us breathing room.",
+  );
+});
+
+test("buildGameDayRecapCostPayload aggregates provider usage into total and per-game estimates", () => {
+  const cost = __testing.buildGameDayRecapCostPayload({
+    providers: [
+      createUsageAwareProvider({
+        modelId: PREMIUM_RECAP_MODEL_ID,
+        stage: "writer",
+        usage: {
+          inputTokens: 2_000,
+          outputTokens: 500,
+          requestCount: 1,
+          totalTokens: 2_500,
+        },
+      }),
+      createUsageAwareProvider({
+        modelId: DEFAULT_RECAP_JUDGE_MODEL_ID,
+        stage: "judge",
+        usage: {
+          inputTokens: 1_000,
+          outputTokens: 200,
+          requestCount: 1,
+          totalTokens: 1_200,
+        },
+      }),
+    ],
+    result: {
+      games: [
+        {
+          evidenceTags: [],
+          headline: "Game one",
+          matchId: "m-1",
+          writeup: "Summary one.",
+        },
+        {
+          evidenceTags: [],
+          headline: "Game two",
+          matchId: "m-2",
+          writeup: "Summary two.",
+        },
+      ],
+      summary: {
+        headline: "League roundup",
+        lede: "Two grounded summaries were generated.",
+      },
+    },
+  });
+
+  assert.deepStrictEqual(cost, {
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    currency: "USD",
+    estimatedPerGameCostUsd: 0.00775,
+    estimatedTotalCostUsd: 0.0155,
+    generatedGameCount: 2,
+    inputTokens: 3_000,
+    outputTokens: 700,
+    pricingStatus: "estimated",
+    requestCount: 2,
+    stages: [
+      {
+        cacheReadInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        estimatedCostUsd: 0.0135,
+        inputTokens: 2_000,
+        modelId: PREMIUM_RECAP_MODEL_ID,
+        outputTokens: 500,
+        providerName: "bedrock",
+        requestCount: 1,
+        stage: "writer",
+        totalTokens: 2_500,
+      },
+      {
+        cacheReadInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        estimatedCostUsd: 0.002,
+        inputTokens: 1_000,
+        modelId: DEFAULT_RECAP_JUDGE_MODEL_ID,
+        outputTokens: 200,
+        providerName: "bedrock",
+        requestCount: 1,
+        stage: "judge",
+        totalTokens: 1_200,
+      },
+    ],
+    totalTokens: 3_700,
+  });
+});
+
+test("assessGameDayRecapDeterministicPayload treats filler phrases as soft guidance unless strict mode is enabled", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  const result = {
+    games: [
+      {
+        evidenceTags: ["quarter_turn"],
+        headline: "Home beats Away 85-81",
+        matchId: "m-1",
+        writeup:
+          "Home built a 42-38 halftime lead and the fourth quarter proved decisive in the 85-81 win over Away.",
+      },
+    ],
+    summary: {
+      headline: "Home beats Away 85-81",
+      lede: "Home used a steady second-half edge to close the game out.",
+    },
+  };
+
+  const laxAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    result,
+    [expectedGame],
+    {
+      enforceBannedStylePhrases: false,
+    },
+  );
+  const strictAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    result,
+    [expectedGame],
+    {
+      enforceBannedStylePhrases: true,
+    },
+  );
+
+  assert.equal(
+    laxAssessment.issues.some(
+      (issue) => issue.kind === "banned_style_phrase",
+    ),
+    false,
+  );
+  assert.equal(
+    strictAssessment.issues.some(
+      (issue) => issue.kind === "banned_style_phrase",
+    ),
+    true,
+  );
 });
 
 test("generateResolvedGameDayRecap omits interviews when no candidate exists in the fact store", async () => {
@@ -9622,7 +10234,7 @@ test("salvageGameDayRecapResult rebuilds a playoff opener after sentence repairs
         headline: "Stark Contrast escapes late",
         matchId: "m-1",
         writeup:
-          "Stark Contrast leads the series 1-0. Stark Contrast won the 2nd quarter 19-18. That early separation proved decisive.",
+          "Stark Contrast leads the series 1-0. Stark Contrast won the 2nd quarter 19-18.",
       },
     ],
     summary: {

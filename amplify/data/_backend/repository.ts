@@ -78,6 +78,9 @@ type GameDayRecapCoverage = NonNullable<
 type GameDayRecapResult = NonNullable<
   Schema["GameDayRecap"]["type"]["resultJson"]
 >;
+type GameDayRecapCost = NonNullable<
+  Schema["GameDayRecap"]["type"]["costJson"]
+>;
 type LeagueGameDayPerformancesResult = NonNullable<
   Schema["LeagueGameDayPerformances"]["type"]["resultJson"]
 >;
@@ -422,6 +425,7 @@ export type GameDayRecapRecord = {
   completedAt?: string | null;
   requestJson: GameDayRecapStoredRequest;
   coverageJson?: GameDayRecapCoverage | null;
+  costJson?: GameDayRecapCost | null;
   resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
@@ -444,6 +448,7 @@ export type LeagueGameDayRecapRecord = {
   completedAt?: string | null;
   requestJson: LeagueGameDayRecapStoredRequest;
   coverageJson?: GameDayRecapCoverage | null;
+  costJson?: GameDayRecapCost | null;
   resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
@@ -490,6 +495,7 @@ export type SingleGameSummaryRecord = {
   completedAt?: string | null;
   requestJson: SingleGameSummaryStoredRequest;
   coverageJson?: GameDayRecapCoverage | null;
+  costJson?: GameDayRecapCost | null;
   resultJson?: GameDayRecapResult | null;
   error?: string | null;
   modelProvider?: string | null;
@@ -2276,6 +2282,22 @@ function assertTrackedTeamInputShape<TRecord extends Record<string, unknown>>(
 function assertTrackedPlayerInputShape<TRecord extends Record<string, unknown>>(
   input: TRecord,
 ): void {
+  if (
+    hasOwnInputField(input, "interviewPersonalityType") &&
+    input.interviewPersonalityType != null &&
+    typeof input.interviewPersonalityType !== "string"
+  ) {
+    throw new Error("TrackedPlayer.interviewPersonalityType must be a string.");
+  }
+  if (
+    hasOwnInputField(input, "interviewPersonalitySource") &&
+    input.interviewPersonalitySource != null &&
+    typeof input.interviewPersonalitySource !== "string"
+  ) {
+    throw new Error(
+      "TrackedPlayer.interviewPersonalitySource must be a string.",
+    );
+  }
   if (hasOwnInputField(input, "profileJson") && input.profileJson != null) {
     assertStoredOwnedRosterPlayer(
       input.profileJson,

@@ -61,6 +61,9 @@ export type RecapHistoryKind =
 export type GameDayRecapCoveragePayload = NonNullable<
   GameDayRecapRecord["coverageJson"]
 >;
+export type GameDayRecapCostPayload = NonNullable<
+  GameDayRecapRecord["costJson"]
+>;
 export type GameDayRecapResultPayload = NonNullable<
   GameDayRecapRecord["resultJson"]
 >;
@@ -105,6 +108,7 @@ export type DecodedLineupHelperAssignment = {
 
 type RecapHistoryBase = {
   completedAt: string | null;
+  costJson: GameDayRecapCostPayload | null;
   error: string | null;
   gameDate: string | null;
   gameDayNumber: number | null;
@@ -173,6 +177,9 @@ export type DisconnectBbAccountResult = NonNullable<
 >;
 export type SetBbLeagueTimeZoneResult = NonNullable<
   Schema["setBbLeagueTimeZone"]["returnType"]
+>;
+export type SetTrackedPlayerInterviewPersonalityResult = NonNullable<
+  Schema["setTrackedPlayerInterviewPersonality"]["returnType"]
 >;
 export type SubmitGameDayRecapResult = NonNullable<
   Schema["submitGameDayRecap"]["returnType"]
@@ -486,6 +493,7 @@ export type RecapPanelContext = {
     HomeWorkspacePayload["connection"],
     "countryId" | "countryName" | "leagueId" | "leagueName" | "leagueTimeZone"
   >;
+  playerLabPlayers: PlayerLabPayload["players"];
   recentMatches: HomeWorkspacePayload["recentMatches"];
 };
 

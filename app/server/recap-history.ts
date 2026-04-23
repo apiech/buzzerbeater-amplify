@@ -1,4 +1,5 @@
 import type {
+  GameDayRecapCostPayload,
   GameDayRecapRecord,
   GameDayRecapCoveragePayload,
   GameDayRecapResultPayload,
@@ -166,6 +167,7 @@ export function adaptLeagueDateRecap(
   return {
     completedAt: normalized.completedAt ?? null,
     coverageJson: normalized.coverageJson ?? null,
+    costJson: normalized.costJson ?? null,
     error: normalized.error ?? null,
     gameDate: normalized.gameDate,
     gameDayNumber: null,
@@ -191,6 +193,7 @@ export function adaptLeagueGameDayRecap(
   return {
     completedAt: normalized.completedAt ?? null,
     coverageJson: normalized.coverageJson ?? null,
+    costJson: normalized.costJson ?? null,
     error: normalized.error ?? null,
     gameDate: null,
     gameDayNumber: normalized.gameDayNumber,
@@ -216,6 +219,7 @@ export function adaptLeagueGameDayPerformances(
   return {
     completedAt: normalized.completedAt ?? null,
     coverageJson: normalized.coverageJson ?? null,
+    costJson: null,
     error: normalized.error ?? null,
     gameDate: normalized.gameDate ?? null,
     gameDayNumber: normalized.gameDayNumber,
@@ -244,6 +248,7 @@ export function adaptSingleGameSummary(
   return {
     completedAt: normalized.completedAt ?? null,
     coverageJson: normalized.coverageJson ?? null,
+    costJson: normalized.costJson ?? null,
     error: normalized.error ?? null,
     gameDate: normalized.gameDate ?? null,
     gameDayNumber: null,
@@ -268,6 +273,7 @@ export function normalizeGameDayRecapRecord(
   return {
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
+    costJson: normalizeRecapCost(record.costJson),
     requestJson: {
       approach:
         readOptionalRecapGenerationApproach(
@@ -290,6 +296,7 @@ export function normalizeLeagueGameDayRecapRecord(
   return {
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
+    costJson: normalizeRecapCost(record.costJson),
     requestJson: {
       approach:
         readOptionalRecapGenerationApproach(
@@ -341,6 +348,7 @@ export function normalizeSingleGameSummaryRecord(
   return {
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
+    costJson: normalizeRecapCost(record.costJson),
     requestJson: {
       approach:
         readOptionalRecapGenerationApproach(
@@ -415,6 +423,87 @@ function normalizeRecapCoverage(
     missingGames,
     partial,
     requestedGames,
+  };
+}
+
+function normalizeRecapCost(
+  value: unknown,
+): GameDayRecapCostPayload | null {
+  const record = readLegacyField(value);
+  const currency = asNonEmptyString(record?.currency);
+  const inputTokens = asFiniteNumber(record?.inputTokens);
+  const outputTokens = asFiniteNumber(record?.outputTokens);
+  const pricingStatus =
+    record?.pricingStatus === "estimated" ||
+    record?.pricingStatus === "partial" ||
+    record?.pricingStatus === "unavailable"
+      ? record.pricingStatus
+      : null;
+  const requestCount = asFiniteNumber(record?.requestCount);
+  const totalTokens = asFiniteNumber(record?.totalTokens);
+  const stages = Array.isArray(record?.stages)
+    ? record.stages
+        .flatMap((entry) => {
+          const source = toRecord(entry);
+          const stage = asNonEmptyString(source?.stage);
+          const modelId = asNonEmptyString(source?.modelId);
+          const providerName = asNonEmptyString(source?.providerName);
+          const stageInputTokens = asFiniteNumber(source?.inputTokens);
+          const stageOutputTokens = asFiniteNumber(source?.outputTokens);
+          const stageRequestCount = asFiniteNumber(source?.requestCount);
+          const stageTotalTokens = asFiniteNumber(source?.totalTokens);
+          if (
+            !stage ||
+            !modelId ||
+            !providerName ||
+            stageInputTokens === null ||
+            stageOutputTokens === null ||
+            stageRequestCount === null ||
+            stageTotalTokens === null
+          ) {
+            return [];
+          }
+
+          return [{
+            cacheReadInputTokens: asFiniteNumber(source?.cacheReadInputTokens),
+            cacheWriteInputTokens: asFiniteNumber(source?.cacheWriteInputTokens),
+            estimatedCostUsd: asFiniteNumber(source?.estimatedCostUsd),
+            inputTokens: stageInputTokens,
+            modelId,
+            outputTokens: stageOutputTokens,
+            providerName,
+            requestCount: stageRequestCount,
+            stage,
+            totalTokens: stageTotalTokens,
+          }];
+        })
+    : [];
+
+  if (
+    !currency ||
+    inputTokens === null ||
+    outputTokens === null ||
+    !pricingStatus ||
+    requestCount === null ||
+    totalTokens === null ||
+    stages.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    cacheReadInputTokens: asFiniteNumber(record?.cacheReadInputTokens),
+    cacheWriteInputTokens: asFiniteNumber(record?.cacheWriteInputTokens),
+    currency,
+    estimatedPerGameCostUsd: asFiniteNumber(record?.estimatedPerGameCostUsd),
+    estimatedTotalCostUsd: asFiniteNumber(record?.estimatedTotalCostUsd),
+    generatedGameCount: asFiniteNumber(record?.generatedGameCount),
+    inputTokens,
+    outputTokens,
+    pricingStatus,
+    requestCount,
+    stages,
+    totalTokens,
   };
 }
 

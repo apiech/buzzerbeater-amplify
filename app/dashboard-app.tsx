@@ -29,6 +29,7 @@ import {
   salaryProjectionQueryOptions,
   scoutScheduleQueryOptions,
   scoutTeamSummaryQueryOptions,
+  setTrackedPlayerInterviewPersonalityMutation,
   submitOpponentForecastJobMutation,
   workspaceQueryKeys,
 } from "@/app/dashboard/workspace-query-client";
@@ -95,12 +96,20 @@ import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
 import { formatConnectionStatus } from "@/app/ui/presentation";
 import { hasFeature } from "@/lib/billing/plans";
 import {
+  INTERVIEW_PERSONALITY_SOURCE_LABELS,
+  INTERVIEW_PERSONALITY_TYPES,
+  isInterviewPersonalitySource,
+  isInterviewPersonalityType,
+  resolveInterviewPersonalityLabel,
+} from "@/lib/interview-personalities";
+import {
   captureAnalyticsEvent,
   registerAnalyticsProperties,
   resetAnalytics,
   setAnalyticsPersonProperties,
 } from "@/lib/analytics/client";
 import { safeJsonParse } from "@/lib/json-parsing";
+import { isNonProductionClientRuntime } from "@/lib/ui-debug";
 import { type WorkspaceSection } from "@/app/workspace-sections";
 
 type ConnectionFormState = ConnectBbAccountInput;
@@ -671,7 +680,12 @@ function WorkspaceDashboard({
 }) {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const isNonProdDebugUi = useMemo(() => isNonProductionClientRuntime(), []);
   const home = workspace.home;
+  const playerLabPlayers = useMemo(
+    () => workspace.playerLab?.players ?? [],
+    [workspace.playerLab?.players],
+  );
   const nextScoutMatch = home.nextScoutMatch ?? null;
   const nextOpponentTeamId = nextScoutMatch?.opponentTeamId ?? null;
   const shouldLoadScoutContext =
@@ -731,6 +745,7 @@ function WorkspaceDashboard({
         leagueName: home.connection.leagueName,
         leagueTimeZone: home.connection.leagueTimeZone,
       },
+      playerLabPlayers,
       recentMatches: Array.isArray(home.recentMatches) ? home.recentMatches : [],
     }),
     [
@@ -740,6 +755,7 @@ function WorkspaceDashboard({
       home.connection.leagueName,
       home.connection.leagueTimeZone,
       home.recentMatches,
+      playerLabPlayers,
     ],
   );
   const highlightsContext = useMemo<HighlightsPanelContext>(
@@ -892,11 +908,14 @@ function WorkspaceDashboard({
     : billingSummary
       ? hasFeature(billingPlanId, "leagueWriteups")
       : false;
+  const canEditInterviewVoices = canUseLeagueWriteups;
   const canUseTeamHighlights = commercialModeDisabled
     ? true
     : billingSummary
       ? hasFeature(billingPlanId, "teamHighlights")
       : false;
+  const showInterviewVoiceColumn =
+    canEditInterviewVoices || isNonProdDebugUi;
   const nextScoutMatchContext =
     isScoutViewingNextOpponent && nextScoutMatch
       ? `${formatTimestamp(nextScoutMatch.startTime)} • ${formatMatchVenue(nextScoutMatch.isHome)}`
@@ -928,7 +947,16 @@ function WorkspaceDashboard({
   const loadingSalaryPlayerId = salaryProjectionQuery.isFetching
     ? selectedSalaryPlayerId
     : null;
-  const playerLabPlayers = workspace.playerLab?.players ?? [];
+  const [interviewVoiceError, setInterviewVoiceError] = useState<string | null>(
+    null,
+  );
+  const interviewPersonalityMutation = useMutation({
+    mutationFn: setTrackedPlayerInterviewPersonalityMutation,
+  });
+  const savingInterviewVoicePlayerId =
+    interviewPersonalityMutation.isPending
+      ? interviewPersonalityMutation.variables.playerId
+      : null;
   const salaryCalculatorDelta =
     salaryCalculatorSeed?.currentSalary !== null &&
     salaryCalculatorSeed?.currentSalary !== undefined &&
@@ -995,6 +1023,31 @@ function WorkspaceDashboard({
       draft,
     );
     router.push("/workspace/predictions");
+  }
+
+  async function handleSetInterviewVoice(args: {
+    personalityType: string | null;
+    player: PlayerSummary;
+  }): Promise<void> {
+    const playerId = args.player.playerId?.trim();
+    if (!playerId) {
+      return;
+    }
+
+    setInterviewVoiceError(null);
+    try {
+      await interviewPersonalityMutation.mutateAsync({
+        personalityType: args.personalityType,
+        playerId,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: workspaceQueryKeys.playerLab,
+      });
+    } catch (error) {
+      setInterviewVoiceError(
+        readClientError(error) ?? "Unable to save the interview voice.",
+      );
+    }
   }
 
   async function handleLoadPlayerTrend(player: PlayerSummary) {
@@ -1452,6 +1505,7 @@ function WorkspaceDashboard({
               eyebrow="Players"
               title="Trend lines, salary movement, and roster calls"
             />
+            {interviewVoiceError ? <Alert>{interviewVoiceError}</Alert> : null}
             {playerTrendError ? <Alert>{playerTrendError}</Alert> : null}
             {salaryProjectionError ? (
               <Alert>{salaryProjectionError}</Alert>
@@ -1467,6 +1521,9 @@ function WorkspaceDashboard({
                     <TableHeadCell>Shape</TableHeadCell>
                     <TableHeadCell>DMI</TableHeadCell>
                     <TableHeadCell>Starts</TableHeadCell>
+                    {showInterviewVoiceColumn ? (
+                      <TableHeadCell>Interview voice</TableHeadCell>
+                    ) : null}
                     <TableHeadCell>Analysis</TableHeadCell>
                   </tr>
                 </thead>
@@ -1489,6 +1546,72 @@ function WorkspaceDashboard({
                         <TableCell>
                           {player.projectedStarterCount ?? 0}
                         </TableCell>
+                        {showInterviewVoiceColumn ? (
+                          <TableCell>
+                            <div className="grid gap-2">
+                              {canEditInterviewVoices ? (
+                                <Select
+                                  disabled={
+                                    !player.playerId ||
+                                    savingInterviewVoicePlayerId ===
+                                      player.playerId
+                                  }
+                                  onChange={(event) =>
+                                    void handleSetInterviewVoice({
+                                      personalityType:
+                                        event.currentTarget.value || null,
+                                      player,
+                                    })
+                                  }
+                                  value={
+                                    player.interviewPersonalitySource ===
+                                    "user_override"
+                                      ? (player.interviewPersonalityType ?? "")
+                                      : ""
+                                  }
+                                >
+                                  <option value="">Auto</option>
+                                  {INTERVIEW_PERSONALITY_TYPES.map(
+                                    (personalityType) => (
+                                      <option
+                                        key={personalityType}
+                                        value={personalityType}
+                                      >
+                                        {resolveInterviewPersonalityLabel(
+                                          personalityType,
+                                        )}
+                                      </option>
+                                    ),
+                                  )}
+                                </Select>
+                              ) : null}
+                              {isNonProdDebugUi ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {isInterviewPersonalityType(
+                                    player.interviewPersonalityType,
+                                  ) ? (
+                                    <StatusBadge tone="neutral">
+                                      {resolveInterviewPersonalityLabel(
+                                        player.interviewPersonalityType,
+                                      )}
+                                    </StatusBadge>
+                                  ) : null}
+                                  {isInterviewPersonalitySource(
+                                    player.interviewPersonalitySource,
+                                  ) ? (
+                                    <StatusBadge tone="note">
+                                      {
+                                        INTERVIEW_PERSONALITY_SOURCE_LABELS[
+                                          player.interviewPersonalitySource
+                                        ]
+                                      }
+                                    </StatusBadge>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                        ) : null}
                         <TableCell className="flex flex-wrap gap-2">
                           <Button
                             disabled={!player.playerId}
@@ -1515,7 +1638,10 @@ function WorkspaceDashboard({
                     ))
                   ) : (
                     <tr>
-                      <TableCell className="text-ink-muted" colSpan={7}>
+                      <TableCell
+                        className="text-ink-muted"
+                        colSpan={showInterviewVoiceColumn ? 8 : 7}
+                      >
                         Player data is not available yet.
                       </TableCell>
                     </tr>

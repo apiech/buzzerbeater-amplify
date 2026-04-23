@@ -50,7 +50,7 @@ const sectionDependencies: Record<
   ops: [],
   players: ["playerLab"],
   predictions: [],
-  recaps: [],
+  recaps: ["playerLab"],
   rivals: [],
   scout: [],
   "staff-market": [],

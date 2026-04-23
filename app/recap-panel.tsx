@@ -24,6 +24,7 @@ import {
 } from "@/app/ui/primitives/status-badge";
 import { formatWriteupStatus } from "@/app/ui/presentation";
 import type {
+  GameDayRecapCostPayload,
   GameDayRecapRecord,
   GameDayRecapCoveragePayload,
   GameDayRecapResultPayload,
@@ -37,12 +38,22 @@ import type {
 } from "@/app/types";
 import { captureAnalyticsEvent } from "@/lib/analytics/client";
 import {
+  buildInterviewPersonalitySeed,
+  INTERVIEW_PERSONALITY_SOURCE_LABELS,
+  isInterviewPersonalitySource,
+  isInterviewPersonalityType,
+  resolveDeterministicInterviewPersonality,
+  resolveInterviewPersonalityLabel,
+} from "@/lib/interview-personalities";
+import {
   inferLeagueTimeZone,
   normalizeLeagueTimeZone,
   resolveCalendarDateKey,
 } from "@/lib/league-timezones";
+import { isNonProductionClientRuntime } from "@/lib/ui-debug";
 
 const terminalStatuses = new Set(["FAILED", "SUCCEEDED"]);
+const RECAP_STALE_TIMEOUT_MS = 20 * 60 * 1000;
 const formGridClassName = "grid gap-4 md:grid-cols-2";
 const listClassName = "grid list-none gap-3 p-0";
 const listItemClassName =
@@ -159,6 +170,7 @@ export function RecapPanel({
   isLoadingLeagueWriteupAccess,
 }: RecapPanelProps) {
   const safeContext: Partial<RecapPanelContext> = context;
+  const isNonProdDebugUi = useMemo(() => isNonProductionClientRuntime(), []);
   const defaultLeagueId = safeContext.connection?.leagueId ?? "";
   const defaultLeagueTimeZone = resolveWorkspaceLeagueTimeZone(safeContext);
   const [branch, setBranch] = useState<RecapBranch>(() =>
@@ -389,15 +401,26 @@ export function RecapPanel({
     selectedRecap?.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
       ? toLeagueGameDayPerformancesResult(selectedRecap.resultJson)
       : null;
+  const selectedRecapCost =
+    selectedRecap?.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+      ? null
+      : toGameDayRecapCost(selectedRecap?.costJson);
   const selectedGameOfTheDay = selectedWriteupResult
     ? findGameOfTheDay(selectedWriteupResult)
     : null;
   const selectedCoverage = toGameDayRecapCoverage(selectedRecap?.coverageJson);
+  const selectedRecapDisplayError = selectedRecap
+    ? getRecapDisplayError(selectedRecap)
+    : null;
+  const selectedRecapTimedOut = selectedRecap
+    ? isLocallyTimedOutRecap(selectedRecap)
+    : false;
   const recapDetail = selectedRecap
     ? describeRecapRecord(selectedRecap)
     : branch === "WRITEUPS"
       ? "No writeup selected"
       : "No performances report selected";
+  const selectedRecapCostSummary = formatRecapCostSummary(selectedRecapCost);
   const currentLeagueName = safeContext.connection?.leagueName ?? "Your league";
   const normalizedLeagueTimeZone = normalizeLeagueTimeZone(leagueTimeZone);
   const maxGameDate = resolveRecapInputMaxDate(leagueTimeZone);
@@ -693,6 +716,11 @@ export function RecapPanel({
               {recaps.map((recap) => {
                 const selected =
                   recap.selectionKey === selectedRecap?.selectionKey;
+                const recapCostSnippet = formatRecapCostListSnippet(
+                  recap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+                    ? null
+                    : recap.costJson,
+                );
                 return (
                   <li className={listItemClassName} key={recap.selectionKey}>
                     <button
@@ -709,17 +737,19 @@ export function RecapPanel({
                         <strong className="text-ink text-sm">
                           {recapTitle(recap)}
                         </strong>
-                        <StatusBadge tone={statusToneFromValue(recap.status)}>
+                        <StatusBadge tone={getRecapStatusTone(recap)}>
                           {formatRecapStatus(recap)}
                         </StatusBadge>
                       </div>
                       <span className={statusCopyClassName}>
-                        {describeRecapRecord(recap)} •{" "}
+                        {describeRecapRecord(recap)}
+                        {recapCostSnippet ? ` • ${recapCostSnippet}` : ""}
+                        {" • "}
                         {formatTimestamp(recap.updatedAt)}
                       </span>
-                      {recap.error ? (
+                      {getRecapDisplayError(recap) ? (
                         <span className="text-danger text-sm">
-                          {recap.error}
+                          {getRecapDisplayError(recap)}
                         </span>
                       ) : null}
                     </button>
@@ -752,7 +782,7 @@ export function RecapPanel({
         {selectedRecap ? (
           <div className="grid gap-4">
             <div className="flex flex-wrap items-center gap-3">
-              <StatusBadge tone={statusToneFromValue(selectedRecap.status)}>
+              <StatusBadge tone={getRecapStatusTone(selectedRecap)}>
                 {formatRecapStatus(selectedRecap)}
               </StatusBadge>
               <StatusBadge tone="neutral">
@@ -771,6 +801,93 @@ export function RecapPanel({
                 </span>
               ) : null}
             </div>
+            {selectedRecapCostSummary ? (
+              <p className={statusCopyClassName}>{selectedRecapCostSummary}</p>
+            ) : null}
+            {selectedRecapCost ? (
+              <details className="rounded-panel border border-black/8 bg-surface px-4 py-3">
+                <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2">
+                  <strong className="text-ink text-sm">
+                    {formatRecapCostBreakdownLabel(selectedRecapCost)}
+                  </strong>
+                  <StatusBadge tone="neutral">
+                    {formatRecapCostPricingStatusLabel(
+                      selectedRecapCost.pricingStatus,
+                    )}
+                  </StatusBadge>
+                  {typeof selectedRecapCost.estimatedTotalCostUsd === "number" ? (
+                    <StatusBadge tone="note">
+                      {formatUsdCost(selectedRecapCost.estimatedTotalCostUsd)} total
+                    </StatusBadge>
+                  ) : null}
+                  {typeof selectedRecapCost.estimatedPerGameCostUsd === "number" ? (
+                    <StatusBadge tone="neutral">
+                      {formatUsdCost(selectedRecapCost.estimatedPerGameCostUsd)} per game
+                    </StatusBadge>
+                  ) : null}
+                </summary>
+                <div className="mt-4 grid gap-4">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <StatCard
+                      detail="Based on known model pricing for the stages that reported usage."
+                      label="Pricing status"
+                      value={formatRecapCostPricingStatusLabel(
+                        selectedRecapCost.pricingStatus,
+                      )}
+                    />
+                    <StatCard
+                      detail="Across all recap model stages for this request."
+                      label="Total estimate"
+                      value={
+                        typeof selectedRecapCost.estimatedTotalCostUsd === "number"
+                          ? formatUsdCost(selectedRecapCost.estimatedTotalCostUsd)
+                          : "Unavailable"
+                      }
+                    />
+                    <StatCard
+                      detail="Approximate cost share for each generated game summary."
+                      label="Per-game estimate"
+                      value={
+                        typeof selectedRecapCost.estimatedPerGameCostUsd === "number"
+                          ? formatUsdCost(selectedRecapCost.estimatedPerGameCostUsd)
+                          : "Unavailable"
+                      }
+                    />
+                    <StatCard
+                      detail={`${selectedRecapCost.requestCount.toLocaleString("en-US")} model ${selectedRecapCost.requestCount === 1 ? "request" : "requests"}`}
+                      label="Total tokens"
+                      value={selectedRecapCost.totalTokens.toLocaleString("en-US")}
+                    />
+                  </div>
+                  {selectedRecapCost.stages.length ? (
+                    <div className="grid gap-3">
+                      {selectedRecapCost.stages.map((stage, index) => (
+                        <div
+                          className="rounded-panel border border-black/8 bg-white px-4 py-3"
+                          key={`${stage.stage}-${stage.modelId}-${index}`}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="text-ink text-sm">
+                              {formatRecapCostStageSummary(stage)}
+                            </strong>
+                            <StatusBadge tone="neutral">
+                              {stage.providerName}
+                            </StatusBadge>
+                          </div>
+                          <p className={`${statusCopyClassName} mt-2`}>
+                            {formatRecapCostStageDetail(stage)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className={statusCopyClassName}>
+                      No stage-level model usage was recorded for this recap.
+                    </p>
+                  )}
+                </div>
+              </details>
+            ) : null}
 
             {selectedCoverage?.partial ? (
               <Alert>
@@ -786,7 +903,9 @@ export function RecapPanel({
               </Alert>
             ) : null}
 
-            {selectedRecap.error ? <Alert>{selectedRecap.error}</Alert> : null}
+            {selectedRecapDisplayError ? (
+              <Alert>{selectedRecapDisplayError}</Alert>
+            ) : null}
 
             {selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES" &&
             selectedPerformanceResult ? (
@@ -914,12 +1033,7 @@ export function RecapPanel({
                 </p>
                 <div className="grid gap-4">
                   {selectedWriteupResult.games.map((game) => (
-                    <Panel
-                      as="article"
-                      key={game.matchId}
-                      padding="sm"
-                      variant="glass"
-                    >
+                    <Panel as="article" key={game.matchId} padding="sm" variant="glass">
                       <SectionHeading title={game.headline} titleAs="h5" />
                       {game.surpriseFactor != null ||
                       game.matchId === selectedGameOfTheDay?.matchId ? (
@@ -935,6 +1049,14 @@ export function RecapPanel({
                               Game of the day
                             </StatusBadge>
                           ) : null}
+                          {selectedRecapCost?.estimatedPerGameCostUsd != null ? (
+                            <StatusBadge tone="neutral">
+                              Est. cost share:{" "}
+                              {formatUsdCost(
+                                selectedRecapCost.estimatedPerGameCostUsd,
+                              )}
+                            </StatusBadge>
+                          ) : null}
                         </div>
                       ) : null}
                       <p className="text-ink text-sm leading-7">
@@ -943,9 +1065,18 @@ export function RecapPanel({
                       {game.postgameInterview ? (
                         <div className="mt-4 grid gap-3 rounded-panel border border-black/8 bg-surface px-4 py-3">
                           <div className="grid gap-1">
-                            <strong className="text-ink text-sm">
-                              {game.postgameInterview.title}
-                            </strong>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <strong className="text-ink text-sm">
+                                {game.postgameInterview.title}
+                              </strong>
+                              {isNonProdDebugUi ? (
+                                <RecapInterviewDebugBadges
+                                  context={safeContext}
+                                  playerName={game.postgameInterview.playerName}
+                                  teamName={game.postgameInterview.teamName}
+                                />
+                              ) : null}
+                            </div>
                             <span className={statusCopyClassName}>
                               {game.postgameInterview.playerName} •{" "}
                               {game.postgameInterview.teamName}
@@ -981,7 +1112,11 @@ export function RecapPanel({
               </>
             ) : (
               <p className={statusCopyClassName}>
-                {selectedRecap.status === "FAILED"
+                {selectedRecapTimedOut
+                  ? selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+                    ? "The selected performances request timed out before a structured report was saved."
+                    : "The selected recap request timed out before a structured result was saved."
+                  : selectedRecap.status === "FAILED"
                   ? selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
                     ? "The selected performances request failed before a structured report was saved."
                     : "The selected recap failed before a structured result was saved."
@@ -1401,22 +1536,38 @@ export function sortGameDayRecaps(
 
 export function hasActiveGameDayRecap(
   recaps: readonly GameDayRecapRecord[],
+  nowMs = Date.now(),
 ): boolean {
   return recaps.some(
-    (recap) => Boolean(recap.status) && !terminalStatuses.has(recap.status),
+    (recap) =>
+      Boolean(recap.status) &&
+      !terminalStatuses.has(recap.status) &&
+      !isLocallyTimedOutRecap(recap, nowMs),
   );
 }
 
 export function hasActiveRecapHistory(
   recaps: readonly RecapHistoryRecord[],
+  nowMs = Date.now(),
 ): boolean {
   return recaps.some(
     (recap) =>
-      typeof recap.status === "string" && !terminalStatuses.has(recap.status),
+      typeof recap.status === "string" &&
+      !terminalStatuses.has(recap.status) &&
+      !isLocallyTimedOutRecap(recap, nowMs),
   );
 }
 
-function formatRecapStatus(record: RecapHistoryRecord): string {
+function formatRecapStatus(
+  record: RecapHistoryRecord,
+  nowMs = Date.now(),
+): string {
+  if (isLocallyTimedOutRecap(record, nowMs)) {
+    return record.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+      ? "Report timed out"
+      : "Writeup timed out";
+  }
+
   if (record.kind === "LEAGUE_GAME_DAY_PERFORMANCES") {
     if (record.status === "SUCCEEDED") {
       return "Report ready";
@@ -1432,6 +1583,48 @@ function formatRecapStatus(record: RecapHistoryRecord): string {
   }
 
   return formatWriteupStatus(record.status);
+}
+
+function getRecapStatusTone(
+  record: RecapHistoryRecord,
+  nowMs = Date.now(),
+) {
+  return isLocallyTimedOutRecap(record, nowMs)
+    ? "danger"
+    : statusToneFromValue(record.status);
+}
+
+function isLocallyTimedOutRecap(
+  record: Pick<RecapHistoryRecord, "status" | "updatedAt">,
+  nowMs = Date.now(),
+): boolean {
+  if (!record.status || terminalStatuses.has(record.status)) {
+    return false;
+  }
+
+  const updatedAtMs = Date.parse(record.updatedAt);
+  if (!Number.isFinite(updatedAtMs)) {
+    return false;
+  }
+
+  return nowMs - updatedAtMs >= RECAP_STALE_TIMEOUT_MS;
+}
+
+function getRecapDisplayError(
+  record: RecapHistoryRecord,
+  nowMs = Date.now(),
+): string | null {
+  if (record.error) {
+    return record.error;
+  }
+
+  if (!isLocallyTimedOutRecap(record, nowMs)) {
+    return null;
+  }
+
+  return record.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+    ? "This performances request timed out before the backend marked it complete. Refresh the list or submit a new request."
+    : "This writeup request timed out before the backend marked it complete. Refresh the list or submit a new request.";
 }
 
 function toGameDayRecapCoverage(
@@ -1452,6 +1645,16 @@ function toGameDayRecapResult(
   }
 
   return value as GameDayRecapResultPayload;
+}
+
+function toGameDayRecapCost(
+  value: unknown,
+): GameDayRecapCostPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as GameDayRecapCostPayload;
 }
 
 function toLeagueGameDayPerformancesResult(
@@ -1486,6 +1689,161 @@ function formatTimestamp(value: string | null | undefined): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatUsdCost(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "Unavailable";
+  }
+
+  const absoluteValue = Math.abs(value);
+  const fractionDigits =
+    absoluteValue >= 1
+      ? 2
+      : absoluteValue >= 0.1
+        ? 3
+        : absoluteValue >= 0.01
+          ? 4
+          : absoluteValue >= 0.001
+            ? 5
+            : 6;
+
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: fractionDigits,
+    minimumFractionDigits: fractionDigits,
+    style: "currency",
+  }).format(value);
+}
+
+function formatRecapCostListSnippet(
+  value: unknown,
+): string | null {
+  const cost = toGameDayRecapCost(value);
+  if (!cost) {
+    return null;
+  }
+
+  const prefix =
+    cost.pricingStatus === "partial" ? "Partial est." : "Est.";
+  if (typeof cost.estimatedPerGameCostUsd === "number") {
+    return `${prefix} ${formatUsdCost(cost.estimatedPerGameCostUsd)}/game`;
+  }
+  if (typeof cost.estimatedTotalCostUsd === "number") {
+    return `${prefix} ${formatUsdCost(cost.estimatedTotalCostUsd)}`;
+  }
+
+  return cost.totalTokens > 0
+    ? `${cost.totalTokens.toLocaleString("en-US")} tokens`
+    : null;
+}
+
+function formatRecapCostSummary(
+  value: unknown,
+): string | null {
+  const cost = toGameDayRecapCost(value);
+  if (!cost) {
+    return null;
+  }
+
+  const details: string[] = [];
+  if (typeof cost.estimatedTotalCostUsd === "number") {
+    details.push(`${formatUsdCost(cost.estimatedTotalCostUsd)} total`);
+  }
+  if (typeof cost.estimatedPerGameCostUsd === "number") {
+    details.push(`${formatUsdCost(cost.estimatedPerGameCostUsd)} per game summary`);
+  }
+  details.push(
+    `${cost.requestCount.toLocaleString("en-US")} model ${cost.requestCount === 1 ? "request" : "requests"}`,
+  );
+  details.push(`${cost.totalTokens.toLocaleString("en-US")} tokens`);
+
+  const prefix =
+    cost.pricingStatus === "partial"
+      ? "Partial estimated cost"
+      : typeof cost.estimatedTotalCostUsd === "number"
+        ? "Estimated cost"
+        : "Model usage";
+
+  return `${prefix}: ${details.join(" • ")}`;
+}
+
+function formatRecapCostPricingStatusLabel(
+  pricingStatus: GameDayRecapCostPayload["pricingStatus"],
+): string {
+  switch (pricingStatus) {
+    case "estimated":
+      return "Estimated";
+    case "partial":
+      return "Partial estimate";
+    default:
+      return "Usage only";
+  }
+}
+
+function formatRecapCostBreakdownLabel(
+  value: unknown,
+): string {
+  const cost = toGameDayRecapCost(value);
+  if (!cost) {
+    return "Cost breakdown";
+  }
+
+  return `Cost breakdown • ${formatRecapCostPricingStatusLabel(cost.pricingStatus).toLowerCase()}`;
+}
+
+function formatRecapCostStageLabel(
+  stage: GameDayRecapCostPayload["stages"][number]["stage"],
+): string {
+  switch (stage) {
+    case "writer":
+      return "Writer";
+    case "retry_writer":
+      return "Retry writer";
+    case "judge":
+      return "Judge";
+    default:
+      return stage;
+  }
+}
+
+function formatRecapCostStageSummary(
+  stage: GameDayRecapCostPayload["stages"][number],
+): string {
+  const details = [
+    typeof stage.estimatedCostUsd === "number"
+      ? `Est. ${formatUsdCost(stage.estimatedCostUsd)}`
+      : "Cost unavailable",
+    `${stage.requestCount.toLocaleString("en-US")} ${stage.requestCount === 1 ? "request" : "requests"}`,
+    `${stage.totalTokens.toLocaleString("en-US")} tokens`,
+  ];
+
+  return `${formatRecapCostStageLabel(stage.stage)} • ${details.join(" • ")}`;
+}
+
+function formatRecapCostStageDetail(
+  stage: GameDayRecapCostPayload["stages"][number],
+): string {
+  const cacheReadInputTokens = stage.cacheReadInputTokens ?? 0;
+  const cacheWriteInputTokens = stage.cacheWriteInputTokens ?? 0;
+  const details = [
+    `Model: ${stage.modelId}`,
+    `Input ${stage.inputTokens.toLocaleString("en-US")}`,
+    `Output ${stage.outputTokens.toLocaleString("en-US")}`,
+  ];
+
+  if (cacheReadInputTokens > 0) {
+    details.push(
+      `Cache read ${cacheReadInputTokens.toLocaleString("en-US")}`,
+    );
+  }
+  if (cacheWriteInputTokens > 0) {
+    details.push(
+      `Cache write ${cacheWriteInputTokens.toLocaleString("en-US")}`,
+    );
+  }
+
+  return details.join(" • ");
 }
 
 function describeCoverage(coverage: GameDayRecapCoveragePayload): string {
@@ -1857,13 +2215,77 @@ function formatEvidenceTag(tag: string): string {
     .replace(/\b\w/g, (segment) => segment.toUpperCase());
 }
 
+function RecapInterviewDebugBadges(args: {
+  context: Partial<RecapPanelContext>;
+  playerName: string;
+  teamName: string;
+}) {
+  const personality = resolveRecapInterviewPersonalityDebugState(args);
+  if (!personality) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <StatusBadge tone="neutral">{personality.typeLabel}</StatusBadge>
+      <StatusBadge tone="note">{personality.sourceLabel}</StatusBadge>
+    </div>
+  );
+}
+
+function resolveRecapInterviewPersonalityDebugState(args: {
+  context: Partial<RecapPanelContext>;
+  playerName: string;
+  teamName: string;
+}): {
+  sourceLabel: string;
+  typeLabel: string;
+} | null {
+  const matchedPlayer = args.context.playerLabPlayers?.find(
+    (player) =>
+      player.fullName.trim().toLowerCase() ===
+      args.playerName.trim().toLowerCase(),
+  );
+  const matchedType = matchedPlayer?.interviewPersonalityType;
+  const matchedSource = matchedPlayer?.interviewPersonalitySource;
+  const personalityType = isInterviewPersonalityType(matchedType)
+    ? matchedType
+    : resolveDeterministicInterviewPersonality(
+        buildInterviewPersonalitySeed({
+          playerName: args.playerName,
+          teamName: args.teamName,
+        }),
+      );
+  const personalitySource = isInterviewPersonalitySource(matchedSource)
+    ? matchedSource
+    : "auto";
+
+  return {
+    sourceLabel: INTERVIEW_PERSONALITY_SOURCE_LABELS[personalitySource],
+    typeLabel: resolveInterviewPersonalityLabel(personalityType),
+  };
+}
+
 export const __testing = {
   PERFORMANCE_CAPABILITY_SUMMARY,
   RECAP_CAPABILITY_SUMMARY,
   describeRecapRecord,
   filterRecapHistoryForBranch,
+  formatRecapCostBreakdownLabel,
   formatLeagueGameDayPerformancesForumPost,
+  formatRecapCostListSnippet,
+  formatRecapCostPricingStatusLabel,
+  formatRecapCostStageDetail,
+  formatRecapCostStageSummary,
+  formatRecapCostSummary,
   formatRecapForumPost,
+  formatRecapStatus,
+  getRecapDisplayError,
+  hasActiveGameDayRecap,
+  hasActiveRecapHistory,
+  isLocallyTimedOutRecap,
+  RECAP_STALE_TIMEOUT_MS,
   resolveSubmissionBlockReason,
   recapTitle,
+  resolveRecapInterviewPersonalityDebugState,
 };

@@ -109,6 +109,8 @@ export const playerSummarySchema = strictObject({
   fullName: z.string(),
   gameShape: nullableStringSchema,
   injuryWeeks: nullableNumberSchema,
+  interviewPersonalitySource: nullableStringSchema,
+  interviewPersonalityType: nullableStringSchema,
   nationalityName: nullableStringSchema,
   playerId: nullableStringSchema,
   ppg: nullableNumberSchema,

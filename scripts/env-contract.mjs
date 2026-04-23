@@ -68,6 +68,20 @@ export const envContract = {
         templateValue: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       },
       {
+        name: "GAME_DAY_RECAP_ENFORCE_BANNED_STYLE_PHRASES",
+        purpose:
+          "Optional recap QA toggle that turns filler-phrase validation back into a hard failure instead of soft style guidance.",
+        defaultValue: "false",
+        templateValue: "false",
+      },
+      {
+        name: "GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE",
+        purpose:
+          "Optional recap interview voice mode. Use `random` for the normal personality-assignment flow or `off` to disable personality styling.",
+        defaultValue: "random",
+        templateValue: "random",
+      },
+      {
         name: "COGNITO_AUTH_CUSTOM_DOMAIN",
         purpose:
           "Optional branded Cognito auth hostname override. When unset but a hosted zone name is configured, runtime and synth default to `auth.<zone>`.",

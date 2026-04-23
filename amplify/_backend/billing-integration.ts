@@ -27,6 +27,7 @@ type BillingBackend = {
   nextGameRecommendationSubmit: FunctionResource;
   opponentForecastSubmit: FunctionResource;
   predictionSubmit: FunctionResource;
+  setTrackedPlayerInterviewPersonality: FunctionResource;
   submitLeagueGameDayRecap: FunctionResource;
   submitMyTeamHighlightsScan: FunctionResource;
   submitSingleGameSummary: FunctionResource;
@@ -76,6 +77,10 @@ export function configureBillingIntegration(
     "COMMERCIAL_MODE_ENABLED",
     String(config.commercialModeEnabled),
   );
+  backend.setTrackedPlayerInterviewPersonality.addEnvironment(
+    "COMMERCIAL_MODE_ENABLED",
+    String(config.commercialModeEnabled),
+  );
 
   if (config.defaultPlanId) {
     backend.getBillingSummary.addEnvironment(
@@ -115,6 +120,10 @@ export function configureBillingIntegration(
       config.defaultPlanId,
     );
     backend.clearMyTeamHighlightsData.addEnvironment(
+      "BILLING_DEFAULT_PLAN",
+      config.defaultPlanId,
+    );
+    backend.setTrackedPlayerInterviewPersonality.addEnvironment(
       "BILLING_DEFAULT_PLAN",
       config.defaultPlanId,
     );

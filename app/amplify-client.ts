@@ -71,6 +71,7 @@ type MutationOperationName =
   | "repairOwnerRosterData"
   | "refreshWorkspace"
   | "setBbLeagueTimeZone"
+  | "setTrackedPlayerInterviewPersonality"
   | "submitProductFeedback"
   | "submitGameDayRecap"
   | "submitRivalsBackfill"
@@ -260,6 +261,9 @@ export const client = {
     refreshWorkspace: () => requestMutation("refreshWorkspace"),
     setBbLeagueTimeZone: (input: OperationInput<"setBbLeagueTimeZone">) =>
       requestMutation("setBbLeagueTimeZone", input),
+    setTrackedPlayerInterviewPersonality: (
+      input: OperationInput<"setTrackedPlayerInterviewPersonality">,
+    ) => requestMutation("setTrackedPlayerInterviewPersonality", input),
     submitProductFeedback: (input: OperationInput<"submitProductFeedback">) =>
       requestMutation("submitProductFeedback", input),
     submitGameDayRecap: (input: OperationInput<"submitGameDayRecap">) =>

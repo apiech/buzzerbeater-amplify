@@ -47,6 +47,7 @@ type MutationName =
   | "refreshWorkspace"
   | "submitRivalsBackfill"
   | "setBbLeagueTimeZone"
+  | "setTrackedPlayerInterviewPersonality"
   | "submitProductFeedback"
   | "submitGameDayRecap"
   | "submitLeagueHistoryBackfill"
@@ -245,6 +246,12 @@ const mutationOperations = {
     (await runtime.getServerDataClient()).mutations.setBbLeagueTimeZone(
       requiredInput(input),
     ),
+  setTrackedPlayerInterviewPersonality: async (
+    input: QueryInput<"setTrackedPlayerInterviewPersonality">,
+  ) =>
+    (
+      await runtime.getServerDataClient()
+    ).mutations.setTrackedPlayerInterviewPersonality(requiredInput(input)),
   submitProductFeedback: async (input: QueryInput<"submitProductFeedback">) =>
     (await runtime.getServerDataClient()).mutations.submitProductFeedback(
       requiredInput(input),

@@ -459,6 +459,7 @@ test("repairOwnerRosterData upserts owner snapshots and patches only the cached 
         }),
       }),
       getBbConnection: async () => connection,
+      getTrackedPlayer: async () => null,
       resolveAccessKey: async () => "secret",
       storeCanonicalPlayerSkillSnapshot: async (_env, record) => {
         snapshots.push(record);

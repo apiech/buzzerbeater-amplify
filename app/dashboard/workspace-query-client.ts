@@ -47,6 +47,7 @@ import type {
   ScoutSchedulePayload,
   ScoutTeamSummaryPayload,
   SetBbLeagueTimeZoneResult,
+  SetTrackedPlayerInterviewPersonalityResult,
   SubmitLeagueGameDayRecapResult,
   SubmitGameDayRecapResult,
   SubmitLeagueHistoryBackfillResult,
@@ -1012,6 +1013,38 @@ const gameDayRecapCoverageSchema = z
   })
   .passthrough();
 
+const gameDayRecapCostStageSchema = z
+  .object({
+    cacheReadInputTokens: nullableNumberSchema,
+    cacheWriteInputTokens: nullableNumberSchema,
+    estimatedCostUsd: nullableNumberSchema,
+    inputTokens: z.number(),
+    modelId: z.string(),
+    outputTokens: z.number(),
+    providerName: z.string(),
+    requestCount: z.number(),
+    stage: z.string(),
+    totalTokens: z.number(),
+  })
+  .passthrough();
+
+const gameDayRecapCostSchema = z
+  .object({
+    cacheReadInputTokens: nullableNumberSchema,
+    cacheWriteInputTokens: nullableNumberSchema,
+    currency: z.string(),
+    estimatedPerGameCostUsd: nullableNumberSchema,
+    estimatedTotalCostUsd: nullableNumberSchema,
+    generatedGameCount: nullableNumberSchema,
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    pricingStatus: z.string(),
+    requestCount: z.number(),
+    stages: z.array(gameDayRecapCostStageSchema),
+    totalTokens: z.number(),
+  })
+  .passthrough();
+
 const gameDayRecapResultSchema = z
   .object({
     games: z.array(
@@ -1164,6 +1197,7 @@ const gameDayRecapRecordSchema = z
   .object({
     completedAt: nullableStringSchema,
     coverageJson: gameDayRecapCoverageSchema.nullable().optional(),
+    costJson: gameDayRecapCostSchema.nullable().optional(),
     error: nullableStringSchema,
     gameDate: nullableStringSchema,
     gameDayNumber: nullableNumberSchema,
@@ -1190,6 +1224,7 @@ const singleGameSummarySchema = z
   .object({
     completedAt: nullableStringSchema,
     coverageJson: gameDayRecapCoverageSchema.nullable().optional(),
+    costJson: gameDayRecapCostSchema.nullable().optional(),
     error: nullableStringSchema,
     gameDate: nullableStringSchema,
     leagueId: nullableStringSchema,
@@ -1219,6 +1254,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
     .object({
       completedAt: nullableStringSchema,
       coverageJson: gameDayRecapCoverageSchema.nullable(),
+      costJson: z.null().optional(),
       error: nullableStringSchema,
       gameDate: nullableStringSchema,
       gameDayNumber: z.number(),
@@ -1240,6 +1276,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
     .object({
       completedAt: nullableStringSchema,
       coverageJson: gameDayRecapCoverageSchema.nullable(),
+      costJson: gameDayRecapCostSchema.nullable().optional(),
       error: nullableStringSchema,
       gameDate: z.string(),
       gameDayNumber: z.null(),
@@ -1261,6 +1298,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
     .object({
       completedAt: nullableStringSchema,
       coverageJson: gameDayRecapCoverageSchema.nullable(),
+      costJson: gameDayRecapCostSchema.nullable().optional(),
       error: nullableStringSchema,
       gameDate: z.null(),
       gameDayNumber: z.number(),
@@ -1282,6 +1320,7 @@ const recapHistoryRecordSchema = z.discriminatedUnion("kind", [
     .object({
       completedAt: nullableStringSchema,
       coverageJson: gameDayRecapCoverageSchema.nullable(),
+      costJson: gameDayRecapCostSchema.nullable().optional(),
       error: nullableStringSchema,
       gameDate: nullableStringSchema,
       gameDayNumber: z.null(),
@@ -2965,6 +3004,29 @@ export async function submitSingleGameSummaryMutation(input: {
       .passthrough(),
     "Unable to submit the single-game recap request.",
   ) as SubmitSingleGameSummaryResult;
+}
+
+export async function setTrackedPlayerInterviewPersonalityMutation(input: {
+  personalityType?: string | null;
+  playerId: string;
+}): Promise<SetTrackedPlayerInterviewPersonalityResult> {
+  const response = await client.mutations.setTrackedPlayerInterviewPersonality({
+    playerId: input.playerId,
+    ...(input.personalityType !== undefined
+      ? { personalityType: input.personalityType }
+      : {}),
+  });
+  return readAmplifyDataOrThrow(
+    response,
+    z
+      .object({
+        interviewPersonalitySource: z.string(),
+        interviewPersonalityType: z.string(),
+        playerId: z.string(),
+      })
+      .passthrough(),
+    "Unable to save the interview voice.",
+  ) as SetTrackedPlayerInterviewPersonalityResult;
 }
 
 export async function createBillingCheckoutUrlMutation(returnPath?: string) {

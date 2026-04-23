@@ -5,6 +5,7 @@ import * as sfn from "aws-cdk-lib/aws-stepfunctions";
 import * as tasks from "aws-cdk-lib/aws-stepfunctions-tasks";
 
 type WorkflowOptions = {
+  failureFunction?: IFunction;
   idPrefix: string;
   logGroupRemovalPolicy: RemovalPolicy;
   payload?: sfn.TaskInput;
@@ -33,7 +34,15 @@ export function createSingleLambdaWorkflow(
   if (options.retry) {
     invokeWorker.addRetry(options.retry);
   }
-  invokeWorker.addCatch(new sfn.Fail(stack, `${options.idPrefix}Failed`), {
+
+  const failedState = new sfn.Fail(stack, `${options.idPrefix}Failed`);
+  const catchTarget = options.failureFunction
+    ? new tasks.LambdaInvoke(stack, `${options.idPrefix}FinalizeFailure`, {
+        lambdaFunction: options.failureFunction,
+        payloadResponseOnly: true,
+      }).next(failedState)
+    : failedState;
+  invokeWorker.addCatch(catchTarget, {
     resultPath: "$.error",
   });
 

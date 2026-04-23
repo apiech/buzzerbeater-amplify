@@ -14,6 +14,7 @@ type FunctionResource = {
 };
 
 type GameDayRecapBackend = {
+  gameDayRecapFailureFinalizer: FunctionResource;
   gameDayRecapSubmit: FunctionResource;
   gameDayRecapWorker: FunctionResource;
   submitLeagueGameDayRecap: FunctionResource;
@@ -34,6 +35,7 @@ export function configureGameDayRecapJobs(
   ];
   const workflowStack = Stack.of(backend.gameDayRecapWorker.resources.lambda);
   const workflow = createSingleLambdaWorkflow(workflowStack, {
+    failureFunction: backend.gameDayRecapFailureFinalizer.resources.lambda,
     idPrefix: "GameDayRecapJob",
     logGroupRemovalPolicy: removalPolicy,
     retry: {
@@ -119,6 +121,14 @@ export function configureGameDayRecapJobs(
       config.judgePremiumModelId,
     );
   }
+  backend.gameDayRecapWorker.addEnvironment(
+    "GAME_DAY_RECAP_ENFORCE_BANNED_STYLE_PHRASES",
+    String(config.enforceBannedStylePhrases),
+  );
+  backend.gameDayRecapWorker.addEnvironment(
+    "GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE",
+    config.interviewPersonalityMode,
+  );
 
   workflow.grantStartExecution(backend.gameDayRecapSubmit.resources.lambda);
   workflow.grantStartExecution(backend.submitLeagueGameDayRecap.resources.lambda);

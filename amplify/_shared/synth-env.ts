@@ -72,6 +72,8 @@ export type MaintenanceControlPlaneSynthConfig = {
 
 export type GameDayRecapSynthConfig = {
   defaultModelId: string;
+  enforceBannedStylePhrases: boolean;
+  interviewPersonalityMode: "off" | "random";
   judgeModelId: string | null;
   judgePremiumModelId: string | null;
   premiumModelId: string | null;
@@ -223,6 +225,15 @@ export function resolveGameDayRecapConfig(): GameDayRecapSynthConfig {
       normalizeOptionalString(
         process.env.GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM,
       ) ?? null,
+    enforceBannedStylePhrases: parseBooleanEnv(
+      process.env.GAME_DAY_RECAP_ENFORCE_BANNED_STYLE_PHRASES,
+    ),
+    interviewPersonalityMode:
+      normalizeOptionalString(
+        process.env.GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE,
+      ) === "off"
+        ? "off"
+        : "random",
   };
 }
 

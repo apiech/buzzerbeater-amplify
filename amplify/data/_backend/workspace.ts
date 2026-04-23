@@ -79,6 +79,14 @@ import {
   inferLeagueTimeZone,
   normalizeLeagueTimeZone,
 } from "../../../lib/league-timezones";
+import {
+  buildInterviewPersonalitySeed,
+  isInterviewPersonalitySource,
+  isInterviewPersonalityType,
+  resolveDeterministicInterviewPersonality,
+  type InterviewPersonalitySource,
+  type InterviewPersonalityType,
+} from "../../../lib/interview-personalities";
 import type { Schema } from "../resource";
 import {
   buildCompetitiveRecentSample,
@@ -92,6 +100,7 @@ import {
   type OpponentCompetitionProfile,
 } from "./opponent-competition-profile";
 import { assertMaintenanceInactive } from "./maintenance";
+import { requireFeatureAccess } from "./billing";
 import {
   buildWorkspaceCachePayload,
   readWorkspaceCachePayload,
@@ -141,6 +150,8 @@ type ArenaWorkspaceResult = Schema["ArenaWorkspace"]["type"];
 type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
 type SharedPlayerCardResult = ResolverResult<"generateSharedPlayerCard">;
 type SalaryProjectionResult = ResolverResult<"getSalaryProjection">;
+type TrackedPlayerInterviewPersonalitySelectionResult =
+  ResolverResult<"setTrackedPlayerInterviewPersonality">;
 
 type HomeNextMatchResult = NonNullable<HomeWorkspaceResult["nextMatch"]>;
 type MatchSummaryRecord = HomeWorkspaceResult["recentMatches"][number];
@@ -194,6 +205,11 @@ type OwnerRosterRepairDependencies = {
     env: GraphqlEnv,
     userId: string,
   ) => Promise<BbConnectionRecord | null>;
+  getTrackedPlayer: (
+    env: GraphqlEnv,
+    userId: string,
+    playerId: string,
+  ) => Promise<TrackedPlayerRecord | null>;
   resolveAccessKey: (env: GraphqlEnv, userId: string) => Promise<string>;
   storeCanonicalPlayerSkillSnapshot: (
     env: GraphqlEnv,
@@ -217,6 +233,7 @@ const SHARED_PLAYER_CARD_TTL_DAYS = 30;
 const WORKSPACE_PLAYER_PERSIST_CONCURRENCY = 4;
 const WORKSPACE_BOXSCORE_PERSIST_CONCURRENCY = 4;
 const WORKSPACE_ACTIVE_TRACKED_TEAM_SYNC_CONCURRENCY = 4;
+const PLAYER_LAB_PERSONALITY_LOAD_CONCURRENCY = 6;
 
 const defaultWorkspaceDependencies: WorkspaceDependencies = {
   getSharedPlayerCardRecord,
@@ -234,6 +251,7 @@ const defaultOwnerRosterRepairDependencies: OwnerRosterRepairDependencies = {
       securityCode: accessKey,
     }),
   getBbConnection,
+  getTrackedPlayer: getTrackedPlayerRecord,
   resolveAccessKey,
   storeCanonicalPlayerSkillSnapshot,
   upsertBbConnection,
@@ -466,16 +484,12 @@ export async function setLeagueTimeZone(args: {
   );
 }
 
-export async function repairOwnerRosterData(
-  args: {
-    env: GraphqlEnv;
-    identity: unknown;
-  },
-  dependencies: OwnerRosterRepairDependencies = defaultOwnerRosterRepairDependencies,
-): Promise<{
-  completedAt: string;
-  repairedPlayerCount: number;
-}> {
+export async function setTrackedPlayerInterviewPersonality(args: {
+  env: GraphqlEnv;
+  identity: unknown;
+  personalityType: string | null | undefined;
+  playerId: string;
+}): Promise<TrackedPlayerInterviewPersonalitySelectionResult> {
   await assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
@@ -483,7 +497,92 @@ export async function repairOwnerRosterData(
     throw new Error("Authenticated user identity is missing.");
   }
 
-  const connection = await dependencies.getBbConnection(args.env, userId);
+  await requireFeatureAccess({
+    env: args.env,
+    featureKey: "leagueWriteups",
+    userId,
+  });
+
+  const playerId = args.playerId.trim();
+  if (!playerId) {
+    throw new Error("A player id is required.");
+  }
+
+  const trackedPlayer = await getTrackedPlayerRecord(args.env, userId, playerId);
+  if (!trackedPlayer) {
+    throw new Error(
+      "Refresh the Players workspace before editing a player's interview voice.",
+    );
+  }
+
+  const normalizedRequestedType =
+    typeof args.personalityType === "string"
+      ? args.personalityType.trim().toLowerCase()
+      : null;
+  if (
+    normalizedRequestedType !== null &&
+    normalizedRequestedType !== "" &&
+    !isInterviewPersonalityType(normalizedRequestedType)
+  ) {
+    throw new Error("The selected interview voice is not supported.");
+  }
+
+  const personality = resolveInterviewPersonalityState({
+    existingRecord:
+      normalizedRequestedType && isInterviewPersonalityType(normalizedRequestedType)
+        ? {
+            interviewPersonalitySource: "user_override",
+            interviewPersonalityType: normalizedRequestedType,
+          }
+        : null,
+    playerId: trackedPlayer.playerId,
+    playerName: trackedPlayer.fullName,
+    teamName: trackedPlayer.teamName,
+  });
+  const source =
+    normalizedRequestedType && isInterviewPersonalityType(normalizedRequestedType)
+      ? "user_override"
+      : personality.source;
+  const type =
+    normalizedRequestedType && isInterviewPersonalityType(normalizedRequestedType)
+      ? normalizedRequestedType
+      : personality.type;
+
+  await upsertTrackedPlayer(args.env, {
+    ...trackedPlayer,
+    interviewPersonalitySource: source,
+    interviewPersonalityType: type,
+  });
+
+  return {
+    interviewPersonalitySource: source,
+    interviewPersonalityType: type,
+    playerId,
+  };
+}
+
+export async function repairOwnerRosterData(
+  args: {
+    env: GraphqlEnv;
+    identity: unknown;
+  },
+  dependencies: Partial<OwnerRosterRepairDependencies> = {},
+): Promise<{
+  completedAt: string;
+  repairedPlayerCount: number;
+}> {
+  const resolvedDependencies: OwnerRosterRepairDependencies = {
+    ...defaultOwnerRosterRepairDependencies,
+    ...dependencies,
+  };
+  await assertMaintenanceInactive();
+
+  const userId = resolveUserId(args.identity);
+  if (!userId) {
+    throw new Error("Authenticated user identity is missing.");
+  }
+
+  const connection = await resolvedDependencies.getBbConnection(args.env, userId);
   if (!connection) {
     throw new Error(
       "Connect a BuzzerBeater account before repairing roster data.",
@@ -502,8 +601,11 @@ export async function repairOwnerRosterData(
     throw new Error("The saved BuzzerBeater login is unavailable.");
   }
 
-  const accessKey = await dependencies.resolveAccessKey(args.env, userId);
-  const client = dependencies.createClient({
+  const accessKey = await resolvedDependencies.resolveAccessKey(
+    args.env,
+    userId,
+  );
+  const client = resolvedDependencies.createClient({
     accessKey,
     bbLoginName,
   });
@@ -524,12 +626,20 @@ export async function repairOwnerRosterData(
     roster.players,
     WORKSPACE_PLAYER_PERSIST_CONCURRENCY,
     async (player) => {
+      const existingTrackedPlayer = player.id
+        ? await resolvedDependencies.getTrackedPlayer(
+            args.env,
+            userId,
+            player.id,
+          )
+        : null;
       const trackedPlayer = playerToTrackedPlayerRecord(
         userId,
         teamId,
         teamName,
         player,
         completedAt,
+        existingTrackedPlayer,
       );
       const snapshot = playerToCanonicalPlayerSnapshot(
         userId,
@@ -546,9 +656,9 @@ export async function repairOwnerRosterData(
         completedAt,
       );
       await Promise.all([
-        dependencies.storeCanonicalPlayerSkillSnapshot(args.env, snapshot),
-        dependencies.upsertPlayerSkillObservation(args.env, observation),
-        dependencies.upsertTrackedPlayer(args.env, trackedPlayer),
+        resolvedDependencies.storeCanonicalPlayerSkillSnapshot(args.env, snapshot),
+        resolvedDependencies.upsertPlayerSkillObservation(args.env, observation),
+        resolvedDependencies.upsertTrackedPlayer(args.env, trackedPlayer),
       ]);
     },
   );
@@ -562,7 +672,7 @@ export async function repairOwnerRosterData(
       ),
     ),
   });
-  await dependencies.upsertBbConnection(args.env, updatedConnection);
+  await resolvedDependencies.upsertBbConnection(args.env, updatedConnection);
 
   return {
     completedAt,
@@ -602,12 +712,21 @@ export async function getOrRefreshWorkspaceWithMeta(args: {
     throw new Error("Authenticated user identity is missing.");
   }
 
-  return syncWorkspace({
+  const syncedWorkspace = await syncWorkspace({
     env: args.env,
     userId,
     force: args.force ?? false,
     syncActiveTrackedTeams: args.syncActiveTrackedTeams ?? false,
   });
+
+  return {
+    ...syncedWorkspace,
+    workspace: await withPlayerLabInterviewPersonalities({
+      env: args.env,
+      userId,
+      workspace: syncedWorkspace.workspace,
+    }),
+  };
 }
 
 export async function getLeagueIntelWorkspace(args: {
@@ -1922,12 +2041,16 @@ async function persistWorkspace(
     workspace.roster.players,
     WORKSPACE_PLAYER_PERSIST_CONCURRENCY,
     async (player) => {
+      const existingTrackedPlayer = player.id
+        ? await getTrackedPlayerRecord(env, userId, player.id)
+        : null;
       const trackedPlayer = playerToTrackedPlayerRecord(
         userId,
         workspace.teamInfo.teamId,
         workspace.teamInfo.teamName,
         player,
         fetchedAt,
+        existingTrackedPlayer,
       );
       const snapshot = playerToCanonicalPlayerSnapshot(
         userId,
@@ -3180,6 +3303,8 @@ function buildPlayerLab(
       playerId: player.id,
       fullName: player.fullName,
       bestPosition: player.bestPosition,
+      interviewPersonalitySource: null,
+      interviewPersonalityType: null,
       nationalityName: player.nationality?.name ?? null,
       salary: player.salary,
       age: player.age,
@@ -3189,6 +3314,103 @@ function buildPlayerLab(
       projectedStarterCount: starterCounts[player.id ?? ""] ?? 0,
       ppg: extractPpg(workspace.teamStats, player),
     })),
+  };
+}
+
+function resolveInterviewPersonalityState(args: {
+  existingRecord?: Pick<
+    TrackedPlayerRecord,
+    "interviewPersonalitySource" | "interviewPersonalityType"
+  > | null;
+  playerId?: string | null;
+  playerName: string;
+  teamName?: string | null;
+}): {
+  source: InterviewPersonalitySource;
+  type: InterviewPersonalityType;
+} {
+  const storedType = args.existingRecord?.interviewPersonalityType ?? null;
+  const storedSource = args.existingRecord?.interviewPersonalitySource ?? null;
+  if (
+    isInterviewPersonalityType(storedType) &&
+    isInterviewPersonalitySource(storedSource)
+  ) {
+    return {
+      source: storedSource,
+      type: storedType,
+    };
+  }
+
+  return {
+    source: "auto",
+    type: resolveDeterministicInterviewPersonality(
+      buildInterviewPersonalitySeed({
+        playerId: args.playerId,
+        playerName: args.playerName,
+        teamName: args.teamName,
+      }),
+    ),
+  };
+}
+
+function applyInterviewPersonalityToPlayerSummary(
+  player: PlayerSummaryRecord,
+  personality: {
+    source: InterviewPersonalitySource;
+    type: InterviewPersonalityType;
+  },
+): PlayerSummaryRecord {
+  return {
+    ...player,
+    interviewPersonalitySource: personality.source,
+    interviewPersonalityType: personality.type,
+  };
+}
+
+async function withPlayerLabInterviewPersonalities(args: {
+  env: GraphqlEnv;
+  userId: string;
+  workspace: WorkspaceBundle;
+}): Promise<WorkspaceBundle> {
+  const players = await mapWithConcurrency(
+    args.workspace.playerLab.players,
+    PLAYER_LAB_PERSONALITY_LOAD_CONCURRENCY,
+    async (player) => {
+      const playerId = asString(player.playerId);
+      const trackedPlayer = playerId
+        ? await getTrackedPlayerRecord(args.env, args.userId, playerId)
+        : null;
+      const personality = resolveInterviewPersonalityState({
+        existingRecord: trackedPlayer,
+        playerId,
+        playerName: asString(player.fullName) ?? "Unknown player",
+        teamName: trackedPlayer?.teamName ?? args.workspace.home.team.teamName,
+      });
+
+      if (
+        trackedPlayer &&
+        (!isInterviewPersonalityType(trackedPlayer.interviewPersonalityType) ||
+          !isInterviewPersonalitySource(
+            trackedPlayer.interviewPersonalitySource,
+          ))
+      ) {
+        await upsertTrackedPlayer(args.env, {
+          ...trackedPlayer,
+          interviewPersonalitySource: personality.source,
+          interviewPersonalityType: personality.type,
+        });
+      }
+
+      return applyInterviewPersonalityToPlayerSummary(player, personality);
+    },
+  );
+
+  return {
+    ...args.workspace,
+    playerLab: {
+      ...args.workspace.playerLab,
+      players,
+    },
   };
 }
 
@@ -3284,12 +3506,22 @@ function playerToTrackedPlayerRecord(
   teamName: string | null,
   player: BBApiOwnedRosterPlayer,
   fetchedAt: string,
+  existingRecord: Pick<
+    TrackedPlayerRecord,
+    "interviewPersonalitySource" | "interviewPersonalityType"
+  > | null = null,
 ): TrackedPlayerRecord {
   if (!player.id || !teamId) {
     throw new Error("Tracked player records require both a player id and team id.");
   }
 
   const profileJson = projectStoredOwnedRosterPlayer(player);
+  const interviewPersonality = resolveInterviewPersonalityState({
+    existingRecord,
+    playerId: player.id,
+    playerName: player.fullName,
+    teamName,
+  });
 
   return {
     userId,
@@ -3307,6 +3539,8 @@ function playerToTrackedPlayerRecord(
     gameShape: formatRosterGameShapeLabel(player.skills.gameShape),
     dmi: player.dmi,
     injuryWeeks: player.injuryWeeks,
+    interviewPersonalityType: interviewPersonality.type,
+    interviewPersonalitySource: interviewPersonality.source,
     profileJson,
     fetchedAt,
   };
@@ -3516,6 +3750,8 @@ function projectPlayerSummary(
     playerId: asString(player.playerId),
     fullName: asString(player.fullName) ?? "Unknown player",
     bestPosition: asString(player.bestPosition),
+    interviewPersonalitySource: asString(player.interviewPersonalitySource),
+    interviewPersonalityType: asString(player.interviewPersonalityType),
     nationalityName: asString(player.nationalityName),
     salary: asNumber(player.salary),
     age: asNumber(player.age),

@@ -32,6 +32,8 @@ test("game day recap jobs wire routing env vars into recap submit lambdas", () =
   assert.match(source, /GAME_DAY_RECAP_RETRY_MODEL_ID_PREMIUM/);
   assert.match(source, /GAME_DAY_RECAP_JUDGE_MODEL_ID/);
   assert.match(source, /GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM/);
+  assert.match(source, /GAME_DAY_RECAP_ENFORCE_BANNED_STYLE_PHRASES/);
+  assert.match(source, /GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE/);
 });
 
 test("game day recap jobs retry the completed-slate coverage business error with bounded backoff", () => {
@@ -55,4 +57,29 @@ test("single-lambda workflow only attaches retries when a caller provides retry 
 
   assert.match(source, /retry\?:\s*sfn\.RetryProps/);
   assert.match(source, /if\s*\(options\.retry\)\s*\{\s*invokeWorker\.addRetry\(options\.retry\);/s);
+});
+
+test("game day recap worker timeout is extended to 900 seconds", () => {
+  const source = readFileSync(
+    join(repoRoot, "amplify", "game-day-recap-worker", "resource.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /timeoutSeconds:\s*900/);
+});
+
+test("game day recap workflow catches failures through the finalizer lambda", () => {
+  const workflowSource = readFileSync(
+    join(repoRoot, "amplify", "_backend", "state-machine-workflow.ts"),
+    "utf8",
+  );
+  const jobsSource = readFileSync(
+    join(repoRoot, "amplify", "_backend", "game-day-recap-jobs.ts"),
+    "utf8",
+  );
+
+  assert.match(workflowSource, /failureFunction\?:\s*IFunction/);
+  assert.match(workflowSource, /FinalizeFailure/);
+  assert.match(workflowSource, /invokeWorker\.addCatch\(catchTarget/);
+  assert.match(jobsSource, /failureFunction:\s*backend\.gameDayRecapFailureFinalizer\.resources\.lambda/);
 });

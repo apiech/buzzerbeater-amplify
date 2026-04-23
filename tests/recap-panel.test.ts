@@ -24,6 +24,7 @@ function createContext(): RecapPanelContext {
       leagueName: "Elite League",
       leagueTimeZone: "America/New_York",
     },
+    playerLabPlayers: [],
     recentMatches: [
       {
         hasBoxscore: true,
@@ -47,6 +48,7 @@ function createRecapRecord(args: {
 }): GameDayRecapRecord {
   return {
     createdAt: "2026-03-15T21:00:00Z",
+    costJson: null,
     gameDate: "2026-03-15",
     leagueId: "100",
     leagueName: "Elite League",
@@ -69,6 +71,7 @@ function createRecapHistoryRecord(args: {
   return {
     completedAt: null,
     coverageJson: null,
+    costJson: null,
     error: null,
     gameDate: "2026-03-15",
     gameDayNumber: null,
@@ -181,54 +184,224 @@ test("sortGameDayRecaps orders the most recent recap first", () => {
 });
 
 test("hasActiveGameDayRecap detects non-terminal recap work", () => {
+  const nowMs = Date.parse("2026-03-15T23:05:00Z");
+
   assert.equal(
-    hasActiveGameDayRecap([
-      createRecapRecord({
-        requestedAt: "2026-03-15T22:00:00Z",
-        status: "SUCCEEDED",
-        targetKey: "done",
-      }),
-    ]),
+    hasActiveGameDayRecap(
+      [
+        createRecapRecord({
+          requestedAt: "2026-03-15T22:00:00Z",
+          status: "SUCCEEDED",
+          targetKey: "done",
+        }),
+      ],
+      nowMs,
+    ),
     false,
   );
 
   assert.equal(
-    hasActiveGameDayRecap([
-      createRecapRecord({
-        requestedAt: "2026-03-15T23:00:00Z",
-        status: "BUILDING_CONTEXT",
-        targetKey: "working",
-      }),
-    ]),
+    hasActiveGameDayRecap(
+      [
+        createRecapRecord({
+          requestedAt: "2026-03-15T23:00:00Z",
+          status: "BUILDING_CONTEXT",
+          targetKey: "working",
+        }),
+      ],
+      nowMs,
+    ),
     true,
   );
 });
 
 test("hasActiveRecapHistory detects non-terminal recap work", () => {
+  const nowMs = Date.parse("2026-03-15T23:05:00Z");
+
   assert.equal(
-    hasActiveRecapHistory([
-      createRecapHistoryRecord({
-        selectionKey: "LEAGUE_DATE:done",
-        status: "SUCCEEDED",
-        targetKey: "done",
-        updatedAt: "2026-03-15T22:00:00Z",
-      }),
-    ]),
+    hasActiveRecapHistory(
+      [
+        createRecapHistoryRecord({
+          selectionKey: "LEAGUE_DATE:done",
+          status: "SUCCEEDED",
+          targetKey: "done",
+          updatedAt: "2026-03-15T22:00:00Z",
+        }),
+      ],
+      nowMs,
+    ),
     false,
   );
 
   assert.equal(
-    hasActiveRecapHistory([
-      createRecapHistoryRecord({
-        kind: "SINGLE_GAME",
-        selectionKey: "SINGLE_GAME:working",
-        status: "QUEUED",
-        targetKey: "working",
-        updatedAt: "2026-03-15T23:00:00Z",
-      }),
-    ]),
+    hasActiveRecapHistory(
+      [
+        createRecapHistoryRecord({
+          kind: "SINGLE_GAME",
+          selectionKey: "SINGLE_GAME:working",
+          status: "QUEUED",
+          targetKey: "working",
+          updatedAt: "2026-03-15T23:00:00Z",
+        }),
+      ],
+      nowMs,
+    ),
     true,
   );
+});
+
+test("stale non-terminal recap rows stop counting as active work", () => {
+  const nowMs = Date.parse("2026-03-15T23:25:00Z");
+
+  assert.equal(
+    hasActiveRecapHistory(
+      [
+        createRecapHistoryRecord({
+          kind: "SINGLE_GAME",
+          selectionKey: "SINGLE_GAME:working",
+          status: "QUEUED",
+          targetKey: "working",
+          updatedAt: "2026-03-15T23:00:00Z",
+        }),
+      ],
+      nowMs,
+    ),
+    false,
+  );
+  assert.equal(
+    hasActiveGameDayRecap(
+      [
+        createRecapRecord({
+          requestedAt: "2026-03-15T23:00:00Z",
+          status: "BUILDING_CONTEXT",
+          targetKey: "working",
+        }),
+      ],
+      nowMs,
+    ),
+    false,
+  );
+});
+
+test("stale non-terminal recap rows render timeout status and fallback error copy", () => {
+  const staleRecord = createRecapHistoryRecord({
+    kind: "LEAGUE_DATE",
+    selectionKey: "LEAGUE_DATE:working",
+    status: "GENERATING",
+    targetKey: "working",
+    updatedAt: "2026-03-15T23:00:00Z",
+  });
+  const nowMs = Date.parse("2026-03-15T23:25:00Z");
+
+  assert.equal(recapTesting.isLocallyTimedOutRecap(staleRecord, nowMs), true);
+  assert.equal(recapTesting.formatRecapStatus(staleRecord, nowMs), "Writeup timed out");
+  assert.match(
+    recapTesting.getRecapDisplayError(staleRecord, nowMs) ?? "",
+    /timed out/i,
+  );
+
+  const failedRecord = {
+    ...staleRecord,
+    status: "FAILED" as const,
+  };
+  assert.equal(recapTesting.isLocallyTimedOutRecap(failedRecord, nowMs), false);
+  assert.equal(recapTesting.formatRecapStatus(failedRecord, nowMs), "Writeup failed");
+});
+
+test("recap cost helpers surface per-game estimates in list and detail copy", () => {
+  const costJson = {
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    currency: "USD",
+    estimatedPerGameCostUsd: 0.00775,
+    estimatedTotalCostUsd: 0.0155,
+    generatedGameCount: 2,
+    inputTokens: 3000,
+    outputTokens: 700,
+    pricingStatus: "estimated",
+    requestCount: 2,
+    stages: [
+      {
+        cacheReadInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        estimatedCostUsd: 0.0135,
+        inputTokens: 2000,
+        modelId: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        outputTokens: 500,
+        providerName: "bedrock",
+        requestCount: 1,
+        stage: "writer",
+        totalTokens: 2500,
+      },
+    ],
+    totalTokens: 3700,
+  } as const;
+
+  assert.equal(
+    recapTesting.formatRecapCostListSnippet(costJson),
+    "Est. $0.00775/game",
+  );
+  assert.equal(
+    recapTesting.formatRecapCostSummary(costJson),
+    "Estimated cost: $0.0155 total • $0.00775 per game summary • 2 model requests • 3,700 tokens",
+  );
+  assert.equal(
+    recapTesting.formatRecapCostBreakdownLabel(costJson),
+    "Cost breakdown • estimated",
+  );
+  assert.equal(
+    recapTesting.formatRecapCostPricingStatusLabel(costJson.pricingStatus),
+    "Estimated",
+  );
+  assert.equal(
+    recapTesting.formatRecapCostStageSummary(costJson.stages[0]),
+    "Writer • Est. $0.0135 • 1 request • 2,500 tokens",
+  );
+  assert.equal(
+    recapTesting.formatRecapCostStageDetail(costJson.stages[0]),
+    "Model: us.anthropic.claude-sonnet-4-5-20250929-v1:0 • Input 2,000 • Output 500",
+  );
+});
+
+test("non-prod recap interview debug state prefers stored player personality and falls back to auto", () => {
+  const storedDebugState = recapTesting.resolveRecapInterviewPersonalityDebugState({
+    context: {
+      ...createContext(),
+      playerLabPlayers: [
+        {
+          age: 25,
+          bestPosition: "SF",
+          dmi: 1000,
+          fullName: "Home Hero",
+          gameShape: "proficient",
+          injuryWeeks: 0,
+          interviewPersonalitySource: "user_override",
+          interviewPersonalityType: "deadpan",
+          nationalityName: "USA",
+          playerId: "p-1",
+          ppg: 22,
+          projectedStarterCount: 5,
+          recentAvgMinutes: 38,
+          recentStartCount: 5,
+          salary: 12000,
+        },
+      ],
+    },
+    playerName: "Home Hero",
+    teamName: "Home",
+  });
+  assert.deepStrictEqual(storedDebugState, {
+    sourceLabel: "Custom",
+    typeLabel: "Deadpan",
+  });
+
+  const fallbackDebugState = recapTesting.resolveRecapInterviewPersonalityDebugState({
+    context: createContext(),
+    playerName: "Road Spark",
+    teamName: "Away",
+  });
+  assert.equal(typeof fallbackDebugState?.typeLabel, "string");
+  assert.equal(fallbackDebugState?.sourceLabel, "Auto");
 });
 
 test("history filtering keeps writeups and performances in separate lanes", () => {
@@ -283,6 +456,7 @@ test("recap labels prefer headlines and league/date copy over raw ids", () => {
   const record = {
     completedAt: "2026-03-15T23:15:00Z",
     coverageJson: null,
+    costJson: null,
     error: null,
     gameDate: "2026-03-15",
     gameDayNumber: null,
@@ -323,6 +497,7 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
   const record = {
     completedAt: "2026-03-15T23:15:00Z",
     coverageJson: null,
+    costJson: null,
     error: null,
     gameDate: "2026-03-15",
     gameDayNumber: null,
@@ -389,6 +564,7 @@ test("performances forum formatter builds the planned sections, ties, and match 
   const record = {
     completedAt: "2026-04-12T01:02:00.000Z",
     coverageJson: null,
+    costJson: null,
     error: null,
     gameDate: "2026-04-11",
     gameDayNumber: 22,

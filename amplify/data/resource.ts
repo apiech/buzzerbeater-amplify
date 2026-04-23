@@ -409,6 +409,14 @@ export const setBbLeagueTimeZone = defineFunction({
   memoryMB: 512,
 });
 
+export const setTrackedPlayerInterviewPersonality = defineFunction({
+  resourceGroupName: "data",
+  name: "set-tracked-player-interview-personality",
+  entry: "./set-tracked-player-interview-personality/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+});
+
 export const submitProductFeedback = defineFunction({
   resourceGroupName: "data",
   name: "submit-product-feedback",
@@ -490,6 +498,7 @@ export const maintenanceProtectedFunctions = [
   submitLeagueGameDayPerformances,
   submitSingleGameSummary,
   setBbLeagueTimeZone,
+  setTrackedPlayerInterviewPersonality,
   submitProductFeedback,
   listAccessibleMatches,
   getAccessibleMatch,
@@ -730,6 +739,8 @@ const schema = a
       playerId: a.string(),
       fullName: a.string().required(),
       bestPosition: a.string(),
+      interviewPersonalitySource: a.string(),
+      interviewPersonalityType: a.string(),
       nationalityName: a.string(),
       salary: a.integer(),
       age: a.integer(),
@@ -1205,6 +1216,12 @@ const schema = a
     PlayerLabWorkspace: a.customType({
       syncedAt: a.datetime(),
       players: a.ref("PlayerSummary").required().array().required(),
+    }),
+
+    TrackedPlayerInterviewPersonalitySelection: a.customType({
+      interviewPersonalitySource: a.string(),
+      interviewPersonalityType: a.string(),
+      playerId: a.string().required(),
     }),
 
     ArenaSectionAttendance: a.customType({
@@ -1953,6 +1970,34 @@ const schema = a
         .required(),
       partial: a.boolean().required(),
       requestedGames: a.integer().required(),
+    }),
+
+    GameDayRecapCostStage: a.customType({
+      cacheReadInputTokens: a.integer(),
+      cacheWriteInputTokens: a.integer(),
+      estimatedCostUsd: a.float(),
+      inputTokens: a.integer().required(),
+      modelId: a.string().required(),
+      outputTokens: a.integer().required(),
+      providerName: a.string().required(),
+      requestCount: a.integer().required(),
+      stage: a.string().required(),
+      totalTokens: a.integer().required(),
+    }),
+
+    GameDayRecapCost: a.customType({
+      cacheReadInputTokens: a.integer(),
+      cacheWriteInputTokens: a.integer(),
+      currency: a.string().required(),
+      estimatedPerGameCostUsd: a.float(),
+      estimatedTotalCostUsd: a.float(),
+      generatedGameCount: a.integer(),
+      inputTokens: a.integer().required(),
+      outputTokens: a.integer().required(),
+      pricingStatus: a.string().required(),
+      requestCount: a.integer().required(),
+      stages: a.ref("GameDayRecapCostStage").required().array().required(),
+      totalTokens: a.integer().required(),
     }),
 
     GameDayRecapResultGame: a.customType({
@@ -2898,6 +2943,8 @@ const schema = a
         gameShape: a.string(),
         dmi: a.integer(),
         injuryWeeks: a.integer(),
+        interviewPersonalityType: a.string(),
+        interviewPersonalitySource: a.string(),
         profileJson: a.ref("StoredOwnedRosterPlayer"),
         fetchedAt: a.datetime(),
       })
@@ -3431,6 +3478,7 @@ const schema = a
         completedAt: a.datetime(),
         requestJson: a.ref("GameDayRecapStoredRequest").required(),
         coverageJson: a.ref("GameDayRecapCoverage"),
+        costJson: a.ref("GameDayRecapCost"),
         resultJson: a.ref("GameDayRecapResult"),
         error: a.string(),
         executionArn: a.string(),
@@ -3464,6 +3512,7 @@ const schema = a
         completedAt: a.datetime(),
         requestJson: a.ref("LeagueGameDayRecapStoredRequest").required(),
         coverageJson: a.ref("GameDayRecapCoverage"),
+        costJson: a.ref("GameDayRecapCost"),
         resultJson: a.ref("GameDayRecapResult"),
         error: a.string(),
         executionArn: a.string(),
@@ -3532,6 +3581,7 @@ const schema = a
         completedAt: a.datetime(),
         requestJson: a.ref("SingleGameSummaryStoredRequest").required(),
         coverageJson: a.ref("GameDayRecapCoverage"),
+        costJson: a.ref("GameDayRecapCost"),
         resultJson: a.ref("GameDayRecapResult"),
         error: a.string(),
         executionArn: a.string(),
@@ -3996,6 +4046,16 @@ const schema = a
       .returns(a.ref("ConnectionResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(setBbLeagueTimeZone)),
+
+    setTrackedPlayerInterviewPersonality: a
+      .mutation()
+      .arguments({
+        playerId: a.string().required(),
+        personalityType: a.string(),
+      })
+      .returns(a.ref("TrackedPlayerInterviewPersonalitySelection"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(setTrackedPlayerInterviewPersonality)),
 
     submitProductFeedback: a
       .mutation()
