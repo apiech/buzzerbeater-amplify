@@ -77,6 +77,10 @@ export type RecapQualityTier = Exclude<
   NonNullable<Schema["submitGameDayRecap"]["args"]>["qualityTier"],
   null | undefined
 >;
+export type RecapInterviewIntensity = Exclude<
+  NonNullable<Schema["submitGameDayRecap"]["args"]>["interviewIntensity"],
+  null | undefined
+>;
 export type ConnectBbAccountInput = NonNullable<
   Schema["connectBbAccount"]["args"]
 >;

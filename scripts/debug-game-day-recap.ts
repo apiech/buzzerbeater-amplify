@@ -5,7 +5,10 @@ import {
   type SeasonResolutionDiagnostic,
   type SlateGame,
 } from "../amplify/data/_backend/game-day-recap";
-import { RecapGenerationApproach } from "../amplify/data/schema-enums";
+import {
+  RecapGenerationApproach,
+  RecapInterviewIntensity,
+} from "../amplify/data/schema-enums";
 import type { BbConnectionRecord } from "../amplify/data/_backend/repository";
 import { BBXmlApiClient } from "../lib/bbapi";
 import type { BBApiStandings } from "../lib/bbapi/types";
@@ -126,6 +129,7 @@ async function main(): Promise<void> {
           gameDate: options.gameDate,
           gameDayNumber: null,
           generationApproach: RecapGenerationApproach.FACT_LIBRARY_FIRST,
+          interviewIntensity: RecapInterviewIntensity.PG13,
           kind: "LEAGUE_DATE",
           label: `${selected.standings.league?.name ?? options.leagueId} ${options.gameDate}`,
           leagueId: options.leagueId,

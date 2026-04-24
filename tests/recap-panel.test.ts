@@ -63,6 +63,7 @@ function createRecapRecord(args: {
 
 function createRecapHistoryRecord(args: {
   kind?: RecapHistoryRecord["kind"];
+  requestJson?: RecapHistoryRecord["requestJson"];
   selectionKey: string;
   status: RecapHistoryRecord["status"];
   targetKey: string;
@@ -80,7 +81,7 @@ function createRecapHistoryRecord(args: {
     leagueId: "100",
     leagueName: "Elite League",
     matchId: null,
-    requestJson: {},
+    requestJson: args.requestJson ?? {},
     requestedAt: args.updatedAt,
     resultJson: null,
     season: null,
@@ -364,6 +365,221 @@ test("recap cost helpers surface per-game estimates in list and detail copy", ()
   );
 });
 
+test("model fact review defaults off and submitRecapRequest forwards the toggle to league-date writeups", async () => {
+  assert.equal(recapTesting.DEFAULT_MODEL_JUDGE_ENABLED, false);
+
+  let submittedInput: Record<string, unknown> | null = null;
+
+  const result = await recapTesting.submitRecapRequest(
+    {
+      approach: "FACT_LIBRARY_FIRST",
+      branch: "WRITEUPS",
+      canUseLeagueWriteups: true,
+      context: createContext(),
+      gameDate: "2026-03-15",
+      gameDayNumber: "1",
+      interviewIntensity: "full_heat",
+      leagueId: "100",
+      leagueTimeZone: "America/New_York",
+      loserInterviewPersonalityType: "",
+      matchId: "",
+      modelJudgeEnabled: true,
+      mode: "LEAGUE_DATE",
+      qualityTier: "AUTO",
+      season: "",
+      winnerInterviewPersonalityType: "",
+    },
+    {
+      setBbLeagueTimeZone: async () => {
+        throw new Error("time zone should already match the current context");
+      },
+      submitGameDayRecap: async (input) => {
+        submittedInput = input as Record<string, unknown>;
+        return {
+          executionArn: "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-date",
+          targetKey: "100#2026-03-15#fact-library-first#model-judge",
+        };
+      },
+      submitLeagueGameDayPerformances: async () => {
+        throw new Error("performances mutation should not be called");
+      },
+      submitLeagueGameDayRecap: async () => {
+        throw new Error("league game day mutation should not be called");
+      },
+      submitSingleGameSummary: async () => {
+        throw new Error("single-game mutation should not be called");
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    kind: "LEAGUE_DATE",
+    targetKey: "100#2026-03-15#fact-library-first#model-judge",
+  });
+  assert.deepStrictEqual(submittedInput, {
+    approach: "FACT_LIBRARY_FIRST",
+    gameDate: "2026-03-15",
+    interviewIntensity: "full_heat",
+    leagueId: "100",
+    leagueTimeZone: "America/New_York",
+    modelJudgeEnabled: true,
+  });
+});
+
+test("submitRecapRequest forwards non-empty single-game interview voice overrides", async () => {
+  let submittedInput: Record<string, unknown> | null = null;
+
+  const result = await recapTesting.submitRecapRequest(
+    {
+      approach: "FACT_LIBRARY_FIRST",
+      branch: "WRITEUPS",
+      canUseLeagueWriteups: true,
+      context: createContext(),
+      gameDate: "2026-03-15",
+      gameDayNumber: "1",
+      interviewIntensity: "pg13",
+      leagueId: "100",
+      leagueTimeZone: "America/New_York",
+      loserInterviewPersonalityType: "curt",
+      matchId: "137828772",
+      modelJudgeEnabled: false,
+      mode: "SINGLE_GAME",
+      qualityTier: "AUTO",
+      season: "",
+      winnerInterviewPersonalityType: "deadpan",
+    },
+    {
+      setBbLeagueTimeZone: async () => {
+        throw new Error("time zone mutation should not be called");
+      },
+      submitGameDayRecap: async () => {
+        throw new Error("league-date mutation should not be called");
+      },
+      submitLeagueGameDayPerformances: async () => {
+        throw new Error("performances mutation should not be called");
+      },
+      submitLeagueGameDayRecap: async () => {
+        throw new Error("league game day mutation should not be called");
+      },
+      submitSingleGameSummary: async (input) => {
+        submittedInput = input as Record<string, unknown>;
+        return {
+          executionArn:
+            "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:single-game",
+          targetKey:
+            "137828772#fact-library-first#winner-voice-deadpan#loser-voice-curt",
+        };
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    kind: "SINGLE_GAME",
+    targetKey:
+      "137828772#fact-library-first#winner-voice-deadpan#loser-voice-curt",
+  });
+  assert.deepStrictEqual(submittedInput, {
+    approach: "FACT_LIBRARY_FIRST",
+    interviewIntensity: "pg13",
+    loserInterviewPersonalityType: "curt",
+    matchId: "137828772",
+    modelJudgeEnabled: false,
+    winnerInterviewPersonalityType: "deadpan",
+  });
+});
+
+test("recap validation helpers partition deterministic and judge issues", () => {
+  const issues = [
+    {
+      field: "writeup",
+      kind: "wrong_final_score",
+      reason: "Score mismatch",
+      sentence: "Alpha won 90-80.",
+      sentenceIndex: 0,
+      source: "deterministic",
+    },
+    {
+      field: "headline",
+      kind: "other",
+      reason: "Unsupported headline angle",
+      sentence: "Alpha stuns Beta",
+      sentenceIndex: 0,
+      source: "judge",
+    },
+  ] as const;
+
+  const partitioned = recapTesting.partitionRecapValidationIssues(issues);
+
+  assert.equal(partitioned.deterministic.length, 1);
+  assert.equal(partitioned.judge.length, 1);
+  assert.equal(partitioned.deterministic[0]?.source, "deterministic");
+  assert.equal(partitioned.judge[0]?.source, "judge");
+});
+
+test("recap validation summary explains deterministic-only warnings when judge was disabled", () => {
+  assert.equal(
+    recapTesting.buildRecapValidationAlertSummary({
+      hasDeterministicWarnings: true,
+      hasJudgeWarnings: false,
+      modelJudgeEnabled: false,
+    }),
+    "Deterministic fact checks flagged issues in this recap. The extra model fact review was turned off for this request.",
+  );
+});
+
+test("recap validation summary explains judge-only and mixed-source warnings", () => {
+  assert.equal(
+    recapTesting.buildRecapValidationAlertSummary({
+      hasDeterministicWarnings: false,
+      hasJudgeWarnings: true,
+      modelJudgeEnabled: true,
+    }),
+    "The extra model fact review flagged issues in this recap.",
+  );
+  assert.equal(
+    recapTesting.buildRecapValidationAlertSummary({
+      hasDeterministicWarnings: true,
+      hasJudgeWarnings: true,
+      modelJudgeEnabled: true,
+    }),
+    "Deterministic fact checks and the extra model fact review both flagged issues in this recap.",
+  );
+});
+
+test("didRecapRequestRunModelJudge reads the viewed recap request state", () => {
+  assert.equal(
+    recapTesting.didRecapRequestRunModelJudge(
+      createRecapHistoryRecord({
+        kind: "SINGLE_GAME",
+        requestJson: {
+          modelJudgeEnabled: true,
+        },
+        selectionKey: "SINGLE_GAME:judged",
+        status: "SUCCEEDED",
+        targetKey: "judged",
+        updatedAt: "2026-03-15T23:10:00Z",
+      }),
+    ),
+    true,
+  );
+
+  assert.equal(
+    recapTesting.didRecapRequestRunModelJudge(
+      createRecapHistoryRecord({
+        kind: "SINGLE_GAME",
+        requestJson: {
+          modelJudgeEnabled: false,
+        },
+        selectionKey: "SINGLE_GAME:unchecked",
+        status: "SUCCEEDED",
+        targetKey: "unchecked",
+        updatedAt: "2026-03-15T23:10:00Z",
+      }),
+    ),
+    false,
+  );
+});
+
 test("non-prod recap interview debug state prefers stored player personality and falls back to auto", () => {
   const storedDebugState = recapTesting.resolveRecapInterviewPersonalityDebugState({
     context: {
@@ -465,7 +681,9 @@ test("recap labels prefer headlines and league/date copy over raw ids", () => {
     leagueId: "100",
     leagueName: "Elite League",
     matchId: "137828772",
-    requestJson: {},
+    requestJson: {
+      interviewIntensity: "full_heat",
+    },
     requestedAt: "2026-03-15T23:00:00Z",
     resultJson: {
       games: [
@@ -491,6 +709,7 @@ test("recap labels prefer headlines and league/date copy over raw ids", () => {
   assert.equal(recapTesting.recapTitle(record), "Alpha survives Beta late");
   assert.match(recapTesting.describeRecapRecord(record), /Elite League/);
   assert.match(recapTesting.describeRecapRecord(record), /2026-03-15/);
+  assert.match(recapTesting.describeRecapRecord(record), /Full heat voice/);
   assert.doesNotMatch(recapTesting.describeRecapRecord(record), /137828772/);
 });
 
@@ -585,6 +804,17 @@ test("forum formatter builds BBCode with recap metadata and match links", () => 
   assert.match(forumPost, /Match: scrim-like/);
 });
 
+test("splitRecapWriteupParagraphs falls back to readable story sections", () => {
+  const paragraphs = recapTesting.splitRecapWriteupParagraphs(
+    "Both teams prepared well for Outside looks. On pace, Away prepared for Fast pace, but Home played Motion. Home led 42-38 at halftime. Home used a 14-3 run from 08:00 left in the 3rd quarter to 04:35 left in the 3rd quarter. Ari Away led Away with 24 points, 6 rebounds, and 7 assists. Home held the stronger perimeter defense rating to close the win.",
+  );
+
+  assert.equal(paragraphs.length, 3);
+  assert.match(paragraphs[0] ?? "", /prepared well/i);
+  assert.match(paragraphs[1] ?? "", /halftime.*14-3 run/i);
+  assert.match(paragraphs[2] ?? "", /Ari Away.*perimeter defense/i);
+});
+
 test("forum formatter omits suspect recaps from public copy", () => {
   const record = {
     completedAt: "2026-03-15T23:15:00Z",
@@ -660,6 +890,82 @@ test("forum formatter omits suspect recaps from public copy", () => {
   assert.doesNotMatch(forumPost, /101-99/);
   assert.doesNotMatch(forumPost, /\[match=137828773]/);
   assert.doesNotMatch(forumPost, /Fact library first/i);
+});
+
+test("forum formatter includes every interview in postgameInterviews while keeping legacy recaps readable", () => {
+  const record = {
+    completedAt: "2026-03-15T23:15:00Z",
+    coverageJson: null,
+    costJson: null,
+    error: null,
+    failureJson: null,
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    kind: "LEAGUE_DATE",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    requestJson: {
+      approach: "FACT_LIBRARY_FIRST",
+    },
+    requestedAt: "2026-03-15T23:00:00Z",
+    resultJson: null,
+    season: null,
+    selectionKey: "LEAGUE_DATE:100#2026-03-15",
+    status: "SUCCEEDED",
+    targetKey: "100#2026-03-15#model-judge",
+    updatedAt: "2026-03-15T23:10:00Z",
+  } as const;
+
+  const forumPost = recapTesting.formatRecapForumPost(record, {
+    games: [
+      {
+        evidenceTags: [],
+        headline: "Alpha survives the opener",
+        matchId: "137828772",
+        postgameInterviews: [
+          {
+            playerName: "Ari Alpha",
+            qa: [
+              {
+                answer: "We stayed patient and trusted the defense.",
+                question: "What changed in the fourth quarter?",
+              },
+            ],
+            teamName: "Alpha",
+            teamSide: "home",
+            title: "Ari Alpha on Alpha's finish",
+          },
+          {
+            playerName: "Bex Beta",
+            qa: [
+              {
+                answer: "We have to handle that late swing better in Game 2.",
+                question: "Where did the game turn?",
+              },
+            ],
+            teamName: "Beta",
+            teamSide: "away",
+            title: "Bex Beta on what changed late",
+          },
+        ],
+        surpriseFactor: 6.4,
+        writeup:
+          "Alpha settled the game late after a tense middle stretch kept the opener close.",
+      },
+    ],
+    summary: {
+      gameOfTheDayMatchId: "137828772",
+      gameOfTheDaySurpriseFactor: 6.4,
+      headline: "Elite League roundup",
+      lede: "Game 1 finished with enough tension to support voices from both locker rooms.",
+    },
+  });
+
+  assert.match(forumPost, /\[i]Ari Alpha • Alpha\[\/i]/);
+  assert.match(forumPost, /\[i]Bex Beta • Beta\[\/i]/);
+  assert.match(forumPost, /Where did the game turn\?/);
+  assert.match(forumPost, /We have to handle that late swing better in Game 2\./);
 });
 
 test("performances forum formatter builds the planned sections, ties, and match links", () => {

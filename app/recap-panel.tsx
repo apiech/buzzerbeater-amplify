@@ -3,7 +3,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { RecapGenerationApproach as RecapGenerationApproachEnum } from "@/amplify/data/schema-enums";
+import {
+  RecapGenerationApproach as RecapGenerationApproachEnum,
+  RecapInterviewIntensity as RecapInterviewIntensityEnum,
+} from "@/amplify/data/schema-enums";
 import {
   recapHistoryQueryOptions,
   setBbLeagueTimeZoneMutation,
@@ -14,7 +17,7 @@ import {
 } from "@/app/dashboard/workspace-query-client";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
-import { Field, Input } from "@/app/ui/primitives/field";
+import { Field, Input, Select } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import { StatCard } from "@/app/ui/primitives/stat-card";
@@ -35,16 +38,19 @@ import type {
   RecapPanelContext,
   RecapHistoryKind,
   RecapHistoryRecord,
+  RecapInterviewIntensity,
   RecapQualityTier,
 } from "@/app/types";
 import { captureAnalyticsEvent } from "@/lib/analytics/client";
 import {
   buildInterviewPersonalitySeed,
+  INTERVIEW_PERSONALITY_TYPES,
   INTERVIEW_PERSONALITY_SOURCE_LABELS,
   isInterviewPersonalitySource,
   isInterviewPersonalityType,
   resolveDeterministicInterviewPersonality,
   resolveInterviewPersonalityLabel,
+  type InterviewPersonalityType,
 } from "@/lib/interview-personalities";
 import {
   inferLeagueTimeZone,
@@ -66,6 +72,11 @@ const RECAP_CAPABILITY_SUMMARY =
   "v1 uses standings, schedules, recent form, box scores, effort context, and public play-by-play moments when available. Transfers are still excluded for now.";
 const PERFORMANCE_CAPABILITY_SUMMARY =
   "League game day performances are computed directly from the full final slate. The report tracks player and team leaders, positional top five selections, spotlight callouts, and its own BB forums export.";
+const DEFAULT_MODEL_JUDGE_ENABLED = false;
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value != null;
+}
 
 type RecapPanelProps = {
   canUseLeagueWriteups: boolean;
@@ -81,6 +92,12 @@ type RecapApproachOption = {
   label: string;
   value: RecapGenerationApproach;
 };
+type RecapInterviewIntensityOption = {
+  description: string;
+  label: string;
+  value: RecapInterviewIntensity;
+};
+type DebugInterviewPersonalitySelection = InterviewPersonalityType | "";
 
 const recapBranches: Array<{
   description: string;
@@ -165,6 +182,27 @@ const recapQualityTierOptions: Array<{
   },
 ];
 
+const recapInterviewIntensityOptions: RecapInterviewIntensityOption[] = [
+  {
+    description:
+      "Distinctive, quotable voices that stay broadcast-safe and do not directly trash the opponent.",
+    label: "Clean",
+    value: RecapInterviewIntensityEnum.CLEAN,
+  },
+  {
+    description:
+      "The default: bolder boasts, playful trash talk, philosophy, and funny swagger without crossing into explicit hostility.",
+    label: "PG-13",
+    value: RecapInterviewIntensityEnum.PG13,
+  },
+  {
+    description:
+      "The most theatrical setting: sharper banter, bigger ego, and much harsher competitive energy.",
+    label: "Full heat",
+    value: RecapInterviewIntensityEnum.FULL_HEAT,
+  },
+];
+
 export function RecapPanel({
   canUseLeagueWriteups,
   context,
@@ -181,7 +219,16 @@ export function RecapPanel({
   const [approach, setApproach] = useState<RecapGenerationApproach>(
     RecapGenerationApproachEnum.FACT_LIBRARY_FIRST,
   );
+  const [interviewIntensity, setInterviewIntensity] =
+    useState<RecapInterviewIntensity>(RecapInterviewIntensityEnum.PG13);
   const [qualityTier, setQualityTier] = useState<DebugRecapQualityTier>("AUTO");
+  const [modelJudgeEnabled, setModelJudgeEnabled] = useState(
+    DEFAULT_MODEL_JUDGE_ENABLED,
+  );
+  const [winnerInterviewPersonalityType, setWinnerInterviewPersonalityType] =
+    useState<DebugInterviewPersonalitySelection>("");
+  const [loserInterviewPersonalityType, setLoserInterviewPersonalityType] =
+    useState<DebugInterviewPersonalitySelection>("");
   const [leagueId, setLeagueId] = useState(defaultLeagueId);
   const [leagueTimeZone, setLeagueTimeZone] = useState(
     defaultLeagueTimeZone ?? "",
@@ -209,13 +256,17 @@ export function RecapPanel({
       context: RecapPanelContext;
       gameDate: string;
       gameDayNumber: string;
+      interviewIntensity: RecapInterviewIntensity;
       leagueId: string;
       leagueTimeZone: string;
       matchId: string;
       mode: RecapMode;
       approach: RecapGenerationApproach;
       qualityTier: DebugRecapQualityTier;
+      modelJudgeEnabled: boolean;
       season: string;
+      winnerInterviewPersonalityType: DebugInterviewPersonalitySelection;
+      loserInterviewPersonalityType: DebugInterviewPersonalitySelection;
     }) => submitRecapRequest(input),
   });
   const allHistory = useMemo(
@@ -314,30 +365,45 @@ export function RecapPanel({
         context,
         gameDate,
         gameDayNumber,
+        interviewIntensity,
         leagueId,
         leagueTimeZone,
         mode,
         season,
         qualityTier,
         matchId,
+        modelJudgeEnabled,
+        winnerInterviewPersonalityType,
+        loserInterviewPersonalityType,
       });
 
       captureAnalyticsEvent("recap_requested", {
         has_custom_league_id: leagueId.trim() !== defaultLeagueId,
         has_match_id: Boolean(matchId.trim()),
         has_season_override: Boolean(season.trim()),
+        interview_intensity:
+          branch === "WRITEUPS" ? interviewIntensity : "n/a",
         mode:
           branch === "WRITEUPS"
             ? mode.toLowerCase()
             : "league_game_day_performances",
         requested_quality_tier:
           branch === "WRITEUPS" ? qualityTier.toLowerCase() : "n/a",
+        model_judge_enabled:
+          branch === "WRITEUPS" ? modelJudgeEnabled : false,
+        has_debug_interview_overrides:
+          branch === "WRITEUPS" &&
+          mode === "SINGLE_GAME" &&
+          (winnerInterviewPersonalityType !== "" ||
+            loserInterviewPersonalityType !== ""),
       });
       const selectionKey = toRecapSelectionKey(result.kind, result.targetKey);
       setSelectedRecapKey(selectionKey);
       await recapHistoryQuery.refetch();
     } catch (error) {
       captureAnalyticsEvent("recap_request_failed", {
+        interview_intensity:
+          branch === "WRITEUPS" ? interviewIntensity : "n/a",
         mode:
           branch === "WRITEUPS"
             ? mode.toLowerCase()
@@ -431,6 +497,9 @@ export function RecapPanel({
       ? "No writeup selected"
       : "No performances report selected";
   const selectedRecapCostSummary = formatRecapCostSummary(selectedRecapCost);
+  const selectedRecapModelJudgeEnabled = selectedRecap
+    ? didRecapRequestRunModelJudge(selectedRecap)
+    : false;
   const currentLeagueName = safeContext.connection?.leagueName ?? "Your league";
   const normalizedLeagueTimeZone = normalizeLeagueTimeZone(leagueTimeZone);
   const maxGameDate = resolveRecapInputMaxDate(leagueTimeZone);
@@ -439,6 +508,10 @@ export function RecapPanel({
   const activeApproach =
     recapApproachOptions.find((entry) => entry.value === approach) ??
     recapApproachOptions[0];
+  const activeInterviewIntensity =
+    recapInterviewIntensityOptions.find(
+      (entry) => entry.value === interviewIntensity,
+    ) ?? recapInterviewIntensityOptions[1];
   const activeQualityTier =
     recapQualityTierOptions.find((entry) => entry.value === qualityTier) ??
     recapQualityTierOptions[0];
@@ -543,6 +616,30 @@ export function RecapPanel({
 
               <div className="mt-4 grid gap-3">
                 <SectionHeading
+                  description={activeInterviewIntensity?.description}
+                  title="Interview intensity"
+                  titleAs="h5"
+                />
+                <div className={modeSwitcherClassName}>
+                  {recapInterviewIntensityOptions.map((entry) => (
+                    <Button
+                      key={entry.value}
+                      onClick={() => setInterviewIntensity(entry.value)}
+                      size="sm"
+                      variant={
+                        interviewIntensity === entry.value
+                          ? "primary"
+                          : "secondary"
+                      }
+                    >
+                      {entry.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3">
+                <SectionHeading
                   description={activeQualityTier?.description}
                   title="Writeup tier"
                   titleAs="h5"
@@ -561,6 +658,26 @@ export function RecapPanel({
                     </Button>
                   ))}
                 </div>
+                <label className="flex max-w-xl items-start gap-3 rounded-md border border-black/10 bg-surface-muted/50 px-3 py-2 text-sm leading-6 text-ink">
+                  <input
+                    checked={modelJudgeEnabled}
+                    className="mt-1 size-4 accent-ink"
+                    onChange={(event) =>
+                      setModelJudgeEnabled(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                    <span>
+                      <span className="block font-medium">Model fact review</span>
+                      <span className="block text-ink-muted">
+                        Run the extra AI judge pass for this request.
+                      </span>
+                      <span className="block text-ink-muted">
+                        Turning it off skips only that extra review. Deterministic
+                        fact checks still run.
+                      </span>
+                    </span>
+                  </label>
               </div>
 
               {mode === "LEAGUE_DATE" ? (
@@ -638,14 +755,76 @@ export function RecapPanel({
               ) : null}
 
               {mode === "SINGLE_GAME" ? (
-                <Field hint="Example: 137828772" label="Game number">
-                  <Input
-                    inputMode="numeric"
-                    onChange={(event) => setMatchId(event.target.value)}
-                    placeholder="Game number"
-                    value={matchId}
-                  />
-                </Field>
+                <div className="grid gap-4">
+                  <Field hint="Example: 137828772" label="Game number">
+                    <Input
+                      inputMode="numeric"
+                      onChange={(event) => setMatchId(event.target.value)}
+                      placeholder="Game number"
+                      value={matchId}
+                    />
+                  </Field>
+                  {isNonProdDebugUi ? (
+                    <div className={formGridClassName}>
+                      <Field
+                        hint="Override the winner interview voice for this single-game debug request."
+                        label="Winner interview voice"
+                      >
+                        <Select
+                          onChange={(event) =>
+                            setWinnerInterviewPersonalityType(
+                              event.currentTarget
+                                .value as DebugInterviewPersonalitySelection,
+                            )
+                          }
+                          value={winnerInterviewPersonalityType}
+                        >
+                          <option value="">Auto</option>
+                          {INTERVIEW_PERSONALITY_TYPES.map(
+                            (personalityType) => (
+                              <option
+                                key={`winner:${personalityType}`}
+                                value={personalityType}
+                              >
+                                {resolveInterviewPersonalityLabel(
+                                  personalityType,
+                                )}
+                              </option>
+                            ),
+                          )}
+                        </Select>
+                      </Field>
+                      <Field
+                        hint="Override the loser interview voice for this single-game debug request."
+                        label="Loser interview voice"
+                      >
+                        <Select
+                          onChange={(event) =>
+                            setLoserInterviewPersonalityType(
+                              event.currentTarget
+                                .value as DebugInterviewPersonalitySelection,
+                            )
+                          }
+                          value={loserInterviewPersonalityType}
+                        >
+                          <option value="">Auto</option>
+                          {INTERVIEW_PERSONALITY_TYPES.map(
+                            (personalityType) => (
+                              <option
+                                key={`loser:${personalityType}`}
+                                value={personalityType}
+                              >
+                                {resolveInterviewPersonalityLabel(
+                                  personalityType,
+                                )}
+                              </option>
+                            ),
+                          )}
+                        </Select>
+                      </Field>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </>
           ) : (
@@ -1046,6 +1225,34 @@ export function RecapPanel({
                     const validation = getRecapGameValidation(game);
                     const hasValidationWarnings =
                       validation.status !== "VALID" && validation.issueCount > 0;
+                    const validationIssuesBySource = partitionRecapValidationIssues(
+                      validation.issues,
+                    );
+                    const hasDeterministicWarnings =
+                      validationIssuesBySource.deterministic.length > 0;
+                    const hasJudgeWarnings =
+                      validationIssuesBySource.judge.length > 0;
+                    const validationAlertSummary = hasValidationWarnings
+                      ? buildRecapValidationAlertSummary({
+                          hasDeterministicWarnings,
+                          hasJudgeWarnings,
+                          modelJudgeEnabled: selectedRecapModelJudgeEnabled,
+                        })
+                      : null;
+                    const postgameInterviews = (
+                      game.postgameInterviews?.length
+                        ? game.postgameInterviews
+                        : game.postgameInterview
+                          ? [game.postgameInterview]
+                          : []
+                    ).filter(isPresent);
+                    const postgameInterviewDiagnostics = (
+                      game.postgameInterviewDiagnostics ?? []
+                    ).filter(isPresent);
+                    const hasSuspectPostgameInterview =
+                      postgameInterviewDiagnostics.some(
+                        (diagnostic) => diagnostic.status === "suspect",
+                      );
                     return (
                     <Panel as="article" key={game.matchId} padding="sm" variant="glass">
                       <SectionHeading title={game.headline} titleAs="h5" />
@@ -1082,15 +1289,49 @@ export function RecapPanel({
                       {hasValidationWarnings ? (
                         <Alert className="mb-3" tone="note">
                           <strong className="text-ink">
-                            What may be wrong?
+                            Fact checks flagged this recap
                           </strong>
-                          <ul className="mt-2 grid list-disc gap-1 pl-5">
-                            {validation.issues.map((issue, index) => (
-                              <li key={`${issue.source}:${issue.field}:${issue.sentenceIndex}:${index}`}>
-                                {formatRecapValidationIssue(issue)}
-                              </li>
-                            ))}
-                          </ul>
+                          {validationAlertSummary ? (
+                            <p className="mt-1 text-sm text-ink-muted">
+                              {validationAlertSummary}
+                            </p>
+                          ) : null}
+                          {hasDeterministicWarnings ? (
+                            <div className="mt-3 grid gap-2">
+                              <strong className="text-ink text-sm">
+                                Deterministic fact checks
+                              </strong>
+                              <ul className="grid list-disc gap-1 pl-5">
+                                {validationIssuesBySource.deterministic.map(
+                                  (issue, index) => (
+                                    <li
+                                      key={`${issue.source}:${issue.field}:${issue.sentenceIndex}:${index}`}
+                                    >
+                                      {formatRecapValidationIssue(issue)}
+                                    </li>
+                                  ),
+                                )}
+                              </ul>
+                            </div>
+                          ) : null}
+                          {hasJudgeWarnings ? (
+                            <div className="mt-3 grid gap-2">
+                              <strong className="text-ink text-sm">
+                                Model fact review
+                              </strong>
+                              <ul className="grid list-disc gap-1 pl-5">
+                                {validationIssuesBySource.judge.map(
+                                  (issue, index) => (
+                                    <li
+                                      key={`${issue.source}:${issue.field}:${issue.sentenceIndex}:${index}`}
+                                    >
+                                      {formatRecapValidationIssue(issue)}
+                                    </li>
+                                  ),
+                                )}
+                              </ul>
+                            </div>
+                          ) : null}
                         </Alert>
                       ) : null}
                       <div className="grid gap-3">
@@ -1102,39 +1343,67 @@ export function RecapPanel({
                           ),
                         )}
                       </div>
-                      {game.postgameInterview ? (
-                        <div className="mt-4 grid gap-3 rounded-panel border border-black/8 bg-surface px-4 py-3">
-                          <div className="grid gap-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <strong className="text-ink text-sm">
-                                {game.postgameInterview.title}
-                              </strong>
-                              {isNonProdDebugUi ? (
-                                <RecapInterviewDebugBadges
-                                  context={safeContext}
-                                  playerName={game.postgameInterview.playerName}
-                                  teamName={game.postgameInterview.teamName}
-                                />
-                              ) : null}
-                            </div>
-                            <span className={statusCopyClassName}>
-                              {game.postgameInterview.playerName} •{" "}
-                              {game.postgameInterview.teamName}
-                            </span>
-                          </div>
-                          <div className="grid gap-3">
-                            {game.postgameInterview.qa.map((exchange, index) => (
-                              <div className="grid gap-1" key={index}>
-                                <p className="text-ink text-sm leading-6">
-                                  <strong>Q:</strong> {exchange.question}
-                                </p>
-                                <p className={statusCopyClassName}>
-                                  <strong className="text-ink">A:</strong>{" "}
-                                  {exchange.answer}
-                                </p>
+                      {postgameInterviews.length ? (
+                        <div className="mt-4 grid gap-3">
+                          {hasSuspectPostgameInterview ? (
+                            <p className={statusCopyClassName}>
+                              Interview note: both sides&apos; quotes were kept for
+                              this single-game recap, and one or more answers may
+                              include unsupported details.
+                            </p>
+                          ) : null}
+                          {postgameInterviews.map((interview, interviewIndex) => (
+                            <div
+                              className="grid gap-3 rounded-panel border border-black/8 bg-surface px-4 py-3"
+                              key={`${interview.teamSide}:${interview.playerName}:${interviewIndex}`}
+                            >
+                              <div className="grid gap-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <strong className="text-ink text-sm">
+                                    {interview.title}
+                                  </strong>
+                                  {isNonProdDebugUi ? (
+                                    <RecapInterviewDebugBadges
+                                      context={safeContext}
+                                      playerName={interview.playerName}
+                                      teamName={interview.teamName}
+                                    />
+                                  ) : null}
+                                </div>
+                                <span className={statusCopyClassName}>
+                                  {interview.playerName} • {interview.teamName}
+                                </span>
                               </div>
-                            ))}
-                          </div>
+                              <div className="grid gap-3">
+                                {interview.qa.map((exchange, index) => (
+                                  <div className="grid gap-1" key={index}>
+                                    <p className="text-ink text-sm leading-6">
+                                      <strong>Q:</strong> {exchange.question}
+                                    </p>
+                                    <p className={statusCopyClassName}>
+                                      <strong className="text-ink">A:</strong>{" "}
+                                      {exchange.answer}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                          {isNonProdDebugUi &&
+                          postgameInterviewDiagnostics.length ? (
+                            <div className={statusCopyClassName}>
+                              {postgameInterviewDiagnostics
+                                .map(
+                                  (diagnostic) =>
+                                    `${diagnostic.side}: ${diagnostic.status}${
+                                      diagnostic.reason
+                                        ? ` (${diagnostic.reason})`
+                                        : ""
+                                    }`,
+                                )
+                                .join(" · ")}
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                       {game.evidenceTags.length ? (
@@ -1184,20 +1453,43 @@ export function RecapPanel({
   );
 }
 
-async function submitRecapRequest(args: {
-  approach: RecapGenerationApproach;
-  branch: RecapBranch;
-  canUseLeagueWriteups: boolean;
-  context: RecapPanelContext;
-  gameDate: string;
-  gameDayNumber: string;
-  leagueId: string;
-  leagueTimeZone: string;
-  matchId: string;
-  mode: RecapMode;
-  qualityTier: DebugRecapQualityTier;
-  season: string;
-}): Promise<{ kind: RecapHistoryKind; targetKey: string }> {
+type RecapSubmissionDependencies = {
+  setBbLeagueTimeZone: typeof setBbLeagueTimeZoneMutation;
+  submitGameDayRecap: typeof submitGameDayRecapMutation;
+  submitLeagueGameDayPerformances: typeof submitLeagueGameDayPerformancesMutation;
+  submitLeagueGameDayRecap: typeof submitLeagueGameDayRecapMutation;
+  submitSingleGameSummary: typeof submitSingleGameSummaryMutation;
+};
+
+const defaultRecapSubmissionDependencies: RecapSubmissionDependencies = {
+  setBbLeagueTimeZone: setBbLeagueTimeZoneMutation,
+  submitGameDayRecap: submitGameDayRecapMutation,
+  submitLeagueGameDayPerformances: submitLeagueGameDayPerformancesMutation,
+  submitLeagueGameDayRecap: submitLeagueGameDayRecapMutation,
+  submitSingleGameSummary: submitSingleGameSummaryMutation,
+};
+
+async function submitRecapRequest(
+  args: {
+    approach: RecapGenerationApproach;
+    branch: RecapBranch;
+    canUseLeagueWriteups: boolean;
+    context: RecapPanelContext;
+    gameDate: string;
+    gameDayNumber: string;
+    interviewIntensity: RecapInterviewIntensity;
+    leagueId: string;
+    leagueTimeZone: string;
+    loserInterviewPersonalityType: DebugInterviewPersonalitySelection;
+    matchId: string;
+    modelJudgeEnabled: boolean;
+    mode: RecapMode;
+    qualityTier: DebugRecapQualityTier;
+    season: string;
+    winnerInterviewPersonalityType: DebugInterviewPersonalitySelection;
+  },
+  dependencies: RecapSubmissionDependencies = defaultRecapSubmissionDependencies,
+): Promise<{ kind: RecapHistoryKind; targetKey: string }> {
   const normalizedLeagueId = args.leagueId.trim();
   const normalizedTimeZone = normalizeLeagueTimeZone(args.leagueTimeZone);
   const numericGameDay = Number(args.gameDayNumber);
@@ -1219,7 +1511,7 @@ async function submitRecapRequest(args: {
       throw new Error("Season must be a positive integer when provided.");
     }
 
-    const result = await submitLeagueGameDayPerformancesMutation({
+    const result = await dependencies.submitLeagueGameDayPerformances({
       gameDayNumber: numericGameDay,
       leagueId: normalizedLeagueId,
       ...(seasonValue ? { season: seasonValue } : {}),
@@ -1251,16 +1543,18 @@ async function submitRecapRequest(args: {
 
       const currentTimeZone = resolveWorkspaceLeagueTimeZone(args.context);
       if (currentTimeZone !== normalizedTimeZone) {
-        await setBbLeagueTimeZoneMutation({
+        await dependencies.setBbLeagueTimeZone({
           leagueTimeZone: normalizedTimeZone,
         });
       }
 
-      const result = await submitGameDayRecapMutation({
+      const result = await dependencies.submitGameDayRecap({
         approach: args.approach,
         gameDate: args.gameDate,
+        interviewIntensity: args.interviewIntensity,
         leagueId: normalizedLeagueId,
         leagueTimeZone: normalizedTimeZone,
+        modelJudgeEnabled: args.modelJudgeEnabled,
         ...(args.qualityTier !== "AUTO"
           ? { qualityTier: args.qualityTier }
           : {}),
@@ -1286,10 +1580,12 @@ async function submitRecapRequest(args: {
         throw new Error("Season must be a positive integer when provided.");
       }
 
-      const result = await submitLeagueGameDayRecapMutation({
+      const result = await dependencies.submitLeagueGameDayRecap({
         approach: args.approach,
         gameDayNumber: numericGameDay,
+        interviewIntensity: args.interviewIntensity,
         leagueId: normalizedLeagueId,
+        modelJudgeEnabled: args.modelJudgeEnabled,
         ...(args.qualityTier !== "AUTO"
           ? { qualityTier: args.qualityTier }
           : {}),
@@ -1306,11 +1602,25 @@ async function submitRecapRequest(args: {
         throw new Error("Enter a numeric BuzzerBeater game number.");
       }
 
-      const result = await submitSingleGameSummaryMutation({
+      const result = await dependencies.submitSingleGameSummary({
         approach: args.approach,
+        interviewIntensity: args.interviewIntensity,
+        ...(args.loserInterviewPersonalityType
+          ? {
+              loserInterviewPersonalityType:
+                args.loserInterviewPersonalityType,
+            }
+          : {}),
         matchId: normalizedMatchId,
+        modelJudgeEnabled: args.modelJudgeEnabled,
         ...(args.qualityTier !== "AUTO"
           ? { qualityTier: args.qualityTier }
+          : {}),
+        ...(args.winnerInterviewPersonalityType
+          ? {
+              winnerInterviewPersonalityType:
+                args.winnerInterviewPersonalityType,
+            }
           : {}),
       });
       return {
@@ -1358,16 +1668,20 @@ function describeRecapRecord(record: RecapHistoryRecord): string {
     record.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
       ? null
       : formatRecapGenerationApproachLabel(recapApproachForRecord(record));
+  const intensityLabel =
+    record.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
+      ? null
+      : formatRecapInterviewIntensityLabel(recapInterviewIntensityForRecord(record));
   switch (record.kind) {
     case "LEAGUE_GAME_DAY_PERFORMANCES":
       return `${record.leagueName ?? "League"} • performances • game day ${record.gameDayNumber}${record.gameDate ? ` • ${record.gameDate}` : ""}${record.season ? ` • season ${record.season}` : ""}`;
     case "LEAGUE_GAME_DAY":
-      return `${record.leagueName ?? "League"} • game day ${record.gameDayNumber}${record.season ? ` • season ${record.season}` : ""}${approachLabel ? ` • ${approachLabel}` : ""}`;
+      return `${record.leagueName ?? "League"} • game day ${record.gameDayNumber}${record.season ? ` • season ${record.season}` : ""}${approachLabel ? ` • ${approachLabel}` : ""}${intensityLabel ? ` • ${intensityLabel}` : ""}`;
     case "SINGLE_GAME":
-      return `${record.leagueName ?? "Single game"}${record.gameDate ? ` • ${record.gameDate}` : ""}${approachLabel ? ` • ${approachLabel}` : ""}`;
+      return `${record.leagueName ?? "Single game"}${record.gameDate ? ` • ${record.gameDate}` : ""}${approachLabel ? ` • ${approachLabel}` : ""}${intensityLabel ? ` • ${intensityLabel}` : ""}`;
     case "LEAGUE_DATE":
     default:
-      return `${record.leagueName ?? "League"} • ${record.gameDate}${approachLabel ? ` • ${approachLabel}` : ""}`;
+      return `${record.leagueName ?? "League"} • ${record.gameDate}${approachLabel ? ` • ${approachLabel}` : ""}${intensityLabel ? ` • ${intensityLabel}` : ""}`;
   }
 }
 
@@ -1404,6 +1718,45 @@ function formatRecapGenerationApproachLabel(
   return approach === RecapGenerationApproachEnum.FACT_LIBRARY_FIRST
     ? "Fact library first"
     : "Classic recap engine";
+}
+
+function recapInterviewIntensityForRecord(
+  record: RecapHistoryRecord,
+): RecapInterviewIntensity {
+  if (record.kind === "LEAGUE_GAME_DAY_PERFORMANCES") {
+    return RecapInterviewIntensityEnum.PG13;
+  }
+
+  const interviewIntensity = (
+    record.requestJson as {
+      interviewIntensity?: RecapInterviewIntensity | null;
+    }
+  ).interviewIntensity;
+  switch (interviewIntensity) {
+    case RecapInterviewIntensityEnum.CLEAN:
+      return RecapInterviewIntensityEnum.CLEAN;
+    case RecapInterviewIntensityEnum.FULL_HEAT:
+      return RecapInterviewIntensityEnum.FULL_HEAT;
+    case RecapInterviewIntensityEnum.PG13:
+      return RecapInterviewIntensityEnum.PG13;
+    case null:
+    case undefined:
+      return RecapInterviewIntensityEnum.PG13;
+  }
+}
+
+function formatRecapInterviewIntensityLabel(
+  intensity: RecapInterviewIntensity,
+): string {
+  switch (intensity) {
+    case RecapInterviewIntensityEnum.CLEAN:
+      return "Clean voice";
+    case RecapInterviewIntensityEnum.FULL_HEAT:
+      return "Full heat voice";
+    case RecapInterviewIntensityEnum.PG13:
+    default:
+      return "PG-13 voice";
+  }
 }
 
 function modeLabelForRecord(record: RecapHistoryRecord): string {
@@ -2079,16 +2432,22 @@ function formatRecapForumPost(
       }
       lines.push(`[i]${escapeForumText(metadata.join(" • "))}[/i]`);
     }
-    lines.push(formatForumWriteup(game.writeup));
-    if (game.postgameInterview) {
+	    lines.push(formatForumWriteup(game.writeup));
+	    const postgameInterviews =
+	      (
+	        game.postgameInterviews?.length
+	          ? game.postgameInterviews
+	          : game.postgameInterview
+	            ? [game.postgameInterview]
+	            : []
+	      ).filter(isPresent);
+	    for (const interview of postgameInterviews) {
       lines.push("");
+      lines.push(`[i]${escapeForumText(interview.title)}[/i]`);
       lines.push(
-        `[i]${escapeForumText(game.postgameInterview.title)}[/i]`,
+        `[i]${escapeForumText(interview.playerName)} • ${escapeForumText(interview.teamName)}[/i]`,
       );
-      lines.push(
-        `[i]${escapeForumText(game.postgameInterview.playerName)} • ${escapeForumText(game.postgameInterview.teamName)}[/i]`,
-      );
-      for (const exchange of game.postgameInterview.qa) {
+      for (const exchange of interview.qa) {
         lines.push(`[b]Q:[/b] ${escapeForumText(exchange.question)}`);
         lines.push(`[b]A:[/b] ${escapeForumText(exchange.answer)}`);
       }
@@ -2147,6 +2506,52 @@ function formatRecapValidationIssue(
   const source =
     issue.source === "judge" ? "model judge" : "deterministic check";
   return `${field}: ${issue.reason} (${source}; "${issue.sentence}")`;
+}
+
+function partitionRecapValidationIssues(
+  issues: NonNullable<
+    GameDayRecapResultPayload["games"][number]["validation"]
+  >["issues"],
+): {
+  deterministic: typeof issues;
+  judge: typeof issues;
+} {
+  return {
+    deterministic: issues.filter((issue) => issue.source !== "judge"),
+    judge: issues.filter((issue) => issue.source === "judge"),
+  };
+}
+
+function buildRecapValidationAlertSummary(args: {
+  hasDeterministicWarnings: boolean;
+  hasJudgeWarnings: boolean;
+  modelJudgeEnabled: boolean;
+}): string {
+  if (args.hasDeterministicWarnings && args.hasJudgeWarnings) {
+    return "Deterministic fact checks and the extra model fact review both flagged issues in this recap.";
+  }
+  if (args.hasJudgeWarnings) {
+    return "The extra model fact review flagged issues in this recap.";
+  }
+  if (args.modelJudgeEnabled) {
+    return "Deterministic fact checks flagged issues in this recap. The extra model fact review ran too, but it did not add separate warnings here.";
+  }
+
+  return "Deterministic fact checks flagged issues in this recap. The extra model fact review was turned off for this request.";
+}
+
+function didRecapRequestRunModelJudge(record: RecapHistoryRecord): boolean {
+  if (record.kind === "LEAGUE_GAME_DAY_PERFORMANCES") {
+    return false;
+  }
+
+  return (
+    (
+      record.requestJson as {
+        modelJudgeEnabled?: boolean | null;
+      }
+    ).modelJudgeEnabled === true
+  );
 }
 
 function humanizeRecapValidationToken(value: string): string {
@@ -2211,8 +2616,74 @@ function splitRecapWriteupParagraphs(writeup: string): string[] {
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);
+  if (paragraphs.length > 1) {
+    return paragraphs;
+  }
 
-  return paragraphs.length ? paragraphs : [writeup.trim()].filter(Boolean);
+  const sentences = splitRecapDisplaySentences(writeup);
+  if (sentences.length < 5) {
+    return paragraphs.length ? paragraphs : [writeup.trim()].filter(Boolean);
+  }
+
+  const gameFlowIndex = findRecapDisplayGameFlowIndex(sentences);
+  const closingIndex = findRecapDisplayClosingIndex(sentences, gameFlowIndex);
+  if (gameFlowIndex <= 0 || closingIndex <= gameFlowIndex) {
+    return groupRecapDisplaySentencesEvenly(sentences);
+  }
+
+  return [
+    sentences.slice(0, gameFlowIndex).join(" "),
+    sentences.slice(gameFlowIndex, closingIndex).join(" "),
+    sentences.slice(closingIndex).join(" "),
+  ].filter(Boolean);
+}
+
+function splitRecapDisplaySentences(writeup: string): string[] {
+  return writeup
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function findRecapDisplayGameFlowIndex(sentences: string[]): number {
+  const index = sentences.findIndex((sentence, sentenceIndex) => {
+    if (sentenceIndex === 0) {
+      return false;
+    }
+    return /\b(?:after|at halftime|by halftime|through three|quarter|period|run|lead|trailed|tied|entered|final frame|final period)\b/i.test(
+      sentence,
+    );
+  });
+
+  return index > 0 ? index : Math.min(2, sentences.length - 3);
+}
+
+function findRecapDisplayClosingIndex(
+  sentences: string[],
+  gameFlowIndex: number,
+): number {
+  const index = sentences.findIndex((sentence, sentenceIndex) => {
+    if (sentenceIndex <= gameFlowIndex) {
+      return false;
+    }
+    return /\b(?:led .* with \d+|added \d+|finished with|scored \d+|grabbed \d+|team talent|rating|perimeter defense|inside defense|rebounding|won by|victory)\b/i.test(
+      sentence,
+    );
+  });
+
+  return index > gameFlowIndex
+    ? index
+    : Math.max(gameFlowIndex + 1, sentences.length - 2);
+}
+
+function groupRecapDisplaySentencesEvenly(sentences: string[]): string[] {
+  const setupEnd = Math.min(2, Math.max(1, sentences.length - 3));
+  const closingStart = Math.max(setupEnd + 1, sentences.length - 2);
+  return [
+    sentences.slice(0, setupEnd).join(" "),
+    sentences.slice(setupEnd, closingStart).join(" "),
+    sentences.slice(closingStart).join(" "),
+  ].filter(Boolean);
 }
 
 function formatLeagueGameDayPerformancesForumPost(
@@ -2446,9 +2917,12 @@ function resolveRecapInterviewPersonalityDebugState(args: {
 }
 
 export const __testing = {
+  DEFAULT_MODEL_JUDGE_ENABLED,
   PERFORMANCE_CAPABILITY_SUMMARY,
   RECAP_CAPABILITY_SUMMARY,
+  buildRecapValidationAlertSummary,
   describeRecapRecord,
+  didRecapRequestRunModelJudge,
   filterRecapHistoryForBranch,
   formatRecapCostBreakdownLabel,
   formatLeagueGameDayPerformancesForumPost,
@@ -2463,8 +2937,11 @@ export const __testing = {
   hasActiveGameDayRecap,
   hasActiveRecapHistory,
   isLocallyTimedOutRecap,
+  partitionRecapValidationIssues,
   RECAP_STALE_TIMEOUT_MS,
   resolveSubmissionBlockReason,
   recapTitle,
   resolveRecapInterviewPersonalityDebugState,
+  splitRecapWriteupParagraphs,
+  submitRecapRequest,
 };

@@ -171,6 +171,27 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
 - `GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM`
   - Optional premium override for the grounded judge stage in the premium recap factuality pipeline.
   - Default or recommended value: `unset`.
+- `GAME_DAY_RECAP_ENFORCE_BANNED_STYLE_PHRASES`
+  - Optional recap QA toggle that turns filler-phrase validation back into a hard failure instead of soft style guidance.
+  - Default or recommended value: `false`.
+- `GAME_DAY_RECAP_CONTEXT_CONCURRENCY`
+  - Bounded worker concurrency for building game-day recap context across slate games.
+  - Default or recommended value: `4`.
+- `GAME_DAY_RECAP_JUDGE_CONCURRENCY`
+  - Bounded worker concurrency for recap judge requests, shared across sentence chunks and premium candidate scoring.
+  - Default or recommended value: `4`.
+- `GAME_DAY_RECAP_POLISH_CONCURRENCY`
+  - Bounded worker concurrency for optional recap style-polish passes.
+  - Default or recommended value: `2`.
+- `GAME_DAY_RECAP_INTERVIEW_CONCURRENCY`
+  - Bounded worker concurrency for optional generated postgame interview passes.
+  - Default or recommended value: `2`.
+- `GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE`
+  - Controls optional style polishing for full-slate recaps. Use `auto` to prioritize completion for eight-game slates, `always` to force polish when budget allows, or `off` to disable it.
+  - Default or recommended value: `auto`.
+- `GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE`
+  - Optional recap interview voice mode. Use `random` for the normal personality-assignment flow or `off` to disable personality styling.
+  - Default or recommended value: `random`.
 - `COGNITO_AUTH_CUSTOM_DOMAIN`
   - Optional branded Cognito auth hostname override. When unset but a hosted zone name is configured, runtime and synth default to `auth.<zone>`.
   - Default or recommended value: `unset`.

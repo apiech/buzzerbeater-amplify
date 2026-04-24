@@ -126,16 +126,40 @@ export function configureGameDayRecapJobs(
     String(config.enforceBannedStylePhrases),
   );
   backend.gameDayRecapWorker.addEnvironment(
+    "GAME_DAY_RECAP_CONTEXT_CONCURRENCY",
+    String(config.contextConcurrency),
+  );
+  backend.gameDayRecapWorker.addEnvironment(
+    "GAME_DAY_RECAP_JUDGE_CONCURRENCY",
+    String(config.judgeConcurrency),
+  );
+  backend.gameDayRecapWorker.addEnvironment(
+    "GAME_DAY_RECAP_POLISH_CONCURRENCY",
+    String(config.polishConcurrency),
+  );
+  backend.gameDayRecapWorker.addEnvironment(
+    "GAME_DAY_RECAP_INTERVIEW_CONCURRENCY",
+    String(config.interviewConcurrency),
+  );
+  backend.gameDayRecapWorker.addEnvironment(
+    "GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE",
+    config.fullSlatePolishMode,
+  );
+  backend.gameDayRecapWorker.addEnvironment(
     "GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE",
     config.interviewPersonalityMode,
   );
 
   workflow.grantStartExecution(backend.gameDayRecapSubmit.resources.lambda);
-  workflow.grantStartExecution(backend.submitLeagueGameDayRecap.resources.lambda);
+  workflow.grantStartExecution(
+    backend.submitLeagueGameDayRecap.resources.lambda,
+  );
   workflow.grantStartExecution(
     backend.submitLeagueGameDayPerformances.resources.lambda,
   );
-  workflow.grantStartExecution(backend.submitSingleGameSummary.resources.lambda);
+  workflow.grantStartExecution(
+    backend.submitSingleGameSummary.resources.lambda,
+  );
   const workerLambda = backend.gameDayRecapWorker.resources.lambda;
   workerLambda.addToRolePolicy(
     new PolicyStatement({

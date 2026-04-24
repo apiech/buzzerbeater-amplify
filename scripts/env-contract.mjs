@@ -75,6 +75,41 @@ export const envContract = {
         templateValue: "false",
       },
       {
+        name: "GAME_DAY_RECAP_CONTEXT_CONCURRENCY",
+        purpose:
+          "Bounded worker concurrency for building game-day recap context across slate games.",
+        defaultValue: "4",
+        templateValue: "4",
+      },
+      {
+        name: "GAME_DAY_RECAP_JUDGE_CONCURRENCY",
+        purpose:
+          "Bounded worker concurrency for recap judge requests, shared across sentence chunks and premium candidate scoring.",
+        defaultValue: "4",
+        templateValue: "4",
+      },
+      {
+        name: "GAME_DAY_RECAP_POLISH_CONCURRENCY",
+        purpose:
+          "Bounded worker concurrency for optional recap style-polish passes.",
+        defaultValue: "2",
+        templateValue: "2",
+      },
+      {
+        name: "GAME_DAY_RECAP_INTERVIEW_CONCURRENCY",
+        purpose:
+          "Bounded worker concurrency for optional generated postgame interview passes.",
+        defaultValue: "2",
+        templateValue: "2",
+      },
+      {
+        name: "GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE",
+        purpose:
+          "Controls optional style polishing for full-slate recaps. Use `auto` to prioritize completion for eight-game slates, `always` to force polish when budget allows, or `off` to disable it.",
+        defaultValue: "auto",
+        templateValue: "auto",
+      },
+      {
         name: "GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE",
         purpose:
           "Optional recap interview voice mode. Use `random` for the normal personality-assignment flow or `off` to disable personality styling.",

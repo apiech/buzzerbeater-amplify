@@ -13,6 +13,11 @@ const SWING_RUN_MAX_COMBINED_POINTS = 40;
 const SWING_RUN_TEAM_POINTS_THRESHOLD = 10;
 const SWING_RUN_NET_MARGIN_THRESHOLD = 8;
 const COMPETITIVE_RUN_START_MARGIN_THRESHOLD = 6;
+const EXTENDED_PUT_AWAY_RUN_MAX_ELAPSED_SECONDS = 780;
+const EXTENDED_PUT_AWAY_RUN_MIN_TEAM_POINTS = 15;
+const EXTENDED_PUT_AWAY_RUN_MIN_MARGIN = 10;
+const EXTENDED_PUT_AWAY_RUN_MIN_NET_MARGIN = 10;
+const EXTENDED_PUT_AWAY_RUN_MIN_FOLLOW_THROUGH_MARGIN = 6;
 const SECONDARY_RUN_MARGIN_SWING_THRESHOLD = 8;
 const SECONDARY_RUN_CLOSE_GAP_THRESHOLD = 2;
 const SECONDARY_RUN_MIN_SECONDS_APART = 90;
@@ -198,6 +203,7 @@ type EventContext = {
   quarter: number;
   rawIndex: number;
   scoringTeamSide: TeamSide | null;
+  sourceIsScoringPlay: boolean;
   wallClock: number;
 };
 
@@ -217,6 +223,13 @@ type RunStartAnchor = {
   gameSecondsElapsed: number | null;
   homeScore: number;
   quarter: number | null;
+};
+
+type ExpandedSwingRunWindow = {
+  endEvent: EventContext & { scoringTeamSide: TeamSide };
+  endedBy: RunEndedBy;
+  startAnchor: RunStartAnchor;
+  teamPoints: number;
 };
 
 type InternalDecisiveEndingQualificationReason =
@@ -332,10 +345,13 @@ function buildGameDayRecapPlayByPlayFactsDetailed(
   const bestCompetitiveSwingRun = resolveBestCompetitiveSwingRun(
     scoringEvents,
     teamNames,
+    scoreTimeline,
   );
   const { primaryRun, secondaryRun } = resolveImpactfulRuns(
     scoringEvents,
     teamNames,
+    finalLeader === "tie" ? null : finalLeader,
+    scoreTimeline,
   );
   const lateGameMoments = resolveLateGameMoments(scoringEvents, teamNames);
   const { debug, endingFacts } = resolveEndingFactsWithDebug(
@@ -420,6 +436,7 @@ function buildScoreTimeline(
       quarter: event.quarter,
       rawIndex,
       scoringTeamSide,
+      sourceIsScoringPlay: event.isScoringPlay ?? false,
       wallClock: event.wallClock,
     };
   });
@@ -599,10 +616,11 @@ function resolveLongestUnansweredRun(
 function resolveBestCompetitiveSwingRun(
   scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
   teamNames: TeamNameContext,
+  eventContexts: EventContext[],
 ): GameDayRecapPlayByPlayRun {
   let bestRun = createEmptyRunFact("swing");
 
-  const candidates = collectSwingRunCandidates(scoringEvents, teamNames, {
+  const candidates = collectSwingRunCandidates(scoringEvents, teamNames, eventContexts, {
     requireCompetitiveStart: true,
   });
   for (const candidate of candidates) {
@@ -620,10 +638,24 @@ function resolveBestCompetitiveSwingRun(
 function resolveImpactfulRuns(
   scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
   teamNames: TeamNameContext,
+  winnerSide: TeamSide | null,
+  eventContexts: EventContext[],
 ): ResolvedImpactfulRuns {
   const candidates = [
     ...collectCompletedUnansweredRuns(scoringEvents, teamNames),
-    ...collectSwingRunCandidates(scoringEvents, teamNames),
+    ...collectSwingRunCandidates(scoringEvents, teamNames, eventContexts),
+    ...collectExtendedLeadTakingSwingRunCandidates(
+      scoringEvents,
+      teamNames,
+      eventContexts,
+      winnerSide,
+    ),
+    ...collectExtendedPutAwaySwingRunCandidates(
+      scoringEvents,
+      teamNames,
+      eventContexts,
+      winnerSide,
+    ),
   ].filter(isQualifiedImpactfulRun);
 
   const rankedRuns = [...candidates].sort(compareImpactfulRuns);
@@ -716,15 +748,19 @@ function collectCompletedUnansweredRuns(
 function collectSwingRunCandidates(
   scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
   teamNames: TeamNameContext,
+  eventContexts: EventContext[],
   options?: {
+    maxElapsedSeconds?: number;
     requireCompetitiveStart?: boolean;
   },
 ): GameDayRecapPlayByPlayRun[] {
   const candidates: GameDayRecapPlayByPlayRun[] = [];
+  const maxElapsedSeconds =
+    options?.maxElapsedSeconds ?? SWING_RUN_MAX_ELAPSED_SECONDS;
 
   for (let startIndex = 0; startIndex < scoringEvents.length; startIndex += 1) {
     const startEvent = scoringEvents[startIndex]!;
-    const startAnchor = resolveRunStartAnchor(scoringEvents, startIndex);
+    const startAnchor = resolveSwingRunStartAnchor(eventContexts, startEvent);
     const startMargin = Math.abs(
       startAnchor.homeScore - startAnchor.awayScore,
     );
@@ -750,7 +786,7 @@ function collectSwingRunCandidates(
       const elapsedSeconds = resolveRunElapsedSeconds(startAnchor, endEvent);
       if (
         combinedPoints > SWING_RUN_MAX_COMBINED_POINTS ||
-        (elapsedSeconds !== null && elapsedSeconds > SWING_RUN_MAX_ELAPSED_SECONDS)
+        (elapsedSeconds !== null && elapsedSeconds > maxElapsedSeconds)
       ) {
         break;
       }
@@ -762,19 +798,42 @@ function collectSwingRunCandidates(
       }
 
       const nextScoringEvent = scoringEvents[endIndex + 1] ?? null;
+      const baseRun = buildRunFact({
+        endEvent,
+        endedBy: !nextScoringEvent
+          ? "game_end"
+          : nextScoringEvent.scoringTeamSide !== teamSide
+            ? "opponent_answer"
+            : "unknown",
+        opponentPoints,
+        runType: "swing",
+        startAnchor,
+        teamNames,
+        teamPoints,
+        teamSide,
+      });
+      if (!isQualifiedSwingRun(baseRun)) {
+        candidates.push(baseRun);
+        continue;
+      }
+
+      const expandedRun = expandSwingRunWindowOverAdjacentScoring({
+        endIndex,
+        eventContexts,
+        scoringEvents,
+        startIndex,
+        teamPoints,
+        teamSide,
+      });
       candidates.push(
         buildRunFact({
-          endEvent,
-          endedBy: !nextScoringEvent
-            ? "game_end"
-            : nextScoringEvent.scoringTeamSide !== teamSide
-              ? "opponent_answer"
-              : "unknown",
+          endEvent: expandedRun.endEvent,
+          endedBy: expandedRun.endedBy,
           opponentPoints,
           runType: "swing",
-          startAnchor,
+          startAnchor: expandedRun.startAnchor,
           teamNames,
-          teamPoints,
+          teamPoints: expandedRun.teamPoints,
           teamSide,
         }),
       );
@@ -782,6 +841,118 @@ function collectSwingRunCandidates(
   }
 
   return candidates;
+}
+
+function collectExtendedPutAwaySwingRunCandidates(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  teamNames: TeamNameContext,
+  eventContexts: EventContext[],
+  winnerSide: TeamSide | null,
+): GameDayRecapPlayByPlayRun[] {
+  if (!winnerSide) {
+    return [];
+  }
+
+  const finalMargin = resolveFinalMarginFromTeamPerspective(scoringEvents, winnerSide);
+  const extendedCandidates = collectSwingRunCandidates(
+    scoringEvents,
+    teamNames,
+    eventContexts,
+    {
+      maxElapsedSeconds: EXTENDED_PUT_AWAY_RUN_MAX_ELAPSED_SECONDS,
+      requireCompetitiveStart: true,
+    },
+  );
+
+  return extendedCandidates.filter((candidate) =>
+    isQualifiedExtendedPutAwayRun(
+      candidate,
+      scoringEvents,
+      winnerSide,
+      finalMargin,
+    ),
+  );
+}
+
+function collectExtendedLeadTakingSwingRunCandidates(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  teamNames: TeamNameContext,
+  eventContexts: EventContext[],
+  winnerSide: TeamSide | null,
+): GameDayRecapPlayByPlayRun[] {
+  if (!winnerSide) {
+    return [];
+  }
+
+  const extendedCandidates = collectSwingRunCandidates(
+    scoringEvents,
+    teamNames,
+    eventContexts,
+    {
+      maxElapsedSeconds: EXTENDED_PUT_AWAY_RUN_MAX_ELAPSED_SECONDS,
+      requireCompetitiveStart: true,
+    },
+  );
+
+  return extendedCandidates.filter((candidate) =>
+    isQualifiedExtendedLeadTakingRun(candidate, winnerSide),
+  );
+}
+
+function expandSwingRunWindowOverAdjacentScoring(args: {
+  endIndex: number;
+  eventContexts: EventContext[];
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>;
+  startIndex: number;
+  teamPoints: number;
+  teamSide: TeamSide;
+}): ExpandedSwingRunWindow {
+  let expandedStartIndex = args.startIndex;
+  let expandedEndIndex = args.endIndex;
+  let expandedTeamPoints = args.teamPoints;
+
+  while (expandedStartIndex > 0) {
+    const previousScoringEvent = args.scoringEvents[expandedStartIndex - 1]!;
+    const currentStartEvent = args.scoringEvents[expandedStartIndex]!;
+    if (
+      previousScoringEvent.scoringTeamSide !== args.teamSide ||
+      currentStartEvent.rawIndex - previousScoringEvent.rawIndex !== 1
+    ) {
+      break;
+    }
+
+    expandedStartIndex -= 1;
+    expandedTeamPoints += previousScoringEvent.points;
+  }
+
+  while (expandedEndIndex + 1 < args.scoringEvents.length) {
+    const currentEndEvent = args.scoringEvents[expandedEndIndex]!;
+    const nextScoringEvent = args.scoringEvents[expandedEndIndex + 1]!;
+    if (
+      nextScoringEvent.scoringTeamSide !== args.teamSide ||
+      nextScoringEvent.rawIndex - currentEndEvent.rawIndex !== 1
+    ) {
+      break;
+    }
+
+    expandedEndIndex += 1;
+    expandedTeamPoints += nextScoringEvent.points;
+  }
+
+  const nextScoringEvent = args.scoringEvents[expandedEndIndex + 1] ?? null;
+  return {
+    endEvent: args.scoringEvents[expandedEndIndex]!,
+    endedBy: !nextScoringEvent
+      ? "game_end"
+      : nextScoringEvent.scoringTeamSide !== args.teamSide
+        ? "opponent_answer"
+        : "unknown",
+    startAnchor: resolveSwingRunStartAnchor(
+      args.eventContexts,
+      args.scoringEvents[expandedStartIndex]!,
+    ),
+    teamPoints: expandedTeamPoints,
+  };
 }
 
 function resolveRunStartAnchor(
@@ -813,6 +984,34 @@ function resolveRunStartAnchor(
   };
 }
 
+function resolveSwingRunStartAnchor(
+  eventContexts: EventContext[],
+  startEvent: EventContext,
+): RunStartAnchor {
+  const previousEvent = eventContexts[startEvent.rawIndex - 1] ?? null;
+  if (
+    previousEvent?.sourceIsScoringPlay &&
+    previousEvent.afterAwayScore === startEvent.beforeAwayScore &&
+    previousEvent.afterHomeScore === startEvent.beforeHomeScore
+  ) {
+    return {
+      awayScore: previousEvent.afterAwayScore,
+      clock: previousEvent.clock,
+      gameSecondsElapsed: previousEvent.gameSecondsElapsed,
+      homeScore: previousEvent.afterHomeScore,
+      quarter: previousEvent.quarter,
+    };
+  }
+
+  return {
+    awayScore: startEvent.beforeAwayScore,
+    clock: startEvent.clock,
+    gameSecondsElapsed: startEvent.gameSecondsElapsed,
+    homeScore: startEvent.beforeHomeScore,
+    quarter: startEvent.quarter,
+  };
+}
+
 function resolveRunElapsedSeconds(
   startAnchor: RunStartAnchor,
   endEvent: EventContext,
@@ -832,6 +1031,15 @@ function resolveRunElapsedSeconds(
   return Math.max(0, endSeconds - startSeconds);
 }
 
+function resolveRunDurationSeconds(run: GameDayRecapPlayByPlayRun): number | null {
+  const interval = resolveRunInterval(run);
+  if (!interval) {
+    return null;
+  }
+
+  return Math.max(0, interval.end - interval.start);
+}
+
 function buildRunFact(args: {
   endEvent: EventContext;
   endedBy: RunEndedBy;
@@ -842,6 +1050,27 @@ function buildRunFact(args: {
   teamPoints: number;
   teamSide: TeamSide;
 }): GameDayRecapPlayByPlayRun {
+  const teamStartScore =
+    args.teamSide === "home"
+      ? args.startAnchor.homeScore
+      : args.startAnchor.awayScore;
+  const opponentStartScore =
+    args.teamSide === "home"
+      ? args.startAnchor.awayScore
+      : args.startAnchor.homeScore;
+  const teamEndScore =
+    args.teamSide === "home"
+      ? args.endEvent.afterHomeScore
+      : args.endEvent.afterAwayScore;
+  const opponentEndScore =
+    args.teamSide === "home"
+      ? args.endEvent.afterAwayScore
+      : args.endEvent.afterHomeScore;
+  const displayedTeamPoints = Math.max(0, teamEndScore - teamStartScore);
+  const displayedOpponentPoints = Math.max(
+    0,
+    opponentEndScore - opponentStartScore,
+  );
   const startMarginFromTeamPerspective =
     args.teamSide === "home"
       ? args.startAnchor.homeScore - args.startAnchor.awayScore
@@ -859,8 +1088,8 @@ function buildRunFact(args: {
     endHomeScore: args.endEvent.afterHomeScore,
     endQuarter: args.endEvent.quarter,
     marginSwing: endMarginFromTeamPerspective - startMarginFromTeamPerspective,
-    netMargin: args.teamPoints - args.opponentPoints,
-    opponentPoints: args.opponentPoints,
+    netMargin: displayedTeamPoints - displayedOpponentPoints,
+    opponentPoints: displayedOpponentPoints,
     runType: args.runType,
     startAwayScore: args.startAnchor.awayScore,
     startClock: args.startAnchor.clock,
@@ -868,7 +1097,7 @@ function buildRunFact(args: {
     startHomeScore: args.startAnchor.homeScore,
     startQuarter: args.startAnchor.quarter,
     teamName: resolveTeamName(args.teamSide, args.teamNames),
-    teamPoints: args.teamPoints,
+    teamPoints: displayedTeamPoints,
     teamSide: args.teamSide,
   };
 }
@@ -955,6 +1184,74 @@ function isQualifiedSwingRun(run: GameDayRecapPlayByPlayRun): boolean {
   );
 }
 
+function isQualifiedExtendedPutAwayRun(
+  candidate: GameDayRecapPlayByPlayRun,
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  winnerSide: TeamSide,
+  finalMargin: number,
+): boolean {
+  if (candidate.teamSide !== winnerSide || !isQualifiedSwingRun(candidate)) {
+    return false;
+  }
+
+  const durationSeconds = resolveRunDurationSeconds(candidate);
+  if (
+    durationSeconds === null ||
+    durationSeconds <= SWING_RUN_MAX_ELAPSED_SECONDS ||
+    durationSeconds > EXTENDED_PUT_AWAY_RUN_MAX_ELAPSED_SECONDS
+  ) {
+    return false;
+  }
+
+  if (
+    candidate.endQuarter === null ||
+    candidate.endQuarter < 4 ||
+    candidate.teamPoints < EXTENDED_PUT_AWAY_RUN_MIN_TEAM_POINTS ||
+    candidate.netMargin < EXTENDED_PUT_AWAY_RUN_MIN_NET_MARGIN ||
+    candidate.endMarginFromTeamPerspective < EXTENDED_PUT_AWAY_RUN_MIN_MARGIN ||
+    candidate.endMarginFromTeamPerspective < finalMargin
+  ) {
+    return false;
+  }
+
+  const minimumMarginAfterRun = resolveMinimumMarginAfterRun(
+    candidate,
+    scoringEvents,
+    winnerSide,
+  );
+  return (
+    minimumMarginAfterRun !== null &&
+    minimumMarginAfterRun >= EXTENDED_PUT_AWAY_RUN_MIN_FOLLOW_THROUGH_MARGIN
+  );
+}
+
+function isQualifiedExtendedLeadTakingRun(
+  candidate: GameDayRecapPlayByPlayRun,
+  winnerSide: TeamSide,
+): boolean {
+  if (candidate.teamSide !== winnerSide || !isQualifiedSwingRun(candidate)) {
+    return false;
+  }
+
+  const durationSeconds = resolveRunDurationSeconds(candidate);
+  if (
+    durationSeconds === null ||
+    durationSeconds <= SWING_RUN_MAX_ELAPSED_SECONDS ||
+    durationSeconds > EXTENDED_PUT_AWAY_RUN_MAX_ELAPSED_SECONDS
+  ) {
+    return false;
+  }
+
+  return Boolean(
+    candidate.startQuarter !== null &&
+      candidate.endQuarter !== null &&
+      candidate.startQuarter !== candidate.endQuarter &&
+    candidate.startMarginFromTeamPerspective <= 0 &&
+      candidate.endMarginFromTeamPerspective > 0 &&
+      (candidate.endMarginFromTeamPerspective >= 4 || candidate.netMargin >= 6),
+  );
+}
+
 function isSupportedSecondaryRunCandidate(
   candidate: GameDayRecapPlayByPlayRun,
   primaryRun: GameDayRecapPlayByPlayRun,
@@ -987,7 +1284,13 @@ function isSupportedSecondaryRunCandidate(
     Number.isFinite(primaryEndOrdering) &&
     Math.abs(candidateEndOrdering - primaryEndOrdering) >=
       SECONDARY_RUN_MIN_SECONDS_APART;
+  const leadTakingSwing =
+    candidate.teamSide === primaryRun.teamSide &&
+    candidate.startMarginFromTeamPerspective <= 0 &&
+    candidate.endMarginFromTeamPerspective > 0 &&
+    (candidate.endMarginFromTeamPerspective >= 4 || candidate.netMargin >= 6);
   const materiallyStrong =
+    leadTakingSwing ||
     candidate.marginSwing >= SECONDARY_RUN_MARGIN_SWING_THRESHOLD ||
     candidate.marginSwing >=
       primaryRun.marginSwing - SECONDARY_RUN_CLOSE_GAP_THRESHOLD;
@@ -1026,6 +1329,49 @@ function resolveRunInterval(
     end: Math.max(start, end),
     start: Math.min(start, end),
   };
+}
+
+function resolveFinalMarginFromTeamPerspective(
+  scoringEvents: EventContext[],
+  teamSide: TeamSide,
+): number {
+  const finalEvent = scoringEvents.at(-1);
+  if (!finalEvent) {
+    return 0;
+  }
+
+  return teamSide === "home"
+    ? finalEvent.afterHomeScore - finalEvent.afterAwayScore
+    : finalEvent.afterAwayScore - finalEvent.afterHomeScore;
+}
+
+function resolveMinimumMarginAfterRun(
+  run: GameDayRecapPlayByPlayRun,
+  scoringEvents: EventContext[],
+  teamSide: TeamSide,
+): number | null {
+  const runEndIndex = scoringEvents.findIndex(
+    (event) =>
+      event.quarter === run.endQuarter &&
+      event.clock === run.endClock &&
+      event.afterHomeScore === run.endHomeScore &&
+      event.afterAwayScore === run.endAwayScore,
+  );
+  if (runEndIndex === -1) {
+    return null;
+  }
+
+  let minimumMargin = run.endMarginFromTeamPerspective;
+  for (let index = runEndIndex + 1; index < scoringEvents.length; index += 1) {
+    const event = scoringEvents[index]!;
+    const margin =
+      teamSide === "home"
+        ? event.afterHomeScore - event.afterAwayScore
+        : event.afterAwayScore - event.afterHomeScore;
+    minimumMargin = Math.min(minimumMargin, margin);
+  }
+
+  return minimumMargin;
 }
 
 function resolveLeadChangeFacts(
@@ -1572,7 +1918,12 @@ function buildSummaryLines(args: {
   winnerSide: TeamSide | null;
 }): string[] {
   const lines: string[] = [];
-  const endingSummary = summarizeEndingFacts(args.endingFacts);
+  const combinedComebackEndingSummary = summarizeCombinedComebackEndingFacts({
+    endingFacts: args.endingFacts,
+    leadChangeFacts: args.leadChangeFacts,
+  });
+  const endingSummary =
+    combinedComebackEndingSummary ?? summarizeEndingFacts(args.endingFacts);
   if (endingSummary) {
     lines.push(endingSummary);
   }
@@ -1587,7 +1938,9 @@ function buildSummaryLines(args: {
     );
   }
 
-  const leadChangeSummary = summarizeLeadChangeFacts(args.leadChangeFacts);
+  const leadChangeSummary = combinedComebackEndingSummary
+    ? null
+    : summarizeLeadChangeFacts(args.leadChangeFacts);
   if (leadChangeSummary) {
     lines.push(leadChangeSummary);
   }
@@ -1600,17 +1953,58 @@ function buildSummaryLines(args: {
     lines.push(lateGameSummary);
   }
 
-  const primaryRunSummary = summarizeRun(args.primaryRun, args.winnerSide);
-  if (primaryRunSummary) {
-    lines.push(primaryRunSummary);
-  }
+  const orderedRuns = [args.primaryRun, args.secondaryRun]
+    .filter((run): run is GameDayRecapPlayByPlayRun => Boolean(run?.teamSide))
+    .sort((left, right) => {
+      const leftOrdering =
+        left.startQuarter !== null
+          ? resolveAnchorOrdering(left.startQuarter, left.startClock)
+          : Number.POSITIVE_INFINITY;
+      const rightOrdering =
+        right.startQuarter !== null
+          ? resolveAnchorOrdering(right.startQuarter, right.startClock)
+          : Number.POSITIVE_INFINITY;
+      return leftOrdering - rightOrdering;
+    });
 
-  const secondaryRunSummary = summarizeRun(args.secondaryRun, args.winnerSide);
-  if (secondaryRunSummary) {
-    lines.push(secondaryRunSummary);
+  for (const run of orderedRuns) {
+    const runSummary = summarizeRun(run, args.winnerSide);
+    if (runSummary) {
+      lines.push(runSummary);
+    }
   }
 
   return uniqueSummaryLines(lines).slice(0, 5);
+}
+
+function summarizeCombinedComebackEndingFacts(args: {
+  endingFacts: GameDayRecapPlayByPlayEndingFacts;
+  leadChangeFacts: GameDayRecapPlayByPlayLeadChangeFacts;
+}): string | null {
+  const leadChange = args.leadChangeFacts.bigComebackLeadChange;
+  const decisiveScore = args.endingFacts.decisiveScore;
+  if (
+    !leadChange ||
+    !decisiveScore ||
+    decisiveScore.momentType !== "lead_extension" ||
+    !isSameComebackClosingSequence(leadChange, decisiveScore)
+  ) {
+    return null;
+  }
+
+  const teamName =
+    leadChange.scoringTeamName ?? resolveTeamLabel(leadChange.scoringTeamSide);
+  const periodLabel = formatPeriodLabel(leadChange.quarter);
+  const leadContext = `${teamName} erased a ${leadChange.deficitErased}-point deficit and took the lead for good ${formatClockContext(
+    leadChange.clock,
+    periodLabel,
+  )}`;
+  const opponentLastChance = args.endingFacts.opponentLastChance;
+  if (opponentLastChance) {
+    return `Closing sequence: ${leadContext}; ${describeOpponentLastChance(opponentLastChance)}.`;
+  }
+
+  return `Closing sequence: ${leadContext}.`;
 }
 
 function summarizeEndingFacts(
@@ -1837,33 +2231,57 @@ function summarizeRun(
   const article = selectRunArticle(run.teamPoints);
   const briefRunPhrase = `${article} brief ${runScore} run`;
   const standardRunPhrase = `${article} ${runScore} run`;
+  const startedTrailing = run.startMarginFromTeamPerspective < 0;
+  const startedTied = run.startMarginFromTeamPerspective === 0;
+  const builtLead = run.endMarginFromTeamPerspective > run.startMarginFromTeamPerspective;
 
   if (isWinnerRun) {
     if (
-      run.marginSwing >= 12 ||
-      run.endMarginFromTeamPerspective >= 10 ||
-      run.netMargin >= 10
+      run.endedBy === "game_end" &&
+      (run.endMarginFromTeamPerspective >= 8 || run.netMargin >= 10)
     ) {
       return `${teamName} used ${standardRunPhrase} ${timeRange} to put the game away.`;
     }
     if (run.marginSwing >= 8 || run.endMarginFromTeamPerspective >= 6) {
+      if (startedTrailing) {
+        return `${teamName} answered with ${standardRunPhrase} ${timeRange} to swing the game.`;
+      }
       return `${teamName} used ${standardRunPhrase} ${timeRange} to seize control.`;
     }
     if (run.marginSwing >= 4) {
+      if (startedTrailing) {
+        return `${teamName} answered with ${standardRunPhrase} ${timeRange} to swing momentum.`;
+      }
       return `${teamName} used ${standardRunPhrase} ${timeRange} to swing momentum.`;
     }
 
     return `${teamName} pieced together ${briefRunPhrase} ${timeRange}.`;
   }
 
-  if (run.marginSwing >= 10) {
-    return `${teamName} mounted ${standardRunPhrase} ${timeRange}, but it was not enough.`;
-  }
-  if (run.marginSwing >= 6) {
-    return `${teamName} showed signs of life with ${standardRunPhrase} ${timeRange}, but it was not enough.`;
+  if (startedTrailing) {
+    if (run.marginSwing >= 10) {
+      return `${teamName} mounted ${standardRunPhrase} ${timeRange}, but it was not enough.`;
+    }
+    if (run.marginSwing >= 6) {
+      return `${teamName} made a push with ${standardRunPhrase} ${timeRange}, but it was not enough.`;
+    }
+
+    return `${teamName} made ${briefRunPhrase} ${timeRange}, but it was not enough.`;
   }
 
-  return `${teamName} made ${briefRunPhrase} ${timeRange}, but it was not enough.`;
+  if (startedTied) {
+    if (builtLead) {
+      return `${teamName} used ${standardRunPhrase} ${timeRange} to open the lead.`;
+    }
+
+    return `${teamName} pieced together ${briefRunPhrase} ${timeRange}.`;
+  }
+
+  if (builtLead) {
+    return `${teamName} used ${standardRunPhrase} ${timeRange} to build the lead.`;
+  }
+
+  return `${teamName} pieced together ${briefRunPhrase} ${timeRange} while staying in front.`;
 }
 
 function formatRunTimeRange(run: GameDayRecapPlayByPlayRun): string | null {
@@ -1911,6 +2329,17 @@ function resolveTeamName(
 
 function resolveTeamLabel(teamSide: TeamSide): string {
   return teamSide === "home" ? "The home team" : "The away team";
+}
+
+function isSameComebackClosingSequence(
+  leadChange: GameDayRecapPlayByPlayLeadChange,
+  decisiveScore: GameDayRecapPlayByPlayDecisiveScore,
+): boolean {
+  return (
+    decisiveScore.scoringTeamSide === leadChange.scoringTeamSide &&
+    decisiveScore.quarter === leadChange.quarter &&
+    decisiveScore.clock === leadChange.clock
+  );
 }
 
 function formatScoreFromTeamPerspective(
@@ -1999,6 +2428,8 @@ export const __testing = {
   describeLateGameMoment,
   describeOpponentLastChance,
   isSupportedSecondaryRunCandidate,
+  summarizeCombinedComebackEndingFacts,
   summarizeEndingFacts,
   summarizeLateGameMoments,
+  summarizeRun,
 };

@@ -39,6 +39,7 @@ import type {
   RepairOwnerRosterDataResult,
   RecapGenerationApproach,
   RecapHistoryRecord,
+  RecapInterviewIntensity,
   SubmitLeagueGameDayPerformancesResult,
   RivalsWorkspacePayload,
   SalaryCalculatorSeed,
@@ -71,6 +72,10 @@ import {
   teamRecordSummarySchema,
   tendenciesSummarySchema,
 } from "@/lib/owned-data/contracts";
+import {
+  INTERVIEW_PERSONALITY_TYPES,
+  type InterviewPersonalityType,
+} from "@/lib/interview-personalities";
 import { currentPredictionPreviewSchema } from "@/lib/prediction/contracts";
 
 const nullableStringSchema = z.string().nullable().optional();
@@ -1118,7 +1123,9 @@ const gameDayRecapResultSchema = z
 const gameDayRecapStoredRequestSchema = z
   .object({
     gameDate: z.string(),
+    interviewIntensity: z.enum(["clean", "pg13", "full_heat"]).optional(),
     leagueId: z.string(),
+    modelJudgeEnabled: z.boolean().optional(),
     mode: z.literal("FULL_SLATE"),
   })
   .passthrough();
@@ -1126,7 +1133,9 @@ const gameDayRecapStoredRequestSchema = z
 const leagueGameDayRecapStoredRequestSchema = z
   .object({
     gameDayNumber: z.number(),
+    interviewIntensity: z.enum(["clean", "pg13", "full_heat"]).optional(),
     leagueId: z.string(),
+    modelJudgeEnabled: z.boolean().optional(),
     mode: z.literal("LEAGUE_GAME_DAY"),
     season: nullableNumberSchema,
   })
@@ -1143,8 +1152,18 @@ const leagueGameDayPerformancesStoredRequestSchema = z
 
 const singleGameSummaryStoredRequestSchema = z
   .object({
+    interviewIntensity: z.enum(["clean", "pg13", "full_heat"]).optional(),
+    loserInterviewPersonalityType: z
+      .enum(INTERVIEW_PERSONALITY_TYPES)
+      .nullable()
+      .optional(),
     matchId: z.string(),
+    modelJudgeEnabled: z.boolean().optional(),
     mode: z.literal("SINGLE_GAME"),
+    winnerInterviewPersonalityType: z
+      .enum(INTERVIEW_PERSONALITY_TYPES)
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -2985,8 +3004,10 @@ export async function submitRivalsBackfillMutation(): Promise<SubmitRivalsBackfi
 export async function submitGameDayRecapMutation(input: {
   approach?: RecapGenerationApproach;
   gameDate: string;
+  interviewIntensity?: RecapInterviewIntensity;
   leagueId: string;
   leagueTimeZone: string;
+  modelJudgeEnabled?: boolean;
   qualityTier?: "premium" | "standard";
 }): Promise<SubmitGameDayRecapResult> {
   const response = await client.mutations.submitGameDayRecap(input);
@@ -3005,7 +3026,9 @@ export async function submitGameDayRecapMutation(input: {
 export async function submitLeagueGameDayRecapMutation(input: {
   approach?: RecapGenerationApproach;
   gameDayNumber: number;
+  interviewIntensity?: RecapInterviewIntensity;
   leagueId: string;
+  modelJudgeEnabled?: boolean;
   qualityTier?: "premium" | "standard";
   season?: number;
 }): Promise<SubmitLeagueGameDayRecapResult> {
@@ -3042,8 +3065,12 @@ export async function submitLeagueGameDayPerformancesMutation(input: {
 
 export async function submitSingleGameSummaryMutation(input: {
   approach?: RecapGenerationApproach;
+  interviewIntensity?: RecapInterviewIntensity;
+  loserInterviewPersonalityType?: InterviewPersonalityType;
   matchId: string;
+  modelJudgeEnabled?: boolean;
   qualityTier?: "premium" | "standard";
+  winnerInterviewPersonalityType?: InterviewPersonalityType;
 }): Promise<SubmitSingleGameSummaryResult> {
   const response = await client.mutations.submitSingleGameSummary(input);
   return readAmplifyDataOrThrow(

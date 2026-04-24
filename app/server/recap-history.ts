@@ -15,7 +15,10 @@ import type {
   SingleGameRecapHistoryRecord,
   SingleGameSummaryRecord,
 } from "@/app/types";
-import { RecapGenerationApproach } from "@/amplify/data/schema-enums";
+import {
+  RecapGenerationApproach,
+  RecapInterviewIntensity,
+} from "@/amplify/data/schema-enums";
 import { safeJsonParse } from "@/lib/json-parsing";
 
 export type RecapStreamState = {
@@ -286,6 +289,9 @@ export function normalizeGameDayRecapRecord(
           readLegacyField(record.requestJson)?.approach,
         ) ?? RecapGenerationApproach.LEGACY,
       gameDate: normalizeDateString(readLegacyField(record.requestJson)?.gameDate) ?? record.gameDate,
+      interviewIntensity: normalizeRecapInterviewIntensity(
+        readLegacyField(record.requestJson)?.interviewIntensity,
+      ),
       leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
       mode: "FULL_SLATE",
       qualityTier: normalizeRecapQualityTier(
@@ -312,6 +318,9 @@ export function normalizeLeagueGameDayRecapRecord(
       gameDayNumber:
         asFiniteNumber(readLegacyField(record.requestJson)?.gameDayNumber) ??
         record.gameDayNumber,
+      interviewIntensity: normalizeRecapInterviewIntensity(
+        readLegacyField(record.requestJson)?.interviewIntensity,
+      ),
       leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
       mode: "LEAGUE_GAME_DAY",
       qualityTier: normalizeRecapQualityTier(
@@ -362,6 +371,9 @@ export function normalizeSingleGameSummaryRecord(
         readOptionalRecapGenerationApproach(
           readLegacyField(record.requestJson)?.approach,
         ) ?? RecapGenerationApproach.LEGACY,
+      interviewIntensity: normalizeRecapInterviewIntensity(
+        readLegacyField(record.requestJson)?.interviewIntensity,
+      ),
       matchId:
         asNonEmptyString(readLegacyField(record.requestJson)?.matchId) ?? record.matchId,
       mode: "SINGLE_GAME",
@@ -529,6 +541,23 @@ function normalizeRecapResult(
           const postgameInterview = normalizeRecapPostgameInterview(
             source?.postgameInterview,
           );
+          const postgameInterviews = Array.isArray(source?.postgameInterviews)
+            ? source.postgameInterviews
+                .map((item) => normalizeRecapPostgameInterview(item))
+                .filter(
+                  (
+                    item,
+                  ): item is NonNullable<
+                    GameDayRecapResultPayload["games"][number]["postgameInterview"]
+                  > => Boolean(item),
+                )
+            : postgameInterview
+              ? [postgameInterview]
+              : [];
+          const postgameInterviewDiagnostics =
+            normalizeRecapPostgameInterviewDiagnostics(
+              source?.postgameInterviewDiagnostics,
+            );
           const validation = normalizeRecapGameValidation(source?.validation);
           const writeup = asNonEmptyString(source?.writeup);
           if (!headline || !matchId || !writeup) {
@@ -539,7 +568,13 @@ function normalizeRecapResult(
             evidenceTags: toStringArray(source?.evidenceTags),
             headline,
             matchId,
-            ...(postgameInterview ? { postgameInterview } : {}),
+            ...(postgameInterviews[0]
+              ? { postgameInterview: postgameInterviews[0] }
+              : {}),
+            ...(postgameInterviewDiagnostics.length
+              ? { postgameInterviewDiagnostics }
+              : {}),
+            ...(postgameInterviews.length ? { postgameInterviews } : {}),
             surpriseFactor: asFiniteNumber(source?.surpriseFactor),
             ...(validation ? { validation } : {}),
             writeup,
@@ -727,6 +762,38 @@ function normalizeRecapPostgameInterview(
     teamSide,
     title,
   };
+}
+
+function normalizeRecapPostgameInterviewDiagnostics(
+  value: unknown,
+): NonNullable<
+  GameDayRecapResultPayload["games"][number]["postgameInterviewDiagnostics"]
+> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    const record = toRecord(entry);
+    const side = record?.side;
+    const status = record?.status;
+    if (
+      (side !== "winner" && side !== "loser") ||
+      typeof status !== "string" ||
+      !status
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        details: toStringArray(record.details),
+        reason: asNonEmptyString(record.reason),
+        side,
+        status,
+      },
+    ];
+  });
 }
 
 function normalizeLeagueGameDayPerformancesResult(
@@ -1044,6 +1111,20 @@ function asBoolean(value: unknown): boolean | null {
 
 function normalizeRecapQualityTier(value: unknown): "standard" | "premium" {
   return value === "premium" ? "premium" : "standard";
+}
+
+function normalizeRecapInterviewIntensity(
+  value: unknown,
+): RecapInterviewIntensity {
+  switch (value) {
+    case RecapInterviewIntensity.CLEAN:
+      return RecapInterviewIntensity.CLEAN;
+    case RecapInterviewIntensity.FULL_HEAT:
+      return RecapInterviewIntensity.FULL_HEAT;
+    case RecapInterviewIntensity.PG13:
+    default:
+      return RecapInterviewIntensity.PG13;
+  }
 }
 
 function normalizeDateString(value: unknown): string | null {

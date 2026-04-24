@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(currentDir, "..");
@@ -13,19 +14,24 @@ const productionSourceRoots = [
   join(repoRoot, "amplify"),
   join(repoRoot, "scripts"),
 ] as const;
+const dependencyBagReviewSourceRoots = [
+  join(repoRoot, "amplify", "data", "_backend"),
+  join(repoRoot, "app", "server"),
+  join(repoRoot, "scripts"),
+] as const;
+const LARGE_DEPENDENCY_BAG_REVIEW_THRESHOLD = 6;
 const approvedLargeDependencyBags = new Map<string, number>([
-  ["app/game-prediction-state.ts", 10],
-  ["amplify/data/_backend/billing.ts", 4],
-  ["amplify/data/_backend/game-day-recap.ts", 25],
-  ["amplify/data/_backend/league-history.ts", 16],
-  ["amplify/data/_backend/lineup-helper.ts", 4],
-  ["amplify/data/_backend/match-store.ts", 5],
-  ["amplify/data/_backend/next-game-recommendation.ts", 31],
-  ["amplify/data/_backend/opponent-forecast.ts", 9],
-  ["amplify/data/_backend/prediction.ts", 9],
-  ["amplify/data/_backend/rivals.ts", 15],
-  ["amplify/data/_backend/team-highlights.ts", 11],
+  ["amplify/data/_backend/game-day-recap.ts#ProcessDependencies", 10],
+  ["amplify/data/_backend/game-day-recap.ts#SubmitDependencies", 13],
+  ["amplify/data/_backend/rivals.ts#ProcessDependencies", 7],
 ]);
+
+type DependencyBagSummary = {
+  dependencyCount: number;
+  identifier: string;
+  name: string;
+  relativePath: string;
+};
 
 function listRepoEntries(rootPath: string) {
   return readdirSync(rootPath, { withFileTypes: true }).map((entry) => ({
@@ -89,12 +95,117 @@ function listProductionSourceFiles(): string[] {
   );
 }
 
-function countMatches(source: string, pattern: RegExp): number {
-  return [...source.matchAll(pattern)].length;
+function listDependencyBagReviewSourceFiles(): string[] {
+  return dependencyBagReviewSourceRoots.flatMap((rootPath) =>
+    listSourceFiles(rootPath).filter(
+      (sourceFile) => !testFilePattern.test(sourceFile),
+    ),
+  );
 }
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function resolveScriptKindForFileName(fileName: string): ts.ScriptKind {
+  if (fileName.endsWith(".tsx")) {
+    return ts.ScriptKind.TSX;
+  }
+  if (fileName.endsWith(".jsx")) {
+    return ts.ScriptKind.JSX;
+  }
+  if (fileName.endsWith(".mjs") || fileName.endsWith(".js")) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.TS;
+}
+
+function isDependencyBagName(name: string): boolean {
+  return /(?:Dependencies|Deps)$/.test(name);
+}
+
+function countTypeQueryMembers(
+  members: ts.NodeArray<ts.TypeElement>,
+): number {
+  let count = 0;
+
+  for (const member of members) {
+    if (!ts.isPropertySignature(member)) {
+      continue;
+    }
+    if (member.type && ts.isTypeQueryNode(member.type)) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function collectDependencyBagsFromSource(
+  source: string,
+  options?: {
+    fileName?: string;
+    relativePath?: string;
+  },
+): DependencyBagSummary[] {
+  const fileName = options?.fileName ?? "inline.ts";
+  const relativePath = options?.relativePath ?? fileName;
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    resolveScriptKindForFileName(fileName),
+  );
+  const summaries: DependencyBagSummary[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isTypeAliasDeclaration(statement)) {
+      const name = statement.name.text;
+      if (!isDependencyBagName(name) || !ts.isTypeLiteralNode(statement.type)) {
+        continue;
+      }
+      const dependencyCount = countTypeQueryMembers(statement.type.members);
+      if (dependencyCount === 0) {
+        continue;
+      }
+      summaries.push({
+        dependencyCount,
+        identifier: `${relativePath}#${name}`,
+        name,
+        relativePath,
+      });
+      continue;
+    }
+
+    if (ts.isInterfaceDeclaration(statement)) {
+      const name = statement.name.text;
+      if (!isDependencyBagName(name)) {
+        continue;
+      }
+      const dependencyCount = countTypeQueryMembers(statement.members);
+      if (dependencyCount === 0) {
+        continue;
+      }
+      summaries.push({
+        dependencyCount,
+        identifier: `${relativePath}#${name}`,
+        name,
+        relativePath,
+      });
+    }
+  }
+
+  return summaries;
+}
+
+function collectDependencyBagsForSourceFile(
+  sourceFilePath: string,
+): DependencyBagSummary[] {
+  return collectDependencyBagsFromSource(readFileSync(sourceFilePath, "utf8"), {
+    fileName: sourceFilePath,
+    relativePath: relative(repoRoot, sourceFilePath).replaceAll("\\", "/"),
+  });
 }
 
 test("lambda data access uses the Amplify runtime client", () => {
@@ -472,26 +583,99 @@ test("production source avoids casting cached data into schema-backed workspace 
   }
 });
 
-test("large dependency bags stay on a reviewed allowlist", () => {
-  const dependencyBagPattern = /:\s*typeof\s+[A-Za-z0-9_$.]+/g;
+test("dependency bag parser counts only typeof members on explicit bag declarations", () => {
+  const summaries = collectDependencyBagsFromSource(
+    [
+      "type FooDependencies = {",
+      "  fetchUser: typeof fetchUser,",
+      "  fetchTeam: typeof fetchTeam,",
+      "  fetchLeague: typeof fetchLeague,",
+      "};",
+    ].join("\n"),
+    { relativePath: "inline.ts" },
+  );
 
-  for (const sourceFile of listProductionSourceFiles()) {
-    const source = readFileSync(sourceFile, "utf8");
-    const relativePath = relative(repoRoot, sourceFile).replaceAll("\\", "/");
-    const dependencyCount = countMatches(source, dependencyBagPattern);
-    if (dependencyCount <= 3) {
-      continue;
-    }
+  assert.deepEqual(summaries, [
+    {
+      dependencyCount: 3,
+      identifier: "inline.ts#FooDependencies",
+      name: "FooDependencies",
+      relativePath: "inline.ts",
+    },
+  ]);
+});
 
-    const allowedCount = approvedLargeDependencyBags.get(relativePath);
+test("dependency bag parser ignores runtime typeof guards", () => {
+  const summaries = collectDependencyBagsFromSource(
+    [
+      "const prefix =",
+      '  typeof value === "string"',
+      '    ? "label"',
+      '    : typeof fallback === "number"',
+      '      ? "count"',
+      '      : "other";',
+    ].join("\n"),
+    { relativePath: "inline.ts" },
+  );
+
+  assert.deepEqual(summaries, []);
+});
+
+test("dependency bag parser ignores typeof guards inside non-bag type aliases", () => {
+  const summaries = collectDependencyBagsFromSource(
+    [
+      "type SomethingElse = {",
+      "  fetchUser: typeof fetchUser,",
+      "};",
+      "",
+      "const prefix = typeof value === \"string\" ? value : \"\";",
+    ].join("\n"),
+    { relativePath: "inline.ts" },
+  );
+
+  assert.deepEqual(summaries, []);
+});
+
+test("dependency bag review stays scoped to backend and server orchestration roots", () => {
+  const reviewedFiles = new Set(
+    listDependencyBagReviewSourceFiles().map((sourceFile) =>
+      relative(repoRoot, sourceFile).replaceAll("\\", "/"),
+    ),
+  );
+
+  assert.equal(reviewedFiles.has("app/recap-panel.tsx"), false);
+  assert.equal(
+    reviewedFiles.has("amplify/data/_backend/game-day-recap.ts"),
+    true,
+  );
+});
+
+test("large orchestration dependency bags stay on a reviewed allowlist", () => {
+  const largeDependencyBags = listDependencyBagReviewSourceFiles()
+    .flatMap((sourceFile) => collectDependencyBagsForSourceFile(sourceFile))
+    .filter(
+      (dependencyBag) =>
+        dependencyBag.dependencyCount > LARGE_DEPENDENCY_BAG_REVIEW_THRESHOLD,
+    )
+    .sort((left, right) => left.identifier.localeCompare(right.identifier));
+
+  assert.deepEqual(
+    largeDependencyBags.map((dependencyBag) => dependencyBag.identifier),
+    [...approvedLargeDependencyBags.keys()].sort(),
+  );
+
+  for (const dependencyBag of largeDependencyBags) {
+    const allowedCount = approvedLargeDependencyBags.get(
+      dependencyBag.identifier,
+    );
     assert.notEqual(
       allowedCount,
       undefined,
-      `${relativePath} introduces an unreviewed large : typeof dependency bag (${dependencyCount}).`,
+      `${dependencyBag.identifier} introduces an unreviewed large dependency bag (${dependencyBag.dependencyCount}).`,
     );
     assert.ok(
-      dependencyCount <= allowedCount,
-      `${relativePath} grew its reviewed : typeof dependency bag from ${allowedCount} to ${dependencyCount}.`,
+      dependencyBag.dependencyCount <= allowedCount,
+      `${dependencyBag.identifier} grew its reviewed dependency bag from ${allowedCount} to ${dependencyBag.dependencyCount}.`,
     );
   }
 });

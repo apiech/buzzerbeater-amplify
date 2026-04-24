@@ -71,11 +71,16 @@ export type MaintenanceControlPlaneSynthConfig = {
 };
 
 export type GameDayRecapSynthConfig = {
+  contextConcurrency: number;
   defaultModelId: string;
   enforceBannedStylePhrases: boolean;
+  fullSlatePolishMode: "always" | "auto" | "off";
+  interviewConcurrency: number;
   interviewPersonalityMode: "off" | "random";
+  judgeConcurrency: number;
   judgeModelId: string | null;
   judgePremiumModelId: string | null;
+  polishConcurrency: number;
   premiumModelId: string | null;
   retryModelId: string | null;
   retryPremiumModelId: string | null;
@@ -203,6 +208,10 @@ export function resolveGameDayRecapConfig(): GameDayRecapSynthConfig {
   loadLocalSynthEnv();
 
   return {
+    contextConcurrency: parsePositiveIntegerEnv(
+      process.env.GAME_DAY_RECAP_CONTEXT_CONCURRENCY,
+      4,
+    ),
     defaultModelId: resolveRequiredEnv(
       process.env,
       "GAME_DAY_RECAP_MODEL_ID",
@@ -228,12 +237,27 @@ export function resolveGameDayRecapConfig(): GameDayRecapSynthConfig {
     enforceBannedStylePhrases: parseBooleanEnv(
       process.env.GAME_DAY_RECAP_ENFORCE_BANNED_STYLE_PHRASES,
     ),
+    fullSlatePolishMode: normalizeFullSlatePolishMode(
+      process.env.GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE,
+    ),
+    interviewConcurrency: parsePositiveIntegerEnv(
+      process.env.GAME_DAY_RECAP_INTERVIEW_CONCURRENCY,
+      2,
+    ),
     interviewPersonalityMode:
       normalizeOptionalString(
         process.env.GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE,
       ) === "off"
         ? "off"
         : "random",
+    judgeConcurrency: parsePositiveIntegerEnv(
+      process.env.GAME_DAY_RECAP_JUDGE_CONCURRENCY,
+      4,
+    ),
+    polishConcurrency: parsePositiveIntegerEnv(
+      process.env.GAME_DAY_RECAP_POLISH_CONCURRENCY,
+      2,
+    ),
   };
 }
 
@@ -567,6 +591,26 @@ function normalizeOptionalString(value: string | undefined): string | null {
 function parseBooleanEnv(value: string | undefined): boolean {
   const normalized = normalizeOptionalString(value)?.toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function parsePositiveIntegerEnv(
+  value: string | undefined,
+  fallback: number,
+): number {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeFullSlatePolishMode(
+  value: string | undefined,
+): GameDayRecapSynthConfig["fullSlatePolishMode"] {
+  const normalized = normalizeOptionalString(value)?.toLowerCase();
+  return normalized === "always" || normalized === "off" ? normalized : "auto";
 }
 
 function resolveAwsRegion(env: Record<string, string | undefined>): string {

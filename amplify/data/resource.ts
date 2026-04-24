@@ -10,6 +10,7 @@ import {
   LineupHelperAlgorithm,
   PositionCode,
   RecapGenerationApproach,
+  RecapInterviewIntensity,
   TeamHighlightsPerspective,
 } from "./schema-enums";
 import { buildBbConnectionSecretFunctionEnvironment } from "../_shared/bb-connection-secret";
@@ -601,6 +602,7 @@ const schema = a
     PositionCode: a.enum(Object.values(PositionCode)),
     LineupHelperAlgorithm: a.enum(Object.values(LineupHelperAlgorithm)),
     RecapGenerationApproach: a.enum(Object.values(RecapGenerationApproach)),
+    RecapInterviewIntensity: a.enum(Object.values(RecapInterviewIntensity)),
 
     TeamHighlightsPerspective: a.enum(Object.values(TeamHighlightsPerspective)),
     TeamHighlightsScanState: a.enum([
@@ -1926,7 +1928,9 @@ const schema = a
     GameDayRecapStoredRequest: a.customType({
       approach: a.ref("RecapGenerationApproach"),
       gameDate: a.date().required(),
+      interviewIntensity: a.ref("RecapInterviewIntensity"),
       leagueId: a.string().required(),
+      modelJudgeEnabled: a.boolean(),
       mode: a.ref("RecapRequestMode").required(),
       qualityTier: a.ref("RecapQualityTier").required(),
     }),
@@ -1934,7 +1938,9 @@ const schema = a
     LeagueGameDayRecapStoredRequest: a.customType({
       approach: a.ref("RecapGenerationApproach"),
       gameDayNumber: a.integer().required(),
+      interviewIntensity: a.ref("RecapInterviewIntensity"),
       leagueId: a.string().required(),
+      modelJudgeEnabled: a.boolean(),
       mode: a.ref("RecapRequestMode").required(),
       qualityTier: a.ref("RecapQualityTier").required(),
       season: a.integer(),
@@ -1949,9 +1955,13 @@ const schema = a
 
     SingleGameSummaryStoredRequest: a.customType({
       approach: a.ref("RecapGenerationApproach"),
+      interviewIntensity: a.ref("RecapInterviewIntensity"),
+      loserInterviewPersonalityType: a.string(),
       matchId: a.string().required(),
+      modelJudgeEnabled: a.boolean(),
       mode: a.ref("RecapRequestMode").required(),
       qualityTier: a.ref("RecapQualityTier").required(),
+      winnerInterviewPersonalityType: a.string(),
     }),
 
     GameDayRecapCoverageMissingGame: a.customType({
@@ -2050,9 +2060,22 @@ const schema = a
       headline: a.string().required(),
       matchId: a.string().required(),
       postgameInterview: a.ref("GameDayRecapResultPostgameInterview"),
+      postgameInterviews: a
+        .ref("GameDayRecapResultPostgameInterview")
+        .array(),
+      postgameInterviewDiagnostics: a
+        .ref("GameDayRecapPostgameInterviewDiagnostic")
+        .array(),
       surpriseFactor: a.float(),
       validation: a.ref("GameDayRecapGameValidation"),
       writeup: a.string().required(),
+    }),
+
+    GameDayRecapPostgameInterviewDiagnostic: a.customType({
+      details: a.string().array(),
+      reason: a.string(),
+      side: a.string().required(),
+      status: a.string().required(),
     }),
 
     GameDayRecapResultPostgameInterviewExchange: a.customType({
@@ -4046,6 +4069,8 @@ const schema = a
         approach: a.ref("RecapGenerationApproach"),
         leagueId: a.string().required(),
         gameDate: a.date().required(),
+        interviewIntensity: a.ref("RecapInterviewIntensity"),
+        modelJudgeEnabled: a.boolean(),
         qualityTier: a.ref("RecapQualityTier"),
       })
       .returns(a.ref("GameDayRecapSubmitResult"))
@@ -4058,6 +4083,8 @@ const schema = a
         approach: a.ref("RecapGenerationApproach"),
         leagueId: a.string().required(),
         gameDayNumber: a.integer().required(),
+        interviewIntensity: a.ref("RecapInterviewIntensity"),
+        modelJudgeEnabled: a.boolean(),
         qualityTier: a.ref("RecapQualityTier"),
         season: a.integer(),
       })
@@ -4080,8 +4107,12 @@ const schema = a
       .mutation()
       .arguments({
         approach: a.ref("RecapGenerationApproach"),
+        interviewIntensity: a.ref("RecapInterviewIntensity"),
+        loserInterviewPersonalityType: a.string(),
         matchId: a.string().required(),
+        modelJudgeEnabled: a.boolean(),
         qualityTier: a.ref("RecapQualityTier"),
+        winnerInterviewPersonalityType: a.string(),
       })
       .returns(a.ref("GameDayRecapSubmitResult"))
       .authorization((allow) => [allow.authenticated()])

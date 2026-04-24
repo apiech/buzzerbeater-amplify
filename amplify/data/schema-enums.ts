@@ -16,6 +16,12 @@ export enum RecapGenerationApproach {
   LEGACY = "LEGACY",
 }
 
+export enum RecapInterviewIntensity {
+  CLEAN = "clean",
+  FULL_HEAT = "full_heat",
+  PG13 = "pg13",
+}
+
 export enum TeamHighlightsPerspective {
   AGAINST = "AGAINST",
   BOTH = "BOTH",

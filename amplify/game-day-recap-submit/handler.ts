@@ -23,7 +23,9 @@ export const handler: Handler = async (event) => {
       env,
       gameDate: event.arguments.gameDate,
       identity: event.identity,
+      interviewIntensity: event.arguments.interviewIntensity ?? null,
       leagueId: event.arguments.leagueId,
+      modelJudgeEnabled: event.arguments.modelJudgeEnabled ?? null,
       qualityTier: event.arguments.qualityTier ?? null,
       stateMachineArn,
     });

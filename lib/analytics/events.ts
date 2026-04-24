@@ -218,13 +218,17 @@ export type AnalyticsEventMap = {
     status: string | null;
   };
   recap_request_failed: {
+    interview_intensity: string;
     mode: string;
     requested_quality_tier: string;
   };
   recap_requested: {
+    has_debug_interview_overrides: boolean;
     has_custom_league_id: boolean;
     has_match_id: boolean;
     has_season_override: boolean;
+    interview_intensity: string;
+    model_judge_enabled: boolean;
     mode: string;
     requested_quality_tier: string;
   };

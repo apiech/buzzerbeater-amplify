@@ -30,25 +30,34 @@ import {
   normalizeInterviewPersonalityMode,
   resolveDeterministicInterviewPersonality,
   resolveInterviewPersonalityPrompt,
+  type InterviewIntensity,
   type InterviewPersonalityMode,
   type InterviewPersonalitySource,
   type InterviewPersonalityType,
 } from "../../../lib/interview-personalities";
 import { formatBuzzerBeaterLabel } from "../../../lib/buzzerbeater/rating-scale";
-import { TEAM_RATING_KEYS } from "../../../lib/buzzerbeater/team-ratings";
+import {
+  TEAM_RATING_KEYS,
+  type TeamRatingKey,
+} from "../../../lib/buzzerbeater/team-ratings";
 import { RETRYABLE_COMPLETED_SLATE_COVERAGE_ERROR_NAME } from "../../_shared/game-day-recap-errors";
-import { RecapGenerationApproach } from "../schema-enums";
+import {
+  RecapGenerationApproach,
+  RecapInterviewIntensity,
+} from "../schema-enums";
 import { resolveBbAccessKey } from "./credentials";
 import {
   buildGameDayRecapTargetKey,
   buildLeagueGameDayRecapTargetKey,
   buildSingleGameSummaryTargetKey,
   normalizeGameDayRecapRequest,
+  normalizeRecapInterviewIntensity,
   normalizeLeagueGameDayPerformancesRequest,
   normalizeLeagueGameDayRecapRequest,
   normalizeSingleGameSummaryRequest,
   parseGameDayRecapQueueMessage,
   type RecapGenerationApproachValue,
+  type RecapInterviewIntensityValue,
   type RecapJobKind,
   type RecapQualityTier,
   type RecapQueueMessage,
@@ -228,6 +237,7 @@ type GameDayRecapFactsLibrary = {
 };
 
 type GameDayRecapPromptInterviewCandidate = {
+  perspective?: "loser" | "winner";
   personalitySource?: InterviewPersonalitySource | null;
   personalityType?: InterviewPersonalityType | null;
   playerId?: string | null;
@@ -262,6 +272,7 @@ type GameDayRecapPromptGame = {
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   playByPlaySummaryLines: string[];
   postgameInterviewCandidate?: GameDayRecapPromptInterviewCandidate | null;
+  postgameInterviewCandidates?: GameDayRecapPromptInterviewCandidate[] | null;
   quarterFacts: GameDayRecapPromptQuarterFacts;
   quarterScores: {
     away: number[];
@@ -269,6 +280,8 @@ type GameDayRecapPromptGame = {
   };
   seriesContext?: GameDayRecapSeriesContext;
   standingsContext: string[];
+  teamRatingFacts?: GameDayRecapTeamRatingFacts;
+  teamTalent?: GameDayRecapTeamTalentFacts;
   teams: {
     away: GameDayRecapPromptTeam;
     home: GameDayRecapPromptTeam;
@@ -280,13 +293,16 @@ type GameDayRecapRequestFacts = {
   gameDate: string | null;
   gameDayNumber: number | null;
   generationApproach: RecapGenerationApproachValue;
+  interviewIntensity: RecapInterviewIntensityValue;
   kind: RecapJobKind;
   label: string;
   leagueId: string | null;
   leagueName: string | null;
+  loserInterviewPersonalityType?: InterviewPersonalityType | null;
   matchId: string | null;
   season: number | null;
   timeZone: string | null;
+  winnerInterviewPersonalityType?: InterviewPersonalityType | null;
 };
 
 type GameDayRecapWriterPayload = {
@@ -353,6 +369,7 @@ type GameDayRecapPromptTeam = {
   offStrategy: string | null;
   ratingLabels: Record<string, string>;
   ratingTotal: number | null;
+  ratingValues?: Partial<Record<TeamRatingKey, number>>;
   recentAverageMargin: number | null;
   recentSignalFlags: string[];
   record: TeamSeasonContextPromptField;
@@ -360,6 +377,7 @@ type GameDayRecapPromptTeam = {
   score: number;
   streak: TeamSeasonContextPromptField;
   streakEnteringGame: TeamSeasonContextPromptField;
+  turnovers: number | null;
   topPlayers: Array<{
     assists: number;
     blocks: number;
@@ -388,6 +406,71 @@ type GameDayRecapFactStorePlayerLeader = {
 
 type GameDayRecapFactStoreTeam = GameDayRecapPromptTeam & {
   rawRatings: BBApiBoxScoreTeam["ratings"] | null;
+};
+
+type GameDayRecapRatingAttackContext = {
+  attackLabel: string;
+  defenseKey: "insideDefense" | "outsideDefense";
+  defenseLabel: string;
+  scoringKey: "insideScoring" | "outsideScoring";
+};
+
+type GameDayRecapRatingMatchupRelevance =
+  | "inside_attack"
+  | "inside_defense"
+  | "neutral_attack"
+  | "offensive_flow_turnovers"
+  | "outside_attack"
+  | "outside_defense"
+  | "rebounding"
+  | "same_category";
+
+type GameDayRecapRatingFactValue = {
+  key: TeamRatingKey;
+  label: string;
+  value: number;
+};
+
+type GameDayRecapTeamRatingSnapshot = {
+  ratingLabels: Record<string, string>;
+  ratingTotal: number | null;
+  ratings: Partial<Record<TeamRatingKey, GameDayRecapRatingFactValue>>;
+  teamTalentTotal: number | null;
+  turnovers: number | null;
+};
+
+type GameDayRecapRatingComparisonFact = {
+  differential: number;
+  left: {
+    label: string;
+    ratingKey: TeamRatingKey;
+    teamName: string;
+    teamSide: "away" | "home";
+    value: number;
+  };
+  relevance: GameDayRecapRatingMatchupRelevance;
+  right: {
+    label: string;
+    ratingKey: TeamRatingKey;
+    teamName: string;
+    teamSide: "away" | "home";
+    value: number;
+  };
+  summary: string;
+};
+
+type GameDayRecapTeamRatingFacts = {
+  away: GameDayRecapTeamRatingSnapshot;
+  comparisons: GameDayRecapRatingComparisonFact[];
+  home: GameDayRecapTeamRatingSnapshot;
+};
+
+type GameDayRecapTeamTalentFacts = {
+  awayTotal: number | null;
+  differentialFromHomePerspective: number | null;
+  homeTotal: number | null;
+  leaderSide: "away" | "home" | "tie" | null;
+  summary: string | null;
 };
 
 type GameDayRecapWinnerFacts = {
@@ -424,6 +507,7 @@ type GameDayRecapGameFactStore = {
     rebounds: GameDayRecapFactStorePlayerLeader | null;
   };
   postgameInterviewCandidate?: GameDayRecapPromptInterviewCandidate | null;
+  postgameInterviewCandidates?: GameDayRecapPromptInterviewCandidate[] | null;
   quarterFacts: GameDayRecapPromptQuarterFacts;
   quarterScores: {
     away: number[];
@@ -433,6 +517,8 @@ type GameDayRecapGameFactStore = {
   rotationSummaries: string[];
   seriesContext?: GameDayRecapSeriesContext;
   standingsContext: string[];
+  teamRatingFacts: GameDayRecapTeamRatingFacts;
+  teamTalent: GameDayRecapTeamTalentFacts;
   teams: {
     away: GameDayRecapFactStoreTeam;
     home: GameDayRecapFactStoreTeam;
@@ -446,13 +532,32 @@ type GameDayRecapFactStore = {
   request: GameDayRecapRequestFacts;
 };
 
+type GameDayRecapFullSlatePolishMode = "always" | "auto" | "off";
 type GameDayRecapRuntimeConfig = {
+  contextConcurrency: number;
   enforceBannedStylePhrases: boolean;
+  fullSlatePolishMode: GameDayRecapFullSlatePolishMode;
+  interviewConcurrency: number;
   interviewPersonalityMode: InterviewPersonalityMode;
+  judgeConcurrency: number;
+  polishConcurrency: number;
 };
 
 type GameDayRecapPromptPayload = GameDayRecapWriterPayload & {
   factStore: GameDayRecapFactStore;
+};
+
+type RequestedInterviewPersonalityOverrides = {
+  loserInterviewPersonalityType?: InterviewPersonalityType | null;
+  winnerInterviewPersonalityType?: InterviewPersonalityType | null;
+};
+
+type BoundedConcurrencyLimiter = <T>(task: () => Promise<T>) => Promise<T>;
+
+type GameDayRecapGenerationConcurrency = {
+  interviewLimiter: BoundedConcurrencyLimiter;
+  judgeLimiter: BoundedConcurrencyLimiter;
+  polishLimiter: BoundedConcurrencyLimiter;
 };
 
 export type SlateGame = {
@@ -553,7 +658,9 @@ type GameDayRecapSemanticValidationIssueKind =
   | "unsupported_interview_claim"
   | "unsupported_lead_change_claim"
   | "unsupported_scoring_context"
+  | "unsupported_run_framing"
   | "unsupported_run_claim"
+  | "unsupported_tactic_contrast"
   | "wrong_quarter_winner";
 type GameDayRecapSemanticValidationIssueSalvage =
   | "drop_only"
@@ -648,6 +755,25 @@ type GameDayRecapResultPostgameInterview = {
   teamName: string;
   teamSide: "away" | "home";
   title: string;
+};
+
+type GameDayRecapPostgameInterviewDiagnostic = {
+  details: string[];
+  reason: string | null;
+  side: "loser" | "winner";
+  status:
+    | "generated"
+    | "missing_candidate"
+    | "skipped"
+    | "suspect"
+    | "unavailable";
+};
+
+type GuaranteedPostgameInterviewResult = {
+  details: string[];
+  interview: GameDayRecapResultPostgameInterview;
+  reason: string | null;
+  status: "generated" | "suspect";
 };
 
 type GameDayRecapNormalizationWarning = {
@@ -753,7 +879,9 @@ class GameDayRecapJudgeContractError extends Error {
   readonly issues: GameDayRecapJudgeContractIssue[];
 
   constructor(issues: GameDayRecapJudgeContractIssue[]) {
-    super("Game day recap judge result did not satisfy the expected sentence coverage contract.");
+    super(
+      "Game day recap judge result did not satisfy the expected sentence coverage contract.",
+    );
     this.name = "GameDayRecapJudgeContractError";
     this.issues = issues;
   }
@@ -845,9 +973,10 @@ type GameDayRecapJudgeSlotId =
   | "slot4"
   | "slot5";
 
-type GameDayRecapJudgeSentenceChunkEntry = GameDayRecapJudgeSentenceInventoryEntry & {
-  slotId: GameDayRecapJudgeSlotId;
-};
+type GameDayRecapJudgeSentenceChunkEntry =
+  GameDayRecapJudgeSentenceInventoryEntry & {
+    slotId: GameDayRecapJudgeSlotId;
+  };
 
 type GameDayRecapJudgeSentenceChunk = {
   candidateIndex: number;
@@ -881,6 +1010,7 @@ type GameDayRecapJudgeGameFactPacket = {
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   playerLeaders: GameDayRecapGameFactStore["playerLeaders"];
   postgameInterviewCandidate: GameDayRecapPromptInterviewCandidate | null;
+  postgameInterviewCandidates: GameDayRecapPromptInterviewCandidate[] | null;
   quarterFacts: GameDayRecapPromptQuarterFacts;
   quarterScores: {
     away: number[];
@@ -890,9 +1020,29 @@ type GameDayRecapJudgeGameFactPacket = {
   rotationSummaries: string[];
   seriesContext: GameDayRecapSeriesContext | null;
   standingsContext: string[];
+  teamRatingFacts: GameDayRecapTeamRatingFacts;
+  teamTalent: GameDayRecapTeamTalentFacts;
   teams: {
-    away: Pick<GameDayRecapFactStoreTeam, "name" | "score" | "topPlayers">;
-    home: Pick<GameDayRecapFactStoreTeam, "name" | "score" | "topPlayers">;
+    away: Pick<
+      GameDayRecapFactStoreTeam,
+      | "name"
+      | "score"
+      | "topPlayers"
+      | "turnovers"
+      | "ratingLabels"
+      | "ratingTotal"
+      | "ratingValues"
+    >;
+    home: Pick<
+      GameDayRecapFactStoreTeam,
+      | "name"
+      | "score"
+      | "topPlayers"
+      | "turnovers"
+      | "ratingLabels"
+      | "ratingTotal"
+      | "ratingValues"
+    >;
   };
   winner: GameDayRecapWinnerFacts;
 };
@@ -1033,6 +1183,16 @@ const GAME_DAY_RECAP_RETRY_PREMIUM_MODEL_ENV_NAME =
 const GAME_DAY_RECAP_JUDGE_MODEL_ENV_NAME = "GAME_DAY_RECAP_JUDGE_MODEL_ID";
 const GAME_DAY_RECAP_JUDGE_PREMIUM_MODEL_ENV_NAME =
   "GAME_DAY_RECAP_JUDGE_MODEL_ID_PREMIUM";
+const GAME_DAY_RECAP_CONTEXT_CONCURRENCY_ENV_NAME =
+  "GAME_DAY_RECAP_CONTEXT_CONCURRENCY";
+const GAME_DAY_RECAP_JUDGE_CONCURRENCY_ENV_NAME =
+  "GAME_DAY_RECAP_JUDGE_CONCURRENCY";
+const GAME_DAY_RECAP_POLISH_CONCURRENCY_ENV_NAME =
+  "GAME_DAY_RECAP_POLISH_CONCURRENCY";
+const GAME_DAY_RECAP_INTERVIEW_CONCURRENCY_ENV_NAME =
+  "GAME_DAY_RECAP_INTERVIEW_CONCURRENCY";
+const GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE_ENV_NAME =
+  "GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE";
 const GAME_DAY_RECAP_DECISIVE_QUARTER_MARGIN = 8;
 const PREMIUM_RECAP_CANDIDATE_COUNT = 3;
 const TERMINAL_RECAP_STATUSES = new Set<GameDayRecapStatus>([
@@ -1105,8 +1265,13 @@ const KNOWN_RECAP_MODEL_PRICING = [
   },
 ] as const;
 const DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG: GameDayRecapRuntimeConfig = {
+  contextConcurrency: 4,
   enforceBannedStylePhrases: false,
+  fullSlatePolishMode: "auto",
+  interviewConcurrency: 2,
   interviewPersonalityMode: "random",
+  judgeConcurrency: 4,
+  polishConcurrency: 2,
 };
 const COMEBACK_SUMMARY_THRESHOLD = 8;
 const MIN_REMAINING_MS_FOR_STYLE_POLISH = 90_000;
@@ -1281,6 +1446,7 @@ const GAME_DAY_RECAP_INFO_EVENTS = new Set([
   "submit.skipped_active_job",
   "submit.execution.start",
   "submit.execution.succeeded",
+  "process.stage_timing",
   "process.completed",
 ]);
 
@@ -1332,7 +1498,10 @@ function toBedrockStructuredOutputSchema(
   return Object.fromEntries(
     Object.entries(record)
       .filter(([key]) => BEDROCK_STRUCTURED_OUTPUT_SCHEMA_KEYS.has(key))
-      .map(([key, value]) => [key, toBedrockStructuredOutputSchema(value, key)]),
+      .map(([key, value]) => [
+        key,
+        toBedrockStructuredOutputSchema(value, key),
+      ]),
   );
 }
 
@@ -1392,7 +1561,9 @@ export async function submitGameDayRecap(
     env: GraphqlEnv;
     gameDate: string;
     identity: unknown;
+    interviewIntensity?: RecapInterviewIntensityValue | null;
     leagueId: string;
+    modelJudgeEnabled?: boolean | null;
     qualityTier?: RecapQualityTier | null;
     stateMachineArn: string;
   },
@@ -1422,9 +1593,15 @@ export async function submitGameDayRecap(
   const request = normalizeGameDayRecapRequest({
     approach: args.approach ?? undefined,
     gameDate: args.gameDate,
+    interviewIntensity: args.interviewIntensity ?? undefined,
     leagueId: args.leagueId,
+    modelJudgeEnabled: args.modelJudgeEnabled ?? undefined,
     qualityTier: args.qualityTier ?? undefined,
   });
+  const modelJudgeEnabled = request.modelJudgeEnabled === true;
+  const interviewIntensity = normalizeRecapInterviewIntensity(
+    request.interviewIntensity,
+  );
   const qualityTier =
     request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
   const generationApproach =
@@ -1434,6 +1611,8 @@ export async function submitGameDayRecap(
     request.gameDate,
     generationApproach,
     request.qualityTier ?? null,
+    modelJudgeEnabled,
+    interviewIntensity,
   );
   const existing = await deps.getGameDayRecap(args.env, userId, targetKey);
 
@@ -1442,7 +1621,9 @@ export async function submitGameDayRecap(
     existingStatus: existing?.status ?? null,
     gameDate: request.gameDate,
     generationApproach,
+    interviewIntensity,
     leagueId: request.leagueId,
+    modelJudgeEnabled,
     targetKey,
     userId,
   });
@@ -1491,7 +1672,9 @@ export async function submitGameDayRecap(
     requestJson: {
       approach: generationApproach,
       gameDate: request.gameDate,
+      interviewIntensity,
       leagueId: request.leagueId,
+      modelJudgeEnabled,
       mode: "FULL_SLATE",
       qualityTier,
     },
@@ -1518,7 +1701,9 @@ export async function submitGameDayRecap(
       ),
       {
         kind: "LEAGUE_DATE",
+        interviewIntensity,
         modelId,
+        modelJudgeEnabled,
         qualityTier,
         requestedAt,
         targetKey,
@@ -1562,7 +1747,9 @@ export async function submitLeagueGameDayRecap(
     env: GraphqlEnv;
     gameDayNumber: number;
     identity: unknown;
+    interviewIntensity?: RecapInterviewIntensityValue | null;
     leagueId: string;
+    modelJudgeEnabled?: boolean | null;
     qualityTier?: RecapQualityTier | null;
     stateMachineArn: string;
     season?: number | null;
@@ -1587,10 +1774,16 @@ export async function submitLeagueGameDayRecap(
   const request = normalizeLeagueGameDayRecapRequest({
     approach: args.approach ?? undefined,
     gameDayNumber: args.gameDayNumber,
+    interviewIntensity: args.interviewIntensity ?? undefined,
     leagueId: args.leagueId,
+    modelJudgeEnabled: args.modelJudgeEnabled ?? undefined,
     qualityTier: args.qualityTier ?? undefined,
     season: args.season ?? null,
   });
+  const modelJudgeEnabled = request.modelJudgeEnabled === true;
+  const interviewIntensity = normalizeRecapInterviewIntensity(
+    request.interviewIntensity,
+  );
   const qualityTier =
     request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
   const generationApproach =
@@ -1601,6 +1794,8 @@ export async function submitLeagueGameDayRecap(
     request.season,
     generationApproach,
     request.qualityTier ?? null,
+    modelJudgeEnabled,
+    interviewIntensity,
   );
   const existing = await deps.getLeagueGameDayRecap(
     args.env,
@@ -1635,7 +1830,9 @@ export async function submitLeagueGameDayRecap(
     requestJson: {
       approach: generationApproach,
       gameDayNumber: request.gameDayNumber,
+      interviewIntensity,
       leagueId: request.leagueId,
+      modelJudgeEnabled,
       mode: "LEAGUE_GAME_DAY",
       qualityTier,
       season: request.season,
@@ -1658,7 +1855,9 @@ export async function submitLeagueGameDayRecap(
       ),
       {
         kind: "LEAGUE_GAME_DAY",
+        interviewIntensity,
         modelId,
+        modelJudgeEnabled,
         qualityTier,
         requestedAt,
         targetKey,
@@ -1689,9 +1888,13 @@ export async function submitSingleGameSummary(
     approach?: RecapGenerationApproachValue | null;
     env: GraphqlEnv;
     identity: unknown;
+    interviewIntensity?: RecapInterviewIntensityValue | null;
+    loserInterviewPersonalityType?: InterviewPersonalityType | null;
     matchId: string;
+    modelJudgeEnabled?: boolean | null;
     qualityTier?: RecapQualityTier | null;
     stateMachineArn: string;
+    winnerInterviewPersonalityType?: InterviewPersonalityType | null;
   },
   dependencies: SubmitDependencyOverrides = defaultSubmitDependencies,
 ): Promise<{ executionArn: string | null; targetKey: string }> {
@@ -1712,9 +1915,19 @@ export async function submitSingleGameSummary(
   });
   const request = normalizeSingleGameSummaryRequest({
     approach: args.approach ?? undefined,
+    interviewIntensity: args.interviewIntensity ?? undefined,
+    loserInterviewPersonalityType:
+      args.loserInterviewPersonalityType ?? undefined,
     matchId: args.matchId,
+    modelJudgeEnabled: args.modelJudgeEnabled ?? undefined,
     qualityTier: args.qualityTier ?? undefined,
+    winnerInterviewPersonalityType:
+      args.winnerInterviewPersonalityType ?? undefined,
   });
+  const modelJudgeEnabled = request.modelJudgeEnabled === true;
+  const interviewIntensity = normalizeRecapInterviewIntensity(
+    request.interviewIntensity,
+  );
   const qualityTier =
     request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
   const generationApproach =
@@ -1723,6 +1936,10 @@ export async function submitSingleGameSummary(
     request.matchId,
     generationApproach,
     request.qualityTier ?? null,
+    modelJudgeEnabled,
+    interviewIntensity,
+    request.winnerInterviewPersonalityType ?? null,
+    request.loserInterviewPersonalityType ?? null,
   );
   const existing = await deps.getSingleGameSummary(args.env, userId, targetKey);
   if (existing && !TERMINAL_RECAP_STATUSES.has(existing.status)) {
@@ -1753,9 +1970,23 @@ export async function submitSingleGameSummary(
     promptVersion: resolveGameDayRecapPromptVersion(generationApproach),
     requestJson: {
       approach: generationApproach,
+      interviewIntensity,
+      ...(request.loserInterviewPersonalityType
+        ? {
+            loserInterviewPersonalityType:
+              request.loserInterviewPersonalityType,
+          }
+        : {}),
       matchId: request.matchId,
+      modelJudgeEnabled,
       mode: "SINGLE_GAME",
       qualityTier,
+      ...(request.winnerInterviewPersonalityType
+        ? {
+            winnerInterviewPersonalityType:
+              request.winnerInterviewPersonalityType,
+          }
+        : {}),
     },
     requestedAt,
     resultJson: null,
@@ -1775,7 +2006,9 @@ export async function submitSingleGameSummary(
       ),
       {
         kind: "SINGLE_GAME",
+        interviewIntensity,
         modelId,
+        modelJudgeEnabled,
         qualityTier,
         requestedAt,
         targetKey,
@@ -1879,7 +2112,9 @@ export async function submitLeagueGameDayPerformances(
         `${userId}:${targetKey}:${requestedAt}`,
       ),
       {
+        interviewIntensity: RecapInterviewIntensity.PG13,
         kind: "LEAGUE_GAME_DAY_PERFORMANCES",
+        modelJudgeEnabled: false,
         qualityTier: "standard",
         requestedAt,
         targetKey,
@@ -1931,7 +2166,9 @@ export async function processGameDayRecap(
   const runtimeConfig = resolveGameDayRecapRuntimeConfig(args.env);
   const modelId = runtimeModels.writerModelId;
   logGameDayRecapInfo("process.message.received", {
+    interviewIntensity: message.interviewIntensity,
     modelId,
+    modelJudgeEnabled: message.modelJudgeEnabled,
     qualityTier: message.qualityTier,
     requestedAt: message.requestedAt,
     targetKey: message.targetKey,
@@ -1951,6 +2188,9 @@ export async function processGameDayRecap(
   logGameDayRecapInfo("process.recap.loaded", {
     completedAt: recap.completedAt,
     generationApproach: resolveRecapGenerationApproach(recap.requestJson),
+    interviewIntensity: normalizeRecapInterviewIntensity(
+      recap.requestJson?.interviewIntensity,
+    ),
     requestedAt: recap.requestedAt,
     status: recap.status,
     targetKey: recap.targetKey,
@@ -2048,6 +2288,7 @@ export async function processGameDayRecap(
     const builtPromptPayload = await buildGameDayRecapPromptPayload({
       bb,
       connection,
+      contextConcurrency: runtimeConfig.contextConcurrency,
       enforceCompletedSlateCoverage: true,
       fetchPublicMatchPlayByPlay: dependencies.fetchPublicMatchPlayByPlay,
       now: deps.now(),
@@ -2056,6 +2297,9 @@ export async function processGameDayRecap(
         gameDate: recap.gameDate,
         gameDayNumber: null,
         generationApproach,
+        interviewIntensity: normalizeRecapInterviewIntensity(
+          recap.requestJson?.interviewIntensity,
+        ),
         kind: "LEAGUE_DATE",
         label: `${standings.league?.name ?? recap.leagueId} ${recap.gameDate}`,
         leagueId: recap.leagueId,
@@ -2126,14 +2370,13 @@ export async function processGameDayRecap(
             stage: "retry_writer",
           })
         : null;
-    judgeProvider =
-      runtimeModels.judgeModelId
-        ? deps.createProvider({
-            modelId: runtimeModels.judgeModelId,
-            region: args.region,
-            stage: "judge",
-          })
-        : null;
+    judgeProvider = message.modelJudgeEnabled && runtimeModels.judgeModelId
+      ? deps.createProvider({
+          modelId: runtimeModels.judgeModelId,
+          region: args.region,
+          stage: "judge",
+        })
+      : null;
     logGameDayRecapInfo("process.provider.ready", {
       modelId: writerProvider.modelId,
       providerName: writerProvider.providerName,
@@ -2375,7 +2618,9 @@ function buildQueuedRecapWorkflowFailureMessage(args: {
   error: unknown;
   kind: RecapQueueMessage["kind"];
 }): string {
-  const { causeMessage, errorName } = parseQueuedRecapWorkflowFailure(args.error);
+  const { causeMessage, errorName } = parseQueuedRecapWorkflowFailure(
+    args.error,
+  );
   const combinedText = [errorName, causeMessage].filter(Boolean).join(" ");
   const timedOut = /\b(?:states\.timeout|task timed out|timed out)\b/i.test(
     combinedText,
@@ -2538,6 +2783,7 @@ export async function processLeagueGameDayRecap(
     const builtPromptPayload = await buildGameDayRecapPromptPayload({
       bb,
       connection,
+      contextConcurrency: runtimeConfig.contextConcurrency,
       enforceCompletedSlateCoverage: true,
       fetchPublicMatchPlayByPlay: dependencies.fetchPublicMatchPlayByPlay,
       now: deps.now(),
@@ -2546,6 +2792,9 @@ export async function processLeagueGameDayRecap(
         gameDate: null,
         gameDayNumber: recap.gameDayNumber,
         generationApproach,
+        interviewIntensity: normalizeRecapInterviewIntensity(
+          recap.requestJson?.interviewIntensity,
+        ),
         kind: "LEAGUE_GAME_DAY",
         label: `${standings.league?.name ?? recap.leagueId} game day ${recap.gameDayNumber}`,
         leagueId: recap.leagueId,
@@ -2600,14 +2849,13 @@ export async function processLeagueGameDayRecap(
             stage: "retry_writer",
           })
         : null;
-    judgeProvider =
-      runtimeModels.judgeModelId
-        ? deps.createProvider({
-            modelId: runtimeModels.judgeModelId,
-            region: args.region,
-            stage: "judge",
-          })
-        : null;
+    judgeProvider = message.modelJudgeEnabled && runtimeModels.judgeModelId
+      ? deps.createProvider({
+          modelId: runtimeModels.judgeModelId,
+          region: args.region,
+          stage: "judge",
+        })
+      : null;
     const generatedRecap = await generateResolvedGameDayRecap({
       remainingTimeInMillis: args.remainingTimeInMillis,
       runtimeConfig,
@@ -2951,12 +3199,37 @@ export async function processSingleGameSummary(
       connection,
       fetchPublicMatchPlayByPlay: dependencies.fetchPublicMatchPlayByPlay,
       generationApproach,
+      interviewIntensity: normalizeRecapInterviewIntensity(
+        summary.requestJson?.interviewIntensity,
+      ),
+      loserInterviewPersonalityType: isInterviewPersonalityType(
+        summary.requestJson?.loserInterviewPersonalityType,
+      )
+        ? summary.requestJson.loserInterviewPersonalityType
+        : null,
       matchId: summary.matchId,
+      winnerInterviewPersonalityType: isInterviewPersonalityType(
+        summary.requestJson?.winnerInterviewPersonalityType,
+      )
+        ? summary.requestJson.winnerInterviewPersonalityType
+        : null,
     });
     const promptFactStore = await withResolvedInterviewPersonalities({
       env: args.env,
       factStore: builtPromptPayload.factStore,
       interviewPersonalityMode: runtimeConfig.interviewPersonalityMode,
+      requestedOverrides: {
+        loserInterviewPersonalityType: isInterviewPersonalityType(
+          summary.requestJson?.loserInterviewPersonalityType,
+        )
+          ? summary.requestJson.loserInterviewPersonalityType
+          : null,
+        winnerInterviewPersonalityType: isInterviewPersonalityType(
+          summary.requestJson?.winnerInterviewPersonalityType,
+        )
+          ? summary.requestJson.winnerInterviewPersonalityType
+          : null,
+      },
       userId: summary.userId,
     });
     const promptPayload = buildGameDayRecapWriterPayloadFromFactStore({
@@ -2990,14 +3263,13 @@ export async function processSingleGameSummary(
             stage: "retry_writer",
           })
         : null;
-    judgeProvider =
-      runtimeModels.judgeModelId
-        ? deps.createProvider({
-            modelId: runtimeModels.judgeModelId,
-            region: args.region,
-            stage: "judge",
-          })
-        : null;
+    judgeProvider = message.modelJudgeEnabled && runtimeModels.judgeModelId
+      ? deps.createProvider({
+          modelId: runtimeModels.judgeModelId,
+          region: args.region,
+          stage: "judge",
+        })
+      : null;
     const generatedRecap = await generateResolvedGameDayRecap({
       remainingTimeInMillis: args.remainingTimeInMillis,
       runtimeConfig,
@@ -3058,7 +3330,13 @@ function resolveRecapMessage(args: {
   messageBody?: string;
 }): RecapQueueMessage {
   if (args.message) {
-    return args.message;
+    return {
+      ...args.message,
+      interviewIntensity: normalizeRecapInterviewIntensity(
+        args.message.interviewIntensity,
+      ),
+      modelJudgeEnabled: args.message.modelJudgeEnabled === true,
+    };
   }
   if (!args.messageBody) {
     throw new Error("Game day recap payload was not provided.");
@@ -3251,14 +3529,53 @@ function resolveGameDayRecapRuntimeConfig(
 ): GameDayRecapRuntimeConfig {
   return {
     ...DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG,
+    contextConcurrency: parsePositiveIntegerRuntimeEnv(
+      env[GAME_DAY_RECAP_CONTEXT_CONCURRENCY_ENV_NAME],
+      DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG.contextConcurrency,
+    ),
     enforceBannedStylePhrases:
       (env.GAME_DAY_RECAP_ENFORCE_BANNED_STYLE_PHRASES ?? "")
         .trim()
         .toLowerCase() === "true",
+    fullSlatePolishMode: normalizeFullSlatePolishModeRuntimeEnv(
+      env[GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE_ENV_NAME],
+    ),
+    interviewConcurrency: parsePositiveIntegerRuntimeEnv(
+      env[GAME_DAY_RECAP_INTERVIEW_CONCURRENCY_ENV_NAME],
+      DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG.interviewConcurrency,
+    ),
     interviewPersonalityMode: normalizeInterviewPersonalityMode(
       env.GAME_DAY_RECAP_INTERVIEW_PERSONALITY_MODE ?? null,
     ),
+    judgeConcurrency: parsePositiveIntegerRuntimeEnv(
+      env[GAME_DAY_RECAP_JUDGE_CONCURRENCY_ENV_NAME],
+      DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG.judgeConcurrency,
+    ),
+    polishConcurrency: parsePositiveIntegerRuntimeEnv(
+      env[GAME_DAY_RECAP_POLISH_CONCURRENCY_ENV_NAME],
+      DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG.polishConcurrency,
+    ),
   };
+}
+
+function parsePositiveIntegerRuntimeEnv(
+  value: string | undefined,
+  fallback: number,
+): number {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeFullSlatePolishModeRuntimeEnv(
+  value: string | undefined,
+): GameDayRecapFullSlatePolishMode {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "always" || normalized === "off" ? normalized : "auto";
 }
 
 export function resolveSeasonForDate(
@@ -3588,7 +3905,8 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "Use the supplied final team scores and winner as the source of truth for every outcome claim.",
     "If a game has only four periods, do not mention overtime. If it has more than four periods, mention overtime only when it helps the story and keep the count accurate.",
     "If a game includes requiredContextSentences, include each supplied requiredContextSentence exactly once in the writeup and keep the wording intact.",
-    "If a game includes effortSummary or gameDayPrepSummaries, use the supplied requiredContextSentences rather than inventing a paraphrase or citing raw effortDelta or GDP codes.",
+    "If a game includes effortSummary or gameDayPrepSummaries, use the supplied requiredContextSentences as the only effort and game-day-prep copy rather than inventing a paraphrase or citing raw effortDelta or GDP codes.",
+    "Do not write a separate tactical or GDP setup sentence that repeats a requiredContextSentence in different words.",
     "If a game includes rotationSummaries, fold that short-handed or foul-trouble context into the writeup in natural language without guessing why a player sat.",
     "Only call a game high-scoring or a shootout when gameScoringContext is high_scoring_shootout; only call it low-scoring or a defensive grind when gameScoringContext is low_scoring_grind.",
     "If a one-possession game includes playByPlayFacts.endingFacts, lead with that decisive ending in the headline or the opening sentence instead of burying it under broader context.",
@@ -3599,11 +3917,18 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "If a game includes playByPlayFacts.secondaryRun, you may mention it when it meaningfully sharpens the story, but do not force it in.",
     "If a game includes playByPlayFacts and its ending facts mark a buzzerbeater, use the word buzzerbeater in the headline or opening sentence.",
     "If a game includes seriesContext.summaryLine, put the series state in the game headline and do not repeat the series-score sentence in the writeup.",
+    "For team-rating or team-talent claims, use only game.teamRatingFacts, game.teamTalent, and factsLibrary.matchupEdgeFacts.supported; never invent rating edges.",
+    "Use natural phrases such as team talent or talent edge; never write raw ratings, BBStats, or numeric rating totals in public recap prose.",
     "If a game is decided by three points or fewer but the supplied play-by-play does not identify a final-possession detail, keep the finish grounded and do not invent a last shot, last miss, or last turnover.",
     "If a game includes playByPlayFacts, use only those supplied facts and never infer unsupplied possession-by-possession detail.",
     "Only mention a run when the supplied play-by-play facts support it, and include the supplied timing anchors when you do.",
     "If mentioning more than one run, use only non-overlapping run windows from the supplied facts.",
+    "Use game-high only for a global game leader supplied by playerLeaders. Use team-high or led [team] for team-scoped leaders from teams[].topPlayers.",
     "Only mention lead-change counts, rapid back-and-forth bursts, or comeback-to-the-lead claims when the supplied play-by-play facts support them, and keep the counts and timing exact.",
+    "Once the writeup moves past the lede, keep the game flow in chronological order.",
+    "Use comeback language for a cited run only when that team started the run trailing; if it started tied or ahead, describe the run neutrally as building the lead or staying in front.",
+    "Reserve contrasting or opposite offense language for materially different offensive families; do not call same-family pairings such as Motion and Princeton contrasting.",
+    "When a late go-ahead score and immediate lead-extension free throws belong to the same closing sequence, condense them into one closing-possession sentence instead of listing each free throw separately.",
     "In playoff games, do not mention regular-season records or any winning or losing streaks.",
     "Keep each writeup flowing like sports-reporter prose rather than a checklist, bullet list, or stack of disconnected facts.",
     "Use connective, polished sports-desk prose with varied sentence length instead of stacking short note-like fact sentences.",
@@ -3635,6 +3960,7 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "Favor smooth, transitional sentences over stacked score-note fragments.",
     "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
     "When requiredContextSentences are present for a game, include each one exactly once in the writeup.",
+    "When requiredContextSentences cover effort or game-day prep, do not add a second paraphrase of that same prep or pace read.",
     "Never cite the raw effortDelta value or raw GDP codes.",
     "When rotationSummaries are present for a game, mention that short-handed or foul-trouble context naturally and do not invent reasons such as injuries, load management, or discipline beyond the provided note.",
     "When playByPlayFacts.endingFacts are present for a close game, treat those structured ending facts as the preferred source for the lede.",
@@ -3647,8 +3973,13 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "When playByPlayFacts are present for a game, use them only as provided and do not embellish them into unsupplied sequences.",
     "When playByPlayFacts.bestCompetitiveSwingRun or playByPlayFacts.leadChangeFacts are present, use them as the source of truth for runs and back-and-forth claims.",
     "Only mention runs when the supplied play-by-play facts support them, and include the supplied timing anchors.",
+    "Keep the game flow in time order after the opener; do not jump backward in the timeline without a clear transition.",
+    "Use comeback phrasing for a run only when that team actually started the run trailing.",
     "Do not mention overlapping run windows as separate game swings; if two supplied run facts overlap, keep the stronger primary run.",
+    "Use game-high only for a global game leader supplied by playerLeaders. Use team-high or led [team] for team-scoped leaders from teams[].topPlayers.",
     "Only mention lead-change counts, rapid bursts, or comeback-to-the-lead claims when the supplied play-by-play facts support them, and keep the counts and timing exact.",
+    "Reserve contrasting or opposite offense wording for materially different offensive families; do not call same-family pairings such as Motion and Princeton contrasting.",
+    "When a late go-ahead basket and immediate lead-extension free throws are part of the same sequence, summarize them as one closing possession.",
     "Do not include postgameInterview in this response.",
     "In playoff games, do not mention regular-season records or any winning or losing streaks.",
     "Outside playoff games, unqualified team record, streak, and recent-form fields describe the postgame state after the final result.",
@@ -3658,6 +3989,8 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "Use quarterFacts as the source of truth for period-by-period scoring. If a quarter is tied, do not say either team outscored, won, or took that quarter.",
     "Only use high-scoring/shootout or low-scoring/defensive-grind framing when gameScoringContext explicitly supports it.",
     "If you mention team ratings, use the supplied BuzzerBeater word labels rather than raw numeric scores.",
+    "For team-rating or team-talent claims, use only teamRatingFacts, teamTalent, and factsLibrary.matchupEdgeFacts.supported; never invent rating edges.",
+    "Use natural phrases such as team talent or talent edge; never write raw ratings, BBStats, or numeric rating totals in public recap prose.",
     "Do not restate the exact same winner-and-score outcome in a later sentence once the game result is already clear.",
     "Prefer concrete basketball detail over filler such as 'at a key juncture' or 'proved decisive'.",
     "Never call a one-game win or loss a streak.",
@@ -3756,7 +4089,12 @@ function buildGameDayRecapStylePolishBedrockRequest(args: {
                     "Keep playoff series-score language out of the writeup; that state belongs in the headline.",
                     "Keep the exact supplied primary run mention and timing anchors.",
                     "Keep every requiredContextSentence exactly once.",
+                    "Do not add a second paraphrase of a required effort, tactic, pace, or game-day-prep sentence.",
                     "Remove duplicate quarter or outcome restatements when they are redundant.",
+                    "Keep the timeline in chronological order once the writeup moves into game flow.",
+                    "Use comeback language only when the cited run began with that team trailing.",
+                    "Reserve contrasting or opposite offense language for materially different offensive families.",
+                    "Condense same-sequence go-ahead scores and immediate lead-extension free throws into one closing-possession beat.",
                     "Keep or create paragraph breaks between setup, chronological game flow, and closing analysis.",
                     "Vary sentence openings and sentence length.",
                     "Use cleaner transitions and more connected prose.",
@@ -3764,6 +4102,7 @@ function buildGameDayRecapStylePolishBedrockRequest(args: {
                   restrictions: [
                     "Do not change the game result.",
                     "Do not add or remove any supported factual claim unless you are removing a redundant repetition.",
+                    "Do not split the same late-game closing possession into multiple micro-event sentences.",
                     "Do not introduce any postgameInterview content.",
                     "Return only the rewritten writeup.",
                   ],
@@ -3785,8 +4124,7 @@ function buildGameDayRecapStylePolishBedrockRequest(args: {
       textFormat: {
         structure: {
           jsonSchema: {
-            description:
-              "Style-only rewrite of one basketball recap writeup.",
+            description: "Style-only rewrite of one basketball recap writeup.",
             name: "game_day_recap_style_polish",
             schema: JSON.stringify(
               toBedrockStructuredOutputSchema(
@@ -3816,6 +4154,7 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
   modelId: string;
   payload: GameDayRecapPostgameInterviewRequestPayload;
 }) {
+  const interviewIntensity = args.payload.request.interviewIntensity;
   return {
     inferenceConfig: {
       maxTokens: 1400,
@@ -3829,26 +4168,37 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
               {
                 instructions: {
                   goals: [
-                    "Write a short grounded postgame interview for the supplied winning-team player.",
+                    "Write a short fact-grounded postgame interview for the supplied player.",
                     "Use one or two short Q&A exchanges.",
-                    "Keep the tone plausible, lightly stylized, and conversational.",
                     "Ground every answer only in the supplied candidate facts and game facts.",
                     "Write the title and every question in polished professional sportswriter tone.",
+                    "For a loser-perspective candidate, ask what went wrong, where the game turned, and what changes for the next game.",
                     "Let the supplied personality type shape only the player's answers, without changing the facts.",
+                    "Make the selected personality unmistakable in every player answer through cadence, rhythm, metaphor, and word choice.",
+                    "Push the player's answers far enough that the voice is obvious without any debug labels.",
+                    "Use the example sentence inside personalityGuidance as a style reference point, not as a fact to copy.",
                   ],
                   restrictions: [
+                    `Honor the requested interviewIntensity of ${interviewIntensity}.`,
                     "Use the exact supplied playerName, teamName, and teamSide.",
                     "Do not invent exact shot-order details, streak counts, locker-room scenes, or coach quotes.",
                     "Do not overstate garbage-time baskets as game-sealing moments unless the supplied ending facts support that.",
                     "Do not contradict the supplied writeup or game facts.",
                     "Do not let the player's personality spill into the title or the reporter questions.",
+                    "Do not flatten the player's answers into generic athlete-speak when a personality type is supplied.",
+                    "Keep any swagger, philosopher references, bar-like phrasing, and trash talk original rather than quoting recognizable lyrics or public lines verbatim.",
+                    "Do not copy the example sentence verbatim unless the supplied facts make that wording naturally fit.",
                     "Return only the postgameInterview object.",
                   ],
                 },
                 candidate: args.payload.candidate,
                 gameFacts: args.payload.gameFacts,
                 personalityGuidance: resolveInterviewPersonalityPrompt(
-                  args.payload.candidate.personalityType ?? "friendly",
+                  {
+                    intensity: interviewIntensity,
+                    personalityType:
+                      args.payload.candidate.personalityType ?? "friendly",
+                  },
                 ),
                 recapGame: args.payload.recapGame,
                 request: args.payload.request,
@@ -3882,12 +4232,17 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
     system: [
       {
         text: [
-          "You are writing a grounded, plausible postgame interview snippet for a basketball recap.",
+          "You are writing a fact-grounded postgame interview snippet for a basketball recap.",
           "Use only the supplied facts.",
-          "Keep the interview short, natural, and concrete.",
+          "Keep the interview short, concrete, and quotable.",
           "Write the title and questions in professional sportswriter tone.",
           "Use the supplied personality guidance only for the player's answers.",
+          "Make the selected personality obvious in every player answer through cadence, rhythm, metaphor, and word choice.",
+          "Let the requested interview intensity control how wild, cocky, funny, or hostile the player's answers become.",
           "Do not let the player's personality bleed into the title or reporter questions.",
+          "Do not flatten the answers into generic athlete-speak when a personality type is supplied.",
+          "Do not quote copyrighted lyrics or famous lines verbatim.",
+          "Treat any example sentence in personalityGuidance as style reference only, not text to copy.",
           "Return structured output only.",
         ].join(" "),
       },
@@ -3963,6 +4318,19 @@ function buildGameDayRecapJudgeGameFactStore(
     homeTeamName: game.teams.home.name,
     quarterScores: game.quarterScores,
   });
+  const teams = {
+    away: {
+      ...game.teams.away,
+      rawRatings: null,
+    },
+    home: {
+      ...game.teams.home,
+      rawRatings: null,
+    },
+  };
+  const teamRatingFacts =
+    game.teamRatingFacts ?? buildTeamRatingFactsForRecap(teams);
+  const teamTalent = game.teamTalent ?? buildTeamTalentFactsForRecap(teams);
 
   return {
     effortDelta: game.effortDelta,
@@ -3978,31 +4346,391 @@ function buildGameDayRecapJudgeGameFactStore(
     periodStates,
     playByPlayFacts: game.playByPlayFacts,
     playByPlaySummaryLines: game.playByPlaySummaryLines,
-    playerLeaders: {
-      assists: null,
-      bestAllAround: null,
-      points: null,
-      rebounds: null,
-    },
+    playerLeaders: buildGameDayRecapPromptPlayerLeaders(game),
     postgameInterviewCandidate: game.postgameInterviewCandidate ?? null,
+    postgameInterviewCandidates: game.postgameInterviewCandidates ?? null,
     quarterFacts: game.quarterFacts,
     quarterScores: game.quarterScores,
     requiredContextSentences: game.requiredContextSentences,
     rotationSummaries: game.rotationSummaries,
     ...(game.seriesContext ? { seriesContext: game.seriesContext } : {}),
     standingsContext: game.standingsContext,
-    teams: {
-      away: {
-        ...game.teams.away,
-        rawRatings: null,
-      },
-      home: {
-        ...game.teams.home,
-        rawRatings: null,
-      },
-    },
+    teamRatingFacts,
+    teamTalent,
+    teams,
     type: game.type,
     winner,
+  };
+}
+
+function buildTeamRatingFactsForRecap(args: {
+  away: Pick<
+    GameDayRecapFactStoreTeam,
+    | "name"
+    | "offStrategy"
+    | "ratingLabels"
+    | "ratingTotal"
+    | "ratingValues"
+    | "rawRatings"
+    | "turnovers"
+  >;
+  home: Pick<
+    GameDayRecapFactStoreTeam,
+    | "name"
+    | "offStrategy"
+    | "ratingLabels"
+    | "ratingTotal"
+    | "ratingValues"
+    | "rawRatings"
+    | "turnovers"
+  >;
+}): GameDayRecapTeamRatingFacts {
+  const awaySnapshot = buildTeamRatingSnapshotForRecap(args.away);
+  const homeSnapshot = buildTeamRatingSnapshotForRecap(args.home);
+  const sameCategoryComparisons = TEAM_RATING_KEYS.flatMap((key) =>
+    buildSameCategoryRatingComparison({
+      awaySnapshot,
+      awayTeamName: args.away.name,
+      homeSnapshot,
+      homeTeamName: args.home.name,
+      key,
+    }),
+  );
+  const crossMatchupComparisons = [
+    ...buildRatingAttackComparisonsForRecap({
+      attacker: args.away,
+      attackerSide: "away" as const,
+      defender: args.home,
+      defenderSide: "home" as const,
+    }),
+    ...buildRatingAttackComparisonsForRecap({
+      attacker: args.home,
+      attackerSide: "home" as const,
+      defender: args.away,
+      defenderSide: "away" as const,
+    }),
+  ];
+
+  return {
+    away: awaySnapshot,
+    comparisons: uniqueRatingComparisonFacts([
+      ...crossMatchupComparisons,
+      ...sameCategoryComparisons,
+    ]),
+    home: homeSnapshot,
+  };
+}
+
+function buildTeamTalentFactsForRecap(args: {
+  away: Pick<GameDayRecapFactStoreTeam, "name" | "ratingValues" | "rawRatings">;
+  home: Pick<GameDayRecapFactStoreTeam, "name" | "ratingValues" | "rawRatings">;
+}): GameDayRecapTeamTalentFacts {
+  const awayTotal = buildTeamTalentTotalForRecap(args.away);
+  const homeTotal = buildTeamTalentTotalForRecap(args.home);
+  const differentialFromHomePerspective =
+    awayTotal === null || homeTotal === null ? null : homeTotal - awayTotal;
+  const leaderSide =
+    awayTotal === null || homeTotal === null
+      ? null
+      : awayTotal === homeTotal
+        ? "tie"
+        : homeTotal > awayTotal
+          ? "home"
+          : "away";
+  const summary =
+    leaderSide === null
+      ? null
+      : leaderSide === "tie"
+        ? `${args.home.name} and ${args.away.name} looked evenly matched on team talent.`
+        : `${leaderSide === "home" ? args.home.name : args.away.name} seemed to have the team talent edge.`;
+
+  return {
+    awayTotal,
+    differentialFromHomePerspective,
+    homeTotal,
+    leaderSide,
+    summary,
+  };
+}
+
+function buildTeamRatingSnapshotForRecap(
+  team: Pick<
+    GameDayRecapFactStoreTeam,
+    "ratingLabels" | "ratingTotal" | "ratingValues" | "rawRatings" | "turnovers"
+  >,
+): GameDayRecapTeamRatingSnapshot {
+  const values = resolveTeamRatingValuesForRecap(team);
+  const ratings = Object.fromEntries(
+    TEAM_RATING_KEYS.flatMap((key) => {
+      const value = values[key];
+      if (!isFiniteRatingValue(value)) {
+        return [];
+      }
+      return [
+        [
+          key,
+          {
+            key,
+            label: formatRatingLabelForFact(team.ratingLabels, key, value),
+            value,
+          },
+        ],
+      ];
+    }),
+  ) as Partial<Record<TeamRatingKey, GameDayRecapRatingFactValue>>;
+
+  return {
+    ratingLabels: team.ratingLabels,
+    ratingTotal: team.ratingTotal,
+    ratings,
+    teamTalentTotal: buildTeamTalentTotalForRecap(team),
+    turnovers: team.turnovers,
+  };
+}
+
+function buildSameCategoryRatingComparison(args: {
+  awaySnapshot: GameDayRecapTeamRatingSnapshot;
+  awayTeamName: string;
+  homeSnapshot: GameDayRecapTeamRatingSnapshot;
+  homeTeamName: string;
+  key: TeamRatingKey;
+}): GameDayRecapRatingComparisonFact[] {
+  const awayRating = args.awaySnapshot.ratings[args.key];
+  const homeRating = args.homeSnapshot.ratings[args.key];
+  if (!awayRating || !homeRating || awayRating.value === homeRating.value) {
+    return [];
+  }
+
+  const awayIsStronger = awayRating.value > homeRating.value;
+  const leftRating = awayIsStronger ? awayRating : homeRating;
+  const rightRating = awayIsStronger ? homeRating : awayRating;
+  const leftTeamName = awayIsStronger ? args.awayTeamName : args.homeTeamName;
+  const rightTeamName = awayIsStronger ? args.homeTeamName : args.awayTeamName;
+  const leftTeamSide = awayIsStronger ? "away" : "home";
+  const rightTeamSide = awayIsStronger ? "home" : "away";
+  const label = FACT_LIBRARY_RATING_LABELS[args.key] ?? args.key;
+  const differential = roundToOneDecimal(leftRating.value - rightRating.value);
+
+  return [
+    {
+      differential,
+      left: {
+        label: leftRating.label,
+        ratingKey: args.key,
+        teamName: leftTeamName,
+        teamSide: leftTeamSide,
+        value: leftRating.value,
+      },
+      relevance: args.key === "rebounding" ? "rebounding" : "same_category",
+      right: {
+        label: rightRating.label,
+        ratingKey: args.key,
+        teamName: rightTeamName,
+        teamSide: rightTeamSide,
+        value: rightRating.value,
+      },
+      summary: `${leftTeamName} held the stronger ${label} rating (${leftRating.label} vs ${rightRating.label}).`,
+    },
+  ];
+}
+
+function buildRatingAttackComparisonsForRecap(args: {
+  attacker: Pick<
+    GameDayRecapFactStoreTeam,
+    "name" | "offStrategy" | "ratingLabels" | "ratingValues" | "rawRatings"
+  >;
+  attackerSide: "away" | "home";
+  defender: Pick<
+    GameDayRecapFactStoreTeam,
+    "name" | "ratingLabels" | "ratingValues" | "rawRatings"
+  >;
+  defenderSide: "away" | "home";
+}): GameDayRecapRatingComparisonFact[] {
+  return resolveRatingAttackContexts(args.attacker.offStrategy).flatMap(
+    (context) => {
+      const attackValue = resolveTeamRatingValueForRecap(
+        args.attacker,
+        context.scoringKey,
+      );
+      const defenseValue = resolveTeamRatingValueForRecap(
+        args.defender,
+        context.defenseKey,
+      );
+      if (
+        !isFiniteRatingValue(attackValue) ||
+        !isFiniteRatingValue(defenseValue)
+      ) {
+        return [];
+      }
+
+      const attackLabel = formatRatingLabelForFact(
+        args.attacker.ratingLabels,
+        context.scoringKey,
+        attackValue,
+      );
+      const defenseLabel = formatRatingLabelForFact(
+        args.defender.ratingLabels,
+        context.defenseKey,
+        defenseValue,
+      );
+      const defenseIsStronger = defenseValue >= attackValue;
+      const differential = roundToOneDecimal(
+        Math.abs(defenseValue - attackValue),
+      );
+      return [
+        {
+          differential,
+          left: defenseIsStronger
+            ? {
+                label: defenseLabel,
+                ratingKey: context.defenseKey,
+                teamName: args.defender.name,
+                teamSide: args.defenderSide,
+                value: defenseValue,
+              }
+            : {
+                label: attackLabel,
+                ratingKey: context.scoringKey,
+                teamName: args.attacker.name,
+                teamSide: args.attackerSide,
+                value: attackValue,
+              },
+          relevance:
+            context.scoringKey === "outsideScoring"
+              ? defenseIsStronger
+                ? "outside_defense"
+                : "outside_attack"
+              : defenseIsStronger
+                ? "inside_defense"
+                : "inside_attack",
+          right: defenseIsStronger
+            ? {
+                label: attackLabel,
+                ratingKey: context.scoringKey,
+                teamName: args.attacker.name,
+                teamSide: args.attackerSide,
+                value: attackValue,
+              }
+            : {
+                label: defenseLabel,
+                ratingKey: context.defenseKey,
+                teamName: args.defender.name,
+                teamSide: args.defenderSide,
+                value: defenseValue,
+              },
+          summary: defenseIsStronger
+            ? `${args.defender.name} had ${defenseLabel} ${context.defenseLabel} against ${attackLabel} ${context.attackLabel} from ${args.attacker.name}.`
+            : `${args.attacker.name} brought ${attackLabel} ${context.attackLabel} against ${defenseLabel} ${context.defenseLabel} from ${args.defender.name}.`,
+        },
+      ];
+    },
+  );
+}
+
+function uniqueRatingComparisonFacts(
+  comparisons: GameDayRecapRatingComparisonFact[],
+): GameDayRecapRatingComparisonFact[] {
+  const seen = new Set<string>();
+  return comparisons.filter((comparison) => {
+    const key = [
+      comparison.left.teamSide,
+      comparison.left.ratingKey,
+      comparison.right.teamSide,
+      comparison.right.ratingKey,
+      comparison.relevance,
+    ].join(":");
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildTeamTalentTotalForRecap(
+  team: Pick<GameDayRecapFactStoreTeam, "ratingValues" | "rawRatings">,
+): number | null {
+  let hasRating = false;
+  const total = TEAM_RATING_KEYS.reduce((sum, key) => {
+    const value = resolveTeamRatingValueForRecap(team, key);
+    if (!isFiniteRatingValue(value)) {
+      return sum;
+    }
+    hasRating = true;
+    return sum + Math.round(value * 3);
+  }, 0);
+
+  return hasRating ? total : null;
+}
+
+function resolveTeamRatingValuesForRecap(
+  team: Pick<GameDayRecapFactStoreTeam, "ratingValues" | "rawRatings">,
+): Partial<Record<TeamRatingKey, number>> {
+  return Object.fromEntries(
+    TEAM_RATING_KEYS.flatMap((key) => {
+      const value = resolveTeamRatingValueForRecap(team, key);
+      return isFiniteRatingValue(value)
+        ? [[key, roundToOneDecimal(value)]]
+        : [];
+    }),
+  ) as Partial<Record<TeamRatingKey, number>>;
+}
+
+function resolveTeamRatingValueForRecap(
+  team: Pick<GameDayRecapFactStoreTeam, "ratingValues" | "rawRatings">,
+  key: TeamRatingKey,
+): number | null {
+  const rawValue = team.rawRatings?.[key] ?? team.ratingValues?.[key];
+  return isFiniteRatingValue(rawValue) ? roundToOneDecimal(rawValue) : null;
+}
+
+function buildGameDayRecapPromptPlayerLeaders(
+  game: GameDayRecapPromptGame,
+): GameDayRecapGameFactStore["playerLeaders"] {
+  const candidates = (["away", "home"] as const).flatMap((teamSide) =>
+    game.teams[teamSide].topPlayers.map((player) => ({
+      playerName: player.name,
+      statLine: {
+        assists: player.assists,
+        blocks: player.blocks,
+        minutes: player.minutes,
+        points: player.points,
+        rebounds: player.rebounds,
+        steals: player.steals,
+        turnovers: player.turnovers,
+      },
+      teamName: game.teams[teamSide].name,
+      teamSide,
+    })),
+  );
+
+  const buildLeader = (
+    valueFor: (
+      entry: Omit<GameDayRecapFactStorePlayerLeader, "value">,
+    ) => number,
+  ): GameDayRecapFactStorePlayerLeader | null => {
+    return (
+      candidates
+        .map((candidate) => ({
+          ...candidate,
+          value: valueFor(candidate),
+        }))
+        .filter((candidate) => candidate.value > 0)
+        .sort(
+          (left, right) =>
+            right.value - left.value ||
+            compareFactStorePlayerLeaderEntries(left, right),
+        )[0] ?? null
+    );
+  };
+
+  return {
+    assists: buildLeader((entry) => entry.statLine.assists),
+    bestAllAround: buildLeader((entry) =>
+      scoreInterviewStatLine(entry.statLine),
+    ),
+    points: buildLeader((entry) => entry.statLine.points),
+    rebounds: buildLeader((entry) => entry.statLine.rebounds),
   };
 }
 
@@ -4062,22 +4790,33 @@ function buildGameDayRecapJudgeGameFactPacket(
     playByPlayFacts: game.playByPlayFacts,
     playerLeaders: game.playerLeaders,
     postgameInterviewCandidate: game.postgameInterviewCandidate ?? null,
+    postgameInterviewCandidates: game.postgameInterviewCandidates ?? null,
     quarterFacts: game.quarterFacts,
     quarterScores: game.quarterScores,
     requiredContextSentences: game.requiredContextSentences,
     rotationSummaries: game.rotationSummaries,
     seriesContext: game.seriesContext ?? null,
     standingsContext: game.standingsContext,
+    teamRatingFacts: game.teamRatingFacts,
+    teamTalent: game.teamTalent,
     teams: {
       away: {
         name: game.teams.away.name,
+        ratingLabels: game.teams.away.ratingLabels,
+        ratingTotal: game.teams.away.ratingTotal,
+        ratingValues: game.teams.away.ratingValues,
         score: game.teams.away.score,
         topPlayers: game.teams.away.topPlayers,
+        turnovers: game.teams.away.turnovers,
       },
       home: {
         name: game.teams.home.name,
+        ratingLabels: game.teams.home.ratingLabels,
+        ratingTotal: game.teams.home.ratingTotal,
+        ratingValues: game.teams.home.ratingValues,
         score: game.teams.home.score,
         topPlayers: game.teams.home.topPlayers,
+        turnovers: game.teams.home.turnovers,
       },
     },
     winner: game.winner,
@@ -4158,10 +4897,14 @@ function buildGameDayRecapJudgeBedrockRequest(args: {
                       "Winner truth comes only from gameFacts.winner.",
                       "Use gameFacts.periodStates, quarterFacts, quarterScores, and overtime as the source of truth for period-state and overtime claims.",
                       "Use gameFacts.playByPlayFacts as the source of truth for ending, run, comeback, and lead-change claims.",
-                      "Use gameFacts.playerLeaders, teams[].topPlayers, and postgameInterviewCandidate as the source of truth for player-attribution claims.",
+                      "Use gameFacts.playerLeaders, teams[].topPlayers, and postgameInterviewCandidates as the source of truth for player-attribution claims.",
+                      "Treat game-high as supported only when the named player is the global leader in gameFacts.playerLeaders for that stat. Team-high or led [team] may be supported by teams[].topPlayers.",
+                      "Use gameFacts.teamRatingFacts and gameFacts.teamTalent as the source of truth for team-rating, matchup-edge, turnover-flow, and team-talent claims.",
+                      "Treat natural equivalents as the same rating family when gameFacts supports them, such as perimeter defense for outsideDefense and team talent for the internal total.",
+                      "Reject rating or team-talent claims when no matching gameFacts.teamRatingFacts or gameFacts.teamTalent support exists.",
                       "Set containsOutcomeClaim to true only for sentences that make a winner, final-score, overtime, or quarter-outcome claim.",
                       "Use contradictionType winner, final_score, overtime, quarter_outcome, series_state, run, lead_change, ending, record, other, or none as appropriate.",
-                      "Judge postgameInterview title, questions, and answers sentence by sentence against the supplied winner-side interview candidate and supported facts.",
+                      "Judge postgameInterview title, questions, and answers sentence by sentence against the supplied matching interview candidate for that side and its supported facts.",
                       "If the opening writeup sentence is the exact series summary line, a decisive ending in the second writeup sentence still counts as foregrounded rather than buried.",
                     ],
                     restrictions: [
@@ -4205,6 +4948,8 @@ function buildGameDayRecapJudgeBedrockRequest(args: {
           text: [
             "You are a grounded factuality judge for basketball recap sentences.",
             "Use only the supplied gameFacts.",
+            "Use gameFacts.teamRatingFacts and gameFacts.teamTalent for rating-edge and team-talent claims.",
+            "Do not require exact wording for rating labels when the supplied facts support a natural equivalent.",
             "Do not use world knowledge or outside basketball conventions.",
             "Do not rewrite or improve the prose.",
             "Judge each sentence independently against the gameFacts.",
@@ -4412,6 +5157,7 @@ export function assertSupportedBedrockRecapModel(
 async function buildGameDayRecapPromptPayload(args: {
   bb: Pick<BBXmlApiClient, "getBoxScore" | "getSchedule" | "getTeamInfo">;
   connection: BbConnectionRecord;
+  contextConcurrency?: number;
   enforceCompletedSlateCoverage?: boolean;
   fetchPublicMatchPlayByPlay?: PublicPlayByPlayFetcher;
   now: Date;
@@ -4439,190 +5185,229 @@ async function buildGameDayRecapPromptPayload(args: {
   const coverageIssues: CoverageIssue[] = [];
   const finalCoverageBlockers: CoverageIssue[] = [];
   const factStoreGames: GameDayRecapFactStore["games"] = [];
-
-  for (const requestedGame of args.requestedGames) {
-    const boxScoreResult = await loadBoxScore(
-      args.bb,
-      boxScoreCache,
-      requestedGame.matchId,
-    );
-    const expectedFinal = isRequestedGameExpectedFinal({
-      now: args.now,
-      request: args.request,
-      requestedGame,
-    });
-    if (boxScoreResult.kind !== "ok") {
-      if (boxScoreResult.kind === "api_fetch_failed") {
-        logGameDayRecapWarn("process.box_score_fetch_failed", {
-          expectedFinal,
-          matchId: requestedGame.matchId,
-          scheduledAwayScore: requestedGame.scheduledAwayScore,
-          scheduledHomeScore: requestedGame.scheduledHomeScore,
-          scheduleFinal: requestedGame.isScheduleFinal,
-          targetKey: args.targetKey,
-          userId: args.userId,
-          ...boxScoreResult.error,
-        });
-      } else if (boxScoreResult.kind === "parse_failed") {
-        logGameDayRecapWarn("process.box_score_parse_failed", {
-          expectedFinal,
-          matchId: requestedGame.matchId,
-          scheduledAwayScore: requestedGame.scheduledAwayScore,
-          scheduledHomeScore: requestedGame.scheduledHomeScore,
-          scheduleFinal: requestedGame.isScheduleFinal,
-          targetKey: args.targetKey,
-          userId: args.userId,
-          ...boxScoreResult.error,
-        });
-      } else {
-        logGameDayRecapWarn("process.box_score_incomplete", {
-          awayScore: boxScoreResult.boxScore.awayTeam.score,
-          expectedFinal,
-          homeScore: boxScoreResult.boxScore.homeTeam.score,
-          matchId: requestedGame.matchId,
-          scheduledAwayScore: requestedGame.scheduledAwayScore,
-          scheduledHomeScore: requestedGame.scheduledHomeScore,
-          scheduleFinal: requestedGame.isScheduleFinal,
-          targetKey: args.targetKey,
-          userId: args.userId,
-        });
-      }
-
-      const issue: CoverageIssue = {
-        awayTeamName: requestedGame.awayTeamName,
-        homeTeamName: requestedGame.homeTeamName,
-        matchId: requestedGame.matchId,
-        reason:
-          boxScoreResult.kind === "incomplete_boxscore"
-            ? "final box score was incomplete"
-            : boxScoreResult.kind === "parse_failed"
-              ? "final box score response could not be parsed"
-              : "final box score was unavailable",
-      };
-      coverageIssues.push(issue);
-      if (expectedFinal) {
-        finalCoverageBlockers.push(issue);
-      }
-      continue;
-    }
-    const boxScore = boxScoreResult.boxScore;
-
-    const homeSchedule = scheduleByTeamId.get(requestedGame.homeTeamId);
-    const awaySchedule = scheduleByTeamId.get(requestedGame.awayTeamId);
-    const homeStanding = standingsIndex.get(requestedGame.homeTeamId);
-    const awayStanding = standingsIndex.get(requestedGame.awayTeamId);
-    if (!homeSchedule || !awaySchedule || !homeStanding || !awayStanding) {
-      coverageIssues.push({
-        awayTeamName: requestedGame.awayTeamName,
-        homeTeamName: requestedGame.homeTeamName,
-        matchId: requestedGame.matchId,
-        reason:
-          "team context could not be resolved from standings or schedules",
-      });
-      continue;
-    }
-
-    const [homeRecentBoxScores, awayRecentBoxScores, playByPlayResult] =
-      await Promise.all([
-        loadRecentCompletedBoxScores({
-          bb: args.bb,
-          boxScoreCache,
-          gameStartTime: requestedGame.startTime,
-          includeMatch: includeRecapContextMatch,
-          limit: 3,
-          schedule: homeSchedule,
-        }),
-        loadRecentCompletedBoxScores({
-          bb: args.bb,
-          boxScoreCache,
-          gameStartTime: requestedGame.startTime,
-          includeMatch: includeRecapContextMatch,
-          limit: 3,
-          schedule: awaySchedule,
-        }),
-        args.fetchPublicMatchPlayByPlay
-          ? loadPromptGamePlayByPlay({
-              awayTeamName: requestedGame.awayTeamName,
-              cache: playByPlayCache,
-              fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
-              homeTeamName: requestedGame.homeTeamName,
-              matchId: requestedGame.matchId,
-            })
-          : Promise.resolve<GameDayRecapPlayByPlayLoadResult>({
-              debug: null,
-              error: null,
-              facts: null,
-            }),
-      ]);
-
-    if (playByPlayResult.error) {
-      logGameDayRecapWarn(
-        playByPlayResult.error.kind === "parse_failed"
-          ? "process.play_by_play_parse_failed"
-          : "process.play_by_play_fetch_failed",
-        {
-          matchId: requestedGame.matchId,
-          targetKey: args.targetKey,
-          userId: args.userId,
-          ...playByPlayResult.error.details,
-        },
-      );
-    }
-    logPlayByPlayEndingFactsDebug({
-      matchId: requestedGame.matchId,
-      playByPlayResult,
+  const contextConcurrency =
+    args.contextConcurrency ??
+    DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG.contextConcurrency;
+  const gameContextResults = await withGameDayRecapStageTiming(
+    "context_games",
+    {
+      concurrency: contextConcurrency,
+      gameCount: args.requestedGames.length,
+      requestKind: args.request.kind,
       targetKey: args.targetKey,
       userId: args.userId,
-    });
-
-    const homeContext = buildTeamSeasonContext({
-      boxScores: homeRecentBoxScores,
-      gameStartTime: requestedGame.startTime,
-      includeMatch: includeRecapContextMatch,
-      schedule: homeSchedule,
-      standing: homeStanding,
-    });
-    const awayContext = buildTeamSeasonContext({
-      boxScores: awayRecentBoxScores,
-      gameStartTime: requestedGame.startTime,
-      includeMatch: includeRecapContextMatch,
-      schedule: awaySchedule,
-      standing: awayStanding,
-    });
-    const homePostgameContext = derivePostgameTeamSeasonContext({
-      boxScore,
-      enteringGameContext: homeContext,
-      priorBoxScores: homeRecentBoxScores,
-    });
-    const awayPostgameContext = derivePostgameTeamSeasonContext({
-      boxScore,
-      enteringGameContext: awayContext,
-      priorBoxScores: awayRecentBoxScores,
-    });
-    const seriesContext =
-      args.request.kind === "LEAGUE_DATE"
-        ? resolvePlayoffSeriesContext({
-            awaySchedule,
-            boxScore,
-            homeSchedule,
+    },
+    () =>
+      mapWithBoundedConcurrency(
+        args.requestedGames,
+        contextConcurrency,
+        async (requestedGame) => {
+          const boxScoreResult = await loadBoxScore(
+            args.bb,
+            boxScoreCache,
+            requestedGame.matchId,
+          );
+          const expectedFinal = isRequestedGameExpectedFinal({
+            now: args.now,
+            request: args.request,
             requestedGame,
-            standings: args.standings,
-          })
-        : null;
+          });
+          if (boxScoreResult.kind !== "ok") {
+            if (boxScoreResult.kind === "api_fetch_failed") {
+              logGameDayRecapWarn("process.box_score_fetch_failed", {
+                expectedFinal,
+                matchId: requestedGame.matchId,
+                scheduledAwayScore: requestedGame.scheduledAwayScore,
+                scheduledHomeScore: requestedGame.scheduledHomeScore,
+                scheduleFinal: requestedGame.isScheduleFinal,
+                targetKey: args.targetKey,
+                userId: args.userId,
+                ...boxScoreResult.error,
+              });
+            } else if (boxScoreResult.kind === "parse_failed") {
+              logGameDayRecapWarn("process.box_score_parse_failed", {
+                expectedFinal,
+                matchId: requestedGame.matchId,
+                scheduledAwayScore: requestedGame.scheduledAwayScore,
+                scheduledHomeScore: requestedGame.scheduledHomeScore,
+                scheduleFinal: requestedGame.isScheduleFinal,
+                targetKey: args.targetKey,
+                userId: args.userId,
+                ...boxScoreResult.error,
+              });
+            } else {
+              logGameDayRecapWarn("process.box_score_incomplete", {
+                awayScore: boxScoreResult.boxScore.awayTeam.score,
+                expectedFinal,
+                homeScore: boxScoreResult.boxScore.homeTeam.score,
+                matchId: requestedGame.matchId,
+                scheduledAwayScore: requestedGame.scheduledAwayScore,
+                scheduledHomeScore: requestedGame.scheduledHomeScore,
+                scheduleFinal: requestedGame.isScheduleFinal,
+                targetKey: args.targetKey,
+                userId: args.userId,
+              });
+            }
 
-    factStoreGames.push(
-      buildGameDayRecapGameFactStore({
-        awayEnteringGameContext: awayContext,
-        awayPostgameContext,
-        boxScore,
-        hasHistoricalContext: true,
-        homeEnteringGameContext: homeContext,
-        homePostgameContext,
-        playByPlayFacts: playByPlayResult.facts,
-        requestedGame,
-        seriesContext,
-      }),
-    );
+            const issue: CoverageIssue = {
+              awayTeamName: requestedGame.awayTeamName,
+              homeTeamName: requestedGame.homeTeamName,
+              matchId: requestedGame.matchId,
+              reason:
+                boxScoreResult.kind === "incomplete_boxscore"
+                  ? "final box score was incomplete"
+                  : boxScoreResult.kind === "parse_failed"
+                    ? "final box score response could not be parsed"
+                    : "final box score was unavailable",
+            };
+            return {
+              coverageIssue: issue,
+              finalCoverageBlocker: expectedFinal ? issue : null,
+              factStoreGame: null,
+            };
+          }
+          const boxScore = boxScoreResult.boxScore;
+
+          const homeSchedule = scheduleByTeamId.get(requestedGame.homeTeamId);
+          const awaySchedule = scheduleByTeamId.get(requestedGame.awayTeamId);
+          const homeStanding = standingsIndex.get(requestedGame.homeTeamId);
+          const awayStanding = standingsIndex.get(requestedGame.awayTeamId);
+          if (
+            !homeSchedule ||
+            !awaySchedule ||
+            !homeStanding ||
+            !awayStanding
+          ) {
+            return {
+              coverageIssue: {
+                awayTeamName: requestedGame.awayTeamName,
+                homeTeamName: requestedGame.homeTeamName,
+                matchId: requestedGame.matchId,
+                reason:
+                  "team context could not be resolved from standings or schedules",
+              },
+              finalCoverageBlocker: null,
+              factStoreGame: null,
+            };
+          }
+
+          const [homeRecentBoxScores, awayRecentBoxScores, playByPlayResult] =
+            await Promise.all([
+              loadRecentCompletedBoxScores({
+                bb: args.bb,
+                boxScoreCache,
+                gameStartTime: requestedGame.startTime,
+                includeMatch: includeRecapContextMatch,
+                limit: 3,
+                schedule: homeSchedule,
+              }),
+              loadRecentCompletedBoxScores({
+                bb: args.bb,
+                boxScoreCache,
+                gameStartTime: requestedGame.startTime,
+                includeMatch: includeRecapContextMatch,
+                limit: 3,
+                schedule: awaySchedule,
+              }),
+              args.fetchPublicMatchPlayByPlay
+                ? loadPromptGamePlayByPlay({
+                    awayTeamName: requestedGame.awayTeamName,
+                    cache: playByPlayCache,
+                    fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
+                    homeTeamName: requestedGame.homeTeamName,
+                    matchId: requestedGame.matchId,
+                  })
+                : Promise.resolve<GameDayRecapPlayByPlayLoadResult>({
+                    debug: null,
+                    error: null,
+                    facts: null,
+                  }),
+            ]);
+
+          if (playByPlayResult.error) {
+            logGameDayRecapWarn(
+              playByPlayResult.error.kind === "parse_failed"
+                ? "process.play_by_play_parse_failed"
+                : "process.play_by_play_fetch_failed",
+              {
+                matchId: requestedGame.matchId,
+                targetKey: args.targetKey,
+                userId: args.userId,
+                ...playByPlayResult.error.details,
+              },
+            );
+          }
+          logPlayByPlayEndingFactsDebug({
+            matchId: requestedGame.matchId,
+            playByPlayResult,
+            targetKey: args.targetKey,
+            userId: args.userId,
+          });
+
+          const homeContext = buildTeamSeasonContext({
+            boxScores: homeRecentBoxScores,
+            gameStartTime: requestedGame.startTime,
+            includeMatch: includeRecapContextMatch,
+            schedule: homeSchedule,
+            standing: homeStanding,
+          });
+          const awayContext = buildTeamSeasonContext({
+            boxScores: awayRecentBoxScores,
+            gameStartTime: requestedGame.startTime,
+            includeMatch: includeRecapContextMatch,
+            schedule: awaySchedule,
+            standing: awayStanding,
+          });
+          const homePostgameContext = derivePostgameTeamSeasonContext({
+            boxScore,
+            enteringGameContext: homeContext,
+            priorBoxScores: homeRecentBoxScores,
+          });
+          const awayPostgameContext = derivePostgameTeamSeasonContext({
+            boxScore,
+            enteringGameContext: awayContext,
+            priorBoxScores: awayRecentBoxScores,
+          });
+          const seriesContext =
+            args.request.kind === "LEAGUE_DATE"
+              ? resolvePlayoffSeriesContext({
+                  awaySchedule,
+                  boxScore,
+                  homeSchedule,
+                  requestedGame,
+                  standings: args.standings,
+                })
+              : null;
+
+          return {
+            coverageIssue: null,
+            finalCoverageBlocker: null,
+            factStoreGame: buildGameDayRecapGameFactStore({
+              awayEnteringGameContext: awayContext,
+              awayPostgameContext,
+              boxScore,
+              hasHistoricalContext: true,
+              homeEnteringGameContext: homeContext,
+              homePostgameContext,
+              playByPlayFacts: playByPlayResult.facts,
+              requestedGame,
+              seriesContext,
+            }),
+          };
+        },
+      ),
+  );
+
+  for (const result of gameContextResults) {
+    if (result.coverageIssue) {
+      coverageIssues.push(result.coverageIssue);
+    }
+    if (result.finalCoverageBlocker) {
+      finalCoverageBlockers.push(result.finalCoverageBlocker);
+    }
+    if (result.factStoreGame) {
+      factStoreGames.push(result.factStoreGame);
+    }
   }
 
   const leagueName =
@@ -4676,7 +5461,10 @@ async function buildSingleGameSummaryPromptPayload(args: {
   connection: BbConnectionRecord;
   fetchPublicMatchPlayByPlay?: PublicPlayByPlayFetcher;
   generationApproach: RecapGenerationApproachValue;
+  interviewIntensity: RecapInterviewIntensityValue;
+  loserInterviewPersonalityType?: InterviewPersonalityType | null;
   matchId: string;
+  winnerInterviewPersonalityType?: InterviewPersonalityType | null;
 }): Promise<GameDayRecapPromptPayload> {
   const requestedGame = toSlateGameFromBoxScore(args.boxScore);
   const playoffSeriesResolution = await resolveSingleGamePlayoffSeriesContext({
@@ -4743,13 +5531,26 @@ async function buildSingleGameSummaryPromptPayload(args: {
       gameDate,
       gameDayNumber: null,
       generationApproach: args.generationApproach,
+      interviewIntensity: args.interviewIntensity,
       kind: "SINGLE_GAME",
       label: `Match ${args.matchId}`,
       leagueId: args.connection.leagueId ?? null,
       leagueName: args.connection.leagueName ?? null,
+      ...(args.loserInterviewPersonalityType
+        ? {
+            loserInterviewPersonalityType:
+              args.loserInterviewPersonalityType,
+          }
+        : {}),
       matchId: args.matchId,
       season: playoffSeriesResolution.season,
       timeZone,
+      ...(args.winnerInterviewPersonalityType
+        ? {
+            winnerInterviewPersonalityType:
+              args.winnerInterviewPersonalityType,
+          }
+        : {}),
     },
   };
 
@@ -4919,11 +5720,15 @@ function buildGameDayRecapGameFactStore(args: {
     homeTeamName: homeTeam.name,
     quarterScores,
   });
-  const postgameInterviewCandidate = buildPostgameInterviewCandidate({
+  const postgameInterviewCandidates = buildPostgameInterviewCandidates({
     boxScore: args.boxScore,
     playByPlayFacts,
     requestedGame: args.requestedGame,
   });
+  const postgameInterviewCandidate =
+    postgameInterviewCandidates.find(
+      (candidate) => candidate.perspective !== "loser",
+    ) ?? null;
   const effortSummary = describeEffortDeltaForRecap({
     awayTeamName: args.boxScore.awayTeam.teamName,
     effortDelta: args.boxScore.effortDelta,
@@ -4937,6 +5742,12 @@ function buildGameDayRecapGameFactStore(args: {
     awayScore: awayTeam.score,
     homeScore: homeTeam.score,
   });
+  const teams = {
+    away: awayTeam,
+    home: homeTeam,
+  };
+  const teamRatingFacts = buildTeamRatingFactsForRecap(teams);
+  const teamTalent = buildTeamTalentFactsForRecap(teams);
 
   return {
     effortDelta: args.boxScore.effortDelta,
@@ -4959,18 +5770,18 @@ function buildGameDayRecapGameFactStore(args: {
       boxScore: args.boxScore,
       requestedGame: args.requestedGame,
     }),
-    ...(postgameInterviewCandidate
-      ? { postgameInterviewCandidate }
+    ...(postgameInterviewCandidate ? { postgameInterviewCandidate } : {}),
+    ...(postgameInterviewCandidates.length
+      ? { postgameInterviewCandidates }
       : {}),
     quarterFacts,
     quarterScores,
     requiredContextSentences,
     ...(args.seriesContext ? { seriesContext: args.seriesContext } : {}),
     standingsContext,
-    teams: {
-      away: awayTeam,
-      home: homeTeam,
-    },
+    teamRatingFacts,
+    teamTalent,
+    teams,
     type: args.boxScore.type ?? args.requestedGame.type,
     winner,
   };
@@ -4980,60 +5791,48 @@ async function withResolvedInterviewPersonalities(args: {
   env: GraphqlEnv;
   factStore: GameDayRecapFactStore;
   interviewPersonalityMode: InterviewPersonalityMode;
+  requestedOverrides?: RequestedInterviewPersonalityOverrides | null;
   userId: string;
 }): Promise<GameDayRecapFactStore> {
-  if (args.interviewPersonalityMode === "off") {
+  const hasRequestedOverrides = Boolean(
+    args.requestedOverrides?.winnerInterviewPersonalityType ||
+      args.requestedOverrides?.loserInterviewPersonalityType,
+  );
+  if (args.interviewPersonalityMode === "off" && !hasRequestedOverrides) {
     return args.factStore;
   }
 
   const games = await Promise.all(
     args.factStore.games.map(async (game) => {
-      const candidate = game.postgameInterviewCandidate;
-      if (!candidate) {
+      const candidates = collectPostgameInterviewCandidates(game);
+      if (!candidates.length) {
         return game;
       }
 
-      let trackedPlayer = null;
-      if (candidate.playerId && candidate.teamSide === game.winner.winnerSide) {
-        try {
-          trackedPlayer = await getTrackedPlayer(
-            args.env,
-            args.userId,
-            candidate.playerId,
-          );
-        } catch (error) {
-          logGameDayRecapWarn("process.interview_personality_lookup_failed", {
-            errorMessage: error instanceof Error ? error.message : String(error),
-            matchId: game.matchId,
-            playerId: candidate.playerId,
-            targetKey: null,
+      const resolvedCandidates = await Promise.all(
+        candidates.map((candidate) =>
+          resolvePostgameInterviewCandidatePersonality({
+            allowAutomaticResolution:
+              args.interviewPersonalityMode !== "off",
+            candidate,
+            env: args.env,
+            game,
+            requestedOverrides: args.requestedOverrides ?? null,
             userId: args.userId,
-          });
-        }
-      }
-      const storedType = trackedPlayer?.interviewPersonalityType ?? null;
-      const storedSource = trackedPlayer?.interviewPersonalitySource ?? null;
-      const personalityType = isInterviewPersonalityType(storedType)
-        ? storedType
-        : resolveDeterministicInterviewPersonality(
-            buildInterviewPersonalitySeed({
-              playerId: candidate.playerId,
-              playerName: candidate.playerName,
-              teamName: candidate.teamName,
-            }),
-          );
-      const personalitySource: InterviewPersonalitySource =
-        trackedPlayer && storedSource === "user_override"
-          ? "user_override"
-          : "auto";
+          }),
+        ),
+      );
+      const winnerCandidate =
+        resolvedCandidates.find(
+          (candidate) => candidate.perspective !== "loser",
+        ) ?? null;
 
       return {
         ...game,
-        postgameInterviewCandidate: {
-          ...candidate,
-          personalitySource,
-          personalityType,
-        },
+        ...(winnerCandidate
+          ? { postgameInterviewCandidate: winnerCandidate }
+          : {}),
+        postgameInterviewCandidates: resolvedCandidates,
       };
     }),
   );
@@ -5042,6 +5841,144 @@ async function withResolvedInterviewPersonalities(args: {
     ...args.factStore,
     games,
   };
+}
+
+async function resolvePostgameInterviewCandidatePersonality(args: {
+  allowAutomaticResolution: boolean;
+  candidate: GameDayRecapPromptInterviewCandidate;
+  env: GraphqlEnv;
+  game: GameDayRecapGameFactStore;
+  requestedOverrides?: RequestedInterviewPersonalityOverrides | null;
+  userId: string;
+}): Promise<GameDayRecapPromptInterviewCandidate> {
+  const requestedType = resolveRequestedPostgameInterviewPersonalityType({
+    candidate: args.candidate,
+    requestedOverrides: args.requestedOverrides ?? null,
+  });
+  if (requestedType) {
+    return {
+      ...args.candidate,
+      personalitySource: "request_override",
+      personalityType: requestedType,
+    };
+  }
+  if (!args.allowAutomaticResolution) {
+    return args.candidate;
+  }
+
+  let trackedPlayer = null;
+  if (
+    args.candidate.playerId &&
+    args.candidate.teamSide === args.game.winner.winnerSide
+  ) {
+    try {
+      trackedPlayer = await getTrackedPlayer(
+        args.env,
+        args.userId,
+        args.candidate.playerId,
+      );
+    } catch (error) {
+      logGameDayRecapWarn("process.interview_personality_lookup_failed", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        matchId: args.game.matchId,
+        playerId: args.candidate.playerId,
+        targetKey: null,
+        userId: args.userId,
+      });
+    }
+  }
+  const storedType = trackedPlayer?.interviewPersonalityType ?? null;
+  const storedSource = trackedPlayer?.interviewPersonalitySource ?? null;
+  const personalityType = isInterviewPersonalityType(storedType)
+    ? storedType
+    : resolveDeterministicInterviewPersonality(
+        buildInterviewPersonalitySeed({
+          playerId: args.candidate.playerId,
+          playerName: args.candidate.playerName,
+          teamName: args.candidate.teamName,
+        }),
+      );
+  const personalitySource: InterviewPersonalitySource =
+    trackedPlayer && storedSource === "user_override" ? "user_override" : "auto";
+
+  return {
+    ...args.candidate,
+    personalitySource,
+    personalityType,
+  };
+}
+
+function resolveRequestedPostgameInterviewPersonalityType(args: {
+  candidate: GameDayRecapPromptInterviewCandidate;
+  requestedOverrides: RequestedInterviewPersonalityOverrides | null;
+}): InterviewPersonalityType | null {
+  if (!args.requestedOverrides) {
+    return null;
+  }
+
+  if (args.candidate.perspective === "loser") {
+    return args.requestedOverrides.loserInterviewPersonalityType ?? null;
+  }
+
+  return args.requestedOverrides.winnerInterviewPersonalityType ?? null;
+}
+
+function resolveRequestedInterviewOverridesFromRequest(
+  request: Pick<
+    GameDayRecapRequestFacts,
+    "loserInterviewPersonalityType" | "winnerInterviewPersonalityType"
+  >,
+): RequestedInterviewPersonalityOverrides | null {
+  const loserInterviewPersonalityType = isInterviewPersonalityType(
+    request.loserInterviewPersonalityType,
+  )
+    ? request.loserInterviewPersonalityType
+    : null;
+  const winnerInterviewPersonalityType = isInterviewPersonalityType(
+    request.winnerInterviewPersonalityType,
+  )
+    ? request.winnerInterviewPersonalityType
+    : null;
+
+  return loserInterviewPersonalityType || winnerInterviewPersonalityType
+    ? {
+        loserInterviewPersonalityType,
+        winnerInterviewPersonalityType,
+      }
+    : null;
+}
+
+function applyRequestedInterviewOverrideToCandidate(
+  candidate: GameDayRecapPromptInterviewCandidate,
+  requestedOverrides: RequestedInterviewPersonalityOverrides | null,
+): GameDayRecapPromptInterviewCandidate {
+  const requestedType = resolveRequestedPostgameInterviewPersonalityType({
+    candidate,
+    requestedOverrides,
+  });
+  if (!requestedType) {
+    return candidate;
+  }
+
+  return {
+    ...candidate,
+    personalitySource: "request_override",
+    personalityType: requestedType,
+  };
+}
+
+function collectPostgameInterviewCandidates(
+  game: Pick<
+    GameDayRecapGameFactStore | GameDayRecapPromptGame,
+    "postgameInterviewCandidate" | "postgameInterviewCandidates"
+  >,
+): GameDayRecapPromptInterviewCandidate[] {
+  const candidates = game.postgameInterviewCandidates ?? [];
+  if (candidates.length) {
+    return candidates;
+  }
+
+  return game.postgameInterviewCandidate ? [game.postgameInterviewCandidate] : [];
 }
 
 function buildGameDayRecapWriterPayloadFromFactStore(args: {
@@ -5088,15 +6025,34 @@ function buildGameDayRecapWriterGameFromFactStore(args: {
     ...(args.game.postgameInterviewCandidate
       ? { postgameInterviewCandidate: args.game.postgameInterviewCandidate }
       : {}),
+    ...(args.game.postgameInterviewCandidates?.length
+      ? { postgameInterviewCandidates: args.game.postgameInterviewCandidates }
+      : {}),
     quarterFacts: args.game.quarterFacts,
     quarterScores: args.game.quarterScores,
-    ...(args.game.seriesContext ? { seriesContext: args.game.seriesContext } : {}),
+    ...(args.game.seriesContext
+      ? { seriesContext: args.game.seriesContext }
+      : {}),
     standingsContext: args.game.standingsContext,
+    teamRatingFacts: args.game.teamRatingFacts,
+    teamTalent: toWriterFacingTeamTalentFacts(args.game.teamTalent),
     teams: {
       away: toPromptTeamFromFactStoreTeam(args.game.teams.away),
       home: toPromptTeamFromFactStoreTeam(args.game.teams.home),
     },
     type: args.game.type,
+  };
+}
+
+function toWriterFacingTeamTalentFacts(
+  facts: GameDayRecapTeamTalentFacts,
+): GameDayRecapTeamTalentFacts {
+  return {
+    awayTotal: null,
+    differentialFromHomePerspective: null,
+    homeTotal: null,
+    leaderSide: facts.leaderSide,
+    summary: facts.summary,
   };
 }
 
@@ -5229,7 +6185,8 @@ function buildGameDayRecapPlayerLeaders(args: {
   requestedGame: SlateGame;
 }): GameDayRecapGameFactStore["playerLeaders"] {
   const candidates = (["home", "away"] as const).flatMap((teamSide) => {
-    const team = teamSide === "home" ? args.boxScore.homeTeam : args.boxScore.awayTeam;
+    const team =
+      teamSide === "home" ? args.boxScore.homeTeam : args.boxScore.awayTeam;
     const teamName =
       team.teamName ??
       (teamSide === "home"
@@ -5303,7 +6260,8 @@ function compareFactStorePlayerLeaderEntries(
   }
 
   const allAroundGap =
-    scoreInterviewStatLine(right.statLine) - scoreInterviewStatLine(left.statLine);
+    scoreInterviewStatLine(right.statLine) -
+    scoreInterviewStatLine(left.statLine);
   if (allAroundGap !== 0) {
     return allAroundGap;
   }
@@ -5416,15 +6374,16 @@ function resolveBoxScoreWinnerSide(
   return homeScore > awayScore ? "home" : "away";
 }
 
-function buildPostgameInterviewCandidate(args: {
+function buildPostgameInterviewCandidates(args: {
   boxScore: BBApiBoxScore;
   playByPlayFacts: GameDayRecapPlayByPlayFacts | null;
   requestedGame: SlateGame;
-}): GameDayRecapPromptInterviewCandidate | null {
+}): GameDayRecapPromptInterviewCandidate[] {
   const winnerSide = resolveBoxScoreWinnerSide(args.boxScore);
   if (!winnerSide) {
-    return null;
+    return [];
   }
+  const loserSide = winnerSide === "home" ? "away" : "home";
 
   const winnerTeam =
     winnerSide === "home" ? args.boxScore.homeTeam : args.boxScore.awayTeam;
@@ -5433,9 +6392,11 @@ function buildPostgameInterviewCandidate(args: {
     (winnerSide === "home"
       ? args.requestedGame.homeTeamName
       : args.requestedGame.awayTeamName);
-  const eligiblePlayers = winnerTeam.players.filter((player) => !player.didNotPlay);
+  const eligiblePlayers = winnerTeam.players.filter(
+    (player) => !player.didNotPlay,
+  );
   if (!eligiblePlayers.length) {
-    return null;
+    return [];
   }
 
   const decisivePlayer = resolveInterviewDecisivePlayer({
@@ -5444,38 +6405,124 @@ function buildPostgameInterviewCandidate(args: {
     winnerSide,
   });
   const selectedPlayer =
-    decisivePlayer ?? [...eligiblePlayers].sort(compareInterviewPlayers)[0] ?? null;
+    decisivePlayer ?? [...eligiblePlayers].sort(compareInterviewPlayers)[0];
+  if (!selectedPlayer) {
+    return [];
+  }
+
+  const statLine = extractInterviewStatLine(selectedPlayer);
+  const hasDecisiveMoment = decisivePlayer?.id === selectedPlayer.id;
+  const candidates: GameDayRecapPromptInterviewCandidate[] = [];
+  if (shouldGeneratePostgameInterview(statLine, hasDecisiveMoment)) {
+    candidates.push({
+      perspective: "winner",
+      playerId: selectedPlayer.id ?? null,
+      playerName: selectedPlayer.fullName,
+      selectionReason: buildPostgameInterviewSelectionReason({
+        playByPlayFacts: args.playByPlayFacts,
+        player: selectedPlayer,
+        statLine,
+        winnerName,
+        winnerSide,
+      }),
+      statLine,
+      supportedFacts: buildPostgameInterviewSupportedFacts({
+        playByPlayFacts: args.playByPlayFacts,
+        player: selectedPlayer,
+        statLine,
+        winnerName,
+        winnerSide,
+      }),
+      teamName: winnerName,
+      teamSide: winnerSide,
+    });
+  }
+
+  const loserCandidate = buildLosingPostgameInterviewCandidate({
+    boxScore: args.boxScore,
+    loserSide,
+    requestedGame: args.requestedGame,
+    winnerSide,
+  });
+  if (loserCandidate) {
+    candidates.push(loserCandidate);
+  }
+
+  return candidates;
+}
+
+function buildLosingPostgameInterviewCandidate(args: {
+  boxScore: BBApiBoxScore;
+  loserSide: "away" | "home";
+  requestedGame: SlateGame;
+  winnerSide: "away" | "home";
+}): GameDayRecapPromptInterviewCandidate | null {
+  const loserTeam =
+    args.loserSide === "home" ? args.boxScore.homeTeam : args.boxScore.awayTeam;
+  const winnerTeam =
+    args.winnerSide === "home"
+      ? args.boxScore.homeTeam
+      : args.boxScore.awayTeam;
+  const loserName =
+    loserTeam.teamName ??
+    (args.loserSide === "home"
+      ? args.requestedGame.homeTeamName
+      : args.requestedGame.awayTeamName);
+  const winnerName =
+    winnerTeam.teamName ??
+    (args.winnerSide === "home"
+      ? args.requestedGame.homeTeamName
+      : args.requestedGame.awayTeamName);
+  const selectedPlayer =
+    loserTeam.players.filter((player) => !player.didNotPlay).sort(compareInterviewPlayers)[0] ??
+    null;
   if (!selectedPlayer) {
     return null;
   }
 
   const statLine = extractInterviewStatLine(selectedPlayer);
-  const hasDecisiveMoment = decisivePlayer?.id === selectedPlayer.id;
-  if (!shouldGeneratePostgameInterview(statLine, hasDecisiveMoment)) {
+  if (!shouldGeneratePostgameInterview(statLine, false)) {
     return null;
   }
 
   return {
+    perspective: "loser",
     playerId: selectedPlayer.id ?? null,
     playerName: selectedPlayer.fullName,
-    selectionReason: buildPostgameInterviewSelectionReason({
-      playByPlayFacts: args.playByPlayFacts,
-      player: selectedPlayer,
-      statLine,
-      winnerName,
-      winnerSide,
-    }),
+    selectionReason: `Best grounded losing-side interview candidate for ${loserName}.`,
     statLine,
-    supportedFacts: buildPostgameInterviewSupportedFacts({
-      playByPlayFacts: args.playByPlayFacts,
+    supportedFacts: buildLosingPostgameInterviewSupportedFacts({
+      loserName,
       player: selectedPlayer,
       statLine,
       winnerName,
-      winnerSide,
     }),
-    teamName: winnerName,
-    teamSide: winnerSide,
+    teamName: loserName,
+    teamSide: args.loserSide,
   };
+}
+
+function buildLosingPostgameInterviewSupportedFacts(args: {
+  loserName: string;
+  player: BBApiBoxScorePlayer;
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"];
+  winnerName: string;
+}): string[] {
+  const facts = new Set<string>();
+  facts.add(`${args.loserName} lost to ${args.winnerName}.`);
+  facts.add(
+    `${args.player.fullName} finished with ${args.statLine.points} points.`,
+  );
+  if (args.statLine.rebounds > 0 || args.statLine.assists > 0) {
+    facts.add(
+      `${args.player.fullName} added ${args.statLine.rebounds} rebounds and ${args.statLine.assists} assists.`,
+    );
+  }
+  if (args.statLine.turnovers > 0) {
+    facts.add(`${args.player.fullName} had ${args.statLine.turnovers} turnovers.`);
+  }
+
+  return Array.from(facts).slice(0, 4);
 }
 
 function resolveInterviewDecisivePlayer(args: {
@@ -5514,8 +6561,8 @@ function eventTextMentionsPlayer(
 
   return Boolean(
     lastName &&
-      lastName.length >= 3 &&
-      new RegExp(`\\b${escapeRegExp(lastName)}\\b`, "i").test(eventText),
+    lastName.length >= 3 &&
+    new RegExp(`\\b${escapeRegExp(lastName)}\\b`, "i").test(eventText),
   );
 }
 
@@ -5575,10 +6622,10 @@ function shouldGeneratePostgameInterview(
 
   return Boolean(
     statLine.points >= 10 ||
-      scoreInterviewStatLine(statLine) >= 16 ||
-      statLine.rebounds >= 10 ||
-      statLine.assists >= 8 ||
-      statLine.steals + statLine.blocks >= 4,
+    scoreInterviewStatLine(statLine) >= 16 ||
+    statLine.rebounds >= 10 ||
+    statLine.assists >= 8 ||
+    statLine.steals + statLine.blocks >= 4,
   );
 }
 
@@ -5647,7 +6694,9 @@ function buildPostgameInterviewSupportedFacts(args: {
     );
   }
 
-  facts.add(`${args.player.fullName} finished with ${args.statLine.points} points.`);
+  facts.add(
+    `${args.player.fullName} finished with ${args.statLine.points} points.`,
+  );
 
   if (args.statLine.rebounds > 0 || args.statLine.assists > 0) {
     facts.add(
@@ -5743,21 +6792,52 @@ function buildFactsLibraryMatchupEdgeFacts(
         gap: roundToOneDecimal(winnerValue - loserValue),
         key,
         label: FACT_LIBRARY_RATING_LABELS[key] ?? key,
-        loserLabel: loserRatingLabels[key] ?? String(roundToOneDecimal(loserValue)),
+        loserLabel:
+          loserRatingLabels[key] ?? String(roundToOneDecimal(loserValue)),
         winnerLabel:
           winnerRatingLabels[key] ?? String(roundToOneDecimal(winnerValue)),
       },
     ];
   });
 
-  const supported = ratingComparisons
-    .filter((comparison) => comparison.gap >= 0.8)
-    .sort((left, right) => right.gap - left.gap)
-    .slice(0, 3)
-    .map(
-      (comparison) =>
-        `${game.winner.winnerName ?? winnerTeam.name} held the stronger ${comparison.label} rating (${comparison.winnerLabel} vs ${comparison.loserLabel}).`,
-    );
+  const contextualSupported = [
+    ...game.teamRatingFacts.comparisons
+      .filter(
+        (comparison) =>
+          comparison.left.teamSide === winnerSide &&
+          comparison.differential >= 0.7 &&
+          comparison.relevance !== "same_category",
+      )
+      .sort((left, right) => right.differential - left.differential)
+      .slice(0, 3)
+      .map((comparison) => comparison.summary),
+    buildDefenseAgainstOpponentAttackRatingFact({
+      attacker: loserTeam,
+      attackerLabels: loserRatingLabels,
+      attackerName: game.winner.loserName ?? loserTeam.name,
+      defender: winnerTeam,
+      defenderLabels: winnerRatingLabels,
+      defenderName: game.winner.winnerName ?? winnerTeam.name,
+    }),
+    buildOffenseAgainstOpponentDefenseRatingFact({
+      attacker: winnerTeam,
+      attackerLabels: winnerRatingLabels,
+      attackerName: game.winner.winnerName ?? winnerTeam.name,
+      defender: loserTeam,
+      defenderLabels: loserRatingLabels,
+      defenderName: game.winner.loserName ?? loserTeam.name,
+    }),
+    buildLowFlowTurnoverRatingFact({
+      team: loserTeam,
+      teamLabels: loserRatingLabels,
+      teamName: game.winner.loserName ?? loserTeam.name,
+    }),
+  ].filter((fact): fact is string => Boolean(fact));
+
+  const supported = uniqueRecapLines([
+    ...contextualSupported,
+    ...teamTalentFactsForMatchupEdges(game),
+  ]).slice(0, 4);
   const suppressed = ratingComparisons
     .filter((comparison) => comparison.gap <= -0.8)
     .sort((left, right) => left.gap - right.gap)
@@ -5773,32 +6853,206 @@ function buildFactsLibraryMatchupEdgeFacts(
   };
 }
 
+function buildDefenseAgainstOpponentAttackRatingFact(args: {
+  attacker: GameDayRecapFactStoreTeam;
+  attackerLabels: Record<string, string>;
+  attackerName: string;
+  defender: GameDayRecapFactStoreTeam;
+  defenderLabels: Record<string, string>;
+  defenderName: string;
+}): string | null {
+  const context = resolveRatingAttackContext(args.attacker.offStrategy);
+  if (!context) {
+    return null;
+  }
+
+  const defenseValue = args.defender.rawRatings?.[context.defenseKey];
+  const attackValue = args.attacker.rawRatings?.[context.scoringKey];
+  if (
+    !isFiniteRatingValue(defenseValue) ||
+    !isFiniteRatingValue(attackValue) ||
+    Math.max(defenseValue, attackValue) < 11.5 ||
+    defenseValue < attackValue - 0.7
+  ) {
+    return null;
+  }
+
+  return `${args.defenderName} had ${formatRatingLabelForFact(
+    args.defenderLabels,
+    context.defenseKey,
+    defenseValue,
+  )} ${context.defenseLabel} against ${formatRatingLabelForFact(
+    args.attackerLabels,
+    context.scoringKey,
+    attackValue,
+  )} ${context.attackLabel} from ${args.attackerName}.`;
+}
+
+function buildOffenseAgainstOpponentDefenseRatingFact(args: {
+  attacker: GameDayRecapFactStoreTeam;
+  attackerLabels: Record<string, string>;
+  attackerName: string;
+  defender: GameDayRecapFactStoreTeam;
+  defenderLabels: Record<string, string>;
+  defenderName: string;
+}): string | null {
+  const context = resolveRatingAttackContext(args.attacker.offStrategy);
+  if (!context) {
+    return null;
+  }
+
+  const attackValue = args.attacker.rawRatings?.[context.scoringKey];
+  const defenseValue = args.defender.rawRatings?.[context.defenseKey];
+  if (
+    !isFiniteRatingValue(attackValue) ||
+    !isFiniteRatingValue(defenseValue) ||
+    attackValue < 11.5 ||
+    attackValue < defenseValue + 0.8
+  ) {
+    return null;
+  }
+
+  return `${args.attackerName} brought ${formatRatingLabelForFact(
+    args.attackerLabels,
+    context.scoringKey,
+    attackValue,
+  )} ${context.attackLabel} against ${formatRatingLabelForFact(
+    args.defenderLabels,
+    context.defenseKey,
+    defenseValue,
+  )} ${context.defenseLabel} from ${args.defenderName}.`;
+}
+
+function buildLowFlowTurnoverRatingFact(args: {
+  team: GameDayRecapFactStoreTeam;
+  teamLabels: Record<string, string>;
+  teamName: string;
+}): string | null {
+  const offensiveFlow = args.team.rawRatings?.offensiveFlow;
+  const turnovers = args.team.turnovers;
+  if (
+    !isFiniteRatingValue(offensiveFlow) ||
+    turnovers === null ||
+    turnovers < 12 ||
+    offensiveFlow > 9.5
+  ) {
+    return null;
+  }
+
+  return `For ${args.teamName}, ${formatRatingLabelForFact(
+    args.teamLabels,
+    "offensiveFlow",
+    offensiveFlow,
+  )} offensive flow paired with ${turnovers} turnovers.`;
+}
+
+function teamTalentFactsForMatchupEdges(
+  game: GameDayRecapGameFactStore,
+): string[] {
+  if (!game.teamTalent.summary) {
+    return [];
+  }
+
+  const differential = Math.abs(
+    game.teamTalent.differentialFromHomePerspective ?? 0,
+  );
+  return differential >= 6 ? [game.teamTalent.summary] : [];
+}
+
+function resolveRatingAttackContext(
+  offStrategy: string | null,
+): GameDayRecapRatingAttackContext | null {
+  return resolveRatingAttackContexts(offStrategy)[0] ?? null;
+}
+
+function resolveRatingAttackContexts(
+  offStrategy: string | null,
+): GameDayRecapRatingAttackContext[] {
+  const normalized =
+    offStrategy
+      ?.toLowerCase()
+      .replace(/[^a-z]+/g, " ")
+      .trim() ?? "";
+  const outsideContext: GameDayRecapRatingAttackContext = {
+    attackLabel: "outside scoring",
+    defenseKey: "outsideDefense",
+    defenseLabel: "perimeter defense",
+    scoringKey: "outsideScoring",
+  };
+  const insideContext: GameDayRecapRatingAttackContext = {
+    attackLabel: "inside scoring",
+    defenseKey: "insideDefense",
+    defenseLabel: "inside defense",
+    scoringKey: "insideScoring",
+  };
+
+  if (/\b(?:motion|run and gun|princeton|outside)\b/.test(normalized)) {
+    return [outsideContext];
+  }
+
+  if (/\b(?:look inside|low post|inside isolation|inside)\b/.test(normalized)) {
+    return [insideContext];
+  }
+
+  return [outsideContext, insideContext];
+}
+
+function resolveOffenseStoryFamily(
+  offStrategy: string | null,
+): "inside" | "outside" | null {
+  const contexts = resolveRatingAttackContexts(offStrategy);
+  if (contexts.length !== 1) {
+    return null;
+  }
+
+  return contexts[0]?.scoringKey === "insideScoring" ? "inside" : "outside";
+}
+
+function isFiniteRatingValue(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function formatRatingLabelForFact(
+  labels: Record<string, string>,
+  key: string,
+  value: number,
+): string {
+  return labels[key] ?? String(roundToOneDecimal(value));
+}
+
 function buildFactsLibraryNarrativePlan(args: {
   game: GameDayRecapGameFactStore;
   gameFlow: GameDayRecapFactsLibraryGameFlow;
   matchupEdgeFacts: GameDayRecapFactsLibrary["matchupEdgeFacts"];
   summaryFacts: string[];
 }): GameDayRecapFactsLibraryNarrativePlan {
-  const setupFacts = uniqueRecapLines([
-    buildTacticalSetupFact(args.game),
-    args.game.effortSummary,
-    ...args.game.gameDayPrepSummaries,
-    ...args.game.rotationSummaries,
-  ].filter((fact): fact is string => Boolean(fact)));
-  const gameFlowFacts = uniqueRecapLines([
-    args.game.periodStates.halftime
-      ? buildThroughPeriodSentenceFromState(args.game.periodStates.halftime)
-      : null,
-    args.game.periodStates.throughThreeQuarters
-      ? buildThroughPeriodSentenceFromState(args.game.periodStates.throughThreeQuarters)
-      : null,
-    ...args.gameFlow.highlightLeadChanges,
-    ...args.gameFlow.highlightRuns.map((highlight) => highlight.summary),
-    args.gameFlow.closingNote,
-    ...args.summaryFacts.filter((fact) =>
-      /\b(?:quarter|run|lead|comeback|largest lead|through three)\b/i.test(fact),
-    ),
-  ].filter((fact): fact is string => Boolean(fact)));
+  const setupFacts = uniqueRecapLines(
+    [
+      buildTacticalSetupFact(args.game),
+      ...args.game.requiredContextSentences,
+      ...args.game.rotationSummaries,
+    ].filter((fact): fact is string => Boolean(fact)),
+  );
+  const gameFlowFacts = uniqueRecapLines(
+    [
+      args.game.periodStates.halftime
+        ? buildThroughPeriodSentenceFromState(args.game.periodStates.halftime)
+        : null,
+      args.game.periodStates.throughThreeQuarters
+        ? buildThroughPeriodSentenceFromState(
+            args.game.periodStates.throughThreeQuarters,
+          )
+        : null,
+      ...args.gameFlow.highlightLeadChanges,
+      ...args.gameFlow.highlightRuns.map((highlight) => highlight.summary),
+      args.gameFlow.closingNote,
+      ...args.summaryFacts.filter((fact) =>
+        /\b(?:quarter|run|lead|comeback|largest lead|through three)\b/i.test(
+          fact,
+        ),
+      ),
+    ].filter((fact): fact is string => Boolean(fact)),
+  );
   const closingFacts = uniqueRecapLines([
     ...buildPlayerLeaderNarrativeFacts(args.game),
     ...args.matchupEdgeFacts.supported,
@@ -5817,7 +7071,9 @@ function buildFactsLibraryNarrativePlan(args: {
   };
 }
 
-function buildTacticalSetupFact(game: GameDayRecapGameFactStore): string | null {
+function buildTacticalSetupFact(
+  game: GameDayRecapGameFactStore,
+): string | null {
   const awayOffense = game.teams.away.offStrategy?.trim();
   const homeOffense = game.teams.home.offStrategy?.trim();
   const awayDefense = game.teams.away.defStrategy?.trim();
@@ -5829,7 +7085,9 @@ function buildTacticalSetupFact(game: GameDayRecapGameFactStore): string | null 
     homeDefense ? `${game.teams.home.name} defended with ${homeDefense}` : null,
   ].filter((part): part is string => Boolean(part));
 
-  return tacticParts.length ? `Tactical setup: ${tacticParts.join("; ")}.` : null;
+  return tacticParts.length
+    ? `Tactical setup: ${tacticParts.join("; ")}.`
+    : null;
 }
 
 function buildThroughPeriodSentenceFromState(
@@ -5867,8 +7125,9 @@ function buildFactsLibraryGameFlow(args: {
   seriesContext: GameDayRecapSeriesContext | null;
 }): GameDayRecapFactsLibraryGameFlow {
   const highlightRuns = buildFactsLibraryRunHighlights(args.playByPlayFacts);
-  const highlightLeadChanges =
-    buildFactsLibraryLeadChangeHighlights(args.playByPlayFacts);
+  const highlightLeadChanges = buildFactsLibraryLeadChangeHighlights(
+    args.playByPlayFacts,
+  );
   const closingNote =
     args.playByPlayFacts?.summaryLines.find((line) =>
       /\b(?:Closing sequence|buzzerbeater|Late-game swing|Late-game swings)\b/i.test(
@@ -5948,9 +7207,7 @@ function buildFactsLibrarySummaryFacts(args: {
     `${args.winnerName} beat ${args.loserName} ${args.finalScoreFromWinnerPerspective}.`,
   );
   if (args.gameScoringContext === "high_scoring_shootout") {
-    facts.add(
-      `Both teams topped 100 points, making it a high-scoring game.`,
-    );
+    facts.add(`Both teams topped 100 points, making it a high-scoring game.`);
   } else if (args.gameScoringContext === "low_scoring_grind") {
     facts.add(
       `Both teams stayed below 80 points, making it a low-scoring game.`,
@@ -6042,7 +7299,7 @@ function buildFactsLibraryStorySignals(args: {
     (args.throughThreeQuarters.homeScore > args.throughThreeQuarters.awayScore
       ? args.homeTeamName
       : args.throughThreeQuarters.awayScore >
-            args.throughThreeQuarters.homeScore
+          args.throughThreeQuarters.homeScore
         ? args.awayTeamName
         : null) === args.winnerName
   ) {
@@ -6051,7 +7308,8 @@ function buildFactsLibraryStorySignals(args: {
     );
   } else if (
     args.throughThreeQuarters &&
-    args.throughThreeQuarters.homeScore !== args.throughThreeQuarters.awayScore &&
+    args.throughThreeQuarters.homeScore !==
+      args.throughThreeQuarters.awayScore &&
     args.finalMargin >= 10
   ) {
     const leaderName =
@@ -6130,7 +7388,8 @@ function buildFactsLibraryHeadlineCandidates(args: {
 }): string[] {
   const candidates: string[] = [];
   const seriesGameNumber = args.seriesContext
-    ? args.seriesContext.postgameWins.away + args.seriesContext.postgameWins.home
+    ? args.seriesContext.postgameWins.away +
+      args.seriesContext.postgameWins.home
     : null;
   const winnerSeriesWins =
     args.seriesContext?.summaryLine === "The series is tied 1-1."
@@ -6187,9 +7446,11 @@ function buildFactsLibraryHeadlineCandidates(args: {
       ? args.playByPlayFacts.primaryRun
       : args.playByPlayFacts?.secondaryRun?.teamSide === args.winnerSide
         ? args.playByPlayFacts.secondaryRun
-        : args.playByPlayFacts?.longestUnansweredRun.teamSide === args.winnerSide
+        : args.playByPlayFacts?.longestUnansweredRun.teamSide ===
+            args.winnerSide
           ? args.playByPlayFacts.longestUnansweredRun
-          : args.playByPlayFacts?.bestCompetitiveSwingRun.teamSide === args.winnerSide
+          : args.playByPlayFacts?.bestCompetitiveSwingRun.teamSide ===
+              args.winnerSide
             ? args.playByPlayFacts.bestCompetitiveSwingRun
             : null;
   if (winnerRun) {
@@ -6218,13 +7479,7 @@ function buildThroughThreeQuartersSentenceFromState(
 }
 
 function uniqueRecapLines(lines: string[]): string[] {
-  return Array.from(
-    new Set(
-      lines
-        .map((line) => line.trim())
-        .filter(Boolean),
-    ),
-  );
+  return Array.from(new Set(lines.map((line) => line.trim()).filter(Boolean)));
 }
 
 type CompletedBestOfThreeSeriesMatch = {
@@ -7031,6 +8286,7 @@ function buildPromptTeam(args: {
     offStrategy: args.team.offStrategy,
     ratingLabels: formatTeamRatingsForRecap(args.team.ratings),
     ratingTotal: sumTeamRatingsForRecap(args.team.ratings),
+    ratingValues: compactTeamRatingValuesForRecap(args.team.ratings),
     recentAverageMargin: args.hasHistoricalContext
       ? args.postgameContext.recentAverageMargin
       : null,
@@ -7038,8 +8294,30 @@ function buildPromptTeam(args: {
       ? args.postgameContext.recentSignalFlags
       : [],
     score: args.team.score ?? 0,
+    turnovers: resolveTeamTurnoversForRecap(args.team),
     topPlayers: extractTopPlayers(args.team.players),
   };
+}
+
+function resolveTeamTurnoversForRecap(team: BBApiBoxScoreTeam): number | null {
+  const totalTurnovers =
+    team.teamTotals.to ?? team.teamTotals.turnovers ?? team.teamTotals.turnover;
+  if (typeof totalTurnovers === "number" && Number.isFinite(totalTurnovers)) {
+    return totalTurnovers;
+  }
+
+  let hasPlayerTurnovers = false;
+  const playerTurnovers = team.players.reduce((sum, player) => {
+    const turnovers = player.performanceStats?.to;
+    if (typeof turnovers !== "number" || !Number.isFinite(turnovers)) {
+      return sum;
+    }
+
+    hasPlayerTurnovers = true;
+    return sum + turnovers;
+  }, 0);
+
+  return hasPlayerTurnovers ? playerTurnovers : null;
 }
 
 function buildEvidenceSignals(args: {
@@ -7344,6 +8622,19 @@ function formatTeamRatingsForRecap(
       return [[key, label ?? String(roundToOneDecimal(value))]];
     }),
   );
+}
+
+function compactTeamRatingValuesForRecap(
+  ratings: BBApiBoxScoreTeam["ratings"],
+): Partial<Record<TeamRatingKey, number>> {
+  return Object.fromEntries(
+    TEAM_RATING_KEYS.flatMap((key) => {
+      const value = ratings?.[key];
+      return isFiniteRatingValue(value)
+        ? [[key, roundToOneDecimal(value)]]
+        : [];
+    }),
+  ) as Partial<Record<TeamRatingKey, number>>;
 }
 
 function sumTeamRatingsForRecap(
@@ -8357,6 +9648,97 @@ function logGameDayRecapError(
   console.error(`${GAME_DAY_RECAP_LOG_PREFIX} ${event}`, details);
 }
 
+function createBoundedConcurrencyLimiter(
+  concurrency: number,
+): BoundedConcurrencyLimiter {
+  const limit = Math.max(1, Math.trunc(concurrency));
+  const queue: Array<{
+    reject: (reason?: unknown) => void;
+    resolve: (value: unknown) => void;
+    task: () => Promise<unknown>;
+  }> = [];
+  let activeCount = 0;
+
+  const runNext = () => {
+    if (activeCount >= limit) {
+      return;
+    }
+    const next = queue.shift();
+    if (!next) {
+      return;
+    }
+
+    activeCount += 1;
+    Promise.resolve()
+      .then(next.task)
+      .then(next.resolve, next.reject)
+      .finally(() => {
+        activeCount -= 1;
+        runNext();
+      });
+  };
+
+  return <T>(task: () => Promise<T>) =>
+    new Promise<T>((resolve, reject) => {
+      queue.push({
+        reject,
+        resolve: resolve as (value: unknown) => void,
+        task: task as () => Promise<unknown>,
+      });
+      runNext();
+    });
+}
+
+async function mapWithBoundedConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const limiter = createBoundedConcurrencyLimiter(concurrency);
+  return Promise.all(
+    items.map((item, index) => limiter(() => worker(item, index))),
+  );
+}
+
+function createGameDayRecapGenerationConcurrency(
+  config: GameDayRecapRuntimeConfig,
+): GameDayRecapGenerationConcurrency {
+  return {
+    interviewLimiter: createBoundedConcurrencyLimiter(
+      config.interviewConcurrency,
+    ),
+    judgeLimiter: createBoundedConcurrencyLimiter(config.judgeConcurrency),
+    polishLimiter: createBoundedConcurrencyLimiter(config.polishConcurrency),
+  };
+}
+
+async function withGameDayRecapStageTiming<T>(
+  stage: string,
+  details: Record<string, unknown>,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const result = await operation();
+    logGameDayRecapInfo("process.stage_timing", {
+      ...details,
+      durationMs: Date.now() - startedAt,
+      stage,
+      status: "succeeded",
+    });
+    return result;
+  } catch (error) {
+    logGameDayRecapInfo("process.stage_timing", {
+      ...details,
+      durationMs: Date.now() - startedAt,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      stage,
+      status: "failed",
+    });
+    throw error;
+  }
+}
+
 function buildGameDayRecapInfoLogEntry(
   event: string,
   details: Record<string, unknown>,
@@ -8381,6 +9763,26 @@ function buildGameDayRecapInfoLogEntry(
         ]),
         coverage,
       },
+      event,
+    };
+  }
+
+  if (event === "process.stage_timing") {
+    return {
+      details: pickGameDayRecapLogFields(details, [
+        "candidateCount",
+        "concurrency",
+        "durationMs",
+        "errorMessage",
+        "gameCount",
+        "qualityTier",
+        "remainingTimeMs",
+        "requestKind",
+        "stage",
+        "status",
+        "targetKey",
+        "userId",
+      ]),
       event,
     };
   }
@@ -8689,8 +10091,7 @@ function attachValidResultValidation(
 function buildGameDayRecapFailureDetails(
   error: unknown,
 ): GameDayRecapFailureDetailsPayload {
-  const message =
-    error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
   const errorName = error instanceof Error ? error.name : null;
   if (error instanceof GameDayRecapRepairFailureError) {
     const issuesByMatchId = new Map<
@@ -8959,13 +10360,17 @@ function buildGameDayRecapCostPayload(args: {
   );
   const estimatedStageCosts = stages
     .map((stage) => stage.estimatedCostUsd)
-    .filter((estimatedCostUsd): estimatedCostUsd is number =>
-      typeof estimatedCostUsd === "number",
+    .filter(
+      (estimatedCostUsd): estimatedCostUsd is number =>
+        typeof estimatedCostUsd === "number",
     );
   const estimatedTotalCostUsd =
     estimatedStageCosts.length > 0
       ? roundRecapUsdEstimate(
-          estimatedStageCosts.reduce((total, stageCost) => total + stageCost, 0),
+          estimatedStageCosts.reduce(
+            (total, stageCost) => total + stageCost,
+            0,
+          ),
         )
       : undefined;
   const generatedGameCount = args.result?.games.length ?? 0;
@@ -9160,24 +10565,24 @@ async function generateResolvedGameDayRecap(args: {
   const factStore = resolvePayloadFactStore(args.payload);
   const runtimeConfig =
     args.runtimeConfig ?? DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG;
+  const concurrency = createGameDayRecapGenerationConcurrency(runtimeConfig);
   const logContext = {
     targetKey: args.targetKey,
     userId: args.userId,
   };
   const rewriteProvider =
     args.qualityTier === "premium"
-      ? args.retryProvider ?? args.writerProvider
+      ? (args.retryProvider ?? args.writerProvider)
       : args.writerProvider;
 
   let generated: GeneratedGameDayRecap;
   if (args.qualityTier === "premium") {
-    if (!args.retryProvider || !args.judgeProvider) {
-      throw new Error(
-        "Premium recap generation requires both retry and judge providers.",
-      );
+    if (!args.retryProvider) {
+      throw new Error("Premium recap generation requires a retry provider.");
     }
 
     generated = await generatePremiumValidatedGameDayRecap({
+      concurrency,
       judgeProvider: args.judgeProvider,
       logContext,
       payload: args.payload,
@@ -9186,11 +10591,8 @@ async function generateResolvedGameDayRecap(args: {
       writerProvider: args.writerProvider,
     });
   } else {
-    if (!args.judgeProvider) {
-      throw new Error("Standard recap generation requires a judge provider.");
-    }
-
     generated = await generateValidatedGameDayRecap({
+      concurrency,
       judgeProvider: args.judgeProvider,
       logContext,
       payload: args.payload,
@@ -9202,64 +10604,92 @@ async function generateResolvedGameDayRecap(args: {
   return finalizeGeneratedGameDayRecap({
     factStore,
     generated,
+    concurrency,
     interviewProvider: rewriteProvider,
     judgeProvider: args.judgeProvider,
     logContext,
     polishProvider: rewriteProvider,
+    qualityTier: args.qualityTier,
     remainingTimeInMillis: args.remainingTimeInMillis,
     runtimeConfig,
   });
 }
 
 async function finalizeGeneratedGameDayRecap(args: {
+  concurrency: GameDayRecapGenerationConcurrency;
   factStore: GameDayRecapFactStore;
   generated: GeneratedGameDayRecap;
   interviewProvider: StructuredGameDayRecapProvider;
-  judgeProvider: StructuredGameDayRecapProvider;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   remainingTimeInMillis?: () => number;
   polishProvider: StructuredGameDayRecapProvider;
+  qualityTier: RecapQualityTier;
   runtimeConfig: GameDayRecapRuntimeConfig;
 }): Promise<GeneratedGameDayRecap> {
   const recapWithoutInterviews = stripPostgameInterviewsFromResult(
     args.generated.result,
   );
-  const polishedResult = hasRemainingExecutionBudget(
-    args.remainingTimeInMillis,
-    MIN_REMAINING_MS_FOR_STYLE_POLISH,
-  )
-    ? await polishGeneratedGameDayRecapResult({
-        factStore: args.factStore,
-        judgeProvider: args.judgeProvider,
-        logContext: args.logContext,
-        provider: args.polishProvider,
-        result: recapWithoutInterviews,
-        runtimeConfig: args.runtimeConfig,
-      })
+  const stylePolishDecision = resolveStylePolishDecision({
+    gameCount: recapWithoutInterviews.games.length,
+    remainingTimeInMillis: args.remainingTimeInMillis,
+    runtimeConfig: args.runtimeConfig,
+  });
+  const polishedResult = stylePolishDecision.shouldRun
+    ? await withGameDayRecapStageTiming(
+        "style_polish",
+        {
+          concurrency: args.runtimeConfig.polishConcurrency,
+          gameCount: recapWithoutInterviews.games.length,
+          remainingTimeMs: args.remainingTimeInMillis?.() ?? null,
+          targetKey: args.logContext?.targetKey,
+          userId: args.logContext?.userId,
+        },
+        () =>
+          polishGeneratedGameDayRecapResult({
+            concurrency: args.concurrency,
+            factStore: args.factStore,
+            judgeProvider: args.judgeProvider,
+            logContext: args.logContext,
+            provider: args.polishProvider,
+            qualityTier: args.qualityTier,
+            remainingTimeInMillis: args.remainingTimeInMillis,
+            result: recapWithoutInterviews,
+            runtimeConfig: args.runtimeConfig,
+          }),
+      )
     : recapWithoutInterviews;
-  if (
-    recapWithoutInterviews === polishedResult &&
-    !hasRemainingExecutionBudget(
-      args.remainingTimeInMillis,
-      MIN_REMAINING_MS_FOR_STYLE_POLISH,
-    )
-  ) {
+  if (!stylePolishDecision.shouldRun) {
     logGameDayRecapWarn("process.style_polish_skipped_budget", {
+      reason: stylePolishDecision.reason,
       remainingTimeMs: args.remainingTimeInMillis?.() ?? null,
       stage: "style-polish",
       targetKey: args.logContext?.targetKey ?? null,
       userId: args.logContext?.userId ?? null,
     });
   }
-  const resultWithInterviews = await attachGuaranteedPostgameInterviews({
-    factStore: args.factStore,
-    judgeProvider: args.judgeProvider,
-    logContext: args.logContext,
-    provider: args.interviewProvider,
-    result: polishedResult,
-    remainingTimeInMillis: args.remainingTimeInMillis,
-    runtimeConfig: args.runtimeConfig,
-  });
+  const resultWithInterviews = await withGameDayRecapStageTiming(
+    "postgame_interviews",
+    {
+      concurrency: args.runtimeConfig.interviewConcurrency,
+      gameCount: polishedResult.games.length,
+      remainingTimeMs: args.remainingTimeInMillis?.() ?? null,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () =>
+      attachGuaranteedPostgameInterviews({
+        concurrency: args.concurrency,
+        factStore: args.factStore,
+        judgeProvider: args.judgeProvider,
+        logContext: args.logContext,
+        provider: args.interviewProvider,
+        qualityTier: args.qualityTier,
+        result: polishedResult,
+        remainingTimeInMillis: args.remainingTimeInMillis,
+        runtimeConfig: args.runtimeConfig,
+      }),
+  );
 
   return {
     coverageIssues: args.generated.coverageIssues,
@@ -9278,6 +10708,44 @@ function hasRemainingExecutionBudget(
   return remainingTimeInMillis() > minimumRequiredMs;
 }
 
+function resolveStylePolishDecision(args: {
+  gameCount: number;
+  remainingTimeInMillis: (() => number) | undefined;
+  runtimeConfig: GameDayRecapRuntimeConfig;
+}): { reason: string | null; shouldRun: boolean } {
+  if (args.runtimeConfig.fullSlatePolishMode === "off") {
+    return {
+      reason: "mode_off",
+      shouldRun: false,
+    };
+  }
+  if (
+    args.runtimeConfig.fullSlatePolishMode === "auto" &&
+    args.gameCount >= 8
+  ) {
+    return {
+      reason: "full_slate_auto",
+      shouldRun: false,
+    };
+  }
+  if (
+    !hasRemainingExecutionBudget(
+      args.remainingTimeInMillis,
+      MIN_REMAINING_MS_FOR_STYLE_POLISH,
+    )
+  ) {
+    return {
+      reason: "remaining_time",
+      shouldRun: false,
+    };
+  }
+
+  return {
+    reason: null,
+    shouldRun: true,
+  };
+}
+
 function buildSingleGameValidationResult(
   game: GameDayRecapResultGame,
 ): GameDayRecapResultPayload {
@@ -9287,8 +10755,7 @@ function buildSingleGameValidationResult(
       gameOfTheDayMatchId: null,
       gameOfTheDaySurpriseFactor: null,
       headline: game.headline,
-      lede:
-        "Single-game recap validation placeholder to recheck grounded recap content.",
+      lede: "Single-game recap validation placeholder to recheck grounded recap content.",
     },
   };
 }
@@ -9296,7 +10763,8 @@ function buildSingleGameValidationResult(
 async function validateStandaloneRecapGame(args: {
   expectedGame: GameDayRecapGameFactStore;
   game: GameDayRecapResultGame;
-  judgeProvider: StructuredGameDayRecapProvider;
+  judgeLimiter?: BoundedConcurrencyLimiter;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   request: GameDayRecapRequestFacts;
   runtimeConfig: GameDayRecapRuntimeConfig;
@@ -9319,7 +10787,7 @@ async function validateStandaloneRecapGame(args: {
       enforceBannedStylePhrases: args.runtimeConfig.enforceBannedStylePhrases,
     },
   );
-  const judged = await judgeGameDayRecapResult({
+  const judged = await judgeGameDayRecapResultIfEnabled({
     factStore: buildGameDayRecapFactStore({
       games: [args.expectedGame],
       request: args.request,
@@ -9328,6 +10796,7 @@ async function validateStandaloneRecapGame(args: {
       args.stage === "postgame-interview"
         ? ["postgameInterview"]
         : ["headline", "writeup", "postgameInterview"],
+    judgeLimiter: args.judgeLimiter,
     logContext: args.logContext,
     provider: args.judgeProvider,
     result: deterministic.orderedResult,
@@ -9342,109 +10811,12 @@ async function validateStandaloneRecapGame(args: {
 }
 
 async function polishGeneratedGameDayRecapResult(args: {
+  concurrency: GameDayRecapGenerationConcurrency;
   factStore: GameDayRecapFactStore;
-  judgeProvider: StructuredGameDayRecapProvider;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   provider: StructuredGameDayRecapProvider;
-  result: GameDayRecapResultPayload;
-  runtimeConfig: GameDayRecapRuntimeConfig;
-}): Promise<GameDayRecapResultPayload> {
-  const expectedGamesByMatchId = new Map(
-    args.factStore.games.map((game) => [game.matchId, game]),
-  );
-  let games = [...args.result.games];
-
-  for (let index = 0; index < games.length; index += 1) {
-    const game = games[index];
-    if (!game) {
-      continue;
-    }
-
-    const expectedGame = expectedGamesByMatchId.get(game.matchId);
-    if (!expectedGame) {
-      continue;
-    }
-
-    try {
-      const polishedOutput = await args.provider.generate({
-        gameFacts: buildGameDayRecapWriterGameFromFactStore({
-          game: expectedGame,
-          generationApproach: args.factStore.request.generationApproach,
-        }),
-        recapGame: {
-          headline: game.headline,
-          matchId: game.matchId,
-          writeup: game.writeup,
-        },
-        request: args.factStore.request,
-        task: "style_polish",
-      });
-      const polishedWriteup = normalizeGameDayRecapStylePolishWriteup(
-        polishedOutput,
-      );
-      if (!polishedWriteup || polishedWriteup === game.writeup) {
-        continue;
-      }
-
-      const validated = await validateStandaloneRecapGame({
-        expectedGame,
-        game: {
-          ...game,
-          writeup: polishedWriteup,
-        },
-        judgeProvider: args.judgeProvider,
-        logContext: args.logContext,
-        request: args.factStore.request,
-        runtimeConfig: args.runtimeConfig,
-        stage: "style-polish",
-      });
-      if (
-        validated.deterministicIssues.length > 0 ||
-        validated.judgeIssues.length > 0
-      ) {
-        logGameDayRecapWarn("process.style_polish_rejected", {
-          deterministicIssues: summarizeGameDayRecapValidationIssuesForLog(
-            validated.deterministicIssues,
-          ),
-          judgeIssues: summarizeGameDayRecapJudgeIssuesForLog(
-            validated.judgeIssues,
-          ),
-          matchId: game.matchId,
-          stage: "style-polish",
-          targetKey: args.logContext?.targetKey ?? null,
-          userId: args.logContext?.userId ?? null,
-        });
-        continue;
-      }
-
-      games[index] = validated.game;
-      logGameDayRecapInfo("process.style_polish_applied", {
-        matchId: game.matchId,
-        targetKey: args.logContext?.targetKey,
-        userId: args.logContext?.userId,
-      });
-    } catch (error) {
-      logGameDayRecapWarn("process.style_polish_skipped", {
-        errorMessage: error instanceof Error ? error.message : String(error),
-        matchId: game.matchId,
-        stage: "style-polish",
-        targetKey: args.logContext?.targetKey ?? null,
-        userId: args.logContext?.userId ?? null,
-      });
-    }
-  }
-
-  return {
-    ...args.result,
-    games,
-  };
-}
-
-async function attachGuaranteedPostgameInterviews(args: {
-  factStore: GameDayRecapFactStore;
-  judgeProvider: StructuredGameDayRecapProvider;
-  logContext?: GameDayRecapGenerationLogContext;
-  provider: StructuredGameDayRecapProvider;
+  qualityTier: RecapQualityTier;
   remainingTimeInMillis?: () => number;
   result: GameDayRecapResultPayload;
   runtimeConfig: GameDayRecapRuntimeConfig;
@@ -9453,32 +10825,100 @@ async function attachGuaranteedPostgameInterviews(args: {
     args.factStore.games.map((game) => [game.matchId, game]),
   );
   const games = await Promise.all(
-    args.result.games.map(async (game) => {
-      const expectedGame = expectedGamesByMatchId.get(game.matchId);
-      const candidate = expectedGame?.postgameInterviewCandidate ?? null;
-      if (!expectedGame || !candidate) {
-        return removePostgameInterview(game);
-      }
+    args.result.games.map((game) =>
+      args.concurrency.polishLimiter(async () => {
+        if (
+          !hasRemainingExecutionBudget(
+            args.remainingTimeInMillis,
+            MIN_REMAINING_MS_FOR_STYLE_POLISH,
+          )
+        ) {
+          logGameDayRecapWarn("process.style_polish_skipped_budget", {
+            matchId: game.matchId,
+            remainingTimeMs: args.remainingTimeInMillis?.() ?? null,
+            stage: "style-polish",
+            targetKey: args.logContext?.targetKey ?? null,
+            userId: args.logContext?.userId ?? null,
+          });
+          return game;
+        }
 
-      const interview = await generateGuaranteedPostgameInterview({
-        candidate,
-        expectedGame,
-        game,
-        judgeProvider: args.judgeProvider,
-        logContext: args.logContext,
-        provider: args.provider,
-        remainingTimeInMillis: args.remainingTimeInMillis,
-        request: args.factStore.request,
-        runtimeConfig: args.runtimeConfig,
-      });
+        const expectedGame = expectedGamesByMatchId.get(game.matchId);
+        if (!expectedGame) {
+          return game;
+        }
 
-      return interview
-        ? {
-            ...game,
-            postgameInterview: interview,
+        try {
+          const polishedOutput = await args.provider.generate({
+            gameFacts: buildGameDayRecapWriterGameFromFactStore({
+              game: expectedGame,
+              generationApproach: args.factStore.request.generationApproach,
+            }),
+            recapGame: {
+              headline: game.headline,
+              matchId: game.matchId,
+              writeup: game.writeup,
+            },
+            request: args.factStore.request,
+            task: "style_polish",
+          });
+          const polishedWriteup =
+            normalizeGameDayRecapStylePolishWriteup(polishedOutput);
+          if (!polishedWriteup || polishedWriteup === game.writeup) {
+            return game;
           }
-        : removePostgameInterview(game);
-    }),
+
+          const validated = await validateStandaloneRecapGame({
+            expectedGame,
+            game: {
+              ...game,
+              writeup: polishedWriteup,
+            },
+            judgeLimiter: args.concurrency.judgeLimiter,
+            judgeProvider: args.judgeProvider,
+            logContext: args.logContext,
+            request: args.factStore.request,
+            runtimeConfig: args.runtimeConfig,
+            stage: "style-polish",
+          });
+          if (
+            validated.deterministicIssues.length > 0 ||
+            validated.judgeIssues.length > 0
+          ) {
+            logGameDayRecapWarn("process.style_polish_rejected", {
+              deterministicIssues: summarizeGameDayRecapValidationIssuesForLog(
+                validated.deterministicIssues,
+              ),
+              judgeIssues: summarizeGameDayRecapJudgeIssuesForLog(
+                validated.judgeIssues,
+              ),
+              matchId: game.matchId,
+              stage: "style-polish",
+              targetKey: args.logContext?.targetKey ?? null,
+              userId: args.logContext?.userId ?? null,
+            });
+            return game;
+          }
+
+          logGameDayRecapInfo("process.style_polish_applied", {
+            matchId: game.matchId,
+            targetKey: args.logContext?.targetKey,
+            userId: args.logContext?.userId,
+          });
+          return validated.game;
+        } catch (error) {
+          logGameDayRecapWarn("process.style_polish_skipped", {
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+            matchId: game.matchId,
+            stage: "style-polish",
+            targetKey: args.logContext?.targetKey ?? null,
+            userId: args.logContext?.userId ?? null,
+          });
+          return game;
+        }
+      }),
+    ),
   );
 
   return {
@@ -9487,20 +10927,375 @@ async function attachGuaranteedPostgameInterviews(args: {
   };
 }
 
+function isSingleGameRecapRequest(request: GameDayRecapRequestFacts): boolean {
+  return request.kind === "SINGLE_GAME";
+}
+
+function collectGuaranteedPostgameInterviewCandidates(args: {
+  game: GameDayRecapGameFactStore;
+  request: GameDayRecapRequestFacts;
+}): GameDayRecapPromptInterviewCandidate[] {
+  const candidates = collectPostgameInterviewCandidates(args.game);
+  if (!isSingleGameRecapRequest(args.request)) {
+    return candidates;
+  }
+
+  const winnerSide = args.game.winner.winnerSide;
+  if (!winnerSide) {
+    return candidates;
+  }
+  const loserSide = winnerSide === "home" ? "away" : "home";
+
+  return [
+    candidates.find((candidate) => candidate.teamSide === winnerSide) ??
+      buildSingleGameFallbackInterviewCandidate({
+        game: args.game,
+        perspective: "winner",
+        teamSide: winnerSide,
+      }),
+    candidates.find((candidate) => candidate.teamSide === loserSide) ??
+      buildSingleGameFallbackInterviewCandidate({
+        game: args.game,
+        perspective: "loser",
+        teamSide: loserSide,
+      }),
+  ].filter(
+    (
+      candidate,
+    ): candidate is GameDayRecapPromptInterviewCandidate => candidate !== null,
+  );
+}
+
+function listMissingGuaranteedPostgameInterviewSides(args: {
+  candidates: GameDayRecapPromptInterviewCandidate[];
+  game: GameDayRecapGameFactStore;
+  request: GameDayRecapRequestFacts;
+}): Array<"loser" | "winner"> {
+  if (!isSingleGameRecapRequest(args.request)) {
+    return args.candidates.length ? [] : ["winner"];
+  }
+
+  const winnerSide = args.game.winner.winnerSide;
+  if (!winnerSide) {
+    return args.candidates.length ? [] : ["winner", "loser"];
+  }
+  const sidesByPerspective = new Set(
+    args.candidates.map((candidate) =>
+      candidate.teamSide === winnerSide ? "winner" : "loser",
+    ),
+  );
+
+  const requiredSides: Array<"loser" | "winner"> = ["winner", "loser"];
+  return requiredSides.filter(
+    (side): side is "loser" | "winner" => !sidesByPerspective.has(side),
+  );
+}
+
+function buildSingleGameFallbackInterviewCandidate(args: {
+  game: GameDayRecapGameFactStore;
+  perspective: "loser" | "winner";
+  teamSide: "away" | "home";
+}): GameDayRecapPromptInterviewCandidate | null {
+  const team = args.game.teams[args.teamSide];
+  const opponentSide = args.teamSide === "home" ? "away" : "home";
+  const opponent = args.game.teams[opponentSide];
+  const selectedPlayer = team.topPlayers[0];
+  if (!selectedPlayer) {
+    return null;
+  }
+
+  const statLine = {
+    assists: selectedPlayer.assists,
+    blocks: selectedPlayer.blocks,
+    minutes: selectedPlayer.minutes,
+    points: selectedPlayer.points,
+    rebounds: selectedPlayer.rebounds,
+    steals: selectedPlayer.steals,
+    turnovers: selectedPlayer.turnovers,
+  };
+
+  return {
+    perspective: args.perspective,
+    playerId: null,
+    playerName: selectedPlayer.name,
+    selectionReason: `Single-game fallback ${args.perspective}-side interview candidate for ${team.name}.`,
+    statLine,
+    supportedFacts: buildSingleGameFallbackInterviewSupportedFacts({
+      opponentName: opponent.name,
+      perspective: args.perspective,
+      playerName: selectedPlayer.name,
+      statLine,
+      teamName: team.name,
+    }),
+    teamName: team.name,
+    teamSide: args.teamSide,
+  };
+}
+
+function buildSingleGameFallbackInterviewSupportedFacts(args: {
+  opponentName: string;
+  perspective: "loser" | "winner";
+  playerName: string;
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"];
+  teamName: string;
+}): string[] {
+  const facts = new Set<string>();
+  facts.add(
+    args.perspective === "winner"
+      ? `${args.teamName} beat ${args.opponentName}.`
+      : `${args.teamName} lost to ${args.opponentName}.`,
+  );
+  facts.add(
+    `${args.playerName} finished with ${args.statLine.points} points.`,
+  );
+  if (args.statLine.rebounds > 0 || args.statLine.assists > 0) {
+    facts.add(
+      `${args.playerName} added ${args.statLine.rebounds} rebounds and ${args.statLine.assists} assists.`,
+    );
+  }
+  if (args.statLine.turnovers > 0) {
+    facts.add(`${args.playerName} had ${args.statLine.turnovers} turnovers.`);
+  }
+
+  return Array.from(facts).slice(0, 4);
+}
+
+function buildRetainedPostgameInterviewWarningDetails(args: {
+  deterministicIssues: GameDayRecapSemanticValidationIssue[];
+  judgeIssues: GameDayRecapJudgeValidationIssue[];
+}): string[] {
+  const details = [
+    ...args.deterministicIssues
+      .slice(0, 3)
+      .map((issue) => `Deterministic check: ${issue.reason}`),
+    ...args.judgeIssues
+      .slice(0, 3)
+      .map(
+        (issue) =>
+          `Judge check: ${
+            issue.notes ??
+            "One or more interview lines may not be fully supported by the grounded facts."
+          }`,
+      ),
+  ];
+
+  return details.length
+    ? details
+    : [
+        "One or more interview lines may not be fully supported by the grounded facts.",
+      ];
+}
+
+function withGuaranteedPostgameInterviewCandidate(args: {
+  candidate: GameDayRecapPromptInterviewCandidate;
+  game: GameDayRecapGameFactStore;
+}): GameDayRecapGameFactStore {
+  const existingCandidates = collectPostgameInterviewCandidates(args.game);
+  if (
+    existingCandidates.some(
+      (candidate) =>
+        candidate.teamSide === args.candidate.teamSide &&
+        candidate.playerName === args.candidate.playerName,
+    )
+  ) {
+    return args.game;
+  }
+
+  const postgameInterviewCandidates = [...existingCandidates, args.candidate];
+  return {
+    ...args.game,
+    postgameInterviewCandidate:
+      postgameInterviewCandidates.find(
+        (candidate) => candidate.perspective !== "loser",
+      ) ?? null,
+    postgameInterviewCandidates,
+  };
+}
+
+async function attachGuaranteedPostgameInterviews(args: {
+  concurrency: GameDayRecapGenerationConcurrency;
+  factStore: GameDayRecapFactStore;
+  judgeProvider: StructuredGameDayRecapProvider | null;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider;
+  qualityTier: RecapQualityTier;
+  remainingTimeInMillis?: () => number;
+  result: GameDayRecapResultPayload;
+  runtimeConfig: GameDayRecapRuntimeConfig;
+}): Promise<GameDayRecapResultPayload> {
+  const expectedGamesByMatchId = new Map(
+    args.factStore.games.map((game) => [game.matchId, game]),
+  );
+  const singleGameRequest = isSingleGameRecapRequest(args.factStore.request);
+  const requestedOverrides = resolveRequestedInterviewOverridesFromRequest(
+    args.factStore.request,
+  );
+  const games = await Promise.all(
+    args.result.games.map((game) =>
+      args.concurrency.interviewLimiter(async () => {
+        const expectedGame = expectedGamesByMatchId.get(game.matchId);
+        if (!expectedGame) {
+          return removePostgameInterview(game);
+        }
+        const candidates = collectGuaranteedPostgameInterviewCandidates({
+          game: expectedGame,
+          request: args.factStore.request,
+        });
+        const missingSides = listMissingGuaranteedPostgameInterviewSides({
+          candidates,
+          game: expectedGame,
+          request: args.factStore.request,
+        });
+        if (!candidates.length) {
+          return {
+            ...removePostgameInterview(game),
+            postgameInterviewDiagnostics: missingSides.length
+              ? missingSides.map((side) =>
+                  buildPostgameInterviewDiagnostic({
+                    reason: "No grounded interview candidate was available.",
+                    side,
+                    status: "missing_candidate",
+                  }),
+                )
+              : [
+                  buildPostgameInterviewDiagnostic({
+                    reason: "No grounded interview candidate was available.",
+                    side: "winner",
+                    status: "missing_candidate",
+                  }),
+                ],
+          };
+        }
+
+        const interviews: GameDayRecapResultPostgameInterview[] = [];
+        const diagnostics: GameDayRecapPostgameInterviewDiagnostic[] = [];
+        for (const rawCandidate of candidates) {
+          const candidate = applyRequestedInterviewOverrideToCandidate(
+            rawCandidate,
+            requestedOverrides,
+          );
+          const side = candidate.perspective === "loser" ? "loser" : "winner";
+          if (
+            side === "loser" &&
+            args.qualityTier !== "premium" &&
+            !singleGameRequest
+          ) {
+            diagnostics.push(
+              buildPostgameInterviewDiagnostic({
+                reason: "Losing-side interviews are reserved for premium recaps.",
+                side,
+                status: "skipped",
+              }),
+            );
+            continue;
+          }
+
+          const expectedGameForInterview = withGuaranteedPostgameInterviewCandidate(
+            {
+              candidate,
+              game: expectedGame,
+            },
+          );
+          const interviewResult = await generateGuaranteedPostgameInterview({
+            allowSuspectRetention: singleGameRequest,
+            candidate,
+            expectedGame: expectedGameForInterview,
+            game,
+            judgeLimiter: args.concurrency.judgeLimiter,
+            judgeProvider: args.judgeProvider,
+            logContext: args.logContext,
+            provider: args.provider,
+            remainingTimeInMillis: args.remainingTimeInMillis,
+            request: args.factStore.request,
+            runtimeConfig: args.runtimeConfig,
+          });
+          if (interviewResult) {
+            interviews.push(interviewResult.interview);
+            diagnostics.push(
+              buildPostgameInterviewDiagnostic({
+                details: interviewResult.details,
+                reason: interviewResult.reason,
+                side,
+                status: interviewResult.status,
+              }),
+            );
+          } else {
+            diagnostics.push(
+              buildPostgameInterviewDiagnostic({
+                reason: "Interview generation did not produce a valid grounded result.",
+                side,
+                status: "unavailable",
+              }),
+            );
+          }
+        }
+        for (const side of missingSides) {
+          diagnostics.push(
+            buildPostgameInterviewDiagnostic({
+              reason: "No grounded interview candidate was available.",
+              side,
+              status: "missing_candidate",
+            }),
+          );
+        }
+
+        const winnerInterview =
+          interviews.find(
+            (interview) => interview.teamSide === expectedGame.winner.winnerSide,
+          ) ?? interviews[0] ?? null;
+
+        return interviews.length
+          ? {
+              ...game,
+              postgameInterview: winnerInterview ?? undefined,
+              postgameInterviewDiagnostics: diagnostics,
+              postgameInterviews: interviews,
+            }
+          : {
+              ...removePostgameInterview(game),
+              postgameInterviewDiagnostics: diagnostics,
+            };
+      }),
+    ),
+  );
+
+  return {
+    ...args.result,
+    games,
+  };
+}
+
+function buildPostgameInterviewDiagnostic(args: {
+  details?: string[];
+  reason: string | null;
+  side: "loser" | "winner";
+  status: GameDayRecapPostgameInterviewDiagnostic["status"];
+}): GameDayRecapPostgameInterviewDiagnostic {
+  return {
+    details: args.details ?? [],
+    reason: args.reason,
+    side: args.side,
+    status: args.status,
+  };
+}
+
 async function generateGuaranteedPostgameInterview(args: {
+  allowSuspectRetention: boolean;
   candidate: GameDayRecapPromptInterviewCandidate;
   expectedGame: GameDayRecapGameFactStore;
   game: GameDayRecapResultGame;
-  judgeProvider: StructuredGameDayRecapProvider;
+  judgeLimiter: BoundedConcurrencyLimiter;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   provider: StructuredGameDayRecapProvider;
   remainingTimeInMillis?: () => number;
   request: GameDayRecapRequestFacts;
   runtimeConfig: GameDayRecapRuntimeConfig;
-}): Promise<GameDayRecapResultPostgameInterview | null> {
+}): Promise<GuaranteedPostgameInterviewResult | null> {
   const fallbackInterview = buildFallbackPostgameInterview({
     candidate: args.candidate,
     expectedGame: args.expectedGame,
+    interviewIntensity: args.request.interviewIntensity,
   });
   if (
     !hasRemainingExecutionBudget(
@@ -9515,10 +11310,32 @@ async function generateGuaranteedPostgameInterview(args: {
       targetKey: args.logContext?.targetKey ?? null,
       userId: args.logContext?.userId ?? null,
     });
+    if (
+      !hasRemainingExecutionBudget(
+        args.remainingTimeInMillis,
+        MIN_REMAINING_MS_FOR_INTERVIEW_RETRY,
+      )
+    ) {
+      logGameDayRecapWarn("process.postgame_interview_fallback_used", {
+        matchId: args.game.matchId,
+        reason: "remaining_time",
+        stage: "postgame-interview",
+        targetKey: args.logContext?.targetKey ?? null,
+        userId: args.logContext?.userId ?? null,
+      });
+      return {
+        details: [],
+        interview: fallbackInterview,
+        reason: null,
+        status: "generated",
+      };
+    }
     return validateFallbackInterview({
+      allowSuspectRetention: args.allowSuspectRetention,
       expectedGame: args.expectedGame,
       fallbackInterview,
       game: args.game,
+      judgeLimiter: args.judgeLimiter,
       judgeProvider: args.judgeProvider,
       logContext: args.logContext,
       request: args.request,
@@ -9562,11 +11379,9 @@ async function generateGuaranteedPostgameInterview(args: {
 
       const validated = await validateStandaloneRecapGame({
         expectedGame: args.expectedGame,
-        game: {
-          ...args.game,
-          postgameInterview: parsed.interview,
-        },
+        game: withPostgameInterviewForValidation(args.game, parsed.interview),
         judgeProvider: args.judgeProvider,
+        judgeLimiter: args.judgeLimiter,
         logContext: args.logContext,
         request: args.request,
         runtimeConfig: args.runtimeConfig,
@@ -9576,7 +11391,12 @@ async function generateGuaranteedPostgameInterview(args: {
         validated.deterministicIssues.length === 0 &&
         validated.judgeIssues.length === 0
       ) {
-        return parsed.interview;
+        return {
+          details: [],
+          interview: parsed.interview,
+          reason: null,
+          status: "generated",
+        };
       }
 
       logGameDayRecapWarn("process.postgame_interview_retry", {
@@ -9625,9 +11445,11 @@ async function generateGuaranteedPostgameInterview(args: {
   }
 
   return validateFallbackInterview({
+    allowSuspectRetention: args.allowSuspectRetention,
     expectedGame: args.expectedGame,
     fallbackInterview,
     game: args.game,
+    judgeLimiter: args.judgeLimiter,
     judgeProvider: args.judgeProvider,
     logContext: args.logContext,
     request: args.request,
@@ -9636,20 +11458,23 @@ async function generateGuaranteedPostgameInterview(args: {
 }
 
 async function validateFallbackInterview(args: {
+  allowSuspectRetention: boolean;
   expectedGame: GameDayRecapGameFactStore;
   fallbackInterview: GameDayRecapResultPostgameInterview;
   game: GameDayRecapResultGame;
-  judgeProvider: StructuredGameDayRecapProvider;
+  judgeLimiter: BoundedConcurrencyLimiter;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   request: GameDayRecapRequestFacts;
   runtimeConfig: GameDayRecapRuntimeConfig;
-}): Promise<GameDayRecapResultPostgameInterview | null> {
+}): Promise<GuaranteedPostgameInterviewResult | null> {
   const validatedFallback = await validateStandaloneRecapGame({
     expectedGame: args.expectedGame,
-    game: {
-      ...args.game,
-      postgameInterview: args.fallbackInterview,
-    },
+    game: withPostgameInterviewForValidation(
+      args.game,
+      args.fallbackInterview,
+    ),
+    judgeLimiter: args.judgeLimiter,
     judgeProvider: args.judgeProvider,
     logContext: args.logContext,
     request: args.request,
@@ -9666,7 +11491,36 @@ async function validateFallbackInterview(args: {
       targetKey: args.logContext?.targetKey ?? null,
       userId: args.logContext?.userId ?? null,
     });
-    return args.fallbackInterview;
+    return {
+      details: [],
+      interview: args.fallbackInterview,
+      reason: null,
+      status: "generated",
+    };
+  }
+
+  if (args.allowSuspectRetention) {
+    logGameDayRecapWarn("process.postgame_interview_retained_with_warnings", {
+      deterministicIssues: summarizeGameDayRecapValidationIssuesForLog(
+        validatedFallback.deterministicIssues,
+      ),
+      judgeIssues: summarizeGameDayRecapJudgeIssuesForLog(
+        validatedFallback.judgeIssues,
+      ),
+      matchId: args.game.matchId,
+      stage: "postgame-interview",
+      targetKey: args.logContext?.targetKey ?? null,
+      userId: args.logContext?.userId ?? null,
+    });
+    return {
+      details: buildRetainedPostgameInterviewWarningDetails({
+        deterministicIssues: validatedFallback.deterministicIssues,
+        judgeIssues: validatedFallback.judgeIssues,
+      }),
+      interview: args.fallbackInterview,
+      reason: "Interview was kept despite validation warnings.",
+      status: "suspect",
+    };
   }
 
   logGameDayRecapWarn("process.postgame_interview_unavailable", {
@@ -9684,10 +11538,52 @@ async function validateFallbackInterview(args: {
   return null;
 }
 
+function withPostgameInterviewForValidation(
+  game: GameDayRecapResultGame,
+  interview: GameDayRecapResultPostgameInterview,
+): GameDayRecapResultGame {
+  const validationGame = {
+    ...removePostgameInterview(game),
+    postgameInterviews: [interview],
+  };
+  return interview.teamSide === game.postgameInterview?.teamSide
+    ? {
+        ...validationGame,
+        postgameInterview: interview,
+      }
+    : validationGame;
+}
+
 function buildFallbackPostgameInterview(args: {
   candidate: GameDayRecapPromptInterviewCandidate;
   expectedGame: GameDayRecapGameFactStore;
+  interviewIntensity: RecapInterviewIntensityValue;
 }): GameDayRecapResultPostgameInterview {
+  if (args.candidate.perspective === "loser") {
+    return {
+      playerName: args.candidate.playerName,
+      qa: [
+        {
+          answer: buildFallbackLosingInterviewAnswer(
+            args.candidate,
+            args.interviewIntensity,
+          ),
+          question: "Where did this one get away from you?",
+        },
+        {
+          answer: buildFallbackAdjustmentInterviewAnswer(
+            args.candidate,
+            args.interviewIntensity,
+          ),
+          question: "What has to change for the next game?",
+        },
+      ],
+      teamName: args.candidate.teamName,
+      teamSide: args.candidate.teamSide,
+      title: `${args.candidate.playerName} on ${args.candidate.teamName}'s response`,
+    };
+  }
+
   const winningRun =
     args.expectedGame.playByPlayFacts?.primaryRun?.teamSide ===
     args.candidate.teamSide
@@ -9698,14 +11594,21 @@ function buildFallbackPostgameInterview(args: {
         : null;
   const qa: GameDayRecapResultPostgameInterview["qa"] = [
     {
-      answer: buildFallbackInterviewStatAnswer(args.candidate),
+      answer: buildFallbackInterviewStatAnswer(
+        args.candidate,
+        args.interviewIntensity,
+      ),
       question: buildFallbackInterviewStatQuestion(args.candidate),
     },
   ];
 
   if (winningRun) {
     qa.push({
-      answer: buildFallbackInterviewRunAnswer(winningRun, args.candidate),
+      answer: buildFallbackInterviewRunAnswer(
+        winningRun,
+        args.candidate,
+        args.interviewIntensity,
+      ),
       question: buildFallbackInterviewRunQuestion(winningRun),
     });
   }
@@ -9717,6 +11620,179 @@ function buildFallbackPostgameInterview(args: {
     teamSide: args.candidate.teamSide,
     title: `${args.candidate.playerName} on ${args.candidate.teamName}'s win`,
   };
+}
+
+function buildFallbackLosingInterviewAnswer(
+  candidate: GameDayRecapPromptInterviewCandidate,
+  interviewIntensity: RecapInterviewIntensityValue,
+): string {
+  const statSummary = summarizeInterviewStatLine(candidate.statLine);
+  switch (candidate.personalityType ?? "friendly") {
+    case "curt":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `We let it slip. I had ${statSummary}.`,
+        full_heat: `We let it slip. I had ${statSummary}. That cannot happen again.`,
+        pg13: `We let it slip. I had ${statSummary}. That is on us.`,
+      });
+    case "friendly":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `We had our chances, but the rough stretches added up. I had ${statSummary}, and we have to turn that into winning possessions next time.`,
+        full_heat: `We had enough to win and still let the game drift. I had ${statSummary}, but that is just decoration if we let them leave feeling loud.`,
+        pg13: `We had enough on the table to win it. I had ${statSummary}, but we have to stop letting rough stretches hand people confidence.`,
+      });
+    case "rambling":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `It was one of those games where it kept feeling like one steady stretch could put us back on top, but the rough patches kept stacking up before we could truly settle. I had ${statSummary}, and we needed to string together more of the right possessions.`,
+        full_heat: `It was the kind of game where the door kept swinging open just wide enough for us to reclaim it, and every time we reached for the handle we left a finger in the frame. I had ${statSummary}, but we spent too many possessions letting them believe they were authors of the ending.`,
+        pg13: `It felt like the game kept offering us one clean runway back into control, and every time we started down it another sloppy patch rose up like a toll booth. I had ${statSummary}, but we needed a longer stretch of grown-up possessions.`,
+      });
+    case "nonsensical":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `The game got wobbly on us for a while, and once it tipped the wrong direction we never quite got both hands back on it. I had ${statSummary}, but we needed steadier trips when it got strange.`,
+        full_heat: `The game turned into a shopping cart with one busted wheel, and instead of kicking it straight we kept pretending it was gliding. I had ${statSummary}, but the ugly minutes wrote the headline for us.`,
+        pg13: `The game started walking around sideways on us, and instead of grabbing it by the collar we kept letting it knock lamps over. I had ${statSummary}, but we needed saner possessions when the room got weird.`,
+      });
+    case "excited":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `It hurts because it felt right there for us, but the game swung away in a few big moments. I had ${statSummary}, and we have to answer those stretches better next time.`,
+        full_heat: `It stings because I still felt the game sitting in reach, and then we gave them just enough oxygen to start acting like kings. I had ${statSummary}, and we have to punch back harder the next time the rope gets tight.`,
+        pg13: `It burns because it felt right there for us and then the game flipped on a few huge possessions. I had ${statSummary}, and we have to answer those swings like a serious team next time.`,
+      });
+    case "braggart":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `I still believed I could tilt it back our way, but ${statSummary} does not mean much when we let the game drift in the wrong moments.`,
+        full_heat: `I still knew I was good enough to drag us back into control, but ${statSummary} is just expensive wallpaper if we let them start crowing like they solved me.`,
+        pg13: `I still felt like I could flip the whole room by myself, but ${statSummary} is just window dressing if we let the game swing away from us.`,
+      });
+    case "swaggering":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `I still felt like we were one clean stretch away from taking the wheel back, but ${statSummary} does not shine the same in a loss.`,
+        full_heat: `I still felt the game leaning toward my tempo, but ${statSummary} does not sparkle when you let the other side walk out grinning like they discovered fire.`,
+        pg13: `I still felt like the game wanted to dance to our beat, but ${statSummary} loses its shine when you let the ending slip out of your hands.`,
+      });
+    case "earnest":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `I was just trying to give the group a lift, and I ended up with ${statSummary}, but we needed a better team response in the moments that decided it.`,
+        full_heat: `I was trying to pour everything I had into the group, and it turned into ${statSummary}, but we did not meet the game with the discipline the moment demanded.`,
+        pg13: `I was trying to give the group a real lift, and it turned into ${statSummary}, but we needed a sharper team response in the possessions that decided it.`,
+      });
+    case "stoic":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `They won the key stretches. I had ${statSummary}, but we needed cleaner possessions when the game tightened.`,
+        full_heat: `They won the key stretches because we allowed it. I had ${statSummary}, but the critical possessions were not clean enough.`,
+        pg13: `They won the key stretches. I had ${statSummary}, but we were not sharp enough when the game hardened.`,
+      });
+    case "cagey":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `There were a few stretches we will want back. I had ${statSummary}, but the bigger thing is cleaning up what we can control.`,
+        full_heat: `There were a few ugly turns in that game that I am sure both teams noticed. I had ${statSummary}, but the louder lesson is in the possessions we handed away.`,
+        pg13: `There were a couple stretches we will want back. I had ${statSummary}, but the bigger thing is cleaning up what we can control before people get too comfortable.`,
+      });
+    case "deadpan":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `They made the bigger run. I had ${statSummary}. That was not enough.`,
+        full_heat: `They made the bigger run. I had ${statSummary}. Apparently that was the part we chose to waste.`,
+        pg13: `They made the bigger run. I had ${statSummary}. Turns out that was still not enough.`,
+      });
+    case "reflective":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: `The game turned when we stopped getting clean trips in a row. I had ${statSummary}, but we needed a fuller response.`,
+        full_heat: `Marcus Aurelius would probably call it a failure of discipline. We stopped stacking clean possessions, and the whole thing slid. I had ${statSummary}, but our collective response arrived late.`,
+        pg13: `The game turned when we stopped stringing together clean trips. I had ${statSummary}, but the response needed more force and more composure.`,
+      });
+  }
+}
+
+function buildFallbackAdjustmentInterviewAnswer(
+  candidate: GameDayRecapPromptInterviewCandidate,
+  interviewIntensity: RecapInterviewIntensityValue,
+): string {
+  switch (candidate.personalityType ?? "friendly") {
+    case "curt":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "Cleaner possessions. Better ending.",
+        full_heat: "Cleaner possessions. Colder blood. Different ending.",
+        pg13: "Cleaner possessions. More pressure. Different ending.",
+      });
+    case "friendly":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "We have to settle the game down sooner, clean up the rough trips, and make sure the next response comes from us.",
+        full_heat: "We have to steady the game sooner, stop gifting people confidence, and answer with enough force that the whole building feels the change.",
+        pg13: "We have to steady the game sooner, clean up the messy trips, and make sure the next punch lands from us.",
+      });
+    case "rambling":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "It starts with not letting one shaky possession invite a second and then a third, because once the game smells hesitation it starts multiplying it, so the answer is a calmer and more connected stretch earlier.",
+        full_heat: "It starts with refusing to let one crooked possession grow cousins, because the moment a tight game thinks it has found fear it starts feasting, and we gave it too much to chew on tonight.",
+        pg13: "It starts with not letting one bad trip sprout branches, because once a close game smells uncertainty it keeps coming back for more, and we have to shut that door earlier next time.",
+      });
+    case "nonsensical":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "We need straighter wheels, louder brakes, and fewer wandering possessions next time.",
+        full_heat: "We need to stop decorating the runway with banana peels and then acting surprised when the landing skids into a fence.",
+        pg13: "We need straighter wheels, fewer circus possessions, and a better grip on the rope when the game starts swinging.",
+      });
+    case "excited":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "We have to answer the swing moments faster and come back with more force the next time the game gets loud.",
+        full_heat: "We have to hit the next swing harder, faster, and with enough bite that nobody on the other bench starts feeling brave.",
+        pg13: "We have to answer the swing moments faster and hit back hard enough that the whole game tilts with us next time.",
+      });
+    case "braggart":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "The fix is simple: tighten the loose stretches and let our best players decide the ending.",
+        full_heat: "The fix is simple: stop leaving the door cracked and let the real shot-makers write the obituary next time.",
+        pg13: "The fix is simple: tighten the sloppy stretches and let the killers decide the ending next time.",
+      });
+    case "swaggering":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "We need a cleaner rhythm late and a steadier hand when the game starts wobbling.",
+        full_heat: "We need a cleaner rhythm late and enough nerve to snatch the spotlight back before the other side starts mugging for it.",
+        pg13: "We need a cleaner rhythm late and enough swagger to snatch the spotlight back before the other side gets too comfortable in it.",
+      });
+    case "earnest":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "We have to be more disciplined in the possessions that test our connection, because that is where good teams show who they are.",
+        full_heat: "We have to meet those pressure possessions with a deeper kind of discipline, because talent without collective nerve is just noise.",
+        pg13: "We have to be more disciplined in the possessions that test our connection, because that is where serious teams separate themselves.",
+      });
+    case "stoic":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "Execute better. Finish better.",
+        full_heat: "Execute better. Finish better. Leave no doubt.",
+        pg13: "Execute better. Finish better. End the argument earlier.",
+      });
+    case "cagey":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "We know what has to be cleaned up. The important part is doing it before the next close one asks the same question.",
+        full_heat: "We know exactly what needs to change. I am not going to publish the answer for our opponents, but they will see it soon enough.",
+        pg13: "We know what has to change. I am not going to hand out the blueprint, but it had better look different next time.",
+      });
+    case "deadpan":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "Fewer mistakes. More winning.",
+        full_heat: "Fewer mistakes. Less charity. More winning.",
+        pg13: "Fewer mistakes. More pressure. More winning.",
+      });
+    case "reflective":
+      return pickInterviewIntensityVariant(interviewIntensity, {
+        clean: "The answer is better possession discipline. Games like this usually turn on a handful of choices, and ours need to be stronger.",
+        full_heat: "The answer is better possession discipline. History is usually written by the team that keeps its nerve in the tightest five minutes, and tonight we let someone else hold the pen.",
+        pg13: "The answer is better possession discipline. Games like this turn on a handful of choices, and ours need more force and more clarity.",
+      });
+  }
+}
+
+function summarizeInterviewStatLine(
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"],
+): string {
+  const parts = [
+    statLine.points > 0 ? `${statLine.points} points` : null,
+    statLine.rebounds > 0 ? `${statLine.rebounds} rebounds` : null,
+    statLine.assists > 0 ? `${statLine.assists} assists` : null,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length ? joinNaturalLanguage(parts) : "my minutes";
 }
 
 function buildFallbackInterviewStatQuestion(
@@ -9760,6 +11836,7 @@ function buildFallbackInterviewRunQuestion(
 
 function buildFallbackInterviewStatAnswer(
   candidate: GameDayRecapPromptInterviewCandidate,
+  interviewIntensity: RecapInterviewIntensityValue,
 ): string {
   const statParts: string[] = [];
   if (candidate.statLine.points > 0) {
@@ -9782,11 +11859,13 @@ function buildFallbackInterviewStatAnswer(
     statParts.length > 0
       ? applyInterviewPersonalityTone({
           candidate,
+          interviewIntensity,
           kind: "stat",
           statSummary: joinNaturalLanguage(statParts.slice(0, 4)),
         })
       : applyInterviewPersonalityTone({
           candidate,
+          interviewIntensity,
           kind: "stat",
           statSummary: null,
         });
@@ -9797,11 +11876,13 @@ function buildFallbackInterviewStatAnswer(
 function buildFallbackInterviewRunAnswer(
   run: NonNullable<GameDayRecapPlayByPlayFacts["primaryRun"]>,
   candidate?: GameDayRecapPromptInterviewCandidate,
+  interviewIntensity: RecapInterviewIntensityValue = RecapInterviewIntensity.PG13,
 ): string {
   const timeRange = formatInterviewRunTimeRange(run);
   return ensureSentence(
     applyInterviewPersonalityTone({
       candidate: candidate ?? null,
+      interviewIntensity,
       kind: "run",
       run,
       statSummary: null,
@@ -9812,61 +11893,164 @@ function buildFallbackInterviewRunAnswer(
 
 function applyInterviewPersonalityTone(args: {
   candidate: GameDayRecapPromptInterviewCandidate | null | undefined;
+  interviewIntensity: RecapInterviewIntensityValue;
   kind: "run" | "stat";
   run?: NonNullable<GameDayRecapPlayByPlayFacts["primaryRun"]>;
   statSummary: string | null;
   timeRange?: string | null;
 }): string {
   const personalityType = args.candidate?.personalityType ?? "friendly";
+  const interviewIntensity = normalizeFallbackInterviewIntensity(
+    args.interviewIntensity,
+  );
 
   if (args.kind === "stat") {
     switch (personalityType) {
       case "curt":
         return args.statSummary
-          ? `I stayed aggressive and it turned into ${args.statSummary}.`
-          : "I stayed aggressive and tried to make the simple play.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `Best player on the floor. ${args.statSummary}.`,
+              full_heat: `They had no answer. ${args.statSummary}. Next question.`,
+              pg13: `Best player on the floor. ${args.statSummary}. Next question.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I made the right plays.",
+              full_heat: "I kept cutting the lights on them.",
+              pg13: "I stayed aggressive. That was enough.",
+            });
       case "rambling":
         return args.statSummary
-          ? `It felt like one of those nights where every solid read kept leading to another one, and by the end it added up to ${args.statSummary}.`
-          : "It felt like one of those nights where the reads kept opening up if we stayed patient.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `It felt like one of those nights where every sturdy read opened another little side door, and by the time the whole hallway finished unfolding it had somehow become ${args.statSummary}.`,
+              full_heat: `It felt like one of those nights where every clean read opened another trapdoor under their feet, and by the time the smoke cleared the official record had to call it ${args.statSummary}.`,
+              pg13: `It felt like one of those nights where every good read opened another lane, another pass, another little crack in their foundation, and by the time the whole thing finished tipping it had turned into ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "It felt like the game kept unfolding if we stayed patient enough to let the next read introduce itself.",
+              full_heat: "It felt like the game kept handing us their secrets one shaky possession at a time if we were patient enough to keep listening.",
+              pg13: "It felt like the game kept opening up for us if we were patient enough not to ruin our own advantage.",
+            });
       case "nonsensical":
         return args.statSummary
-          ? `The game had a funny rhythm to it, and once we found it, it kind of stacked itself into ${args.statSummary}.`
-          : "The game had a funny rhythm to it, and we finally got it moving our way.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `The game felt like steering a parade float through crosswind, and somehow it still rolled into ${args.statSummary}.`,
+              full_heat: `The game turned into a velvet chainsaw recital, and the final paperwork still had the nerve to call it ${args.statSummary}.`,
+              pg13: `The game felt like a thunderstorm trying to dribble, and by the end the official record swore it had become ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "The game had a sideways rhythm to it, and we finally got the wheels pointed the same direction.",
+              full_heat: "The game sounded like pots and pans falling down a staircase, and eventually we found the beat hidden inside the noise.",
+              pg13: "The game got weird in a hurry, and we eventually grabbed the weirdness by the steering wheel.",
+            });
       case "excited":
         return args.statSummary
-          ? `I felt great out there, and once we got rolling it turned into ${args.statSummary}.`
-          : "I felt great out there and just tried to bring energy every trip.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `Man, I felt alive out there, and once the first couple reads landed it turned into ${args.statSummary}.`,
+              full_heat: `Man, I was a live wire with sneakers tonight, and they were trying to catch thunder with oven mitts. ${args.statSummary}.`,
+              pg13: `Man, I was on fire, the whole gym could feel it, and once I smelled the rhythm it turned into ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I felt great out there and tried to bring energy every trip.",
+              full_heat: "I felt the game buzzing in my teeth, and once that happens somebody is getting run over.",
+              pg13: "I felt great out there and kept trying to bring real pressure every trip.",
+            });
       case "braggart":
+        return args.statSummary
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `I knew I was the best option on the floor, and ${args.statSummary} was the receipt.`,
+              full_heat: `I was the best player in the building by a disrespectful margin. They were guessing, I was dictating, and ${args.statSummary} was the paperwork.`,
+              pg13: `I was unstoppable tonight. They kept seeing the same problem, and ${args.statSummary} was the invoice.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I trusted my game and kept pressing the advantage.",
+              full_heat: "I knew exactly who owned the matchup. They were reacting to me from the opening tip.",
+              pg13: "I knew the matchup was mine from the jump and I kept leaning on it.",
+            });
       case "swaggering":
         return args.statSummary
-          ? `I liked the matchup, trusted my game, and it turned into ${args.statSummary}.`
-          : "I trusted my game and kept pressing the advantage.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `Once the rhythm started dressing in my colors, it turned into ${args.statSummary}.`,
+              full_heat: `I had the whole game wearing my cologne by halftime, and ${args.statSummary} was just the shine left on the glass.`,
+              pg13: `Once the rhythm put my name on it, the whole court started moving to my tempo and it turned into ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "Once I found the groove, I kept letting the game come to me.",
+              full_heat: "Once the floor started breathing at my tempo, the rest of it was fashion.",
+              pg13: "Once I found the groove, I let the whole game slide into my rhythm.",
+            });
       case "earnest":
         return args.statSummary
-          ? `I was just trying to help the group however I could, and tonight that meant ${args.statSummary}.`
-          : "I was just trying to help the group however I could.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `I was trying to serve the group possession by possession, and tonight that work showed up as ${args.statSummary}.`,
+              full_heat: `I was trying to pour conviction into the group on every trip, and tonight that responsibility turned into ${args.statSummary}.`,
+              pg13: `I was trying to give the group real force and real calm on every trip, and tonight that work turned into ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I was just trying to help the group however I could.",
+              full_heat: "I was trying to meet the game with everything the group needed from me.",
+              pg13: "I was just trying to help the group in every way the game asked.",
+            });
       case "stoic":
         return args.statSummary
-          ? `I stayed with the plan, and it ended up being ${args.statSummary}.`
-          : "I stayed with the plan and took what was there.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `The reads were clean. It became ${args.statSummary}.`,
+              full_heat: `We broke their equation a possession at a time. It became ${args.statSummary}.`,
+              pg13: `We applied pressure, kept the math honest, and it became ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I stayed with the plan and took what was there.",
+              full_heat: "I stayed on script until their resistance stopped mattering.",
+              pg13: "I stayed with the plan and kept pressure on the weak spots.",
+            });
       case "deadpan":
         return args.statSummary
-          ? `I kept playing, and eventually it looked like ${args.statSummary}.`
-          : "I kept playing and a few things worked out.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `They kept leaving options on the table. I took a few. ${args.statSummary}.`,
+              full_heat: `They treated me like a rumor. The box score corrected that. ${args.statSummary}.`,
+              pg13: `They kept offering the same mistake. I kept accepting. ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I kept playing and a few things worked out.",
+              full_heat: "I kept showing up in the same spots. Apparently that was exhausting for them.",
+              pg13: "I kept showing up where they did not want me. That usually helps.",
+            });
       case "reflective":
         return args.statSummary
-          ? `I thought the game settled down for me once I stopped forcing it, and that turned into ${args.statSummary}.`
-          : "I thought the game settled down once we trusted the next pass and the next rotation.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `There is a Stoic line about keeping your hands on what is yours to control. Tonight the next read was in my hands, and it became ${args.statSummary}.`,
+              full_heat: `Heraclitus said everything flows. Tonight their defense flowed exactly where I wanted, and that became ${args.statSummary}.`,
+              pg13: `Marcus Aurelius would say the obstacle becomes the way. Tonight they were the obstacle and ${args.statSummary} became the way.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I thought the game slowed down once we trusted the next pass and the next rotation.",
+              full_heat: "I thought the game revealed itself once we stopped arguing with the current and started steering it.",
+              pg13: "I thought the game settled once we stopped forcing it and started trusting the next clean read.",
+            });
       case "cagey":
         return args.statSummary
-          ? `I just tried to read what they were giving us, and it came out to ${args.statSummary}.`
-          : "I just tried to read what they were giving us and stay patient.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `I saw a couple openings and kept pulling the right thread. It came out to ${args.statSummary}.`,
+              full_heat: `I knew where the leak was by the second quarter. I am not naming it for them, but it turned into ${args.statSummary}.`,
+              pg13: `They showed me a few habits, and I will let them watch the film to figure out which ones turned into ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I just tried to read what they were giving us and stay patient.",
+              full_heat: "I saw enough early. The rest is for our room, not theirs.",
+              pg13: "I just kept reading what they were giving us and kept a few details to myself.",
+            });
       case "friendly":
       default:
         return args.statSummary
-          ? `I just tried to stay active and make the right play, and it ended up with ${args.statSummary}.`
-          : "I just tried to stay active and make the right play every trip.";
+          ? pickInterviewIntensityVariant(interviewIntensity, {
+              clean: `I was smiling out there because the game kept rewarding the simple read, and it turned into ${args.statSummary}.`,
+              full_heat: `The night opened its front door for me, I walked right through it, and it turned into ${args.statSummary}.`,
+              pg13: `I felt the rhythm early, kept stepping on the gas, and it turned into ${args.statSummary}.`,
+            })
+          : pickInterviewIntensityVariant(interviewIntensity, {
+              clean: "I just tried to stay active and make the right play every trip.",
+              full_heat: "I stayed loose, stayed sharp, and kept making them pay for every late step.",
+              pg13: "I stayed active, stayed loose, and kept pressing every good read I saw.",
+            });
     }
   }
 
@@ -9875,50 +12059,180 @@ function applyInterviewPersonalityTone(args: {
   switch (personalityType) {
     case "curt":
       return args.timeRange
-        ? `We locked in during that ${runLabel} stretch ${args.timeRange}.`
-        : `We locked in during that ${runLabel} stretch.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} was us locking in.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} was the part where they ran out of answers.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} was where we broke it open.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch was us locking in.`,
+            full_heat: `That ${runLabel} stretch was where they ran out of answers.`,
+            pg13: `That ${runLabel} stretch was where we broke it open.`,
+          });
     case "rambling":
       return args.timeRange
-        ? `That ${runLabel} stretch ${args.timeRange} was the point where the game started tilting because every stop seemed to lead to another composed possession on the other end.`
-        : `That ${runLabel} stretch was the point where the game started tilting because every stop seemed to lead to another composed possession.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} was the part where the game started tilting because every stop seemed to lead to another calm possession and another inch of leverage.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} was the part where the whole game started folding like wet cardboard, because every stop turned into another little sermon on why they could not live with our pace.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} was the part where the whole game started leaning our way, because every stop led to another clean hit and another crack in their confidence.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch was the point where the game started tilting because every stop seemed to lead to another composed possession.`,
+            full_heat: `That ${runLabel} stretch was the point where the game started folding because every stop sounded like another board coming loose beneath them.`,
+            pg13: `That ${runLabel} stretch was the point where the game started tilting because every stop seemed to lead to another clean punch.`,
+          });
     case "nonsensical":
       return args.timeRange
-        ? `That ${runLabel} stretch ${args.timeRange} gave the game a different temperature, and once it warmed our way we kept it there.`
-        : `That ${runLabel} stretch gave the game a different temperature, and once it warmed our way we kept it there.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} changed the temperature of the whole room, and once it tilted warm our way we kept both hands on the thermostat.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} turned the game into a house fire with sneakers, and they spent the rest of the night trying to pat smoke back into a wall.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} changed the weather of the whole game, and once the storm leaned our way we kept steering the clouds.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch changed the temperature of the whole room, and once it tilted warm our way we stayed on it.`,
+            full_heat: `That ${runLabel} stretch turned the game into smoke and panic, and they never found the windows.`,
+            pg13: `That ${runLabel} stretch changed the weather of the whole game, and we stayed in command of it.`,
+          });
     case "excited":
       return args.timeRange
-        ? `That ${runLabel} stretch ${args.timeRange} gave us a huge burst of life and we rode it the rest of the way.`
-        : `That ${runLabel} stretch gave us a huge burst of life and we rode it.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} gave us a huge burst of life, and from there the whole place felt like it belonged to us.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} was the lightning strike. After that they were just trying to stand under the same tree and pretend they were dry.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} gave us a massive jolt, and after that we rode the game like it already knew our name.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch gave us a huge burst of life and we rode it.`,
+            full_heat: `That ${runLabel} stretch was the lightning bolt. After that they were just squinting at the damage.`,
+            pg13: `That ${runLabel} stretch gave us a huge jolt and we kept riding it.`,
+          });
     case "braggart":
+      return args.timeRange
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} was us taking over, plain and simple.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} was the moment the game signed its name over to us. They were spectators after that.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} was us taking the game by the throat and not giving it back.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch was us taking over, plain and simple.`,
+            full_heat: `That ${runLabel} stretch was the game admitting who the boss was.`,
+            pg13: `That ${runLabel} stretch was us taking the game by the throat.`,
+          });
     case "swaggering":
       return args.timeRange
-        ? `That ${runLabel} stretch ${args.timeRange} felt like us taking control for real.`
-        : `That ${runLabel} stretch felt like us taking control for real.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} was when the game started moving to our rhythm.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} was when the whole court started walking to our beat and they got stuck clapping on the wrong count.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} was when the game started dancing to our rhythm and they could not find the step.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch was when the game started moving to our rhythm.`,
+            full_heat: `That ${runLabel} stretch was when the court started dressing in our colors.`,
+            pg13: `That ${runLabel} stretch was when the game started dancing to our rhythm.`,
+          });
     case "earnest":
-        return args.timeRange
-          ? `That ${runLabel} stretch ${args.timeRange} came from everybody staying connected on both ends.`
-          : `That ${runLabel} stretch came from everybody staying connected on both ends.`;
+      return args.timeRange
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} came from everybody staying connected on both ends.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} came from everybody honoring the work hard enough to make the other side feel every inch of it.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} came from everybody staying connected and refusing to let the pressure loosen.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch came from everybody staying connected on both ends.`,
+            full_heat: `That ${runLabel} stretch came from collective nerve and collective discipline.`,
+            pg13: `That ${runLabel} stretch came from everybody staying connected and leaning into the pressure.`,
+          });
     case "stoic":
       return args.timeRange
-        ? `We stayed patient during that ${runLabel} stretch ${args.timeRange} and kept the pressure on.`
-        : `We stayed patient during that ${runLabel} stretch and kept the pressure on.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `We stayed patient during that ${runLabel} stretch ${args.timeRange} and kept the pressure on.`,
+            full_heat: `We stayed patient during that ${runLabel} stretch ${args.timeRange} and removed their choices one possession at a time.`,
+            pg13: `We stayed patient during that ${runLabel} stretch ${args.timeRange} and kept grinding the edges off them.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `We stayed patient during that ${runLabel} stretch and kept the pressure on.`,
+            full_heat: `We stayed patient during that ${runLabel} stretch and removed their choices.`,
+            pg13: `We stayed patient during that ${runLabel} stretch and kept grinding.`,
+          });
     case "deadpan":
       return args.timeRange
-        ? `That ${runLabel} stretch ${args.timeRange} helped.`
-        : `That ${runLabel} stretch helped.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} helped.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} helped them understand the evening a little better.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} was fairly informative for everyone involved.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch helped.`,
+            full_heat: `That ${runLabel} stretch clarified a few things.`,
+            pg13: `That ${runLabel} stretch was fairly informative.`,
+          });
     case "reflective":
       return args.timeRange
-        ? `That ${runLabel} stretch ${args.timeRange} mattered because we stopped rushing and made them work through every trip.`
-        : `That ${runLabel} stretch mattered because we stopped rushing and made them work through every trip.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} mattered because we stopped rushing and made them work through every trip.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} mattered because, as the old philosophers would say, form finally conquered panic and left them arguing with the scoreboard.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} mattered because we stopped rushing, trusted the order of things, and made them live inside every possession.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch mattered because we stopped rushing and made them work through every trip.`,
+            full_heat: `That ${runLabel} stretch mattered because we replaced panic with order and they had no counterargument.`,
+            pg13: `That ${runLabel} stretch mattered because we stopped rushing and made them live inside every possession.`,
+          });
     case "cagey":
       return args.timeRange
-        ? `That ${runLabel} stretch ${args.timeRange} came from sticking with what we liked and not forcing the game.`
-        : `That ${runLabel} stretch came from sticking with what we liked and not forcing the game.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch ${args.timeRange} came from sticking with what we liked and not forcing the game.`,
+            full_heat: `That ${runLabel} stretch ${args.timeRange} came from leaning on a pressure point they still have not found on the map.`,
+            pg13: `That ${runLabel} stretch ${args.timeRange} came from sticking with what we liked and quietly pressing the bruise they kept showing us.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `That ${runLabel} stretch came from sticking with what we liked and not forcing the game.`,
+            full_heat: `That ${runLabel} stretch came from pressing a secret they have not earned the right to hear out loud.`,
+            pg13: `That ${runLabel} stretch came from sticking with what we liked and pressing the bruise they kept handing us.`,
+          });
     case "friendly":
     default:
       return args.timeRange
-        ? `We stayed patient and kept the pressure on during that ${runLabel} stretch ${args.timeRange}.`
-        : `We stayed patient and kept the pressure on during that ${runLabel} stretch.`;
+        ? pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `We stayed patient and kept the pressure on during that ${runLabel} stretch ${args.timeRange}.`,
+            full_heat: `We stayed patient and kept leaning until the whole game started tilting like it knew exactly who was stronger during that ${runLabel} stretch ${args.timeRange}.`,
+            pg13: `We stayed patient and kept the pressure on during that ${runLabel} stretch ${args.timeRange}, and once it tipped our way we kept our foot on the gas.`,
+          })
+        : pickInterviewIntensityVariant(interviewIntensity, {
+            clean: `We stayed patient and kept the pressure on during that ${runLabel} stretch.`,
+            full_heat: `We stayed patient and leaned until the whole game admitted who was stronger during that ${runLabel} stretch.`,
+            pg13: `We stayed patient and kept the pressure on during that ${runLabel} stretch.`,
+          });
+  }
+}
+
+function normalizeFallbackInterviewIntensity(
+  intensity: InterviewIntensity | RecapInterviewIntensityValue | null | undefined,
+): InterviewIntensity {
+  if (intensity === RecapInterviewIntensity.CLEAN) {
+    return "clean";
+  }
+  if (intensity === RecapInterviewIntensity.FULL_HEAT) {
+    return "full_heat";
+  }
+  return "pg13";
+}
+
+function pickInterviewIntensityVariant<T>(
+  intensity: InterviewIntensity | RecapInterviewIntensityValue | null | undefined,
+  variants: {
+    clean: T;
+    full_heat: T;
+    pg13: T;
+  },
+): T {
+  switch (normalizeFallbackInterviewIntensity(intensity)) {
+    case "clean":
+      return variants.clean;
+    case "full_heat":
+      return variants.full_heat;
+    case "pg13":
+    default:
+      return variants.pg13;
   }
 }
 
@@ -9934,14 +12248,23 @@ function joinNaturalLanguage(parts: string[]): string {
 }
 
 async function generateValidatedGameDayRecap(args: {
-  judgeProvider: StructuredGameDayRecapProvider;
+  concurrency: GameDayRecapGenerationConcurrency;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   payload: GameDayRecapPromptPayload;
   provider: StructuredGameDayRecapProvider;
   runtimeConfig: GameDayRecapRuntimeConfig;
 }): Promise<GeneratedGameDayRecap> {
   const factStore = resolvePayloadFactStore(args.payload);
-  const initialOutput = await args.provider.generate(args.payload);
+  const initialOutput = await withGameDayRecapStageTiming(
+    "writer_initial",
+    {
+      gameCount: args.payload.games.length,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () => args.provider.generate(args.payload),
+  );
   const initialNormalized = stripPostgameInterviewsFromResult(
     normalizeGameDayRecapResultForStage({
       input: initialOutput,
@@ -9957,8 +12280,9 @@ async function generateValidatedGameDayRecap(args: {
       enforceBannedStylePhrases: args.runtimeConfig.enforceBannedStylePhrases,
     },
   );
-  const initialJudge = await judgeGameDayRecapResult({
+  const initialJudge = await judgeGameDayRecapResultIfEnabled({
     factStore,
+    judgeLimiter: args.concurrency.judgeLimiter,
     logContext: args.logContext,
     provider: args.judgeProvider,
     result: initialDeterministic.orderedResult,
@@ -9999,13 +12323,22 @@ async function generateValidatedGameDayRecap(args: {
       verdict: issue.verdict,
     })),
   };
-  const retryOutput = await args.provider.generate(args.payload, {
-    validationContext: retryValidationContext,
-    validationFeedback: buildRecapValidationFeedbackLines({
-      deterministicIssues: initialDeterministic.issues,
-      judgeIssues: initialJudge.retryableIssues,
-    }),
-  });
+  const retryOutput = await withGameDayRecapStageTiming(
+    "writer_retry",
+    {
+      gameCount: args.payload.games.length,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () =>
+      args.provider.generate(args.payload, {
+        validationContext: retryValidationContext,
+        validationFeedback: buildRecapValidationFeedbackLines({
+          deterministicIssues: initialDeterministic.issues,
+          judgeIssues: initialJudge.retryableIssues,
+        }),
+      }),
+  );
   const retryNormalized = stripPostgameInterviewsFromResult(
     normalizeGameDayRecapResultForStage({
       input: retryOutput,
@@ -10021,8 +12354,9 @@ async function generateValidatedGameDayRecap(args: {
       enforceBannedStylePhrases: args.runtimeConfig.enforceBannedStylePhrases,
     },
   );
-  const retryJudge = await judgeGameDayRecapResult({
+  const retryJudge = await judgeGameDayRecapResultIfEnabled({
     factStore,
+    judgeLimiter: args.concurrency.judgeLimiter,
     logContext: args.logContext,
     provider: args.judgeProvider,
     result: retryDeterministic.orderedResult,
@@ -10048,6 +12382,7 @@ async function generateValidatedGameDayRecap(args: {
     expectedGames: factStore.games,
     judgeIssues: retryJudge.blockingIssues,
     judgeProvider: args.judgeProvider,
+    judgeLimiter: args.concurrency.judgeLimiter,
     logContext: args.logContext,
     request: factStore.request,
     result: retryDeterministic.orderedResult,
@@ -10056,7 +12391,8 @@ async function generateValidatedGameDayRecap(args: {
 }
 
 async function generatePremiumValidatedGameDayRecap(args: {
-  judgeProvider: StructuredGameDayRecapProvider;
+  concurrency: GameDayRecapGenerationConcurrency;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   payload: GameDayRecapPromptPayload;
   retryProvider: StructuredGameDayRecapProvider;
@@ -10064,21 +12400,32 @@ async function generatePremiumValidatedGameDayRecap(args: {
   writerProvider: StructuredGameDayRecapProvider;
 }): Promise<GeneratedGameDayRecap> {
   const factStore = resolvePayloadFactStore(args.payload);
-  const initialCandidates = await Promise.all(
-    Array.from(
-      { length: PREMIUM_RECAP_CANDIDATE_COUNT },
-      async (_value, index) =>
-        evaluatePremiumRecapCandidate({
-          candidateIndex: index,
-          logContext: args.logContext,
-          payload: args.payload,
-          provider: args.writerProvider,
-          runtimeConfig: args.runtimeConfig,
-        }),
-    ),
+  const initialCandidates = await withGameDayRecapStageTiming(
+    "premium_writer_candidates",
+    {
+      candidateCount: PREMIUM_RECAP_CANDIDATE_COUNT,
+      gameCount: args.payload.games.length,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () =>
+      Promise.all(
+        Array.from(
+          { length: PREMIUM_RECAP_CANDIDATE_COUNT },
+          async (_value, index) =>
+            evaluatePremiumRecapCandidate({
+              candidateIndex: index,
+              logContext: args.logContext,
+              payload: args.payload,
+              provider: args.writerProvider,
+              runtimeConfig: args.runtimeConfig,
+            }),
+        ),
+      ),
   );
   await judgePremiumCandidates({
     candidates: initialCandidates,
+    judgeLimiter: args.concurrency.judgeLimiter,
     logContext: args.logContext,
     payload: args.payload,
     provider: args.judgeProvider,
@@ -10099,16 +12446,27 @@ async function generatePremiumValidatedGameDayRecap(args: {
 
   const retrySourceCandidate =
     selectBestRetrySourcePremiumCandidate(initialCandidates);
-  const retryCandidate = await evaluatePremiumRecapCandidate({
-    candidateIndex: PREMIUM_RECAP_CANDIDATE_COUNT,
-    logContext: args.logContext,
-    payload: args.payload,
-    provider: args.retryProvider,
-    runtimeConfig: args.runtimeConfig,
-    validationFeedback: buildPremiumRetryFeedback(retrySourceCandidate),
-  });
+  const retryCandidate = await withGameDayRecapStageTiming(
+    "premium_retry_candidate",
+    {
+      candidateCount: 1,
+      gameCount: args.payload.games.length,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () =>
+      evaluatePremiumRecapCandidate({
+        candidateIndex: PREMIUM_RECAP_CANDIDATE_COUNT,
+        logContext: args.logContext,
+        payload: args.payload,
+        provider: args.retryProvider,
+        runtimeConfig: args.runtimeConfig,
+        validationFeedback: buildPremiumRetryFeedback(retrySourceCandidate),
+      }),
+  );
   await judgePremiumCandidates({
     candidates: [retryCandidate],
+    judgeLimiter: args.concurrency.judgeLimiter,
     logContext: args.logContext,
     payload: args.payload,
     provider: args.judgeProvider,
@@ -10134,6 +12492,7 @@ async function generatePremiumValidatedGameDayRecap(args: {
         fallbackCandidate.judgeAssessment,
       ),
       judgeProvider: args.judgeProvider,
+      judgeLimiter: args.concurrency.judgeLimiter,
       logContext: args.logContext,
       request: factStore.request,
       result: fallbackCandidate.normalizedResult,
@@ -10219,9 +12578,10 @@ async function evaluatePremiumRecapCandidate(args: {
 
 async function judgePremiumCandidates(args: {
   candidates: PremiumRecapCandidate[];
+  judgeLimiter: BoundedConcurrencyLimiter;
   logContext?: GameDayRecapGenerationLogContext;
   payload: GameDayRecapPromptPayload;
-  provider: StructuredGameDayRecapProvider;
+  provider: StructuredGameDayRecapProvider | null;
 }): Promise<void> {
   const judgeableCandidates = args.candidates.filter(
     (
@@ -10234,19 +12594,43 @@ async function judgePremiumCandidates(args: {
     return;
   }
 
-  const factStore = resolvePayloadFactStore(args.payload);
-  for (const candidate of judgeableCandidates) {
-    candidate.judgeAssessment = await judgeSingleRecapCandidate({
-      candidateIndex: candidate.candidateIndex,
-      factStore,
-      fields: ["headline", "writeup"],
-      includeInterestingness: true,
-      logContext: args.logContext,
-      provider: args.provider,
-      result: candidate.validatedResult,
-      stage: "premium-candidate-selection",
-    });
+  if (!args.provider) {
+    for (const candidate of judgeableCandidates) {
+      candidate.judgeAssessment = buildSkippedJudgeAssessment(
+        candidate.candidateIndex,
+      );
+    }
+    return;
   }
+
+  const provider = args.provider;
+  const factStore = resolvePayloadFactStore(args.payload);
+  await withGameDayRecapStageTiming(
+    "premium_candidate_judge",
+    {
+      candidateCount: judgeableCandidates.length,
+      concurrency: "shared",
+      gameCount: args.payload.games.length,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () =>
+      Promise.all(
+        judgeableCandidates.map(async (candidate) => {
+          candidate.judgeAssessment = await judgeSingleRecapCandidate({
+            candidateIndex: candidate.candidateIndex,
+            factStore,
+            fields: ["headline", "writeup"],
+            includeInterestingness: true,
+            judgeLimiter: args.judgeLimiter,
+            logContext: args.logContext,
+            provider,
+            result: candidate.validatedResult,
+            stage: "premium-candidate-selection",
+          });
+        }),
+      ),
+  );
 }
 
 function normalizeGameDayRecapJudgeSentenceVerdictRecord(
@@ -10257,9 +12641,9 @@ function normalizeGameDayRecapJudgeSentenceVerdictRecord(
     typeof record.containsOutcomeClaim === "boolean"
       ? record.containsOutcomeClaim
       : null;
-  const contradictionType = asOptionalString(record.contradictionType)?.trim() as
-    | GameDayRecapJudgeContradictionType
-    | undefined;
+  const contradictionType = asOptionalString(
+    record.contradictionType,
+  )?.trim() as GameDayRecapJudgeContradictionType | undefined;
   const notesText = asOptionalString(record.notes);
   const sourceFieldText = asOptionalString(record.sourceField);
   const verdict = asOptionalString(record.verdict)?.trim() as
@@ -10272,9 +12656,7 @@ function normalizeGameDayRecapJudgeSentenceVerdictRecord(
     notesText === null ||
     sourceFieldText === null
   ) {
-    throw new Error(
-      "The judge sentence verdict entry was incomplete.",
-    );
+    throw new Error("The judge sentence verdict entry was incomplete.");
   }
   const normalizedNotes = notesText.trim();
   const normalizedSourceField = sourceFieldText.trim();
@@ -10349,19 +12731,33 @@ function collectExpectedJudgeSentenceEntriesForGame(
       sentenceIndex,
     }),
   );
-  const interviewEntries = collectPostgameInterviewJudgeSentences(
-    game.postgameInterview,
-  ).map((entry) => ({
-    field: "postgameInterview" as const,
-    key: buildJudgeSentenceKey({
-      field: "postgameInterview",
-      matchId: game.matchId,
-      sentenceIndex: entry.sentenceIndex,
-    }),
-    matchId: game.matchId,
-    sentence: entry.sentence,
-    sentenceIndex: entry.sentenceIndex,
-  }));
+  let interviewSentenceOffset = 0;
+  const interviewEntries = (
+    game.postgameInterviews?.length
+      ? game.postgameInterviews
+      : game.postgameInterview
+        ? [game.postgameInterview]
+        : []
+  ).flatMap((interview) => {
+    const entries = collectPostgameInterviewJudgeSentences(interview).map(
+      (entry) => {
+        const sentenceIndex = interviewSentenceOffset + entry.sentenceIndex;
+        return {
+          field: "postgameInterview" as const,
+          key: buildJudgeSentenceKey({
+            field: "postgameInterview",
+            matchId: game.matchId,
+            sentenceIndex,
+          }),
+          matchId: game.matchId,
+          sentence: entry.sentence,
+          sentenceIndex,
+        };
+      },
+    );
+    interviewSentenceOffset += entries.length;
+    return entries;
+  });
 
   return [headlineEntry, ...writeupEntries, ...interviewEntries].filter(
     (entry) => !allowedFields || allowedFields.has(entry.field),
@@ -10409,7 +12805,10 @@ function normalizeSentenceJudgeChunkResult(args: {
   chunk: GameDayRecapJudgeSentenceChunk;
   input: unknown;
 }): GameDayRecapJudgeSentenceAssessment[] {
-  const record = requireRecord(args.input, "Game day recap judge sentence chunk");
+  const record = requireRecord(
+    args.input,
+    "Game day recap judge sentence chunk",
+  );
   let slotVerdictsRecord: JsonRecord;
   try {
     slotVerdictsRecord = requireRecord(
@@ -10485,9 +12884,8 @@ function normalizeSentenceJudgeChunkResult(args: {
     }
 
     try {
-      const verdictRecord = normalizeGameDayRecapJudgeSentenceVerdictRecord(
-        verdictValue,
-      );
+      const verdictRecord =
+        normalizeGameDayRecapJudgeSentenceVerdictRecord(verdictValue);
       assessments.push({
         containsOutcomeClaim: verdictRecord.containsOutcomeClaim,
         contradictionType: verdictRecord.contradictionType,
@@ -10809,7 +13207,8 @@ async function executeInterestingnessJudgeWithRetry(args: {
       chunkSentenceCount: 0,
       fallbackMode: null,
       judgeKind: "candidate_interestingness",
-      matchId: args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+      matchId:
+        args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
       stage: "premium-candidate-selection",
       targetKey: args.logContext?.targetKey,
       userId: args.logContext?.userId,
@@ -10820,7 +13219,8 @@ async function executeInterestingnessJudgeWithRetry(args: {
       const interestingnessScore = normalizeInterestingnessJudgeResult({
         candidateIndex: args.candidateIndex,
         input,
-        matchId: args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+        matchId:
+          args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
       });
       if (firstContractFailure) {
         logGameDayRecapWarn("process.judge_response_repaired", {
@@ -10835,7 +13235,9 @@ async function executeInterestingnessJudgeWithRetry(args: {
           ),
           judgeKind: "candidate_interestingness",
           matchId:
-            args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+            args.result.games.length === 1
+              ? args.result.games[0]!.matchId
+              : null,
           stage: "premium-candidate-selection",
           targetKey: args.logContext?.targetKey ?? null,
           userId: args.logContext?.userId ?? null,
@@ -10859,7 +13261,9 @@ async function executeInterestingnessJudgeWithRetry(args: {
           issues: summarizeJudgeContractIssuesForLog(error.issues),
           judgeKind: "candidate_interestingness",
           matchId:
-            args.result.games.length === 1 ? args.result.games[0]!.matchId : null,
+            args.result.games.length === 1
+              ? args.result.games[0]!.matchId
+              : null,
           stage: "premium-candidate-selection",
           targetKey: args.logContext?.targetKey ?? null,
           userId: args.logContext?.userId ?? null,
@@ -10894,6 +13298,7 @@ async function judgeSingleRecapCandidate(args: {
   factStore: GameDayRecapFactStore;
   fields?: readonly GameDayRecapJudgeSentenceField[];
   includeInterestingness: boolean;
+  judgeLimiter?: BoundedConcurrencyLimiter;
   logContext?: GameDayRecapGenerationLogContext;
   provider: StructuredGameDayRecapProvider;
   result: GameDayRecapResultPayload;
@@ -10907,31 +13312,48 @@ async function judgeSingleRecapCandidate(args: {
     | "writer";
 }): Promise<GameDayRecapJudgeCandidateAssessment> {
   const factPacketsByMatchId = buildJudgeGameFactPacketIndex(args.factStore);
-  const sentenceAssessments: GameDayRecapJudgeSentenceAssessment[] = [];
-
-  for (const chunk of buildJudgeSentenceChunks({
+  const judgeLimiter: BoundedConcurrencyLimiter =
+    args.judgeLimiter ?? ((task) => task());
+  const chunks = buildJudgeSentenceChunks({
     candidateIndex: args.candidateIndex,
     fields: args.fields,
     result: args.result,
-  })) {
-    const gameFacts = factPacketsByMatchId.get(chunk.matchId);
-    if (!gameFacts) {
-      throw new Error(
-        `Game day recap judge was missing fact-store truth for match ${chunk.matchId}.`,
-      );
-    }
+  });
+  const [sentenceAssessmentGroups, interestingnessScore] = await Promise.all([
+    Promise.all(
+      chunks.map((chunk) =>
+        judgeLimiter(async () => {
+          const gameFacts = factPacketsByMatchId.get(chunk.matchId);
+          if (!gameFacts) {
+            throw new Error(
+              `Game day recap judge was missing fact-store truth for match ${chunk.matchId}.`,
+            );
+          }
 
-    sentenceAssessments.push(
-      ...(await executeSentenceJudgeChunk({
-        chunk,
-        factStore: args.factStore,
-        gameFacts,
-        logContext: args.logContext,
-        provider: args.provider,
-        stage: args.stage,
-      })),
-    );
-  }
+          return executeSentenceJudgeChunk({
+            chunk,
+            factStore: args.factStore,
+            gameFacts,
+            logContext: args.logContext,
+            provider: args.provider,
+            stage: args.stage,
+          });
+        }),
+      ),
+    ),
+    args.includeInterestingness
+      ? judgeLimiter(() =>
+          executeInterestingnessJudgeWithRetry({
+            candidateIndex: args.candidateIndex,
+            factStore: args.factStore,
+            logContext: args.logContext,
+            provider: args.provider,
+            result: args.result,
+          }),
+        )
+      : Promise.resolve(0),
+  ]);
+  const sentenceAssessments = sentenceAssessmentGroups.flat();
 
   sentenceAssessments.sort((left, right) => {
     const comparisons = [
@@ -10944,15 +13366,7 @@ async function judgeSingleRecapCandidate(args: {
 
   return {
     candidateIndex: args.candidateIndex,
-    interestingnessScore: args.includeInterestingness
-      ? await executeInterestingnessJudgeWithRetry({
-          candidateIndex: args.candidateIndex,
-          factStore: args.factStore,
-          logContext: args.logContext,
-          provider: args.provider,
-          result: args.result,
-        })
-      : 0,
+    interestingnessScore,
     sentences: sentenceAssessments,
   };
 }
@@ -11042,9 +13456,53 @@ function buildRecapValidationFeedbackLines(args: {
   );
 }
 
+function buildSkippedJudgeAssessment(
+  candidateIndex: number,
+): GameDayRecapJudgeCandidateAssessment {
+  return {
+    candidateIndex,
+    interestingnessScore: 0,
+    sentences: [],
+  };
+}
+
+async function judgeGameDayRecapResultIfEnabled(args: {
+  factStore: GameDayRecapFactStore;
+  fields?: readonly GameDayRecapJudgeSentenceField[];
+  judgeLimiter?: BoundedConcurrencyLimiter;
+  logContext?: GameDayRecapGenerationLogContext;
+  provider: StructuredGameDayRecapProvider | null;
+  result: GameDayRecapResultPayload;
+  stage:
+    | "retry"
+    | "style-polish"
+    | "postgame-interview"
+    | "salvage-post-patch"
+    | "salvage-post-trim"
+    | "writer";
+}): Promise<{
+  assessment: GameDayRecapJudgeCandidateAssessment;
+  blockingIssues: GameDayRecapJudgeValidationIssue[];
+  retryableIssues: GameDayRecapJudgeValidationIssue[];
+}> {
+  if (!args.provider) {
+    return {
+      assessment: buildSkippedJudgeAssessment(0),
+      blockingIssues: [],
+      retryableIssues: [],
+    };
+  }
+
+  return judgeGameDayRecapResult({
+    ...args,
+    provider: args.provider,
+  });
+}
+
 async function judgeGameDayRecapResult(args: {
   factStore: GameDayRecapFactStore;
   fields?: readonly GameDayRecapJudgeSentenceField[];
+  judgeLimiter?: BoundedConcurrencyLimiter;
   logContext?: GameDayRecapGenerationLogContext;
   provider: StructuredGameDayRecapProvider;
   result: GameDayRecapResultPayload;
@@ -11060,16 +13518,27 @@ async function judgeGameDayRecapResult(args: {
   blockingIssues: GameDayRecapJudgeValidationIssue[];
   retryableIssues: GameDayRecapJudgeValidationIssue[];
 }> {
-  const assessment = await judgeSingleRecapCandidate({
-    candidateIndex: 0,
-    factStore: args.factStore,
-    fields: args.fields,
-    includeInterestingness: false,
-    logContext: args.logContext,
-    provider: args.provider,
-    result: args.result,
-    stage: args.stage,
-  });
+  const assessment = await withGameDayRecapStageTiming(
+    "judge_candidate",
+    {
+      concurrency: args.judgeLimiter ? "shared" : 1,
+      gameCount: args.result.games.length,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () =>
+      judgeSingleRecapCandidate({
+        candidateIndex: 0,
+        factStore: args.factStore,
+        fields: args.fields,
+        includeInterestingness: false,
+        judgeLimiter: args.judgeLimiter,
+        logContext: args.logContext,
+        provider: args.provider,
+        result: args.result,
+        stage: args.stage,
+      }),
+  );
 
   return {
     assessment,
@@ -11267,14 +13736,32 @@ function normalizeGameDayRecapResultWithWarnings(
     if (postgameInterviewResult.warning) {
       warnings.push(postgameInterviewResult.warning);
     }
+    const postgameInterviewsResult = parseGameDayRecapPostgameInterviews({
+      input: gameRecord.postgameInterviews,
+      matchId,
+    });
+    warnings.push(...postgameInterviewsResult.warnings);
+    const postgameInterviews = postgameInterviewsResult.interviews.length
+      ? postgameInterviewsResult.interviews
+      : postgameInterviewResult.interview
+        ? [postgameInterviewResult.interview]
+        : [];
+    const postgameInterviewDiagnostics =
+      parseGameDayRecapPostgameInterviewDiagnostics(
+        gameRecord.postgameInterviewDiagnostics,
+      );
 
     return {
       evidenceTags: validatedTags,
       headline,
       matchId,
-      ...(postgameInterviewResult.interview
-        ? { postgameInterview: postgameInterviewResult.interview }
+      ...(postgameInterviews[0]
+        ? { postgameInterview: postgameInterviews[0] }
         : {}),
+      ...(postgameInterviewDiagnostics.length
+        ? { postgameInterviewDiagnostics }
+        : {}),
+      ...(postgameInterviews.length ? { postgameInterviews } : {}),
       surpriseFactor: null,
       writeup,
     };
@@ -11300,12 +13787,93 @@ function normalizeGameDayRecapResultWithWarnings(
   };
 }
 
-function parseGameDayRecapPostgameInterview(
-  args: {
-    input: unknown;
-    matchId: string;
-  },
-): {
+function parseGameDayRecapPostgameInterviews(args: {
+  input: unknown;
+  matchId: string;
+}): {
+  interviews: GameDayRecapResultPostgameInterview[];
+  warnings: GameDayRecapNormalizationWarning[];
+} {
+  if (args.input == null) {
+    return {
+      interviews: [],
+      warnings: [],
+    };
+  }
+  if (!Array.isArray(args.input)) {
+    return {
+      interviews: [],
+      warnings: [
+        buildInvalidPostgameInterviewWarning(args.matchId, [
+          "postgameInterviews must be an array.",
+        ]),
+      ],
+    };
+  }
+
+  const interviews: GameDayRecapResultPostgameInterview[] = [];
+  const warnings: GameDayRecapNormalizationWarning[] = [];
+  for (const input of args.input) {
+    const parsed = parseGameDayRecapPostgameInterview({
+      input,
+      matchId: args.matchId,
+    });
+    if (parsed.interview) {
+      interviews.push(parsed.interview);
+    }
+    if (parsed.warning) {
+      warnings.push(parsed.warning);
+    }
+  }
+
+  return {
+    interviews,
+    warnings,
+  };
+}
+
+function parseGameDayRecapPostgameInterviewDiagnostics(
+  input: unknown,
+): GameDayRecapPostgameInterviewDiagnostic[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as JsonRecord;
+    const side = asOptionalString(record.side);
+    const status = asOptionalString(record.status);
+    if (
+      (side !== "winner" && side !== "loser") ||
+      (status !== "generated" &&
+        status !== "missing_candidate" &&
+        status !== "skipped" &&
+        status !== "suspect" &&
+        status !== "unavailable")
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        details: Array.isArray(record.details)
+          ? record.details.filter((detail): detail is string => typeof detail === "string")
+          : [],
+        reason: asOptionalString(record.reason),
+        side,
+        status,
+      },
+    ];
+  });
+}
+
+function parseGameDayRecapPostgameInterview(args: {
+  input: unknown;
+  matchId: string;
+}): {
   interview: GameDayRecapResultPostgameInterview | null;
   warning: GameDayRecapNormalizationWarning | null;
 } {
@@ -11544,8 +14112,12 @@ function assessGameDayRecapDeterministicPayload(
   issues: GameDayRecapSemanticValidationIssue[];
   orderedResult: GameDayRecapResultPayload;
 } {
+  const prepDedupedResult = removeDuplicatePrepContextParaphrases(
+    result,
+    expectedGames,
+  );
   const orderedGames = orderGameDayRecapGames(
-    result.games,
+    prepDedupedResult.games,
     expectedGames,
     options.allowPartial ?? false,
   );
@@ -11556,8 +14128,7 @@ function assessGameDayRecapDeterministicPayload(
     const expectedGame = expectedGamesByMatchId.get(game.matchId);
     return expectedGame
       ? validateRecapGameSemantics(game, expectedGame, {
-          enforceBannedStylePhrases:
-            options.enforceBannedStylePhrases ?? false,
+          enforceBannedStylePhrases: options.enforceBannedStylePhrases ?? false,
         })
       : [];
   });
@@ -11566,9 +14137,119 @@ function assessGameDayRecapDeterministicPayload(
     issues,
     orderedResult: {
       games: orderedGames,
-      summary: result.summary,
+      summary: prepDedupedResult.summary,
     },
   };
+}
+
+function removeDuplicatePrepContextParaphrases(
+  result: GameDayRecapResultPayload,
+  expectedGames: GameDayRecapPromptGame[],
+): GameDayRecapResultPayload {
+  const expectedGamesByMatchId = new Map(
+    expectedGames.map((game) => [game.matchId, game]),
+  );
+
+  return {
+    ...result,
+    games: result.games.map((game) => {
+      const expectedGame = expectedGamesByMatchId.get(game.matchId);
+      if (!expectedGame?.requiredContextSentences.length) {
+        return game;
+      }
+
+      return {
+        ...game,
+        writeup: removeDuplicatePrepContextFromWriteup(
+          game.writeup,
+          expectedGame.requiredContextSentences,
+        ),
+      };
+    }),
+  };
+}
+
+function removeDuplicatePrepContextFromWriteup(
+  writeup: string,
+  requiredContextSentences: string[],
+): string {
+  const requiredSentenceKeys = new Set(
+    requiredContextSentences.map(normalizeRecapSentenceForComparison),
+  );
+  const writeupSentenceKeys = new Set(
+    splitRecapText(writeup).map(normalizeRecapSentenceForComparison),
+  );
+  const hasAllRequiredSentences = Array.from(requiredSentenceKeys).every(
+    (sentence) => writeupSentenceKeys.has(sentence),
+  );
+  if (!hasAllRequiredSentences) {
+    return writeup;
+  }
+
+  const paragraphs = writeup
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const sourceParagraphs = paragraphs.length ? paragraphs : [writeup.trim()];
+  const filteredParagraphs = sourceParagraphs
+    .map((paragraph) =>
+      splitRecapText(paragraph)
+        .filter((sentence) => {
+          const normalizedSentence =
+            normalizeRecapSentenceForComparison(sentence);
+          return (
+            requiredSentenceKeys.has(normalizedSentence) ||
+            !isDuplicatePrepContextParaphrase(
+              sentence,
+              requiredContextSentences,
+            )
+          );
+        })
+        .join(" "),
+    )
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  return filteredParagraphs.length ? filteredParagraphs.join("\n\n") : writeup;
+}
+
+function isDuplicatePrepContextParaphrase(
+  sentence: string,
+  requiredContextSentences: string[],
+): boolean {
+  const normalizedSentence = sentence.toLowerCase();
+  const hasFocusContext = requiredContextSentences.some((requiredSentence) =>
+    /\b(?:looks|attack)\b/i.test(requiredSentence),
+  );
+  const hasPaceContext = requiredContextSentences.some((requiredSentence) =>
+    /\bpace\b/i.test(requiredSentence),
+  );
+
+  if (
+    hasFocusContext &&
+    /\b(?:prepared|read|readied|focus|looks|emphasis|came to play)\b/i.test(
+      sentence,
+    ) &&
+    /\b(?:outside|inside|balanced|neutral)\b/i.test(sentence)
+  ) {
+    return true;
+  }
+
+  return (
+    hasPaceContext &&
+    /\b(?:pace|tempo|readied|prepared)\b/i.test(sentence) &&
+    /\b(?:fast|slow|normal|motion|run and gun|look inside|low post|push|patient|princeton)\b/i.test(
+      normalizedSentence,
+    )
+  );
+}
+
+function normalizeRecapSentenceForComparison(sentence: string): string {
+  return sentence
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ");
 }
 
 function decorateGameDayRecapResultWithSurpriseMetadata(
@@ -11867,7 +14548,9 @@ function parsePromptRecord(
   return { losses, wins };
 }
 
-function resolveThroughThreeQuartersState(expectedGame: GameDayRecapPromptGame): {
+function resolveThroughThreeQuartersState(
+  expectedGame: GameDayRecapPromptGame,
+): {
   awayScore: number;
   homeScore: number;
   leadingSide: "away" | "home" | "tie";
@@ -12033,6 +14716,13 @@ function collectSemanticIssuesForField(
       field,
       sentenceIndex,
     ),
+    ...validateTacticContrastSentence(
+      sentence,
+      matchId,
+      expectedGame,
+      field,
+      sentenceIndex,
+    ),
     ...validatePlayoffRecordLanguage(
       sentence,
       matchId,
@@ -12070,6 +14760,9 @@ function validateQuarterSentence(
 ): GameDayRecapSemanticValidationIssue[] {
   const referencedPeriod = extractReferencedQuarter(sentence);
   if (!referencedPeriod) {
+    return [];
+  }
+  if (/\brun\b/i.test(sentence) && extractRunClaim(sentence, expectedGame)) {
     return [];
   }
 
@@ -12239,7 +14932,93 @@ function validateRunSentence(
     ];
   }
 
+  if (
+    matchingRun.startMarginFromTeamPerspective >= 0 &&
+    containsComebackRunLanguage(sentence)
+  ) {
+    const startingState =
+      matchingRun.startMarginFromTeamPerspective === 0 ? "tied" : "ahead";
+    const teamName =
+      matchingRun.teamName ??
+      (matchingRun.teamSide ? expectedGame.teams[matchingRun.teamSide].name : null) ??
+      "That team";
+
+    return [
+      {
+        actualValue: `${teamName} started that ${matchingRun.teamPoints}-${matchingRun.opponentPoints} run ${startingState}.`,
+        feedback: `For match ${matchId}, do not use comeback phrasing for the ${matchingRun.teamPoints}-${matchingRun.opponentPoints} run because ${teamName} started that run ${startingState}, not trailing. Describe it neutrally as building the lead or staying in front.`,
+        field,
+        kind: "unsupported_run_framing",
+        matchId,
+        reason: `${teamName} started that ${matchingRun.teamPoints}-${matchingRun.opponentPoints} run ${startingState}, so comeback phrasing does not fit.`,
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+        teamSide: matchingRun.teamSide ?? undefined,
+      },
+    ];
+  }
+
   return [];
+}
+
+function validateTacticContrastSentence(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  if (
+    !/\b(?:contrasting|contrast(?:ed|ing)?|opposite|polar opposite|diametrically opposite)\b/i.test(
+      sentence,
+    )
+  ) {
+    return [];
+  }
+
+  const awayOffense = expectedGame.teams.away.offStrategy?.trim() ?? null;
+  const homeOffense = expectedGame.teams.home.offStrategy?.trim() ?? null;
+  if (!awayOffense || !homeOffense) {
+    return [];
+  }
+  if (
+    !sentence.toLowerCase().includes(awayOffense.toLowerCase()) ||
+    !sentence.toLowerCase().includes(homeOffense.toLowerCase())
+  ) {
+    return [];
+  }
+
+  const awayFamily = resolveOffenseStoryFamily(awayOffense);
+  const homeFamily = resolveOffenseStoryFamily(homeOffense);
+  if (!awayFamily || awayFamily !== homeFamily) {
+    return [];
+  }
+
+  const familyLabel = awayFamily === "inside" ? "inside" : "outside";
+  return [
+    {
+      actualValue: `${awayOffense} and ${homeOffense} both resolve to the ${familyLabel} family here.`,
+      feedback: `For match ${matchId}, do not call ${awayOffense} and ${homeOffense} contrasting offenses. They sit in the same ${familyLabel} offensive family here, so describe them neutrally instead.`,
+      field,
+      kind: "unsupported_tactic_contrast",
+      matchId,
+      reason: `${awayOffense} and ${homeOffense} were described as contrasting offenses even though they live in the same ${familyLabel} family.`,
+      salvage: semanticIssueSalvageForField(field),
+      sentence,
+      sentenceIndex,
+    },
+  ];
+}
+
+function containsComebackRunLanguage(sentence: string): boolean {
+  return [
+    /\bshowed signs of life\b/i,
+    /\bmade a push\b/i,
+    /\b(?:rally|rallied|rallying|stormed|charged|clawed|fought|roared|came)\s+back\b/i,
+    /\bcomeback\b/i,
+    /\berased\b[^.!?]{0,40}\bdeficit\b/i,
+  ].some((pattern) => pattern.test(sentence));
 }
 
 function validateOverlappingRunMentions(
@@ -12270,7 +15049,11 @@ function validateOverlappingRunMentions(
   const mentions = Array.from(uniqueMentions.values());
 
   for (let leftIndex = 0; leftIndex < mentions.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < mentions.length; rightIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < mentions.length;
+      rightIndex += 1
+    ) {
       const left = mentions[leftIndex]!;
       const right = mentions[rightIndex]!;
       if (!runsOverlapForRecapValidation(left.run, right.run)) {
@@ -12371,7 +15154,10 @@ function runsOverlapForRecapValidation(
     return false;
   }
 
-  return leftInterval.start < rightInterval.end && rightInterval.start < leftInterval.end;
+  return (
+    leftInterval.start < rightInterval.end &&
+    rightInterval.start < leftInterval.end
+  );
 }
 
 function resolveRunIntervalForRecapValidation(
@@ -12419,8 +15205,10 @@ function parseRunClockForRecapValidation(clock: string): number {
     return 0;
   }
 
-  return Number.parseInt(match[1] ?? "0", 10) * 60 +
-    Number.parseInt(match[2] ?? "0", 10);
+  return (
+    Number.parseInt(match[1] ?? "0", 10) * 60 +
+    Number.parseInt(match[2] ?? "0", 10)
+  );
 }
 
 function validatePlayoffRecordLanguage(
@@ -12484,7 +15272,11 @@ function validatePlayoffStreakLanguage(
 function extractRunClaim(
   sentence: string,
   expectedGame: GameDayRecapPromptGame,
-): { opponentPoints: number; teamPoints: number; teamSide: "away" | "home" | null } | null {
+): {
+  opponentPoints: number;
+  teamPoints: number;
+  teamSide: "away" | "home" | null;
+} | null {
   const match = sentence.match(/\b(\d{1,2})-(\d{1,2})\s+run\b/i);
   if (!match) {
     return null;
@@ -12505,7 +15297,11 @@ function hasRequiredRunTimingAnchors(
     return true;
   }
 
-  if (!buildRunAnchorRegex(run.startQuarter, run.startClock, "start").test(sentence)) {
+  if (
+    !buildRunAnchorRegex(run.startQuarter, run.startClock, "start").test(
+      sentence,
+    )
+  ) {
     return false;
   }
 
@@ -12522,10 +15318,13 @@ function hasRequiredRunTimingAnchors(
   );
 }
 
-function formatRunTimingInstruction(
-  run: GameDayRecapPlayByPlayRun,
-): string {
-  if (run.startQuarter !== null && run.startClock && run.endQuarter !== null && run.endClock) {
+function formatRunTimingInstruction(run: GameDayRecapPlayByPlayRun): string {
+  if (
+    run.startQuarter !== null &&
+    run.startClock &&
+    run.endQuarter !== null &&
+    run.endClock
+  ) {
     return `Use "from ${formatRunAnchor(run.startQuarter, run.startClock)} to ${formatRunAnchor(run.endQuarter, run.endClock)}".`;
   }
   if (run.startQuarter !== null && run.startClock) {
@@ -12561,9 +15360,10 @@ function containsPlayoffRecordLanguage(
 
     const escapedName = escapeRegExp(teamName);
     if (
-      new RegExp(`${escapedName}[^.!?]{0,20}\\((\\d{1,2})-(\\d{1,2})\\)`, "i").test(
-        sentence,
-      )
+      new RegExp(
+        `${escapedName}[^.!?]{0,20}\\((\\d{1,2})-(\\d{1,2})\\)`,
+        "i",
+      ).test(sentence)
     ) {
       return true;
     }
@@ -12614,10 +15414,9 @@ function validateScoringContextLanguage(
   }
 
   const actualValue = `${expectedGame.teams.home.name} ${expectedGame.teams.home.score}, ${expectedGame.teams.away.name} ${expectedGame.teams.away.score}`;
-  const requiredThreshold =
-    claimsHighScoring
-      ? "both teams must score more than 100"
-      : "both teams must score fewer than 80";
+  const requiredThreshold = claimsHighScoring
+    ? "both teams must score more than 100"
+    : "both teams must score fewer than 80";
 
   return [
     {
@@ -12755,83 +15554,62 @@ function validatePostgameInterview(
     enforceBannedStylePhrases?: boolean;
   } = {},
 ): GameDayRecapSemanticValidationIssue[] {
-  const interview = game.postgameInterview;
-  if (!interview) {
+  const interviews =
+    (
+      game.postgameInterviews?.length
+        ? game.postgameInterviews
+        : game.postgameInterview
+          ? [game.postgameInterview]
+          : []
+    ).filter(
+      (
+        interview,
+      ): interview is GameDayRecapResultPostgameInterview => Boolean(interview),
+    );
+  if (!interviews.length) {
     return [];
   }
 
-  const candidate = expectedGame.postgameInterviewCandidate;
+  const candidates = collectPostgameInterviewCandidates(expectedGame);
   const issues: GameDayRecapSemanticValidationIssue[] = [];
-  if (!candidate) {
-    issues.push({
-      actualValue: "no supported interview candidate",
-      feedback: `For match ${game.matchId}, omit postgameInterview unless the payload includes a supported winner-side interview candidate.`,
-      field: "postgameInterview",
-      kind: "unsupported_interview_claim",
-      matchId: game.matchId,
-      reason:
-        "The recap included a postgameInterview block even though no supported interview candidate was supplied.",
-      salvage: semanticIssueSalvageForField("postgameInterview"),
-      sentence: interview.title,
-      sentenceIndex: 0,
-    });
-    return issues;
-  }
 
-  if (
-    interview.playerName !== candidate.playerName ||
-    interview.teamName !== candidate.teamName ||
-    interview.teamSide !== candidate.teamSide
-  ) {
-    issues.push({
-      actualValue: `${candidate.playerName} (${candidate.teamName})`,
-      feedback: `For match ${game.matchId}, any postgameInterview must use the supplied candidate ${candidate.playerName} from ${candidate.teamName}.`,
-      field: "postgameInterview",
-      kind: "unsupported_interview_claim",
-      matchId: game.matchId,
-      reason:
-        "The postgameInterview block used a different player or team than the supplied candidate.",
-      salvage: semanticIssueSalvageForField("postgameInterview"),
-      sentence: interview.title,
-      sentenceIndex: 0,
-      teamSide: candidate.teamSide,
-    });
-  }
+  for (const interview of interviews) {
+    const candidate =
+      candidates.find(
+        (entry) =>
+          interview.playerName === entry.playerName &&
+          interview.teamName === entry.teamName &&
+          interview.teamSide === entry.teamSide,
+      ) ?? null;
+    if (!candidate) {
+      issues.push({
+        actualValue: "no supported interview candidate",
+        feedback: `For match ${game.matchId}, omit postgameInterview entries unless the payload includes a supported candidate for that player and team.`,
+        field: "postgameInterview",
+        kind: "unsupported_interview_claim",
+        matchId: game.matchId,
+        reason:
+          "The recap included a postgameInterview block for a player who was not supplied as a supported interview candidate.",
+        salvage: semanticIssueSalvageForField("postgameInterview"),
+        sentence: interview.title,
+        sentenceIndex: 0,
+        teamSide: interview.teamSide,
+      });
+      continue;
+    }
 
-  let sentenceIndexOffset = 0;
-  issues.push(
-    ...offsetSemanticIssueSentenceIndexes(
-      [
-        ...collectInterviewSemanticIssues(
-          interview.title,
-          "postgameInterview",
-          game.matchId,
-          expectedGame,
-        ),
-        ...validateUnsupportedInterviewText(
-          interview.title,
-          game.matchId,
-          candidate.teamSide,
-          0,
-        ),
-      ],
-      sentenceIndexOffset,
-    ),
-  );
-  sentenceIndexOffset += 1;
-
-  for (const exchange of interview.qa) {
+    let sentenceIndexOffset = 0;
     issues.push(
       ...offsetSemanticIssueSentenceIndexes(
         [
           ...collectInterviewSemanticIssues(
-            exchange.question,
+            interview.title,
             "postgameInterview",
             game.matchId,
             expectedGame,
           ),
           ...validateUnsupportedInterviewText(
-            exchange.question,
+            interview.title,
             game.matchId,
             candidate.teamSide,
             0,
@@ -12841,26 +15619,49 @@ function validatePostgameInterview(
       ),
     );
     sentenceIndexOffset += 1;
-    issues.push(
-      ...offsetSemanticIssueSentenceIndexes(
-        [
-          ...collectInterviewSemanticIssues(
-            exchange.answer,
-            "postgameInterview",
-            game.matchId,
-            expectedGame,
-          ),
-          ...validateUnsupportedInterviewText(
-            exchange.answer,
-            game.matchId,
-            candidate.teamSide,
-            0,
-          ),
-        ],
-        sentenceIndexOffset,
-      ),
-    );
-    sentenceIndexOffset += 1;
+
+    for (const exchange of interview.qa) {
+      issues.push(
+        ...offsetSemanticIssueSentenceIndexes(
+          [
+            ...collectInterviewSemanticIssues(
+              exchange.question,
+              "postgameInterview",
+              game.matchId,
+              expectedGame,
+            ),
+            ...validateUnsupportedInterviewText(
+              exchange.question,
+              game.matchId,
+              candidate.teamSide,
+              0,
+            ),
+          ],
+          sentenceIndexOffset,
+        ),
+      );
+      sentenceIndexOffset += 1;
+      issues.push(
+        ...offsetSemanticIssueSentenceIndexes(
+          [
+            ...collectInterviewSemanticIssues(
+              exchange.answer,
+              "postgameInterview",
+              game.matchId,
+              expectedGame,
+            ),
+            ...validateUnsupportedInterviewText(
+              exchange.answer,
+              game.matchId,
+              candidate.teamSide,
+              0,
+            ),
+          ],
+          sentenceIndexOffset,
+        ),
+      );
+      sentenceIndexOffset += 1;
+    }
   }
 
   return issues;
@@ -12947,9 +15748,9 @@ function validateRequiredPrimaryRunMention(
     const runClaim = extractRunClaim(sentence, expectedGame);
     return Boolean(
       runClaim &&
-        runClaim.teamPoints === primaryRun.teamPoints &&
-        runClaim.opponentPoints === primaryRun.opponentPoints &&
-        (!runClaim.teamSide || runClaim.teamSide === primaryRun.teamSide),
+      runClaim.teamPoints === primaryRun.teamPoints &&
+      runClaim.opponentPoints === primaryRun.opponentPoints &&
+      (!runClaim.teamSide || runClaim.teamSide === primaryRun.teamSide),
     );
   });
   if (hasPrimaryRunMention) {
@@ -13212,10 +16013,12 @@ function isShortNoteLikeFactSentence(sentence: string): boolean {
     return false;
   }
 
-  return /\b\d{1,3}-\d{1,3}\b/.test(sentence)
-    || /\b(?:led|scored|added|finished with|won the|pulled down|held a)\b/i.test(
+  return (
+    /\b\d{1,3}-\d{1,3}\b/.test(sentence) ||
+    /\b(?:led|scored|added|finished with|won the|pulled down|held a)\b/i.test(
       sentence,
-    );
+    )
+  );
 }
 
 function validateRequiredSeriesSummaryLine(
@@ -13485,7 +16288,8 @@ async function salvageGameDayRecapResult(args: {
   deterministicIssues: GameDayRecapSemanticValidationIssue[];
   expectedGames: GameDayRecapGameFactStore[];
   judgeIssues: GameDayRecapJudgeValidationIssue[];
-  judgeProvider: StructuredGameDayRecapProvider;
+  judgeLimiter?: BoundedConcurrencyLimiter;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   request: GameDayRecapPromptPayload["request"];
   result: GameDayRecapResultPayload;
@@ -13501,9 +16305,13 @@ async function salvageGameDayRecapResult(args: {
     string,
     GameDayRecapSemanticValidationIssue[]
   >();
-  const judgeIssuesByMatchId = new Map<string, GameDayRecapJudgeValidationIssue[]>();
+  const judgeIssuesByMatchId = new Map<
+    string,
+    GameDayRecapJudgeValidationIssue[]
+  >();
   const repairActions: GameDayRecapRepairAction[] = [];
-  const postPatchDeterministicIssues: GameDayRecapSemanticValidationIssue[] = [];
+  const postPatchDeterministicIssues: GameDayRecapSemanticValidationIssue[] =
+    [];
   const postPatchJudgeIssues: GameDayRecapJudgeValidationIssue[] = [];
   const postTrimDeterministicIssues: GameDayRecapSemanticValidationIssue[] = [];
   const postTrimJudgeIssues: GameDayRecapJudgeValidationIssue[] = [];
@@ -13548,6 +16356,7 @@ async function salvageGameDayRecapResult(args: {
       expectedGame,
       game: currentGame,
       judgeIssues,
+      judgeLimiter: args.judgeLimiter,
       judgeProvider: args.judgeProvider,
       logContext: args.logContext,
       request: args.request,
@@ -13603,7 +16412,8 @@ async function salvageGameDayRecapGame(args: {
   expectedGame: GameDayRecapGameFactStore;
   game: GameDayRecapResultGame;
   judgeIssues: GameDayRecapJudgeValidationIssue[];
-  judgeProvider: StructuredGameDayRecapProvider;
+  judgeLimiter?: BoundedConcurrencyLimiter;
+  judgeProvider: StructuredGameDayRecapProvider | null;
   logContext?: GameDayRecapGenerationLogContext;
   request: GameDayRecapPromptPayload["request"];
   runtimeConfig: GameDayRecapRuntimeConfig;
@@ -13644,14 +16454,12 @@ async function salvageGameDayRecapGame(args: {
     });
   }
 
-  const {
-    game: sentencePatchedGame,
-    replacedSentenceIndexes,
-  } = applyGameWriteupRepairs(
-    gameWithoutInterview,
-    args.expectedGame,
-    args.deterministicIssues,
-  );
+  const { game: sentencePatchedGame, replacedSentenceIndexes } =
+    applyGameWriteupRepairs(
+      gameWithoutInterview,
+      args.expectedGame,
+      args.deterministicIssues,
+    );
   for (const sentenceIndex of replacedSentenceIndexes) {
     repairActions.push({
       action: "replace_sentence",
@@ -13702,7 +16510,8 @@ async function salvageGameDayRecapGame(args: {
     deterministicIssues: postOpenerDeterministic.issues,
     expectedGame: args.expectedGame,
     game: openerRebuiltGame,
-    reason: "restore required effort and preparation context after sentence repair",
+    reason:
+      "restore required effort and preparation context after sentence repair",
     repairActions,
   });
   const postPatchDeterministic = assessGameDayRecapDeterministicPayload(
@@ -13720,8 +16529,9 @@ async function salvageGameDayRecapGame(args: {
       enforceBannedStylePhrases: args.runtimeConfig.enforceBannedStylePhrases,
     },
   );
-  const postPatchJudge = await judgeGameDayRecapResult({
+  const postPatchJudge = await judgeGameDayRecapResultIfEnabled({
     factStore,
+    judgeLimiter: args.judgeLimiter,
     logContext: args.logContext,
     provider: args.judgeProvider,
     result: postPatchDeterministic.orderedResult,
@@ -13806,30 +16616,30 @@ async function salvageGameDayRecapGame(args: {
     reason: "restore required opening structure after trimming",
     repairActions,
   });
-  const postTrimPreContextDeterministic = assessGameDayRecapDeterministicPayload(
-    {
-      games: [trimmedAndRebuiltGame],
-      summary: {
-        gameOfTheDayMatchId: null,
-        gameOfTheDaySurpriseFactor: null,
-        headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
-        lede: "Trimmed recap candidate",
+  const postTrimPreContextDeterministic =
+    assessGameDayRecapDeterministicPayload(
+      {
+        games: [trimmedAndRebuiltGame],
+        summary: {
+          gameOfTheDayMatchId: null,
+          gameOfTheDaySurpriseFactor: null,
+          headline: `${args.expectedGame.teams.home.name} vs. ${args.expectedGame.teams.away.name}`,
+          lede: "Trimmed recap candidate",
+        },
       },
-    },
-    [args.expectedGame],
-    {
-      enforceBannedStylePhrases: args.runtimeConfig.enforceBannedStylePhrases,
-    },
-  );
-  const trimmedRebuiltAndContextInsertedGame = insertMissingRequiredContextSentences(
-    {
+      [args.expectedGame],
+      {
+        enforceBannedStylePhrases: args.runtimeConfig.enforceBannedStylePhrases,
+      },
+    );
+  const trimmedRebuiltAndContextInsertedGame =
+    insertMissingRequiredContextSentences({
       deterministicIssues: postTrimPreContextDeterministic.issues,
       expectedGame: args.expectedGame,
       game: trimmedAndRebuiltGame,
       reason: "restore required effort and preparation context after trimming",
       repairActions,
-    },
-  );
+    });
   const postTrimDeterministic = assessGameDayRecapDeterministicPayload(
     {
       games: [trimmedRebuiltAndContextInsertedGame],
@@ -13845,8 +16655,9 @@ async function salvageGameDayRecapGame(args: {
       enforceBannedStylePhrases: args.runtimeConfig.enforceBannedStylePhrases,
     },
   );
-  const postTrimJudge = await judgeGameDayRecapResult({
+  const postTrimJudge = await judgeGameDayRecapResultIfEnabled({
     factStore,
+    judgeLimiter: args.judgeLimiter,
     logContext: args.logContext,
     provider: args.judgeProvider,
     result: postTrimDeterministic.orderedResult,
@@ -13933,7 +16744,8 @@ function insertMissingRequiredContextSentences(args: {
   reason: string;
   repairActions: GameDayRecapRepairAction[];
 }): GameDayRecapResultGame {
-  const requiredContextSentences = args.expectedGame.requiredContextSentences ?? [];
+  const requiredContextSentences =
+    args.expectedGame.requiredContextSentences ?? [];
   if (!requiredContextSentences.length) {
     return args.game;
   }
@@ -13982,7 +16794,12 @@ function insertMissingRequiredContextSentences(args: {
 function removePostgameInterview(
   game: GameDayRecapResultGame,
 ): GameDayRecapResultGame {
-  const { postgameInterview: _postgameInterview, ...rest } = game;
+  const {
+    postgameInterview: _postgameInterview,
+    postgameInterviewDiagnostics: _postgameInterviewDiagnostics,
+    postgameInterviews: _postgameInterviews,
+    ...rest
+  } = game;
   return rest;
 }
 
@@ -14072,8 +16889,10 @@ function choosePreferredRepairIssue(
     tied_quarter_claim: 7,
     unsupported_interview_claim: 9,
     unsupported_lead_change_claim: 8,
+    unsupported_run_framing: 8,
     unsupported_scoring_context: 8,
     unsupported_run_claim: 8,
+    unsupported_tactic_contrast: 8,
     wrong_quarter_winner: 8,
   };
 
@@ -14124,9 +16943,13 @@ function buildSafeReplacementSentence(
     case "overlapping_run_claims":
     case "unsupported_scoring_context":
       return buildSafeFinalScoreSentence(expectedGame);
+    case "unsupported_run_framing":
+      return buildSafeMomentumSentence(expectedGame);
     case "unsupported_lead_change_claim":
     case "unsupported_run_claim":
       return buildSafeMomentumSentence(expectedGame);
+    case "unsupported_tactic_contrast":
+      return buildSafeTacticalComparisonSentence(expectedGame);
     case "banned_style_phrase":
     case "choppy_fact_stack":
     case "duplicate_period_state_restatement":
@@ -14198,6 +17021,22 @@ function buildSafeMomentumSentence(
   return prioritySummaryLine ?? null;
 }
 
+function buildSafeTacticalComparisonSentence(
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  const awayOffense = expectedGame.teams.away.offStrategy?.trim();
+  const homeOffense = expectedGame.teams.home.offStrategy?.trim();
+  if (!awayOffense || !homeOffense) {
+    return null;
+  }
+
+  if (awayOffense === homeOffense) {
+    return `${expectedGame.teams.away.name} and ${expectedGame.teams.home.name} both stayed with ${awayOffense}.`;
+  }
+
+  return `${expectedGame.teams.away.name} worked from ${awayOffense}, while ${expectedGame.teams.home.name} countered with ${homeOffense}.`;
+}
+
 function buildSafeFinalScoreSentence(
   expectedGame: GameDayRecapPromptGame,
 ): string {
@@ -14213,8 +17052,9 @@ function buildSafePrimaryRunSentence(
   expectedGame: GameDayRecapPromptGame,
 ): string | null {
   return (
-    expectedGame.playByPlayFacts?.summaryLines.find((line) => /\brun\b/i.test(line)) ??
-    null
+    expectedGame.playByPlayFacts?.summaryLines.find((line) =>
+      /\brun\b/i.test(line),
+    ) ?? null
   );
 }
 
@@ -14592,6 +17432,8 @@ export {
 
 export const __testing = {
   assessGameDayRecapDeterministicPayload,
+  createBoundedConcurrencyLimiter,
+  DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG,
   GAME_DAY_RECAP_EVIDENCE_TAGS,
   GAME_DAY_RECAP_PROMPT_VERSION,
   GAME_DAY_RECAP_RESULT_SCHEMA,
@@ -14602,6 +17444,7 @@ export const __testing = {
   buildGameDayRecapJudgeSentenceFactualityResultSchema,
   buildGameDayRecapJudgeFactStore,
   buildGameDayRecapCostPayload,
+  buildGameDayRecapPostgameInterviewBedrockRequest,
   buildJudgeSentenceChunks,
   computeSurpriseFactorForGame,
   buildQuarterFacts,
@@ -14627,9 +17470,12 @@ export const __testing = {
   listCompletedMatchesBefore,
   mergeCoverageIssues,
   normalizeGameDayRecapRequest,
+  normalizeSingleGameSummaryRequest,
   normalizeGameDayRecapResult,
   parseGameDayRecapQueueMessage,
+  buildFallbackPostgameInterview,
   removeInvalidWriteupSentences,
+  resolveGameDayRecapRuntimeConfig,
   resolvePlayoffSeriesContext,
   resolveConfiguredRecapModelId,
   resolveConfiguredRecapStageModelIds,

@@ -457,6 +457,7 @@ function createExpectedPromptGame(matchId: string) {
         offStrategy: "Motion",
         ratingLabels: {},
         ratingTotal: 66.9,
+        ratingValues: createCompleteTeamRatings(12.2),
         recentAverageMargin: 5,
         recentSignalFlags: [],
         record: "10-6",
@@ -464,6 +465,7 @@ function createExpectedPromptGame(matchId: string) {
         score: 81,
         streak: "L1",
         streakEnteringGame: "W2",
+        turnovers: 13,
         topPlayers: [],
       },
       home: {
@@ -480,6 +482,7 @@ function createExpectedPromptGame(matchId: string) {
         offStrategy: "Push",
         ratingLabels: {},
         ratingTotal: 62.1,
+        ratingValues: createCompleteTeamRatings(11.4),
         recentAverageMargin: 7,
         recentSignalFlags: [],
         record: "13-3",
@@ -487,6 +490,7 @@ function createExpectedPromptGame(matchId: string) {
         score: 85,
         streak: "W4",
         streakEnteringGame: "W3",
+        turnovers: 9,
         topPlayers: [],
       },
     },
@@ -528,6 +532,7 @@ function createSingleGameRecapPayload(matchId = "m-1") {
     gameDate: "2026-03-15",
     gameDayNumber: null,
     generationApproach: "FACT_LIBRARY_FIRST" as const,
+    interviewIntensity: "pg13" as const,
     kind: "SINGLE_GAME" as const,
     label: `Match ${matchId}`,
     leagueId: "100",
@@ -810,9 +815,7 @@ function createRecapCandidateResult(args: {
   };
 }
 
-function isStylePolishPayloadForTest(
-  payload: unknown,
-): payload is {
+function isStylePolishPayloadForTest(payload: unknown): payload is {
   recapGame: {
     writeup: string;
   };
@@ -820,15 +823,13 @@ function isStylePolishPayloadForTest(
 } {
   return Boolean(
     payload &&
-      typeof payload === "object" &&
-      "task" in payload &&
-      (payload as { task?: unknown }).task === "style_polish",
+    typeof payload === "object" &&
+    "task" in payload &&
+    (payload as { task?: unknown }).task === "style_polish",
   );
 }
 
-function isPostgameInterviewPayloadForTest(
-  payload: unknown,
-): payload is {
+function isPostgameInterviewPayloadForTest(payload: unknown): payload is {
   candidate: {
     playerName: string;
     statLine: {
@@ -843,15 +844,13 @@ function isPostgameInterviewPayloadForTest(
 } {
   return Boolean(
     payload &&
-      typeof payload === "object" &&
-      "task" in payload &&
-      (payload as { task?: unknown }).task === "postgame_interview",
+    typeof payload === "object" &&
+    "task" in payload &&
+    (payload as { task?: unknown }).task === "postgame_interview",
   );
 }
 
-function isMainRecapWriterPayloadForTest(
-  payload: unknown,
-): payload is {
+function isMainRecapWriterPayloadForTest(payload: unknown): payload is {
   games: Array<{
     matchId: string;
     playByPlayFacts?: unknown;
@@ -864,9 +863,9 @@ function isMainRecapWriterPayloadForTest(
 } {
   return Boolean(
     payload &&
-      typeof payload === "object" &&
-      "games" in payload &&
-      Array.isArray((payload as { games?: unknown }).games),
+    typeof payload === "object" &&
+    "games" in payload &&
+    Array.isArray((payload as { games?: unknown }).games),
   );
 }
 
@@ -901,9 +900,7 @@ function buildTestInterviewStatSummary(candidate: {
   return `${parts[0]!}, ${parts[1]!}, and ${parts[2]!}`;
 }
 
-function maybeHandleAuxiliaryWriterPayloadForTest(
-  payload: unknown,
-): {
+function maybeHandleAuxiliaryWriterPayloadForTest(payload: unknown): {
   handled: true;
   response: unknown;
 } | null {
@@ -1171,9 +1168,9 @@ function mapJudgeResponseSentenceVerdicts(
     return response;
   }
 
-  const sentenceMetadata = (
-    response as Record<PropertyKey, unknown>
-  )[JUDGE_TEST_SENTENCE_METADATA] as
+  const sentenceMetadata = (response as Record<PropertyKey, unknown>)[
+    JUDGE_TEST_SENTENCE_METADATA
+  ] as
     | Record<string, { candidateIndex: number; sentenceKey: string }>
     | undefined;
   const mappedResponse = {
@@ -2863,7 +2860,10 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
     "expected facts library projection",
   );
 
-  assert.equal(payload.factStore.request.generationApproach, "FACT_LIBRARY_FIRST");
+  assert.equal(
+    payload.factStore.request.generationApproach,
+    "FACT_LIBRARY_FIRST",
+  );
   assert.equal(factStoreGame.winner.winnerName, "Alpha");
   assert.equal(factStoreGame.winner.loserName, "Beta");
   assert.equal(factStoreGame.winner.finalScoreHomeAway, "85-81");
@@ -2876,6 +2876,41 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
   assert.equal(reboundsLeader.playerName, "Hal Home");
   assert.equal(assistsLeader.playerName, "Ari Away");
   assert.equal(bestAllAroundLeader.playerName, "Ari Away");
+  assert.equal(
+    factStoreGame.teamRatingFacts.away.ratings.outsideScoring?.value,
+    12.2,
+  );
+  assert.equal(
+    factStoreGame.teamRatingFacts.home.ratings.outsideDefense?.value,
+    10.2,
+  );
+  assert.equal(
+    factStoreGame.teamRatingFacts.comparisons.some(
+      (comparison) =>
+        (comparison.left.teamName === factStoreGame.teams.away.name &&
+          comparison.left.ratingKey === "outsideScoring" &&
+          comparison.right.teamName === factStoreGame.teams.home.name &&
+          comparison.right.ratingKey === "outsideDefense") ||
+        (comparison.left.teamName === factStoreGame.teams.home.name &&
+          comparison.left.ratingKey === "outsideDefense" &&
+          comparison.right.teamName === factStoreGame.teams.away.name &&
+          comparison.right.ratingKey === "outsideScoring"),
+    ),
+    true,
+  );
+  assert.equal(factStoreGame.teamTalent.awayTotal, 202);
+  assert.equal(factStoreGame.teamTalent.homeTotal, 186);
+  assert.match(
+    factStoreGame.teamTalent.summary ?? "",
+    new RegExp(`${factStoreGame.teams.away.name} .*team talent edge`, "i"),
+  );
+  assert.equal(writerGame.teamTalent.awayTotal, null);
+  assert.equal(writerGame.teamTalent.homeTotal, null);
+  assert.match(writerGame.teamTalent.summary ?? "", /team talent edge/i);
+  assert.equal(
+    writerGame.teamRatingFacts?.away.ratings.outsideScoring?.value,
+    12.2,
+  );
   assert.equal(interviewCandidate.playerName, "Hal Home");
   assert.equal(interviewCandidate.teamName, "Alpha");
   assert.equal(interviewCandidate.teamSide, "home");
@@ -2884,7 +2919,10 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
   assert.equal("rawRatings" in writerGame.teams.home, false);
   assert.equal(writerGame.teams.home.name, factStoreGame.teams.home.name);
   assert.equal(writerGame.teams.home.record, factStoreGame.teams.home.record);
-  assert.deepStrictEqual(writerGame.playByPlayFacts, factStoreGame.playByPlayFacts);
+  assert.deepStrictEqual(
+    writerGame.playByPlayFacts,
+    factStoreGame.playByPlayFacts,
+  );
   assert.equal(
     factsLibrary.winner.finalScoreFromWinnerPerspective,
     factStoreGame.winner.finalScoreWinnerFacing,
@@ -2895,6 +2933,163 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
       "expected facts-library through-three state",
     ).scoreFromLeaderPerspective,
     throughThreeState.scoreFromLeaderPerspective,
+  );
+});
+
+test("buildGameDayRecapPromptPayload surfaces matchup-relevant rating edges", async () => {
+  const standings = createStandings(64, "100");
+  standings.conferences[0]!.teams[0]!.teamName = "Silverbacks";
+  standings.conferences[0]!.teams[1]!.teamName = "Splash Gang";
+  const match = {
+    awayTeam: { id: "B", score: 55, teamName: "Splash Gang" },
+    homeTeam: { id: "A", score: 69, teamName: "Silverbacks" },
+    id: "m-ratings",
+    startTime: "2026-04-21T19:00:00Z",
+    type: "league.final",
+  };
+  const schedules = new Map<string, BBApiSchedule>([
+    ["A", createSchedule("A", [match])],
+    ["B", createSchedule("B", [match])],
+    ["C", createSchedule("C", [])],
+    ["D", createSchedule("D", [])],
+  ]);
+  const boxScore = createBoxScore({
+    awayScore: 55,
+    awayTeamId: "B",
+    awayTeamName: "Splash Gang",
+    homeScore: 69,
+    homeTeamId: "A",
+    homeTeamName: "Silverbacks",
+    matchId: "m-ratings",
+    startTime: "2026-04-21T19:00:00Z",
+    type: "league.final",
+  });
+  boxScore.awayTeam.offStrategy = "Run and Gun";
+  boxScore.awayTeam.teamTotals = { pts: 55, to: 15 };
+  boxScore.awayTeam.ratings = {
+    ...createCompleteTeamRatings(10),
+    offensiveFlow: 8.8,
+    outsideScoring: 12.2,
+  };
+  boxScore.homeTeam.offStrategy = "Motion";
+  boxScore.homeTeam.teamTotals = { pts: 69, to: 8 };
+  boxScore.homeTeam.ratings = {
+    ...createCompleteTeamRatings(11),
+    outsideDefense: 14.2,
+    outsideScoring: 13.1,
+  };
+
+  const payload = await __testing.buildGameDayRecapPromptPayload({
+    bb: {
+      getBoxScore: async (matchId) => {
+        if (matchId !== "m-ratings") {
+          throw new Error(`Unexpected box score ${matchId}`);
+        }
+        return boxScore;
+      },
+      getSchedule: async (teamId) => {
+        const schedule = schedules.get(teamId ?? "");
+        if (!schedule) {
+          throw new Error(`Missing schedule for ${teamId}`);
+        }
+        return schedule;
+      },
+      getTeamInfo: async () => {
+        throw new Error("team info should not be loaded in this test");
+      },
+    },
+    connection: {
+      bbLoginName: "coach-alpha",
+      leagueId: "100",
+      leagueName: "Elite League",
+      leagueTimeZone: "America/New_York",
+      refreshSortAt: "2026-04-21T23:10:00.000Z",
+      status: "CONNECTED",
+      userId: "user-1",
+    },
+    fetchPublicMatchPlayByPlay: async (matchId) =>
+      createPublicPlayByPlay({ matchId }),
+    now: new Date("2026-04-21T23:10:00Z"),
+    requestedGames: [
+      {
+        awayTeamId: "B",
+        awayTeamName: "Splash Gang",
+        homeTeamId: "A",
+        homeTeamName: "Silverbacks",
+        isScheduleFinal: true,
+        matchId: "m-ratings",
+        scheduledAwayScore: 55,
+        scheduledHomeScore: 69,
+        startTime: "2026-04-21T19:00:00Z",
+        type: "league.final",
+      },
+    ],
+    request: {
+      generationApproach: "FACT_LIBRARY_FIRST",
+      gameDate: "2026-04-21",
+      gameDayNumber: null,
+      kind: "LEAGUE_DATE",
+      label: "Elite League 2026-04-21",
+      leagueId: "100",
+      leagueName: "Elite League",
+      matchId: null,
+      season: 64,
+      timeZone: "America/New_York",
+    },
+    season: 64,
+    standings,
+    targetKey: "100#2026-04-21",
+    userId: "user-1",
+  });
+
+  const factsLibrary = expectPresent(
+    payload.games[0]?.factsLibrary,
+    "expected facts library",
+  );
+  const factStoreGame = expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact store game",
+  );
+  assert.equal(
+    factStoreGame.teamRatingFacts.home.ratings.outsideDefense?.value,
+    14.2,
+  );
+  assert.equal(
+    factStoreGame.teamRatingFacts.away.ratings.outsideScoring?.value,
+    12.2,
+  );
+  assert.equal(
+    factStoreGame.teamRatingFacts.comparisons.some(
+      (comparison) =>
+        comparison.left.teamName === "Silverbacks" &&
+        comparison.right.teamName === "Splash Gang" &&
+        comparison.relevance === "outside_defense",
+    ),
+    true,
+  );
+  assert.match(factStoreGame.teamTalent.summary ?? "", /team talent edge/i);
+  assert.ok(
+    factsLibrary.matchupEdgeFacts.supported.some((fact) =>
+      /Silverbacks .*perimeter defense.*outside scoring from Splash Gang/i.test(
+        fact,
+      ),
+    ),
+  );
+  assert.ok(
+    factsLibrary.matchupEdgeFacts.supported.some((fact) =>
+      /For Splash Gang, .*offensive flow paired with 15 turnovers/i.test(fact),
+    ),
+  );
+  assert.equal(
+    factsLibrary.matchupEdgeFacts.supported.some((fact) =>
+      /inside (?:scoring|defense)/i.test(fact),
+    ),
+    false,
+  );
+  assert.ok(
+    factsLibrary.narrativePlan.closingFacts.some((fact) =>
+      /perimeter defense.*outside scoring from Splash Gang/i.test(fact),
+    ),
   );
 });
 
@@ -3285,8 +3480,14 @@ test("buildGameDayRecapPromptPayload adds series context for league-date finals"
   assert.ok(finalsPromptGame);
   assert.ok(finalsPromptGame.seriesContext);
   assert.ok(finalsPromptGame.factsLibrary);
-  assert.equal(finalsPromptGame.seriesContext.summaryLine, "Alpha leads the series 1-0.");
-  assert.notEqual(finalsPromptGame.factsLibrary.openingCandidates[0], "Alpha leads the series 1-0.");
+  assert.equal(
+    finalsPromptGame.seriesContext.summaryLine,
+    "Alpha leads the series 1-0.",
+  );
+  assert.notEqual(
+    finalsPromptGame.factsLibrary.openingCandidates[0],
+    "Alpha leads the series 1-0.",
+  );
   assert.match(
     finalsPromptGame.factsLibrary.headlineCandidates[0] ?? "",
     /takes Game 1, leads series 1-0/i,
@@ -3438,17 +3639,31 @@ test("buildGameDayRecapPromptPayload omits series context for league-date semifi
   assert.ok(semifinalPromptGame.factsLibrary);
 });
 
-test("prose recap request normalization defaults to fact-library-first while key builders preserve legacy compatibility", () => {
+test("prose recap request normalization defaults to fact-library-first and pg13 intensity while key builders preserve legacy compatibility", () => {
+  const normalizedRequest = __testing.normalizeGameDayRecapRequest({
+    gameDate: "2026-03-15",
+    leagueId: "100",
+  });
   assert.equal(
-    __testing.normalizeGameDayRecapRequest({
-      gameDate: "2026-03-15",
-      leagueId: "100",
-    }).approach,
+    normalizedRequest.approach,
     "FACT_LIBRARY_FIRST",
   );
+  assert.equal(normalizedRequest.interviewIntensity, "pg13");
+  assert.equal(normalizedRequest.modelJudgeEnabled, false);
   assert.equal(
     __testing.buildGameDayRecapTargetKey("100", "2026-03-15"),
     "100#2026-03-15",
+  );
+  assert.equal(
+    __testing.buildGameDayRecapTargetKey(
+      "100",
+      "2026-03-15",
+      "FACT_LIBRARY_FIRST",
+      "standard",
+      true,
+      "pg13",
+    ),
+    "100#2026-03-15#fact-library-first#quality-standard#model-judge",
   );
   assert.equal(
     __testing.buildLeagueGameDayRecapTargetKey(
@@ -3456,15 +3671,91 @@ test("prose recap request normalization defaults to fact-library-first while key
       3,
       71,
       "FACT_LIBRARY_FIRST",
+      null,
+      true,
+      "pg13",
     ),
-    "100#71#gameday-3#fact-library-first",
+    "100#71#gameday-3#fact-library-first#model-judge",
   );
   assert.equal(
     __testing.buildSingleGameSummaryTargetKey(
       "137828772",
       "FACT_LIBRARY_FIRST",
+      "premium",
+      true,
+      "pg13",
+      null,
+      null,
     ),
-    "137828772#fact-library-first",
+    "137828772#fact-library-first#quality-premium#model-judge",
+  );
+  assert.deepStrictEqual(
+    __testing.normalizeSingleGameSummaryRequest({
+      loserInterviewPersonalityType: "curt",
+      matchId: "137828772",
+      winnerInterviewPersonalityType: "deadpan",
+    }),
+    {
+      approach: "FACT_LIBRARY_FIRST",
+      interviewIntensity: "pg13",
+      loserInterviewPersonalityType: "curt",
+      matchId: "137828772",
+      modelJudgeEnabled: false,
+      winnerInterviewPersonalityType: "deadpan",
+    },
+  );
+  assert.equal(
+    __testing.buildSingleGameSummaryTargetKey(
+      "137828772",
+      "FACT_LIBRARY_FIRST",
+      "premium",
+      true,
+      "pg13",
+      "deadpan",
+      "curt",
+    ),
+    "137828772#fact-library-first#quality-premium#winner-voice-deadpan#loser-voice-curt#model-judge",
+  );
+  assert.equal(
+    __testing.buildGameDayRecapTargetKey(
+      "100",
+      "2026-03-15",
+      "FACT_LIBRARY_FIRST",
+      "standard",
+      true,
+      "full_heat",
+    ),
+    "100#2026-03-15#fact-library-first#quality-standard#intensity-full-heat#model-judge",
+  );
+  assert.equal(
+    __testing.buildLeagueGameDayRecapTargetKey(
+      "100",
+      3,
+      71,
+      "FACT_LIBRARY_FIRST",
+      null,
+      false,
+      "clean",
+    ),
+    "100#71#gameday-3#fact-library-first#intensity-clean",
+  );
+  assert.equal(
+    __testing.normalizeGameDayRecapRequest({
+      gameDate: "2026-03-15",
+      interviewIntensity: "full_heat",
+      leagueId: "100",
+      modelJudgeEnabled: true,
+    }).interviewIntensity,
+    "full_heat",
+  );
+  assert.equal(
+    __testing.normalizeGameDayRecapRequest({
+      gameDate: "2026-03-15",
+      interviewIntensity: "full_heat",
+      leagueId: "100",
+      modelJudgeEnabled: true,
+    }).modelJudgeEnabled,
+    true,
   );
   assert.equal(
     __testing.normalizeGameDayRecapRequest({
@@ -3492,6 +3783,44 @@ test("prose recap request normalization defaults to fact-library-first while key
       "premium",
     ),
     "100#71#gameday-3#fact-library-first#quality-premium",
+  );
+  assert.equal(
+    __testing.parseGameDayRecapQueueMessage(
+      JSON.stringify({
+        kind: "SINGLE_GAME",
+        qualityTier: "standard",
+        requestedAt: "2026-03-15T22:30:00.000Z",
+        targetKey: "137828772#fact-library-first",
+        userId: "user-1",
+      }),
+    ).interviewIntensity,
+    "pg13",
+  );
+  assert.equal(
+    __testing.parseGameDayRecapQueueMessage(
+      JSON.stringify({
+        interviewIntensity: "clean",
+        kind: "SINGLE_GAME",
+        qualityTier: "standard",
+        requestedAt: "2026-03-15T22:30:00.000Z",
+        targetKey: "137828772#fact-library-first#intensity-clean",
+        userId: "user-1",
+      }),
+    ).modelJudgeEnabled,
+    false,
+  );
+  assert.equal(
+    __testing.parseGameDayRecapQueueMessage(
+      JSON.stringify({
+        interviewIntensity: "clean",
+        kind: "SINGLE_GAME",
+        qualityTier: "standard",
+        requestedAt: "2026-03-15T22:30:00.000Z",
+        targetKey: "137828772#fact-library-first#intensity-clean",
+        userId: "user-1",
+      }),
+    ).interviewIntensity,
+    "clean",
   );
 });
 
@@ -3598,10 +3927,7 @@ test("submitGameDayRecap reruns terminal jobs in place", async () => {
     userId: string;
   }>(queuedMessage, "startWorkflowExecution did not receive a rerun message");
   assert.equal(rerunMessage.kind, "LEAGUE_DATE");
-  assert.equal(
-    rerunMessage.targetKey,
-    "100#2026-03-15#fact-library-first",
-  );
+  assert.equal(rerunMessage.targetKey, "100#2026-03-15#fact-library-first");
 });
 
 test("submitGameDayRecap allows access when premium is granted by the environment default", async () => {
@@ -3669,10 +3995,7 @@ test("submitGameDayRecap allows access when premium is granted by the environmen
   assert.equal(premiumMessage.kind, "LEAGUE_DATE");
   assert.equal(premiumMessage.modelId, DEFAULT_RECAP_MODEL_ID);
   assert.equal(premiumMessage.qualityTier, "premium");
-  assert.equal(
-    premiumMessage.targetKey,
-    "100#2026-03-15#fact-library-first",
-  );
+  assert.equal(premiumMessage.targetKey, "100#2026-03-15#fact-library-first");
 });
 
 test("submitGameDayRecap routes premium quality when commercial mode disables billing gates", async () => {
@@ -3809,6 +4132,108 @@ test("submitGameDayRecap honors an explicit standard qualityTier override", asyn
   );
 });
 
+test("submitGameDayRecap persists modelJudgeEnabled and target-key suffix when enabled", async () => {
+  let queuedMessage: {
+    modelJudgeEnabled?: boolean;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  } | null = null;
+  let savedModelJudgeEnabled: boolean | null = null;
+
+  const result = await submitGameDayRecap(
+    {
+      env: createRecapEnv(),
+      gameDate: "2026-03-15",
+      identity: { sub: "user-1" },
+      leagueId: "100",
+      modelJudgeEnabled: true,
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+    },
+    {
+      getGameDayRecap: async () => null,
+      now: () => new Date("2026-03-15T22:30:00Z"),
+      requireFeatureAccess: async () => "premium",
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
+        queuedMessage = message;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:model-judge";
+      },
+      updateGameDayRecap: async () => {},
+      upsertGameDayRecap: async (_env, record: any) => {
+        savedModelJudgeEnabled = record.requestJson?.modelJudgeEnabled ?? null;
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:model-judge",
+    targetKey: "100#2026-03-15#fact-library-first#model-judge",
+  });
+  assert.equal(savedModelJudgeEnabled, true);
+  assert.equal(
+    (queuedMessage as { modelJudgeEnabled?: boolean } | null)
+      ?.modelJudgeEnabled,
+    true,
+  );
+});
+
+test("submitGameDayRecap persists interviewIntensity on the stored request and queue payload", async () => {
+  let queuedMessage: {
+    interviewIntensity?: string;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  } | null = null;
+  let savedInterviewIntensity: string | null = null;
+
+  const result = await submitGameDayRecap(
+    {
+      env: createRecapEnv(),
+      gameDate: "2026-03-15",
+      identity: { sub: "user-1" },
+      interviewIntensity: "full_heat",
+      leagueId: "100",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+    },
+    {
+      getGameDayRecap: async () => null,
+      now: () => new Date("2026-03-15T22:30:00Z"),
+      requireFeatureAccess: async () => "premium",
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
+        queuedMessage = message as typeof queuedMessage;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:intensity";
+      },
+      updateGameDayRecap: async () => {},
+      upsertGameDayRecap: async (_env, record: any) => {
+        savedInterviewIntensity = record.requestJson?.interviewIntensity ?? null;
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:intensity",
+    targetKey: "100#2026-03-15#fact-library-first#intensity-full-heat",
+  });
+  assert.equal(savedInterviewIntensity, "full_heat");
+  assert.equal(
+    (queuedMessage as { interviewIntensity?: string } | null)
+      ?.interviewIntensity,
+    "full_heat",
+  );
+});
+
 test("resolveConfiguredRecapModelId prefers the premium override for premium access", () => {
   const modelId = __testing.resolveConfiguredRecapModelId(
     createRecapEnv({
@@ -3851,6 +4276,30 @@ test("resolveConfiguredRecapStageModelIds falls back to the premium writer model
     retryModelId: PREMIUM_RECAP_MODEL_ID,
     writerModelId: PREMIUM_RECAP_MODEL_ID,
   });
+});
+
+test("resolveGameDayRecapRuntimeConfig applies full-slate concurrency defaults and overrides", () => {
+  const defaults = __testing.resolveGameDayRecapRuntimeConfig({});
+
+  assert.equal(defaults.contextConcurrency, 4);
+  assert.equal(defaults.judgeConcurrency, 4);
+  assert.equal(defaults.polishConcurrency, 2);
+  assert.equal(defaults.interviewConcurrency, 2);
+  assert.equal(defaults.fullSlatePolishMode, "auto");
+
+  const configured = __testing.resolveGameDayRecapRuntimeConfig({
+    GAME_DAY_RECAP_CONTEXT_CONCURRENCY: "3",
+    GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE: "always",
+    GAME_DAY_RECAP_INTERVIEW_CONCURRENCY: "1",
+    GAME_DAY_RECAP_JUDGE_CONCURRENCY: "6",
+    GAME_DAY_RECAP_POLISH_CONCURRENCY: "0",
+  });
+
+  assert.equal(configured.contextConcurrency, 3);
+  assert.equal(configured.judgeConcurrency, 6);
+  assert.equal(configured.polishConcurrency, 2);
+  assert.equal(configured.interviewConcurrency, 1);
+  assert.equal(configured.fullSlatePolishMode, "always");
 });
 
 test("submitLeagueGameDayRecap routes premium quality when commercial mode disables billing gates", async () => {
@@ -4075,12 +4524,14 @@ test("resolveQueuedRecapStageModelIds falls back to the premium writer model for
 test("submitLeagueGameDayRecap persists the routed modelId on the record and queue message", async () => {
   let queuedMessage: {
     modelId?: string;
+    modelJudgeEnabled?: boolean;
     qualityTier?: string;
     requestedAt: string;
     targetKey: string;
     userId: string;
   } | null = null;
   let savedModelId: string | null = null;
+  let savedModelJudgeEnabled: boolean | null = null;
   let savedQualityTier: string | null = null;
 
   const result = await submitLeagueGameDayRecap(
@@ -4110,6 +4561,7 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
       updateLeagueGameDayRecap: async () => {},
       upsertLeagueGameDayRecap: async (_env, record: any) => {
         savedModelId = record.modelId ?? null;
+        savedModelJudgeEnabled = record.requestJson?.modelJudgeEnabled ?? null;
         savedQualityTier = record.requestJson?.qualityTier ?? null;
       },
     },
@@ -4121,10 +4573,16 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
     targetKey: "100#71#gameday-3#fact-library-first",
   });
   assert.equal(savedModelId, PREMIUM_RECAP_MODEL_ID);
+  assert.equal(savedModelJudgeEnabled, false);
   assert.equal(savedQualityTier, "premium");
   assert.equal(
     (queuedMessage as { modelId?: string } | null)?.modelId,
     PREMIUM_RECAP_MODEL_ID,
+  );
+  assert.equal(
+    (queuedMessage as { modelJudgeEnabled?: boolean } | null)
+      ?.modelJudgeEnabled,
+    false,
   );
   assert.equal(
     (queuedMessage as { qualityTier?: string } | null)?.qualityTier,
@@ -4132,15 +4590,69 @@ test("submitLeagueGameDayRecap persists the routed modelId on the record and que
   );
 });
 
+test("submitLeagueGameDayRecap distinguishes explicit interview intensity in the target key and queue payload", async () => {
+  let queuedMessage: {
+    interviewIntensity?: string;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  } | null = null;
+  let savedInterviewIntensity: string | null = null;
+
+  const result = await submitLeagueGameDayRecap(
+    {
+      env: createRecapEnv(),
+      gameDayNumber: 3,
+      identity: { sub: "user-1" },
+      interviewIntensity: "clean",
+      leagueId: "100",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+      season: 71,
+    },
+    {
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
+        queuedMessage = message as typeof queuedMessage;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-clean";
+      },
+      getLeagueGameDayRecap: async () => null,
+      now: () => new Date("2026-03-15T22:30:00Z"),
+      requireFeatureAccess: async () => "premium",
+      updateLeagueGameDayRecap: async () => {},
+      upsertLeagueGameDayRecap: async (_env, record: any) => {
+        savedInterviewIntensity = record.requestJson?.interviewIntensity ?? null;
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:league-clean",
+    targetKey: "100#71#gameday-3#fact-library-first#intensity-clean",
+  });
+  assert.equal(savedInterviewIntensity, "clean");
+  assert.equal(
+    (queuedMessage as { interviewIntensity?: string } | null)
+      ?.interviewIntensity,
+    "clean",
+  );
+});
+
 test("submitSingleGameSummary persists the routed modelId on the record and queue message", async () => {
   let queuedMessage: {
     modelId?: string;
+    modelJudgeEnabled?: boolean;
     qualityTier?: string;
     requestedAt: string;
     targetKey: string;
     userId: string;
   } | null = null;
   let savedModelId: string | null = null;
+  let savedModelJudgeEnabled: boolean | null = null;
   let savedQualityTier: string | null = null;
 
   const result = await submitSingleGameSummary(
@@ -4168,6 +4680,7 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
       updateSingleGameSummary: async () => {},
       upsertSingleGameSummary: async (_env, record: any) => {
         savedModelId = record.modelId ?? null;
+        savedModelJudgeEnabled = record.requestJson?.modelJudgeEnabled ?? null;
         savedQualityTier = record.requestJson?.qualityTier ?? null;
       },
     },
@@ -4179,14 +4692,70 @@ test("submitSingleGameSummary persists the routed modelId on the record and queu
     targetKey: "137828772#fact-library-first",
   });
   assert.equal(savedModelId, PREMIUM_RECAP_MODEL_ID);
+  assert.equal(savedModelJudgeEnabled, false);
   assert.equal(savedQualityTier, "premium");
   assert.equal(
     (queuedMessage as { modelId?: string } | null)?.modelId,
     PREMIUM_RECAP_MODEL_ID,
   );
   assert.equal(
+    (queuedMessage as { modelJudgeEnabled?: boolean } | null)
+      ?.modelJudgeEnabled,
+    false,
+  );
+  assert.equal(
     (queuedMessage as { qualityTier?: string } | null)?.qualityTier,
     "premium",
+  );
+});
+
+test("submitSingleGameSummary distinguishes explicit interview intensity in the target key and queue payload", async () => {
+  let queuedMessage: {
+    interviewIntensity?: string;
+    requestedAt: string;
+    targetKey: string;
+    userId: string;
+  } | null = null;
+  let savedInterviewIntensity: string | null = null;
+
+  const result = await submitSingleGameSummary(
+    {
+      env: createRecapEnv(),
+      identity: { sub: "user-1" },
+      interviewIntensity: "full_heat",
+      matchId: "137828772",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+    },
+    {
+      startWorkflowExecution: async (
+        _stateMachineArn,
+        _executionName,
+        message,
+      ) => {
+        queuedMessage = message as typeof queuedMessage;
+        return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:single-heat";
+      },
+      getSingleGameSummary: async () => null,
+      now: () => new Date("2026-03-15T22:30:00Z"),
+      requireFeatureAccess: async () => "premium",
+      updateSingleGameSummary: async () => {},
+      upsertSingleGameSummary: async (_env, record: any) => {
+        savedInterviewIntensity = record.requestJson?.interviewIntensity ?? null;
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    executionArn:
+      "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:single-heat",
+    targetKey: "137828772#fact-library-first#intensity-full-heat",
+  });
+  assert.equal(savedInterviewIntensity, "full_heat");
+  assert.equal(
+    (queuedMessage as { interviewIntensity?: string } | null)
+      ?.interviewIntensity,
+    "full_heat",
   );
 });
 
@@ -4536,9 +5105,8 @@ test("processGameDayRecap still allows partial coverage for same-day games that 
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -4748,9 +5316,8 @@ test("processGameDayRecap keeps running when one game's play-by-play fetch fails
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -4763,7 +5330,8 @@ test("processGameDayRecap keeps running when one game's play-by-play fetch fails
                     evidenceTags: ["recent_form"],
                     headline: `Recap for ${game.matchId}`,
                     matchId: game.matchId,
-                    writeup: `${game.teams.home.name} had enough to close out ${game.teams.away.name}. ${game.playByPlaySummaryLines.find((line) => /\brun\b/i.test(line)) ?? ""}`.trim(),
+                    writeup:
+                      `${game.teams.home.name} had enough to close out ${game.teams.away.name}. ${game.playByPlaySummaryLines.find((line) => /\brun\b/i.test(line)) ?? ""}`.trim(),
                   })),
                   summary: {
                     headline: "Elite League roundup",
@@ -4917,9 +5485,8 @@ test("processGameDayRecap retries once after semantic validation fails", async (
           ? createPassingJudgeProvider()
           : {
               generate: async (payload, options) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -5084,9 +5651,8 @@ test("processGameDayRecap retries after remaining hard validation failures", asy
           ? createPassingJudgeProvider()
           : {
               generate: async (payload, options) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -5260,9 +5826,8 @@ test("processGameDayRecap patches repeated semantic contradictions after the ret
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -5464,9 +6029,8 @@ test("processGameDayRecap keeps invalid generated games and marks validation war
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -6315,9 +6879,8 @@ test("processGameDayRecap resolves the current open season before fetching seaso
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -6488,9 +7051,8 @@ test("processGameDayRecap falls back to historical season candidates when curren
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -6785,9 +7347,8 @@ test("processLeagueGameDayRecap resolves a full regular-season slate by ordinal 
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -6849,8 +7410,8 @@ test("processLeagueGameDayRecap resolves a full regular-season slate by ordinal 
     ),
   );
   assert.ok(
-    !capturedLeagueGameDayPayload?.games[0]?.playByPlaySummaryLines.some((line) =>
-      /\b6-2 run\b/i.test(line),
+    !capturedLeagueGameDayPayload?.games[0]?.playByPlaySummaryLines.some(
+      (line) => /\b6-2 run\b/i.test(line),
     ),
   );
 });
@@ -7311,9 +7872,8 @@ test("processSingleGameSummary summarizes one finished match without standings o
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -7391,12 +7951,14 @@ test("processSingleGameSummary persists estimated cost tracking for the generate
     userId: "user-1",
   };
   const updates: Array<Record<string, unknown>> = [];
+  let judgeProviderCreated = false;
 
   await processSingleGameSummary(
     {
       env: createRecapEnv(),
       messageBody: JSON.stringify({
         kind: "SINGLE_GAME",
+        modelJudgeEnabled: false,
         qualityTier: "standard",
         requestedAt: summaryRecord.requestedAt,
         targetKey: summaryRecord.targetKey,
@@ -7444,12 +8006,14 @@ test("processSingleGameSummary persists estimated cost tracking for the generate
       }),
       createProvider: ({ stage }) =>
         stage === "judge"
-          ? createPassingJudgeProvider()
+          ? (() => {
+              judgeProviderCreated = true;
+              return createPassingJudgeProvider();
+            })()
           : createUsageAwareProvider({
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -7499,6 +8063,7 @@ test("processSingleGameSummary persists estimated cost tracking for the generate
     updates.at(-1),
     "expected a persisted single-game summary update",
   );
+  assert.equal(judgeProviderCreated, false);
   assert.equal(finalUpdate.status, "SUCCEEDED");
   assert.deepStrictEqual(finalUpdate.costJson, {
     cacheReadInputTokens: 0,
@@ -7634,9 +8199,8 @@ test("processSingleGameSummary adds series context for eligible playoff finals",
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -7757,9 +8321,8 @@ test("processSingleGameSummary keeps playoff series context optional when it can
           ? createPassingJudgeProvider()
           : {
               generate: async (payload) => {
-                const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(
-                  payload,
-                );
+                const auxiliary =
+                  maybeHandleAuxiliaryWriterPayloadForTest(payload);
                 if (auxiliary) {
                   return auxiliary.response;
                 }
@@ -7884,11 +8447,18 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
     /Only mention runs when the supplied play-by-play facts support them/i,
   );
   assert.match(systemText, /overlapping run windows/i);
-  assert.match(systemText, /separate the setup, chronological game flow, and closing analysis with blank lines/i);
+  assert.match(
+    systemText,
+    /separate the setup, chronological game flow, and closing analysis with blank lines/i,
+  );
   assert.match(
     systemText,
     /Only mention lead-change counts, rapid bursts, or comeback-to-the-lead claims/i,
   );
+  assert.match(systemText, /keep the game flow in time order after the opener/i);
+  assert.match(systemText, /use comeback phrasing for a run only when that team actually started the run trailing/i);
+  assert.match(systemText, /same-family pairings such as Motion and Princeton contrasting/i);
+  assert.match(systemText, /same sequence, summarize them as one closing possession/i);
   assert.match(
     systemText,
     /In playoff games, do not mention regular-season records or any winning or losing streaks/i,
@@ -7955,6 +8525,8 @@ test("buildGameDayRecapBedrockRequest sanitizes playoff records from the writer 
 
 test("buildGameDayRecapBedrockRequest keeps postgame interview questions in sportswriter tone and answers in player voice", () => {
   const payload = createSingleGameRecapPayload("m-1");
+  payload.request.interviewIntensity = "full_heat";
+  refreshPayloadFactStore(payload);
   const gameFacts = payload.factStore.games[0]!;
   const request = __testing.buildGameDayRecapBedrockRequest({
     modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -8009,7 +8581,275 @@ test("buildGameDayRecapBedrockRequest keeps postgame interview questions in spor
     userText,
     /Let the supplied personality type shape only the player's answers/i,
   );
+  assert.match(
+    userText,
+    /Make the selected personality unmistakable in every player answer/i,
+  );
+  assert.match(userText, /Honor the requested interviewIntensity of full_heat/i);
+  assert.match(
+    systemText,
+    /do not flatten the answers into generic athlete-speak/i,
+  );
+  assert.match(
+    userText,
+    /Keep any swagger, philosopher references, bar-like phrasing, and trash talk original/i,
+  );
+  assert.match(userText, /"interviewIntensity": "full_heat"/);
   assert.match(userText, /dry and understated/i);
+  assert.match(userText, /Example answer flavor:/i);
+  assert.match(
+    userText,
+    /They kept giving me space\. I assumed it was a cry for help, so I answered it\./i,
+  );
+});
+
+test("fallback postgame interviews change voice with interview intensity", () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  const expectedGame = expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  );
+  const candidate = {
+    personalityType: "braggart" as const,
+    perspective: "winner" as const,
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home" as const,
+  };
+
+  const cleanInterview = __testing.buildFallbackPostgameInterview({
+    candidate,
+    expectedGame,
+    interviewIntensity: "clean",
+  });
+  const fullHeatInterview = __testing.buildFallbackPostgameInterview({
+    candidate,
+    expectedGame,
+    interviewIntensity: "full_heat",
+  });
+
+  assert.notEqual(cleanInterview.qa[0]?.answer, fullHeatInterview.qa[0]?.answer);
+  assert.match(cleanInterview.qa[0]?.answer ?? "", /best option on the floor/i);
+  assert.match(
+    fullHeatInterview.qa[0]?.answer ?? "",
+    /best player in the building by a disrespectful margin/i,
+  );
+});
+
+test("generateResolvedGameDayRecap lets request overrides beat stored interview personalities", async () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  payload.request.winnerInterviewPersonalityType = "deadpan";
+  refreshPayloadFactStore(payload);
+  const factStoreGame = expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  );
+  factStoreGame.postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    personalitySource: "user_override",
+    personalityType: "curt",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+
+  let capturedCandidate:
+    | {
+        personalitySource?: string | null;
+        personalityType?: string | null;
+      }
+    | undefined;
+
+  await __testing.generateResolvedGameDayRecap({
+    judgeProvider: null,
+    payload,
+    qualityTier: "standard",
+    retryProvider: null,
+    writerProvider: {
+      generate: async (providerPayload) => {
+        if (isPostgameInterviewPayloadForTest(providerPayload)) {
+          capturedCandidate = providerPayload.candidate;
+          return {
+            playerName: providerPayload.candidate.playerName,
+            qa: [
+              {
+                answer: "I kept the game calm.",
+                question: "What was working for you tonight?",
+              },
+            ],
+            teamName: providerPayload.candidate.teamName,
+            teamSide: providerPayload.candidate.teamSide,
+            title: `${providerPayload.candidate.playerName} on ${providerPayload.candidate.teamName}'s win`,
+          };
+        }
+        const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(providerPayload);
+        if (auxiliary) {
+          return auxiliary.response;
+        }
+        if (!isMainRecapWriterPayloadForTest(providerPayload)) {
+          throw new Error("expected main recap writer payload");
+        }
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        });
+      },
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.ok(capturedCandidate);
+  assert.equal(capturedCandidate.personalityType, "deadpan");
+  assert.equal(capturedCandidate.personalitySource, "request_override");
+});
+
+test("generateResolvedGameDayRecap applies a one-sided loser override to a synthesized losing-side candidate", async () => {
+  const payload = createSingleGameRecapPayload();
+  payload.request.loserInterviewPersonalityType = "curt";
+  refreshPayloadFactStore(payload);
+  const factStoreGame = expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  );
+  factStoreGame.postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+  factStoreGame.teams.away.topPlayers = [
+    {
+      assists: 6,
+      blocks: 0,
+      minutes: 38,
+      name: "Away Voice",
+      points: 19,
+      rebounds: 11,
+      steals: 1,
+      turnovers: 2,
+    },
+  ];
+
+  const capturedCandidates = new Map<
+    string,
+    {
+      personalitySource?: string | null;
+      personalityType?: string | null;
+    }
+  >();
+
+  await __testing.generateResolvedGameDayRecap({
+    judgeProvider: null,
+    payload,
+    qualityTier: "standard",
+    retryProvider: null,
+    writerProvider: {
+      generate: async (providerPayload) => {
+        if (isPostgameInterviewPayloadForTest(providerPayload)) {
+          capturedCandidates.set(
+            providerPayload.candidate.playerName,
+            providerPayload.candidate,
+          );
+          return {
+            playerName: providerPayload.candidate.playerName,
+            qa: [
+              {
+                answer: "We have to clean it up.",
+                question: "Where did the game turn?",
+              },
+            ],
+            teamName: providerPayload.candidate.teamName,
+            teamSide: providerPayload.candidate.teamSide,
+            title: `${providerPayload.candidate.playerName} on ${providerPayload.candidate.teamName}'s finish`,
+          };
+        }
+        const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(providerPayload);
+        if (auxiliary) {
+          return auxiliary.response;
+        }
+        if (!isMainRecapWriterPayloadForTest(providerPayload)) {
+          throw new Error("expected main recap writer payload");
+        }
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        });
+      },
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.equal(
+    capturedCandidates.get("Away Voice")?.personalityType,
+    "curt",
+  );
+  assert.equal(
+    capturedCandidates.get("Away Voice")?.personalitySource,
+    "request_override",
+  );
+  assert.notEqual(
+    capturedCandidates.get("Home Hero")?.personalitySource,
+    "request_override",
+  );
+});
+
+test("buildGameDayRecapBedrockRequest steers rating prose toward team talent and away from BBStats wording", () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  const request = __testing.buildGameDayRecapBedrockRequest({
+    modelId: DEFAULT_RECAP_MODEL_ID,
+    payload,
+  });
+
+  const systemText = request.system[0]?.text ?? "";
+  const userText = request.messages[0]?.content[0]?.text ?? "";
+
+  assert.match(systemText, /team talent/i);
+  assert.match(userText, /team talent/i);
+  assert.match(
+    systemText,
+    /never write raw ratings, BBStats, or numeric rating totals/i,
+  );
+  assert.match(
+    userText,
+    /never write raw ratings, BBStats, or numeric rating totals/i,
+  );
 });
 
 test("buildGameDayRecapJudgeBedrockRequest uses fixed-slot sentence chunks without Bedrock-hostile schema keywords", () => {
@@ -8075,6 +8915,25 @@ test("buildGameDayRecapJudgeBedrockRequest uses fixed-slot sentence chunks witho
   };
 
   assert.deepStrictEqual(parsed.gameFacts, payload.factStore.games[0]);
+  assert.equal(
+    (parsed.gameFacts as { teamTalent?: { awayTotal: number | null } })
+      .teamTalent?.awayTotal,
+    202,
+  );
+  assert.equal(
+    (
+      parsed.gameFacts as {
+        teamRatingFacts?: {
+          away: {
+            ratings?: {
+              outsideScoring?: { value: number };
+            };
+          };
+        };
+      }
+    ).teamRatingFacts?.away.ratings?.outsideScoring?.value,
+    12.2,
+  );
   assert.equal(parsed.candidateIndex, 0);
   assert.equal(parsed.chunkCount, 1);
   assert.equal(parsed.chunkIndex, 0);
@@ -8101,12 +8960,33 @@ test("buildGameDayRecapJudgeBedrockRequest uses fixed-slot sentence chunks witho
   assert.doesNotMatch(schema, /"maxLength"\s*:/);
   assert.doesNotMatch(schema, /"type"\s*:\s*\[/);
   assert.doesNotMatch(schema, /"anyOf"\s*:/);
+  assert.match(
+    userText,
+    /gameFacts\.teamRatingFacts and gameFacts\.teamTalent/i,
+  );
+  assert.match(
+    userText,
+    /Reject rating or team-talent claims when no matching gameFacts\.teamRatingFacts or gameFacts\.teamTalent support exists/i,
+  );
+  assert.match(
+    userText,
+    /Treat game-high as supported only when the named player is the global leader/i,
+  );
+  assert.match(
+    userText,
+    /Team-high or led \[team] may be supported by teams\[\]\.topPlayers/i,
+  );
+  assert.match(
+    userText,
+    /matching interview candidate for that side and its supported facts/i,
+  );
   assert.equal(
     parsedSchema.properties.slotVerdicts.properties.slot0.properties.notes.type,
     "string",
   );
   assert.equal(
-    parsedSchema.properties.slotVerdicts.properties.slot0.properties.sourceField.type,
+    parsedSchema.properties.slotVerdicts.properties.slot0.properties.sourceField
+      .type,
     "string",
   );
 });
@@ -8658,7 +9538,10 @@ test("judgeGameDayRecapResult flags a wrong final score", async () => {
     "missing blocking final-score issue",
   );
   assert.equal(issue.contradictionType, "final_score");
-  assert.match(issue.feedback, /factStore\.games\[0\]\.winner\.finalScoreHomeAway/i);
+  assert.match(
+    issue.feedback,
+    /factStore\.games\[0\]\.winner\.finalScoreHomeAway/i,
+  );
 });
 
 test("judgeGameDayRecapResult flags a false overtime claim", async () => {
@@ -8805,20 +9688,22 @@ test("validateGameDayRecapResult allows the series state in the headline and the
   const result = {
     games: [
       {
-          evidenceTags: ["buzzerbeater", "close_finish", "one_possession_finish"],
-          headline: "Stark Contrast takes Game 1, leads series 1-0",
-          matchId: "m-1",
-          writeup:
-            "Adrian Diaz buried the buzzerbeater at the horn to lift Stark Contrast past LionPride.",
-        },
-      ],
-      summary: {
-        headline: "League roundup",
-        lede: "The series state belongs in the headline while the decisive ending anchors the writeup.",
+        evidenceTags: ["buzzerbeater", "close_finish", "one_possession_finish"],
+        headline: "Stark Contrast takes Game 1, leads series 1-0",
+        matchId: "m-1",
+        writeup:
+          "Adrian Diaz buried the buzzerbeater at the horn to lift Stark Contrast past LionPride.",
       },
-    };
+    ],
+    summary: {
+      headline: "League roundup",
+      lede: "The series state belongs in the headline while the decisive ending anchors the writeup.",
+    },
+  };
 
-  const validated = __testing.validateGameDayRecapResult(result, [expectedGame]);
+  const validated = __testing.validateGameDayRecapResult(result, [
+    expectedGame,
+  ]);
   assert.equal(validated.games[0]?.writeup, result.games[0]?.writeup);
   assert.equal(validated.summary.gameOfTheDayMatchId, "m-1");
 });
@@ -8894,6 +9779,49 @@ test("validateGameDayRecapResult rejects tied-quarter outscore claims", () => {
         [expectedGame],
       ),
     /tied 24-24/i,
+  );
+});
+
+test("validateGameDayRecapResult validates run sentences through run facts instead of quarter scores", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.playByPlayFacts = {
+    ...createBackAndForthPlayByPlayFacts(),
+    primaryRun: createRunFact({
+      endAwayScore: 22,
+      endClock: "10:30",
+      endHomeScore: 26,
+      endQuarter: 3,
+      opponentPoints: 4,
+      startAwayScore: 18,
+      startClock: "05:49",
+      startHomeScore: 16,
+      startQuarter: 2,
+      teamPoints: 10,
+    }),
+    summaryLines: [
+      "Home used a 10-4 run from 05:49 left in the 2nd quarter to 10:30 left in the 3rd quarter to take control.",
+    ],
+  };
+
+  assert.doesNotThrow(() =>
+    __testing.validateGameDayRecapResult(
+      {
+        games: [
+          {
+            evidenceTags: ["recent_form"],
+            headline: "Home takes control after halftime",
+            matchId: "m-1",
+            writeup:
+              "Home used a 10-4 run from 05:49 left in the 2nd quarter to 10:30 left in the 3rd quarter to take control before the game settled into the final stretch.",
+          },
+        ],
+        summary: {
+          headline: "League roundup",
+          lede: "The turning point came in a cross-quarter run rather than in any one quarter score.",
+        },
+      },
+      [expectedGame],
+    ),
   );
 });
 
@@ -9051,6 +9979,42 @@ test("validateGameDayRecapResult accepts composed game-day prep context sentence
   assert.equal(result.games[0]?.writeup.includes("Both teams"), true);
 });
 
+test("validateGameDayRecapResult removes duplicated game-day prep paraphrases", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.requiredContextSentences = [
+    "Both teams prepared well for Outside looks.",
+    "On pace, Away prepared for Fast pace, but Home played Motion.",
+  ];
+
+  const result = __testing.validateGameDayRecapResult(
+    {
+      games: [
+        {
+          evidenceTags: ["recent_form"],
+          headline: "Home beats Away 85-81",
+          matchId: "m-1",
+          writeup:
+            "Away came to play on outside looks, and both teams prepared well for that emphasis. On pace, Away had readied for a fast tempo, but Home dictated the game through Motion instead. Both teams prepared well for Outside looks. On pace, Away prepared for Fast pace, but Home played Motion. Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        },
+      ],
+      summary: {
+        headline: "League roundup",
+        lede: "Duplicate preparation paraphrases should be removed once the exact grounded sentences are present.",
+      },
+    },
+    [expectedGame],
+  );
+
+  const writeup = result.games[0]?.writeup ?? "";
+  assert.doesNotMatch(writeup, /came to play on outside looks/i);
+  assert.doesNotMatch(writeup, /had readied for a fast tempo/i);
+  assert.match(writeup, /Both teams prepared well for Outside looks\./);
+  assert.match(
+    writeup,
+    /On pace, Away prepared for Fast pace, but Home played Motion\./,
+  );
+});
+
 test("strict filler validation remains available for QA mode", () => {
   const assessed = __testing.assessGameDayRecapDeterministicPayload(
     {
@@ -9106,7 +10070,8 @@ test("judgeGameDayRecapResult flags unsupported run claims", async () => {
   };
   expectedGame.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater = false;
   expectedGame.playByPlayFacts.primaryRun = null;
-  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+  expectedGame.playByPlaySummaryLines =
+    expectedGame.playByPlayFacts.summaryLines;
   const result = createRecapCandidateResult({
     headline: "Home finds the separation",
     writeup:
@@ -9121,7 +10086,8 @@ test("judgeGameDayRecapResult flags unsupported run claims", async () => {
       writeupContradictionType: "run",
       writeupNotes:
         "The run claim does not match any supported play-by-play run in the fact store.",
-      writeupSourceField: "factStore.games[0].playByPlayFacts.bestCompetitiveSwingRun",
+      writeupSourceField:
+        "factStore.games[0].playByPlayFacts.bestCompetitiveSwingRun",
       writeupVerdict: "unsupported",
     }),
     expectedGame,
@@ -9133,7 +10099,10 @@ test("judgeGameDayRecapResult flags unsupported run claims", async () => {
   );
 
   assert.equal(blockingIssue.contradictionType, "run");
-  assert.match(blockingIssue.sourceField ?? "", /playByPlayFacts\.bestCompetitiveSwingRun/i);
+  assert.match(
+    blockingIssue.sourceField ?? "",
+    /playByPlayFacts\.bestCompetitiveSwingRun/i,
+  );
 });
 
 test("validateGameDayRecapResult rejects run mentions without timing anchors", () => {
@@ -9163,7 +10132,8 @@ test("validateGameDayRecapResult rejects run mentions without timing anchors", (
   expectedGame.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater = false;
   expectedGame.playByPlayFacts.primaryRun =
     expectedGame.playByPlayFacts.bestCompetitiveSwingRun;
-  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+  expectedGame.playByPlaySummaryLines =
+    expectedGame.playByPlayFacts.summaryLines;
 
   assert.throws(
     () =>
@@ -9218,7 +10188,8 @@ test("validateGameDayRecapResult rejects run mentions with stale first-basket st
     ],
   };
   expectedGame.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater = false;
-  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+  expectedGame.playByPlaySummaryLines =
+    expectedGame.playByPlayFacts.summaryLines;
 
   assert.throws(
     () =>
@@ -9288,7 +10259,8 @@ test("validateGameDayRecapResult rejects overlapping run mentions", () => {
     ],
   };
   expectedGame.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater = false;
-  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+  expectedGame.playByPlaySummaryLines =
+    expectedGame.playByPlayFacts.summaryLines;
 
   assert.throws(
     () =>
@@ -9314,11 +10286,97 @@ test("validateGameDayRecapResult rejects overlapping run mentions", () => {
   );
 });
 
+test("validateGameDayRecapResult rejects comeback phrasing for a run that started tied", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  const tiedStartRun = createRunFact({
+    endAwayScore: 22,
+    endClock: "04:35",
+    endHomeScore: 28,
+    endQuarter: 3,
+    opponentPoints: 2,
+    runType: "swing",
+    startAwayScore: 20,
+    startClock: "08:40",
+    startHomeScore: 20,
+    startQuarter: 3,
+    teamName: "Home",
+    teamPoints: 8,
+    teamSide: "home",
+  });
+  expectedGame.playByPlayFacts = {
+    ...createBuzzerBeaterPlayByPlayFacts(),
+    bestCompetitiveSwingRun: tiedStartRun,
+    longestUnansweredRun: createEmptyRunFact("unanswered"),
+    primaryRun: tiedStartRun,
+    summaryLines: [
+      "Home used an 8-2 run from 08:40 left in the 3rd quarter to 04:35 left in the 3rd quarter to open the lead.",
+    ],
+  };
+  expectedGame.playByPlayFacts.endingFacts.decisiveScore.isBuzzerBeater = false;
+  expectedGame.playByPlaySummaryLines =
+    expectedGame.playByPlayFacts.summaryLines;
+
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: ["recent_form"],
+              headline: "Home steadies late",
+              matchId: "m-1",
+              writeup:
+                "Home showed signs of life with an 8-2 run from 08:40 left in the 3rd quarter to 04:35 left in the 3rd quarter.",
+            },
+          ],
+          summary: {
+            headline: "League roundup",
+            lede: "Run language should match whether the team was actually climbing back or already level.",
+          },
+        },
+        [expectedGame],
+      ),
+    /comeback phrasing|started that 8-2 run tied/i,
+  );
+});
+
+test("validateGameDayRecapResult rejects contrasting wording for same-family offenses", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.teams.away.name = "Flashover";
+  expectedGame.teams.away.offStrategy = "Motion";
+  expectedGame.teams.home.name = "Mos Eisley Imperials";
+  expectedGame.teams.home.offStrategy = "Princeton";
+
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: ["recent_form"],
+              headline: "Mos Eisley Imperials close strong",
+              matchId: "m-1",
+              writeup:
+                "The two teams employed contrasting offensive systems as Flashover ran Motion while Mos Eisley Imperials worked from Princeton.",
+            },
+          ],
+          summary: {
+            headline: "League roundup",
+            lede: "Same-family outside offenses should not be framed as opposites.",
+          },
+        },
+        [expectedGame],
+      ),
+    /Motion and Princeton were described as contrasting offenses/i,
+  );
+});
+
 test("judgeGameDayRecapResult flags unsupported lead-change counts", async () => {
   const expectedGame = createExpectedPromptGame("m-1");
   expectedGame.playByPlayFacts = createBackAndForthPlayByPlayFacts();
   expectedGame.playByPlayFacts.primaryRun = null;
-  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+  expectedGame.playByPlaySummaryLines =
+    expectedGame.playByPlayFacts.summaryLines;
   const result = createRecapCandidateResult({
     headline: "Home survives the chaos",
     writeup:
@@ -9345,14 +10403,18 @@ test("judgeGameDayRecapResult flags unsupported lead-change counts", async () =>
   );
 
   assert.equal(blockingIssue.contradictionType, "lead_change");
-  assert.match(blockingIssue.sourceField ?? "", /playByPlayFacts\.leadChangeFacts/i);
+  assert.match(
+    blockingIssue.sourceField ?? "",
+    /playByPlayFacts\.leadChangeFacts/i,
+  );
 });
 
 test("judgeGameDayRecapResult flags unsupported comeback-to-the-lead claims", async () => {
   const expectedGame = createExpectedPromptGame("m-1");
   expectedGame.playByPlayFacts = createBackAndForthPlayByPlayFacts();
   expectedGame.playByPlayFacts.primaryRun = null;
-  expectedGame.playByPlaySummaryLines = expectedGame.playByPlayFacts.summaryLines;
+  expectedGame.playByPlaySummaryLines =
+    expectedGame.playByPlayFacts.summaryLines;
   const result = createRecapCandidateResult({
     headline: "Home rallies all the way back",
     writeup:
@@ -9514,9 +10576,11 @@ test("validateGameDayRecapResult rejects missing required effort or prep context
       assert.ok(
         "issues" in error &&
           Array.isArray((error as { issues?: unknown }).issues) &&
-          (error as {
-            issues: Array<{ kind?: unknown }>;
-          }).issues.some(
+          (
+            error as {
+              issues: Array<{ kind?: unknown }>;
+            }
+          ).issues.some(
             (issue) => issue.kind === "missing_required_context_sentence",
           ),
       );
@@ -9872,9 +10936,392 @@ test("generateResolvedGameDayRecap adds a guaranteed postgameInterview when a ca
   assert.equal(interview.teamName, "Home");
   assert.match(interview.title, /on Home's win/);
   assert.equal(interview.qa.length, 1);
-  assert.match(
-    interview.qa[0]?.answer ?? "",
-    /tried to keep Home steady/i,
+  assert.match(interview.qa[0]?.answer ?? "", /tried to keep Home steady/i);
+});
+
+test("generateResolvedGameDayRecap retries from deterministic validation even when model judging is disabled", async () => {
+  const payload = createSingleGameRecapPayload();
+  let providerCalls = 0;
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: null,
+    payload,
+    qualityTier: "standard",
+    retryProvider: null,
+    writerProvider: {
+      generate: async (...providerArgs: any[]) => {
+        const [providerPayload] = providerArgs;
+        const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(providerPayload);
+        if (auxiliary) {
+          return auxiliary.response;
+        }
+        if (!isMainRecapWriterPayloadForTest(providerPayload)) {
+          throw new Error("expected main recap writer payload");
+        }
+
+        providerCalls += 1;
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          writeup:
+            providerCalls === 1
+              ? "Home won the third quarter 22-20 before finally finishing the job in the fourth."
+              : "Away won the third quarter 22-20, but Home steadied itself in the fourth quarter and closed out an 85-81 win.",
+        });
+      },
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.equal(providerCalls, 2);
+  const game = expectPresent(
+    result.result.games[0],
+    "expected a generated recap game after deterministic retry",
+  );
+  const validation = expectPresent(game.validation, "expected recap validation");
+  assert.equal(validation.status, "VALID");
+  assert.equal(
+    validation.issues.every((issue) => issue.source === "deterministic"),
+    true,
+  );
+  assert.match(game.writeup, /Away won the third quarter 22-20/i);
+});
+
+test("generateResolvedGameDayRecap attaches winner and loser postgame interviews for single-game recaps even on standard tier", async () => {
+  const payload = createSingleGameRecapPayload();
+  const factStoreGame = expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  ) as typeof payload.factStore.games[number] & {
+    postgameInterviewCandidates?: Array<{
+      playerName: string;
+      selectionReason: string;
+      statLine: {
+        assists: number;
+        blocks: number;
+        minutes: number;
+        points: number;
+        rebounds: number;
+        steals: number;
+        turnovers: number;
+      };
+      supportedFacts: string[];
+      teamName: string;
+      teamSide: "away" | "home";
+      perspective?: "loser" | "winner";
+    }>;
+  };
+  const winnerCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home" as const,
+    perspective: "winner" as const,
+  };
+  const loserCandidate = {
+    playerName: "Away Voice",
+    selectionReason: "best losing-side line in a close finish",
+    statLine: {
+      assists: 6,
+      blocks: 0,
+      minutes: 38,
+      points: 19,
+      rebounds: 11,
+      steals: 1,
+      turnovers: 2,
+    },
+    supportedFacts: ["Away Voice paced Away with 19 points and 11 rebounds."],
+    teamName: "Away",
+    teamSide: "away" as const,
+    perspective: "loser" as const,
+  };
+  factStoreGame.postgameInterviewCandidate = winnerCandidate;
+  factStoreGame.postgameInterviewCandidates = [winnerCandidate, loserCandidate];
+
+  const writerProvider = {
+    generate: async (providerPayload: unknown) => {
+      const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(providerPayload);
+      if (auxiliary) {
+        return auxiliary.response;
+      }
+      if (!isMainRecapWriterPayloadForTest(providerPayload)) {
+        throw new Error("expected main recap writer payload");
+      }
+      return createRecapCandidateResult({
+        headline: "Home beats Away 85-81",
+        writeup:
+          "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+      });
+    },
+    modelId: DEFAULT_RECAP_MODEL_ID,
+    providerName: "bedrock" as const,
+    stage: "writer" as const,
+  };
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: null,
+    payload,
+    qualityTier: "standard",
+    retryProvider: {
+      ...writerProvider,
+      stage: "retry_writer" as const,
+    },
+    writerProvider,
+  });
+
+  const game = expectPresent(
+    result.result.games[0],
+    "expected a generated premium recap game",
+  );
+  const interviews = expectPresent(
+    game.postgameInterviews,
+    "expected premium winner and loser interviews",
+  );
+  assert.deepStrictEqual(
+    interviews.map((interview) => interview.playerName),
+    ["Home Hero", "Away Voice"],
+  );
+  assert.equal(game.postgameInterview?.playerName, "Home Hero");
+  assert.deepStrictEqual(
+    game.postgameInterviewDiagnostics?.map(
+      (diagnostic) => `${diagnostic.side}:${diagnostic.status}`,
+    ),
+    ["winner:generated", "loser:generated"],
+  );
+});
+
+test("generateResolvedGameDayRecap synthesizes a missing losing-side interview candidate for single-game recaps", async () => {
+  const payload = createSingleGameRecapPayload();
+  const factStoreGame = expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  );
+  factStoreGame.postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+  factStoreGame.teams.away.topPlayers = [
+    {
+      assists: 6,
+      blocks: 0,
+      minutes: 38,
+      name: "Away Voice",
+      points: 19,
+      rebounds: 11,
+      steals: 1,
+      turnovers: 2,
+    },
+  ];
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: null,
+    payload,
+    qualityTier: "standard",
+    retryProvider: null,
+    writerProvider: {
+      generate: async (providerPayload) => {
+        const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(providerPayload);
+        if (auxiliary) {
+          return auxiliary.response;
+        }
+        if (!isMainRecapWriterPayloadForTest(providerPayload)) {
+          throw new Error("expected main recap writer payload");
+        }
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        });
+      },
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  const game = expectPresent(
+    result.result.games[0],
+    "expected a generated single-game recap",
+  );
+  assert.deepStrictEqual(
+    game.postgameInterviews?.map((interview) => interview.playerName),
+    ["Home Hero", "Away Voice"],
+  );
+  assert.deepStrictEqual(
+    game.postgameInterviewDiagnostics?.map(
+      (diagnostic) => `${diagnostic.side}:${diagnostic.status}`,
+    ),
+    ["winner:generated", "loser:generated"],
+  );
+});
+
+test("generateResolvedGameDayRecap keeps suspect winner and loser interviews for single-game recaps", async () => {
+  const payload = createSingleGameRecapPayload();
+  const factStoreGame = expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  ) as typeof payload.factStore.games[number] & {
+    postgameInterviewCandidates?: Array<{
+      playerName: string;
+      selectionReason: string;
+      statLine: {
+        assists: number;
+        blocks: number;
+        minutes: number;
+        points: number;
+        rebounds: number;
+        steals: number;
+        turnovers: number;
+      };
+      supportedFacts: string[];
+      teamName: string;
+      teamSide: "away" | "home";
+      perspective?: "loser" | "winner";
+    }>;
+  };
+  factStoreGame.postgameInterviewCandidates = [
+    {
+      playerName: "Home Hero",
+      selectionReason: "top scorer for the winning team",
+      statLine: {
+        assists: 4,
+        blocks: 1,
+        minutes: 39,
+        points: 24,
+        rebounds: 8,
+        steals: 2,
+        turnovers: 3,
+      },
+      supportedFacts: ["Home Hero led the winners with 24 points."],
+      teamName: "Home",
+      teamSide: "home",
+      perspective: "winner",
+    },
+    {
+      playerName: "Away Voice",
+      selectionReason: "best losing-side line in a close finish",
+      statLine: {
+        assists: 6,
+        blocks: 0,
+        minutes: 38,
+        points: 19,
+        rebounds: 11,
+        steals: 1,
+        turnovers: 2,
+      },
+      supportedFacts: ["Away Voice paced Away with 19 points and 11 rebounds."],
+      teamName: "Away",
+      teamSide: "away",
+      perspective: "loser",
+    },
+  ];
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: createPassingJudgeProvider({
+      generate: (judgePayload) => {
+        if (judgePayload.judgeKind === "candidate_interestingness") {
+          return createInterestingnessJudgeResponseFromPayload({
+            candidateIndex: judgePayload.candidateIndex,
+            interestingnessScore: 5,
+          });
+        }
+
+        return mapJudgeResponseSentenceVerdicts(
+          createSupportedJudgeResponseFromPayload(judgePayload),
+          ({ sentenceKey, verdict }) =>
+            sentenceKey.includes(":postgameInterview:")
+              ? {
+                  ...verdict,
+                  contradictionType: "other",
+                  notes:
+                    "This interview line could not be fully grounded against the supported facts.",
+                  sourceField: "postgameInterviewCandidates",
+                  verdict: "unsupported",
+                }
+              : verdict,
+        );
+      },
+    }),
+    payload,
+    qualityTier: "standard",
+    retryProvider: null,
+    writerProvider: {
+      generate: async (providerPayload) => {
+        const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(providerPayload);
+        if (auxiliary) {
+          return auxiliary.response;
+        }
+        if (!isMainRecapWriterPayloadForTest(providerPayload)) {
+          throw new Error("expected main recap writer payload");
+        }
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        });
+      },
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  const game = expectPresent(
+    result.result.games[0],
+    "expected a generated single-game recap",
+  );
+  assert.deepStrictEqual(
+    game.postgameInterviews?.map((interview) => interview.playerName),
+    ["Home Hero", "Away Voice"],
+  );
+  const diagnostics = expectPresent(
+    game.postgameInterviewDiagnostics,
+    "expected suspect interview diagnostics",
+  );
+  assert.deepStrictEqual(
+    diagnostics.map(
+      (diagnostic) => `${diagnostic.side}:${diagnostic.status}`,
+    ),
+    ["winner:suspect", "loser:suspect"],
+  );
+  assert.equal(
+    diagnostics.every(
+      (diagnostic) =>
+        diagnostic.reason ===
+        "Interview was kept despite validation warnings.",
+    ),
+    true,
+  );
+  assert.equal(
+    diagnostics.every((diagnostic) =>
+      diagnostic.details.some((detail) =>
+        detail.includes("Judge check: This interview line could not be fully grounded"),
+      ),
+    ),
+    true,
   );
 });
 
@@ -9958,7 +11405,7 @@ test("generateResolvedGameDayRecap falls back to a deterministic interview when 
     fallbackExchange.question,
     "You finished with 24 points, 8 rebounds, and 4 assists. What was working for you out there tonight?",
   );
-  assert.match(fallbackExchange.answer, /^I stayed aggressive/i);
+  assert.match(fallbackExchange.answer, /^Best player on the floor\./i);
 });
 
 test("generateResolvedGameDayRecap skips polish and interview generation when remaining time is low", async () => {
@@ -9996,7 +11443,9 @@ test("generateResolvedGameDayRecap skips polish and interview generation when re
       generate: async (payload) => {
         if (isPostgameInterviewPayloadForTest(payload)) {
           interviewCalls += 1;
-          throw new Error("interview generation should be skipped on low budget");
+          throw new Error(
+            "interview generation should be skipped on low budget",
+          );
         }
         if (isStylePolishPayloadForTest(payload)) {
           stylePolishCalls += 1;
@@ -10022,6 +11471,117 @@ test("generateResolvedGameDayRecap skips polish and interview generation when re
   assert.equal(stylePolishCalls, 0);
   assert.equal(interviewCalls, 0);
   assert.equal(result.result.games[0]?.postgameInterview?.teamSide, "home");
+});
+
+test("generateResolvedGameDayRecap completes an eight-game premium slate with optional finishing passes bounded by budget", async () => {
+  const games = Array.from({ length: 8 }, (_, index) => ({
+    ...createExpectedPromptGame(`m-${index + 1}`),
+    postgameInterviewCandidate: {
+      playerName: `Home Hero ${index + 1}`,
+      selectionReason: "top scorer for the winning team",
+      statLine: {
+        assists: 4,
+        blocks: 1,
+        minutes: 39,
+        points: 24,
+        rebounds: 8,
+        steals: 2,
+        turnovers: 3,
+      },
+      supportedFacts: ["Home Hero led the winners with 24 points."],
+      teamName: "Home",
+      teamSide: "home" as const,
+    },
+  }));
+  const request = {
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    generationApproach: "FACT_LIBRARY_FIRST" as const,
+    kind: "LEAGUE_DATE" as const,
+    label: "Elite League 2026-03-15",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    season: 64,
+    timeZone: "America/New_York",
+  };
+  const payload = {
+    coverage: {
+      availableGames: games.length,
+      missingGames: [],
+      partial: false,
+      requestedGames: games.length,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: games,
+      request,
+    }),
+    games,
+    request,
+  };
+  const premiumCandidate = {
+    games: games.map((game, index) => ({
+      evidenceTags: ["recent_form"] as const,
+      headline: `Home beats Away 85-81 in Game ${index + 1}`,
+      matchId: game.matchId,
+      writeup:
+        "Home stayed organized late and closed the game without letting Away erase the final margin.",
+    })),
+    summary: {
+      gameOfTheDayMatchId: "m-1",
+      gameOfTheDaySurpriseFactor: 1,
+      headline: "Elite League roundup",
+      lede: "Home handled a full slate with composed late-game execution.",
+    },
+  };
+  let interviewCalls = 0;
+  let retryCalls = 0;
+  let stylePolishCalls = 0;
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: createPassingJudgeProvider(),
+    payload,
+    qualityTier: "premium",
+    remainingTimeInMillis: () => 20_000,
+    retryProvider: {
+      generate: async (payload) => {
+        retryCalls += 1;
+        if (isStylePolishPayloadForTest(payload)) {
+          stylePolishCalls += 1;
+        }
+        if (isPostgameInterviewPayloadForTest(payload)) {
+          interviewCalls += 1;
+        }
+        throw new Error(
+          "optional retry provider should be skipped on low budget",
+        );
+      },
+      modelId: DEFAULT_RECAP_RETRY_MODEL_ID,
+      providerName: "bedrock",
+      stage: "retry_writer",
+    },
+    runtimeConfig: __testing.resolveGameDayRecapRuntimeConfig({
+      GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE: "auto",
+      GAME_DAY_RECAP_INTERVIEW_CONCURRENCY: "2",
+      GAME_DAY_RECAP_POLISH_CONCURRENCY: "2",
+    }),
+    writerProvider: {
+      generate: async () => premiumCandidate,
+      modelId: PREMIUM_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.equal(result.coverageIssues.length, 0);
+  assert.equal(result.result.games.length, 8);
+  assert.equal(stylePolishCalls, 0);
+  assert.equal(interviewCalls, 0);
+  assert.equal(retryCalls, 0);
+  assert.deepStrictEqual(
+    result.result.games.map((game) => game.postgameInterview?.teamSide),
+    Array.from({ length: 8 }, () => "home"),
+  );
 });
 
 test("validateGameDayRecapResult allows interviews to mention runs without timing anchors", () => {
@@ -10201,9 +11761,7 @@ test("assessGameDayRecapDeterministicPayload treats filler phrases as soft guida
   );
 
   assert.equal(
-    laxAssessment.issues.some(
-      (issue) => issue.kind === "banned_style_phrase",
-    ),
+    laxAssessment.issues.some((issue) => issue.kind === "banned_style_phrase"),
     false,
   );
   assert.equal(
@@ -10348,10 +11906,10 @@ test("salvageGameDayRecapResult rebuilds a playoff opener after sentence repairs
       lede: "The repair path should preserve the series line and rebuild the opener around the real ending.",
     },
   };
-  const deterministic =
-    __testing.assessGameDayRecapDeterministicPayload(invalidResult, [
-      expectedGame,
-    ]);
+  const deterministic = __testing.assessGameDayRecapDeterministicPayload(
+    invalidResult,
+    [expectedGame],
+  );
 
   const repaired = await __testing.salvageGameDayRecapResult({
     deterministicIssues: deterministic.issues,
@@ -10525,6 +12083,79 @@ test("generateResolvedGameDayRecap chunks a 16-sentence candidate into 6/6/4 fac
   assert.deepStrictEqual(chunkSizes, [6, 6, 4]);
 });
 
+test("generateResolvedGameDayRecap runs judge sentence chunks concurrently within the configured limit", async () => {
+  const payload = createSingleGameRecapPayload();
+  const longWriteup = [
+    "Home settled in after the opening stretch.",
+    "Away stayed close through the middle quarters.",
+    "Home found one more answer in the closing possessions.",
+    "That final push kept the result from flipping late.",
+    "Away still made the margin work for a while.",
+    "Home then slowed the tempo and kept control.",
+    "The defense never fully loosened up afterward.",
+    "Away had one more push but not the finish.",
+    "Home answered with patient half-court offense.",
+    "The glass also tilted in Home's favor.",
+    "Away chased the game into the closing minute.",
+    "Home closed every remaining gap cleanly.",
+    "The lead never fully disappeared after that.",
+    "Away could not turn the last pressure into a tie.",
+    "Home finally walked it over the line.",
+  ].join(" ");
+  let activeSentenceJudges = 0;
+  let maxActiveSentenceJudges = 0;
+  let sentenceJudgeCalls = 0;
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: createPassingJudgeProvider({
+      generate: async (judgePayload) => {
+        if (judgePayload.judgeKind === "sentence_factuality") {
+          sentenceJudgeCalls += 1;
+          activeSentenceJudges += 1;
+          maxActiveSentenceJudges = Math.max(
+            maxActiveSentenceJudges,
+            activeSentenceJudges,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          activeSentenceJudges -= 1;
+        }
+
+        return createSupportedJudgeResponseFromPayload(judgePayload);
+      },
+    }),
+    payload,
+    qualityTier: "standard",
+    retryProvider: {
+      generate: async () => {
+        throw new Error(
+          "retry provider should not be used for concurrency test",
+        );
+      },
+      modelId: DEFAULT_RECAP_RETRY_MODEL_ID,
+      providerName: "bedrock",
+      stage: "retry_writer",
+    },
+    runtimeConfig: __testing.resolveGameDayRecapRuntimeConfig({
+      GAME_DAY_RECAP_FULL_SLATE_POLISH_MODE: "off",
+      GAME_DAY_RECAP_JUDGE_CONCURRENCY: "2",
+    }),
+    writerProvider: {
+      generate: async () =>
+        createRecapCandidateResult({
+          headline: "Home beats Away 85-81 after the late push",
+          writeup: longWriteup,
+        }),
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  assert.equal(result.coverageIssues.length, 0);
+  assert.equal(sentenceJudgeCalls, 3);
+  assert.equal(maxActiveSentenceJudges, 2);
+});
+
 test("generateResolvedGameDayRecap retries a grammar-failed chunk as single-sentence judge calls", async () => {
   const payload = createSingleGameRecapPayload();
   const chunkSizes: number[] = [];
@@ -10546,10 +12177,7 @@ test("generateResolvedGameDayRecap retries a grammar-failed chunk as single-sent
       generate: async (judgePayload) => {
         if (judgePayload.judgeKind === "sentence_factuality") {
           chunkSizes.push(judgePayload.sentenceChunk.length);
-          if (
-            !threwGrammarFailure &&
-            judgePayload.sentenceChunk.length === 6
-          ) {
+          if (!threwGrammarFailure && judgePayload.sentenceChunk.length === 6) {
             threwGrammarFailure = true;
             const schemaError = new Error(
               "The model returned the following errors: The compiled grammar is too large, which would cause performance issues.",
@@ -10569,7 +12197,9 @@ test("generateResolvedGameDayRecap retries a grammar-failed chunk as single-sent
     qualityTier: "standard",
     retryProvider: {
       generate: async () => {
-        throw new Error("retry provider should not be used for grammar fallback test");
+        throw new Error(
+          "retry provider should not be used for grammar fallback test",
+        );
       },
       modelId: DEFAULT_RECAP_RETRY_MODEL_ID,
       providerName: "bedrock",
@@ -10589,13 +12219,19 @@ test("generateResolvedGameDayRecap retries a grammar-failed chunk as single-sent
 
   assert.equal(result.coverageIssues.length, 0);
   assert.equal(threwGrammarFailure, true);
-  assert.deepStrictEqual(chunkSizes, [6, 1, 1, 1, 1, 1, 1, 4]);
+  assert.deepStrictEqual(
+    [...chunkSizes].sort((left, right) => left - right),
+    [1, 1, 1, 1, 1, 1, 4, 6],
+  );
 });
 
 test("premium recap selection keeps the same winner after chunked factuality and separate interestingness judging", async () => {
   const payload = createSingleGameRecapPayload();
   const writerProvider = {
-    generate: async (_payload: unknown, options?: { candidateIndex?: number }) => {
+    generate: async (
+      _payload: unknown,
+      options?: { candidateIndex?: number },
+    ) => {
       switch (options?.candidateIndex ?? 0) {
         case 0:
           return createRecapCandidateResult({
@@ -10646,7 +12282,9 @@ test("premium recap selection keeps the same winner after chunked factuality and
     qualityTier: "premium",
     retryProvider: {
       generate: async () => {
-        throw new Error("retry provider should not be used for judge fallback test");
+        throw new Error(
+          "retry provider should not be used for judge fallback test",
+        );
       },
       modelId: DEFAULT_RECAP_RETRY_MODEL_ID,
       providerName: "bedrock",
@@ -10786,8 +12424,7 @@ test("premium recap selection rejects a candidate whose headline judge verdict i
               ? {
                   ...verdict,
                   contradictionType: "winner",
-                  notes:
-                    "The headline credits the wrong side with the result.",
+                  notes: "The headline credits the wrong side with the result.",
                   sourceField: "teams.home.score",
                   verdict: "unsupported",
                 }
@@ -10874,17 +12511,17 @@ test("premium recap selection retries once when no initial candidate clears the 
                     verdict: "unsupported",
                   }
                 : sentenceJudgeCalls === 1 && sentenceKey.endsWith(":writeup:0")
-                ? {
-                    ...verdict,
-                    contradictionType: "other",
-                    notes:
-                      candidateIndex === 0
-                        ? "The payload does not support a full wire-to-wire claim."
-                        : "This candidate should not clear the factual bar before retry.",
-                    sourceField: "quarterFacts.periods",
-                    verdict: "unsupported",
-                  }
-                : verdict,
+                  ? {
+                      ...verdict,
+                      contradictionType: "other",
+                      notes:
+                        candidateIndex === 0
+                          ? "The payload does not support a full wire-to-wire claim."
+                          : "This candidate should not clear the factual bar before retry.",
+                      sourceField: "quarterFacts.periods",
+                      verdict: "unsupported",
+                    }
+                  : verdict,
           );
         }
 
@@ -11122,7 +12759,10 @@ test("premium recap fallback keeps the contradicted game with validation warning
   );
   assert.equal(result.result.summary.headline, "Elite League roundup");
   const validGame = expectPresent(result.result.games[0], "missing valid game");
-  const unsafeGame = expectPresent(result.result.games[1], "missing unsafe game");
+  const unsafeGame = expectPresent(
+    result.result.games[1],
+    "missing unsafe game",
+  );
   assert.equal(validGame.validation?.status, "VALID");
   const unsafeValidation = expectPresent(
     unsafeGame.validation,
@@ -11130,10 +12770,8 @@ test("premium recap fallback keeps the contradicted game with validation warning
   );
   assert.equal(unsafeValidation.status, "UNSAFE");
   assert.match(
-    expectPresent(
-      unsafeValidation.issues[0],
-      "missing unsafe game issue",
-    ).reason,
+    expectPresent(unsafeValidation.issues[0], "missing unsafe game issue")
+      .reason,
     /headline contradiction|Gamma won|winner/i,
   );
 });
