@@ -26,6 +26,7 @@ import {
 } from "../../../lib/league-timezones";
 import {
   buildInterviewPersonalitySeed,
+  isInterviewPersonalitySource,
   isInterviewPersonalityType,
   normalizeInterviewPersonalityMode,
   resolveDeterministicInterviewPersonality,
@@ -747,6 +748,8 @@ type GameDayRecapGenerationLogContext = {
 };
 
 type GameDayRecapResultPostgameInterview = {
+  personalitySource?: InterviewPersonalitySource;
+  personalityType?: InterviewPersonalityType;
   playerName: string;
   qa: Array<{
     answer: string;
@@ -1280,6 +1283,27 @@ const MIN_REMAINING_MS_FOR_INTERVIEW_RETRY = 35_000;
 const GAME_DAY_RECAP_POSTGAME_INTERVIEW_SCHEMA = {
   additionalProperties: false,
   properties: {
+    personalitySource: {
+      enum: ["auto", "request_override", "user_override"],
+      type: "string",
+    },
+    personalityType: {
+      enum: [
+        "curt",
+        "friendly",
+        "rambling",
+        "nonsensical",
+        "excited",
+        "braggart",
+        "earnest",
+        "stoic",
+        "deadpan",
+        "reflective",
+        "cagey",
+        "swaggering",
+      ],
+      type: "string",
+    },
     playerName: {
       type: "string",
     },
@@ -11376,10 +11400,14 @@ async function generateGuaranteedPostgameInterview(args: {
         });
         continue;
       }
+      const interview = withAppliedInterviewPersonalityMetadata(
+        parsed.interview,
+        args.candidate,
+      );
 
       const validated = await validateStandaloneRecapGame({
         expectedGame: args.expectedGame,
-        game: withPostgameInterviewForValidation(args.game, parsed.interview),
+        game: withPostgameInterviewForValidation(args.game, interview),
         judgeProvider: args.judgeProvider,
         judgeLimiter: args.judgeLimiter,
         logContext: args.logContext,
@@ -11393,7 +11421,7 @@ async function generateGuaranteedPostgameInterview(args: {
       ) {
         return {
           details: [],
-          interview: parsed.interview,
+          interview,
           reason: null,
           status: "generated",
         };
@@ -11554,13 +11582,36 @@ function withPostgameInterviewForValidation(
     : validationGame;
 }
 
+function withAppliedInterviewPersonalityMetadata(
+  interview: GameDayRecapResultPostgameInterview,
+  candidate: GameDayRecapPromptInterviewCandidate,
+): GameDayRecapResultPostgameInterview {
+  const personalityType = isInterviewPersonalityType(candidate.personalityType)
+    ? candidate.personalityType
+    : null;
+  if (!personalityType) {
+    return interview;
+  }
+
+  const personalitySource = isInterviewPersonalitySource(
+    candidate.personalitySource,
+  )
+    ? candidate.personalitySource
+    : "auto";
+  return {
+    ...interview,
+    personalitySource,
+    personalityType,
+  };
+}
+
 function buildFallbackPostgameInterview(args: {
   candidate: GameDayRecapPromptInterviewCandidate;
   expectedGame: GameDayRecapGameFactStore;
   interviewIntensity: RecapInterviewIntensityValue;
 }): GameDayRecapResultPostgameInterview {
   if (args.candidate.perspective === "loser") {
-    return {
+    return withAppliedInterviewPersonalityMetadata({
       playerName: args.candidate.playerName,
       qa: [
         {
@@ -11581,7 +11632,7 @@ function buildFallbackPostgameInterview(args: {
       teamName: args.candidate.teamName,
       teamSide: args.candidate.teamSide,
       title: `${args.candidate.playerName} on ${args.candidate.teamName}'s response`,
-    };
+    }, args.candidate);
   }
 
   const winningRun =
@@ -11613,13 +11664,13 @@ function buildFallbackPostgameInterview(args: {
     });
   }
 
-  return {
+  return withAppliedInterviewPersonalityMetadata({
     playerName: args.candidate.playerName,
     qa,
     teamName: args.candidate.teamName,
     teamSide: args.candidate.teamSide,
     title: `${args.candidate.playerName} on ${args.candidate.teamName}'s win`,
-  };
+  }, args.candidate);
 }
 
 function buildFallbackLosingInterviewAnswer(
@@ -13920,6 +13971,15 @@ function parseGameDayRecapPostgameInterview(args: {
     "title",
     details,
   );
+  const personalityType = isInterviewPersonalityType(record.personalityType)
+    ? record.personalityType
+    : null;
+  const personalitySource = personalityType &&
+      isInterviewPersonalitySource(record.personalitySource)
+    ? record.personalitySource
+    : personalityType
+      ? "auto"
+      : null;
   const normalizedQa: GameDayRecapResultPostgameInterview["qa"] = [];
   if (!Array.isArray(record.qa)) {
     details.push("qa was missing or not an array.");
@@ -13974,6 +14034,8 @@ function parseGameDayRecapPostgameInterview(args: {
 
   return {
     interview: {
+      ...(personalitySource ? { personalitySource } : {}),
+      ...(personalityType ? { personalityType } : {}),
       playerName,
       qa: normalizedQa,
       teamName,

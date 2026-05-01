@@ -191,20 +191,20 @@ export class BBXmlApiClient {
   }
 
   async getCurrentWorkspace(): Promise<BBApiCurrentWorkspace> {
-    const seasons = await this.getSeasons();
-    const currentSeason = seasons.seasons
-      .map((season) => season.id)
-      .filter((seasonId): seasonId is number => seasonId !== null)
-      .sort((left, right) => right - left)[0];
+    const latestSeason = resolveLatestSeasonId(await this.getSeasons());
 
     const teamInfo = await this.getTeamInfo();
-    const [roster, schedule, teamStats] = await Promise.all([
+    const [roster, schedule] = await Promise.all([
       this.getRoster(teamInfo.teamId ?? undefined),
-      this.getSchedule(teamInfo.teamId ?? undefined, currentSeason),
-      this.getTeamStats(teamInfo.teamId ?? undefined, currentSeason, "averages"),
+      this.getSchedule(teamInfo.teamId ?? undefined, latestSeason),
     ]);
+    const currentSeason = resolveEffectiveCurrentSeason({
+      fallbackSeason: latestSeason,
+      schedule,
+    });
 
-    const [standings, arena, economy] = await Promise.all([
+    const [teamStats, standings, arena, economy] = await Promise.all([
+      this.getTeamStats(teamInfo.teamId ?? undefined, currentSeason, "averages"),
       teamInfo.league?.id
         ? this.getStandings(teamInfo.league.id, currentSeason)
         : Promise.resolve(null),
@@ -213,6 +213,7 @@ export class BBXmlApiClient {
     ]);
 
     return {
+      currentSeason,
       teamInfo,
       roster: assertOwnedRoster(roster, "Owned roster.aspx response"),
       schedule,
@@ -302,6 +303,27 @@ export class BBXmlApiClient {
     }
     this.cookieHeader = cookiePairs.join("; ");
   }
+}
+
+export function resolveLatestSeasonId(seasons: BBApiSeasons): number {
+  const ids = seasons.seasons
+    .map((season) => season.id)
+    .filter((seasonId): seasonId is number => seasonId !== null)
+    .sort((left, right) => right - left);
+  const latestSeason = ids[0];
+  if (latestSeason === undefined) {
+    throw new Error("No seasons were available from the BuzzerBeater API.");
+  }
+  return latestSeason;
+}
+
+export function resolveEffectiveCurrentSeason(args: {
+  fallbackSeason: number;
+  schedule: Pick<BBApiSchedule, "season"> | null;
+}): number {
+  return typeof args.schedule?.season === "number"
+    ? args.schedule.season
+    : args.fallbackSeason;
 }
 
 export function extractErrorMessage(xml: string): string | null {

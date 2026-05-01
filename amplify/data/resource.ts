@@ -20,9 +20,13 @@ import { getMatchBoxscoreDetails } from "../get-match-boxscore-details/resource"
 import { billingAdminOverride } from "../billing-admin-override/resource";
 import { billingWebhook } from "../billing-webhook/resource";
 import { evaluatePredictionMatrix } from "../evaluate-prediction-matrix/resource";
+import { gameDayRecapFailureFinalizer } from "../game-day-recap-failure-finalizer/resource";
 import { gameDayRecapSubmit } from "../game-day-recap-submit/resource";
 import { gameDayRecapWorker } from "../game-day-recap-worker/resource";
 import { listAccessibleMatches } from "../list-accessible-matches/resource";
+import { leagueSeasonSimulationFailureFinalizer } from "../league-season-simulation-failure-finalizer/resource";
+import { leagueSeasonSimulationSubmit } from "../league-season-simulation-submit/resource";
+import { leagueSeasonSimulationWorker } from "../league-season-simulation-worker/resource";
 import { nextGameRecommendationSubmit } from "../next-game-recommendation-submit/resource";
 import { nextGameRecommendationWorker } from "../next-game-recommendation-worker/resource";
 import { opponentForecastSubmit } from "../opponent-forecast-submit/resource";
@@ -136,6 +140,15 @@ export const getLatestNextGameRecommendation = defineFunction({
   resourceGroupName: "data",
   name: "get-latest-next-game-recommendation",
   entry: "./get-latest-next-game-recommendation/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 1024,
+  environment: secureFunctionEnvironment,
+});
+
+export const getLatestLeagueSeasonSimulation = defineFunction({
+  resourceGroupName: "data",
+  name: "get-latest-league-season-simulation",
+  entry: "./get-latest-league-season-simulation/handler.ts",
   timeoutSeconds: 60,
   memoryMB: 1024,
   environment: secureFunctionEnvironment,
@@ -471,6 +484,7 @@ export const maintenanceProtectedFunctions = [
   getScoutSchedule,
   getLatestOpponentForecast,
   getLatestNextGameRecommendation,
+  getLatestLeagueSeasonSimulation,
   getNextGamePlannerDetail,
   getLeagueIntel,
   getLeagueHistory,
@@ -513,6 +527,8 @@ export const maintenanceProtectedFunctions = [
   gameDayRecapSubmit,
   gameDayRecapWorker,
   evaluatePredictionMatrix,
+  leagueSeasonSimulationSubmit,
+  leagueSeasonSimulationWorker,
   nextGameRecommendationSubmit,
   nextGameRecommendationWorker,
   opponentForecastSubmit,
@@ -523,6 +539,8 @@ export const maintenanceProtectedFunctions = [
 
 const dataFunctions = [
   ...maintenanceProtectedFunctions,
+  gameDayRecapFailureFinalizer,
+  leagueSeasonSimulationFailureFinalizer,
   pruneOperationalData,
   billingWebhook,
   billingAdminOverride,
@@ -576,6 +594,32 @@ const schema = a
       "SUCCEEDED",
       "FAILED",
     ]),
+
+    LeagueSeasonSimulationJobStatus: a.enum([
+      "QUEUED",
+      "RESOLVING_CONTEXT",
+      "COLLECTING_SNAPSHOTS",
+      "SCORING_GAMES",
+      "RUNNING_SIMULATIONS",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
+    LeagueSeasonSimulationProgressPhaseKey: a.enum([
+      "QUEUED",
+      "RESOLVING_CONTEXT",
+      "COLLECTING_SNAPSHOTS",
+      "SCORING_GAMES",
+      "RUNNING_SIMULATIONS",
+      "SUCCEEDED",
+      "FAILED",
+    ]),
+    LeagueSeasonSimulationSelectionStrategy: a.enum([
+      "CURRENT_SEASON_15TH_PERCENTILE",
+      "MULTI_SEASON_THIRD_BEST",
+      "BEST_AVAILABLE",
+      "LEAGUE_AVERAGE_FALLBACK",
+    ]),
+    LeagueIntelFreshnessStatus: a.enum(["FRESH", "UNAVAILABLE"]),
 
     RecommendationMode: a.enum([
       "BIGGEST_WIN",
@@ -940,7 +984,10 @@ const schema = a
     }),
 
     LeagueIntelWorkspace: a.customType({
+      freshnessMessage: a.string(),
+      freshnessStatus: a.ref("LeagueIntelFreshnessStatus"),
       league: a.ref("NamedReference"),
+      season: a.integer(),
       standings: a
         .ref("LeagueConferenceStanding")
         .required()
@@ -1549,6 +1596,11 @@ const schema = a
       executionArn: a.string(),
     }),
 
+    LeagueSeasonSimulationSubmitResult: a.customType({
+      jobId: a.string().required(),
+      executionArn: a.string(),
+    }),
+
     OwnerRosterRepairResult: a.customType({
       completedAt: a.datetime().required(),
       repairedPlayerCount: a.integer().required(),
@@ -1920,6 +1972,156 @@ const schema = a
       result: a.ref("NextGameRecommendationResult"),
     }),
 
+    LeagueSeasonSimulationStoredRequest: a.customType({
+      leagueId: a.string().required(),
+      season: a.integer().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+    }),
+
+    LeagueSeasonSimulationCompletedPhase: a.customType({
+      phaseKey: a.ref("LeagueSeasonSimulationProgressPhaseKey").required(),
+      startedAt: a.datetime().required(),
+      completedAt: a.datetime().required(),
+      durationMs: a.integer().required(),
+      summary: a.string().required(),
+    }),
+
+    LeagueSeasonSimulationProgressContext: a.customType({
+      teamCount: a.integer(),
+      candidateGameCount: a.integer(),
+      remainingGameCount: a.integer(),
+      scoredGameCount: a.integer(),
+      simulationCount: a.integer(),
+      lowSampleTeamCount: a.integer(),
+      currentSeason: a.integer(),
+    }),
+
+    LeagueSeasonSimulationProgress: a.customType({
+      phaseKey: a.ref("LeagueSeasonSimulationProgressPhaseKey").required(),
+      phaseIndex: a.integer().required(),
+      phaseCount: a.integer().required(),
+      summary: a.string().required(),
+      updatedAt: a.datetime().required(),
+      currentPhaseStartedAt: a.datetime(),
+      completedPhases: a
+        .ref("LeagueSeasonSimulationCompletedPhase")
+        .required()
+        .array()
+        .required(),
+      context: a.ref("LeagueSeasonSimulationProgressContext"),
+      completedUnits: a.integer(),
+      totalUnits: a.integer(),
+      unitLabel: a.string(),
+    }),
+
+    LeagueSeasonSimulationFinishProbability: a.customType({
+      place: a.integer().required(),
+      probability: a.float().required(),
+    }),
+
+    LeagueSeasonSimulationSourceSnapshot: a.customType({
+      teamId: a.string().required(),
+      teamName: a.string(),
+      candidateGameCount: a.integer().required(),
+      sourceMatchId: a.string(),
+      sourceSeason: a.integer(),
+      sourceStartTime: a.datetime(),
+      offense: a.string().required(),
+      defense: a.string().required(),
+      selectionStrategy: a
+        .ref("LeagueSeasonSimulationSelectionStrategy")
+        .required(),
+      sampleWarning: a.string(),
+    }),
+
+    LeagueSeasonSimulationTeamResult: a.customType({
+      teamId: a.string().required(),
+      teamName: a.string(),
+      standingsIndex: a.integer().required(),
+      currentWins: a.integer().required(),
+      currentLosses: a.integer().required(),
+      currentPointMargin: a.float().required(),
+      expectedWins: a.float().required(),
+      expectedLosses: a.float().required(),
+      expectedPointMargin: a.float().required(),
+      averageFinish: a.float().required(),
+      firstPlaceProbability: a.float().required(),
+      winsP10: a.float().required(),
+      winsP50: a.float().required(),
+      winsP90: a.float().required(),
+      finishProbabilities: a
+        .ref("LeagueSeasonSimulationFinishProbability")
+        .required()
+        .array()
+        .required(),
+      snapshot: a.ref("LeagueSeasonSimulationSourceSnapshot").required(),
+    }),
+
+    LeagueSeasonSimulationConferenceResult: a.customType({
+      conferenceIndex: a.integer().required(),
+      teams: a
+        .ref("LeagueSeasonSimulationTeamResult")
+        .required()
+        .array()
+        .required(),
+    }),
+
+    LeagueSeasonSimulationGameResult: a.customType({
+      matchId: a.string().required(),
+      startTime: a.datetime(),
+      homeTeamId: a.string().required(),
+      homeTeamName: a.string(),
+      awayTeamId: a.string().required(),
+      awayTeamName: a.string(),
+      expectedHomeScore: a.float().required(),
+      expectedAwayScore: a.float().required(),
+      expectedMargin: a.float().required(),
+      homeWinProbability: a.float().required(),
+      homeOffense: a.string().required(),
+      homeDefense: a.string().required(),
+      awayOffense: a.string().required(),
+      awayDefense: a.string().required(),
+    }),
+
+    LeagueSeasonSimulationResult: a.customType({
+      generatedAt: a.datetime().required(),
+      leagueId: a.string().required(),
+      leagueName: a.string(),
+      season: a.integer().required(),
+      modelVersion: a.string(),
+      simulationCount: a.integer().required(),
+      residualSigma: a.float().required(),
+      lowSampleTeamCount: a.integer().required(),
+      conferences: a
+        .ref("LeagueSeasonSimulationConferenceResult")
+        .required()
+        .array()
+        .required(),
+      remainingGames: a
+        .ref("LeagueSeasonSimulationGameResult")
+        .required()
+        .array()
+        .required(),
+    }),
+
+    LeagueSeasonSimulationSnapshot: a.customType({
+      jobId: a.string().required(),
+      leagueId: a.string().required(),
+      leagueName: a.string(),
+      season: a.integer().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+      executionArn: a.string(),
+      status: a.ref("LeagueSeasonSimulationJobStatus").required(),
+      requestedAt: a.datetime().required(),
+      startedAt: a.datetime(),
+      completedAt: a.datetime(),
+      error: a.string(),
+      progress: a.ref("LeagueSeasonSimulationProgress"),
+      result: a.ref("LeagueSeasonSimulationResult"),
+    }),
+
     GameDayRecapSubmitResult: a.customType({
       targetKey: a.string().required(),
       executionArn: a.string(),
@@ -2084,6 +2286,8 @@ const schema = a
     }),
 
     GameDayRecapResultPostgameInterview: a.customType({
+      personalitySource: a.string(),
+      personalityType: a.string(),
       playerName: a.string().required(),
       qa: a
         .ref("GameDayRecapResultPostgameInterviewExchange")
@@ -3460,6 +3664,74 @@ const schema = a
       ])
       .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
 
+    LeagueSeasonSimulationJob: a
+      .model({
+        userId: a
+          .string()
+          .required()
+          .authorization((allow) => [
+            allow.ownerDefinedIn("userId").to(["read"]),
+          ]),
+        leagueId: a.string().required(),
+        leagueName: a.string(),
+        season: a.integer().required(),
+        teamId: a.string().required(),
+        teamName: a.string(),
+        status: a.ref("LeagueSeasonSimulationJobStatus").required(),
+        requestedAt: a.datetime().required(),
+        startedAt: a.datetime(),
+        completedAt: a.datetime(),
+        requestJson: a.ref("LeagueSeasonSimulationStoredRequest").required(),
+        progressJson: a.ref("LeagueSeasonSimulationProgress"),
+        resultJson: a.ref("LeagueSeasonSimulationResult"),
+        error: a.string(),
+        executionArn: a.string(),
+        expiryKey: a.string().required(),
+        expiresAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [
+        index("userId")
+          .sortKeys(["requestedAt"])
+          .queryField("listLeagueSeasonSimulationJobsByUserAndRequestedAt"),
+        index("expiryKey")
+          .sortKeys(["expiresAt"])
+          .queryField(
+            "listLeagueSeasonSimulationJobsByExpiryKeyAndExpiresAt",
+          ),
+      ])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
+    LeagueSeasonSimulationArtifact: a
+      .model({
+        jobId: a.string().required(),
+        artifactType: a.string().required(),
+        artifactKey: a.string().required(),
+        artifactOrder: a.integer().required(),
+        userId: a
+          .string()
+          .required()
+          .authorization((allow) => [
+            allow.ownerDefinedIn("userId").to(["read"]),
+          ]),
+        payloadJson: a.json().required(),
+        expiryKey: a.string().required(),
+        expiresAt: a.datetime().required(),
+      })
+      .identifier(["jobId", "artifactType", "artifactKey"])
+      .secondaryIndexes((index) => [
+        index("jobId")
+          .sortKeys(["artifactOrder"])
+          .queryField(
+            "listLeagueSeasonSimulationArtifactsByJobIdAndArtifactOrder",
+          ),
+        index("expiryKey")
+          .sortKeys(["expiresAt"])
+          .queryField(
+            "listLeagueSeasonSimulationArtifactsByExpiryKeyAndExpiresAt",
+          ),
+      ])
+      .authorization((allow) => [allow.ownerDefinedIn("userId").to(["read"])]),
+
     NextGamePlannerArtifact: a
       .model({
         artifactKey: a.string().required(),
@@ -3742,6 +4014,12 @@ const schema = a
       .returns(a.ref("NextGameRecommendationSnapshot"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLatestNextGameRecommendation)),
+
+    getLatestLeagueSeasonSimulation: a
+      .query()
+      .returns(a.ref("LeagueSeasonSimulationSnapshot"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(getLatestLeagueSeasonSimulation)),
 
     getNextGamePlannerDetail: a
       .query()
@@ -4062,6 +4340,12 @@ const schema = a
       .returns(a.ref("NextGameRecommendationSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(nextGameRecommendationSubmit)),
+
+    submitLeagueSeasonSimulationJob: a
+      .mutation()
+      .returns(a.ref("LeagueSeasonSimulationSubmitResult"))
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(leagueSeasonSimulationSubmit)),
 
     submitGameDayRecap: a
       .mutation()

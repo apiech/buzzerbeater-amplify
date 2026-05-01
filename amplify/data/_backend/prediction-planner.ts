@@ -1,5 +1,7 @@
 import {
+  predictionPlannerBatchResponseSchema,
   predictionPlannerResponseSchema,
+  type PredictionPlannerBatchResponse,
   type PredictionPlannerResponse,
 } from "../../../lib/prediction/contracts";
 
@@ -10,31 +12,50 @@ export type PlannerInvocationRequest = {
   requestId: string;
 };
 
-export type PlannerInvocationResponse = {
+export type PlannerInvocationResponse<
+  TResponse = PredictionPlannerResponse,
+> = {
   elapsedMs: number;
   payloadBytes: number;
   requestId: string;
-  response: PredictionPlannerResponse;
+  response: TResponse;
 };
 
-export async function invokePlannerRequests(args: {
-  concurrency?: number;
-  endpointName: string;
-  invokePredictionEndpoint: (
-    endpointName: string,
-    payload: JsonRecord,
-  ) => Promise<unknown>;
-  onRequestCompleted?: (result: {
-    completedCount: number;
-    elapsedMs: number;
-    payloadBytes: number;
-    requestId: string;
-    response: PredictionPlannerResponse;
-    totalCount: number;
-  }) => Promise<void> | void;
-  requests: readonly PlannerInvocationRequest[];
-}): Promise<PlannerInvocationResponse[]> {
-  const responses = new Array<PlannerInvocationResponse>(args.requests.length);
+type PlannerBatchInvocationItem = {
+  modelKey?: string;
+  plannerRequest: JsonRecord;
+  requestId: string;
+};
+
+export async function invokePlannerRequests<
+  TResponse = PredictionPlannerResponse,
+>(
+  args: {
+    concurrency?: number;
+    endpointName: string;
+    invokePredictionEndpoint: (
+      endpointName: string,
+      payload: JsonRecord,
+    ) => Promise<unknown>;
+    parseResponse?: (payload: unknown) => TResponse;
+    onRequestCompleted?: (result: {
+      completedCount: number;
+      elapsedMs: number;
+      payloadBytes: number;
+      requestId: string;
+      response: TResponse;
+      totalCount: number;
+    }) => Promise<void> | void;
+    requests: readonly PlannerInvocationRequest[];
+  },
+): Promise<PlannerInvocationResponse<TResponse>[]> {
+  const parseResponse =
+    args.parseResponse ??
+    ((payload: unknown) =>
+      predictionPlannerResponseSchema.parse(payload) as TResponse);
+  const responses = new Array<PlannerInvocationResponse<TResponse>>(
+    args.requests.length,
+  );
   const totalCount = args.requests.length;
   const concurrency = Math.min(
     Math.max(1, args.concurrency ?? 1),
@@ -58,7 +79,7 @@ export async function invokePlannerRequests(args: {
         args.endpointName,
         request.payload,
       );
-      const parsedResponse = predictionPlannerResponseSchema.parse(rawResponse);
+      const parsedResponse = parseResponse(rawResponse);
       const elapsedMs = Date.now() - startedAt;
       completedCount += 1;
 
@@ -79,6 +100,93 @@ export async function invokePlannerRequests(args: {
           totalCount,
         }),
       );
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return responses;
+}
+
+export async function invokePlannerBatchRequests(args: {
+  batchSize: number;
+  concurrency?: number;
+  endpointName: string;
+  invokePredictionEndpoint: (
+    endpointName: string,
+    payload: JsonRecord,
+  ) => Promise<unknown>;
+  onRequestCompleted?: (result: {
+    completedCount: number;
+    elapsedMs: number;
+    payloadBytes: number;
+    requestId: string;
+    response: PredictionPlannerResponse;
+    totalCount: number;
+  }) => Promise<void> | void;
+  requests: readonly PlannerInvocationRequest[];
+}): Promise<PlannerInvocationResponse[]> {
+  if (!args.requests.length) {
+    return [];
+  }
+
+  if (args.batchSize <= 0) {
+    throw new Error("Planner batch size must be greater than zero.");
+  }
+
+  const totalCount = args.requests.length;
+  const responses = new Array<PlannerInvocationResponse>(totalCount);
+  const batches = chunkPlannerRequests(args.requests, args.batchSize);
+  const concurrency = Math.min(
+    Math.max(1, args.concurrency ?? 1),
+    batches.length,
+  );
+  let nextBatchIndex = 0;
+  let completedCount = 0;
+
+  async function worker(): Promise<void> {
+    while (nextBatchIndex < batches.length) {
+      const currentBatchIndex = nextBatchIndex;
+      nextBatchIndex += 1;
+      const batch = batches[currentBatchIndex];
+      if (!batch) {
+        return;
+      }
+
+      const payload = buildPlannerBatchPayload(batch.map(({ request }) => request));
+      const payloadBytes = Buffer.byteLength(JSON.stringify(payload));
+      const startedAt = Date.now();
+      const rawResponse = await args.invokePredictionEndpoint(
+        args.endpointName,
+        payload,
+      );
+      const parsedResponse = predictionPlannerBatchResponseSchema.parse(rawResponse);
+      const elapsedMs = Date.now() - startedAt;
+      const orderedBatchResponses = orderPlannerBatchResponses(
+        batch.map(({ request }) => request.requestId),
+        parsedResponse,
+      );
+
+      for (let index = 0; index < batch.length; index += 1) {
+        const batchEntry = batch[index]!;
+        const parsedItem = orderedBatchResponses[index]!;
+        completedCount += 1;
+        responses[batchEntry.originalIndex] = {
+          elapsedMs,
+          payloadBytes,
+          requestId: parsedItem.requestId,
+          response: parsedItem.response,
+        };
+        await Promise.resolve(
+          args.onRequestCompleted?.({
+            completedCount,
+            elapsedMs,
+            payloadBytes,
+            requestId: parsedItem.requestId,
+            response: parsedItem.response,
+            totalCount,
+          }),
+        );
+      }
     }
   }
 
@@ -187,4 +295,90 @@ function mergePlannerMatrixViews(
     scenarioId: firstView.scenarioId ?? null,
     viewId: firstView.viewId,
   };
+}
+
+function chunkPlannerRequests(
+  requests: readonly PlannerInvocationRequest[],
+  batchSize: number,
+): Array<
+  Array<{
+    originalIndex: number;
+    request: PlannerBatchInvocationItem;
+  }>
+> {
+  const chunks: Array<
+    Array<{
+      originalIndex: number;
+      request: PlannerBatchInvocationItem;
+    }>
+  > = [];
+  for (let index = 0; index < requests.length; index += batchSize) {
+    chunks.push(
+      requests.slice(index, index + batchSize).map((request, chunkIndex) => ({
+        originalIndex: index + chunkIndex,
+        request: toPlannerBatchInvocationItem(request),
+      })),
+    );
+  }
+  return chunks;
+}
+
+function toPlannerBatchInvocationItem(
+  request: PlannerInvocationRequest,
+): PlannerBatchInvocationItem {
+  const plannerRequest = request.payload.plannerRequest;
+  if (
+    !plannerRequest ||
+    typeof plannerRequest !== "object" ||
+    Array.isArray(plannerRequest)
+  ) {
+    throw new Error(
+      `Planner batch requests require a plannerRequest object for request '${request.requestId}'.`,
+    );
+  }
+
+  const modelKey =
+    typeof request.payload.modelKey === "string" &&
+    request.payload.modelKey.trim().length > 0
+      ? request.payload.modelKey.trim()
+      : undefined;
+
+  return {
+    ...(modelKey ? { modelKey } : {}),
+    plannerRequest: plannerRequest as JsonRecord,
+    requestId: request.requestId,
+  };
+}
+
+function buildPlannerBatchPayload(
+  requests: readonly PlannerBatchInvocationItem[],
+): JsonRecord {
+  return {
+    plannerBatchRequest: {
+      requests: requests.map((request) => ({
+        ...(request.modelKey ? { modelKey: request.modelKey } : {}),
+        plannerRequest: request.plannerRequest,
+        requestId: request.requestId,
+      })),
+    },
+  };
+}
+
+function orderPlannerBatchResponses(
+  orderedRequestIds: readonly string[],
+  batchResponse: PredictionPlannerBatchResponse,
+): PredictionPlannerBatchResponse["responses"] {
+  const responseByRequestId = new Map(
+    batchResponse.responses.map((response) => [response.requestId, response]),
+  );
+  const orderedResponses = orderedRequestIds.flatMap((requestId) => {
+    const response = responseByRequestId.get(requestId);
+    return response ? [response] : [];
+  });
+  if (orderedResponses.length !== orderedRequestIds.length) {
+    throw new Error(
+      "Planner batch response did not include a response for every request id.",
+    );
+  }
+  return orderedResponses;
 }

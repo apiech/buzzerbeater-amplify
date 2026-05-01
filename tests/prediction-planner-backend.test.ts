@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { predictionPlannerExpectedOnlyResponseSchema } from "../lib/prediction/contracts";
 import {
   invokePlannerRequests,
   mergePlannerResponses,
@@ -114,6 +115,39 @@ test("invokePlannerRequests parses planner chunks and reports completion progres
   assert.deepEqual(completedRequestIds.sort(), ["chunk-1", "chunk-2"]);
   assert.equal(responses[0]?.response.planEvaluations.length, 2);
   assert.equal(responses[1]?.response.planEvaluations.length, 1);
+});
+
+test("invokePlannerRequests can parse expected-only planner responses", async () => {
+  const responses = await invokePlannerRequests({
+    endpointName: "planner-endpoint",
+    invokePredictionEndpoint: async (_endpointName, payload) => {
+      const pairIds =
+        (payload as {
+          plannerRequest?: {
+            ourPairs?: Array<{ pairId?: string }>;
+          };
+        }).plannerRequest?.ourPairs?.map((pair) => pair.pairId ?? "") ?? [];
+      return createPlannerResponse(pairIds, "expected");
+    },
+    parseResponse: (payload) =>
+      predictionPlannerExpectedOnlyResponseSchema.parse(payload),
+    requests: [
+      {
+        payload: {
+          plannerRequest: {
+            ourPairs: [{ pairId: "pair-1" }],
+          },
+        },
+        requestId: "chunk-1",
+      },
+    ],
+  });
+
+  const firstResponse = responses[0];
+  assert.ok(firstResponse);
+  assert.equal(firstResponse.response.expectedMatrix.viewId, "expected");
+  assert.ok(!("planEvaluations" in firstResponse.response));
+  assert.ok(!("scenarioMatrices" in firstResponse.response));
 });
 
 test("mergePlannerResponses preserves requested planner chunk order", () => {

@@ -44,6 +44,7 @@ type QueryOperationName =
   | "getHomeWorkspace"
   | "getLeagueHistory"
   | "getLeagueIntel"
+  | "getLatestLeagueSeasonSimulation"
   | "getLatestNextGameRecommendation"
   | "getNextGamePlannerDetail"
   | "getLatestOpponentForecast"
@@ -78,6 +79,7 @@ type MutationOperationName =
   | "submitLeagueHistoryBackfill"
   | "submitLeagueGameDayRecap"
   | "submitLeagueGameDayPerformances"
+  | "submitLeagueSeasonSimulationJob"
   | "submitMyTeamHighlightsScan"
   | "submitNextGameRecommendationJob"
   | "submitOpponentForecastJob"
@@ -278,6 +280,8 @@ export const client = {
     submitLeagueGameDayPerformances: (
       input: OperationInput<"submitLeagueGameDayPerformances">,
     ) => requestMutation("submitLeagueGameDayPerformances", input),
+    submitLeagueSeasonSimulationJob: () =>
+      requestMutation("submitLeagueSeasonSimulationJob"),
     submitMyTeamHighlightsScan: () =>
       requestMutation("submitMyTeamHighlightsScan"),
     submitNextGameRecommendationJob: (
@@ -307,6 +311,8 @@ export const client = {
       requestQuery("getLeagueHistory", input),
     getLeagueIntel: (input?: OperationInput<"getLeagueIntel">) =>
       requestQuery("getLeagueIntel", input),
+    getLatestLeagueSeasonSimulation: () =>
+      requestQuery("getLatestLeagueSeasonSimulation"),
     getLatestNextGameRecommendation: (
       input: OperationInput<"getLatestNextGameRecommendation">,
     ) => requestQuery("getLatestNextGameRecommendation", input),

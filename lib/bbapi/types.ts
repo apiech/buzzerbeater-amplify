@@ -309,6 +309,7 @@ export type BBApiLeagues = {
 };
 
 export type BBApiCurrentWorkspace = {
+  currentSeason: number | null;
   teamInfo: BBApiTeamInfo;
   roster: BBApiOwnedRoster;
   schedule: BBApiSchedule;

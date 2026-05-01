@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
+import {
+  DescribeExecutionCommand,
+  SFNClient,
+  StartExecutionCommand,
+} from "@aws-sdk/client-sfn";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -9,6 +13,15 @@ type StartStateMachineExecutionArgs = {
   name: string;
   region?: string;
   stateMachineArn: string;
+};
+
+export type StateMachineExecutionDescription = {
+  cause: string | null;
+  error: string | null;
+  executionArn: string;
+  startDate: string | null;
+  status: string;
+  stopDate: string | null;
 };
 
 const MAX_EXECUTION_NAME_LENGTH = 80;
@@ -35,6 +48,27 @@ export async function startStateMachineExecution(
   }
 
   return response.executionArn;
+}
+
+export async function describeStateMachineExecution(args: {
+  executionArn: string;
+  region?: string;
+}): Promise<StateMachineExecutionDescription> {
+  const client = getClient(args.region);
+  const response = await client.send(
+    new DescribeExecutionCommand({
+      executionArn: args.executionArn,
+    }),
+  );
+
+  return {
+    cause: response.cause ?? null,
+    error: response.error ?? null,
+    executionArn: response.executionArn ?? args.executionArn,
+    startDate: response.startDate?.toISOString() ?? null,
+    status: response.status ?? "UNKNOWN",
+    stopDate: response.stopDate?.toISOString() ?? null,
+  };
 }
 
 export function buildExecutionName(prefix: string, key: string): string {

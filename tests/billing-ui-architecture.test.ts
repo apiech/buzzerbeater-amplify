@@ -67,18 +67,8 @@ test("billing integration wires commercial mode and environment defaults into pr
     "utf8",
   );
 
-  assert.match(source, /getBillingSummary\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
-  assert.match(source, /nextGameRecommendationSubmit\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
-  assert.match(source, /opponentForecastSubmit\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
-  assert.match(source, /predictionSubmit\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
-  assert.match(source, /gameDayRecapSubmit\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
-  assert.match(source, /submitMyTeamHighlightsScan\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
-  assert.match(source, /clearMyTeamHighlightsData\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
-  assert.match(source, /getBillingSummary\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /nextGameRecommendationSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /opponentForecastSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /predictionSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /gameDayRecapSubmit\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /submitMyTeamHighlightsScan\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
-  assert.match(source, /clearMyTeamHighlightsData\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
+  assert.match(source, /applyBillingEnvironmentToFunctions\(backend,\s*config\)/);
+  assert.match(source, /Object\.values\(backend\)\.filter\(isFunctionResource\)/);
+  assert.match(source, /resource\.addEnvironment\(\s*"COMMERCIAL_MODE_ENABLED"/);
+  assert.match(source, /resource\.addEnvironment\(\s*"BILLING_DEFAULT_PLAN"/);
 });

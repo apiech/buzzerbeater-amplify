@@ -21,9 +21,11 @@ import {
   listExpiredSyncRuns,
   updateSyncRun,
   upsertBbConnection,
+  upsertLeagueSeasonSimulationArtifact,
   upsertRivalsBackfill,
   upsertPredictionGridCells,
   upsertPredictionJob,
+  upsertSingleGameSummary,
   upsertMatchBoxscore,
   upsertUserPreference,
   upsertTrackedPlayer,
@@ -392,6 +394,52 @@ test("planner artifact upserts serialize planner AWSJSON payloads", async (t) =>
     },
     expiryKey: "EXPIRABLE",
     expiresAt: "2026-04-26T00:00:00.000Z",
+  });
+});
+
+test("league season simulation artifacts serialize JSON payloads", async (t) => {
+  let createInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          LeagueSeasonSimulationArtifact: {
+            get: async () => ({ data: null }),
+            create: async (input: Record<string, unknown>) => {
+              createInput = input;
+              return { data: input };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertLeagueSeasonSimulationArtifact({} as any, {
+    artifactKey: "context",
+    artifactOrder: 0,
+    artifactType: "CONTEXT",
+    expiresAt: "2026-06-01T00:00:00.000Z",
+    expiryKey: "EXPIRABLE",
+    jobId: "job-1",
+    payloadJson: {
+      remainingGames: [{ matchId: "m-1" }],
+      season: 72,
+    } as any,
+    userId: "user-1",
+  });
+
+  assert.deepStrictEqual(createInput, {
+    artifactKey: "context",
+    artifactOrder: 0,
+    artifactType: "CONTEXT",
+    expiresAt: "2026-06-01T00:00:00.000Z",
+    expiryKey: "EXPIRABLE",
+    jobId: "job-1",
+    payloadJson: '{"remainingGames":[{"matchId":"m-1"}],"season":72}',
+    userId: "user-1",
   });
 });
 
@@ -1066,7 +1114,9 @@ test("getGameDayRecap tolerates legacy requestJson qualityTier coercion errors",
   assert.deepStrictEqual(record?.requestJson, {
     approach: "LEGACY",
     gameDate: "2026-03-15",
+    interviewIntensity: "pg13",
     leagueId: "100",
+    modelJudgeEnabled: false,
     mode: "FULL_SLATE",
     qualityTier: "standard",
   });
@@ -1140,7 +1190,9 @@ test("getLeagueGameDayRecap tolerates legacy requestJson qualityTier coercion er
   assert.deepStrictEqual(record?.requestJson, {
     approach: "LEGACY",
     gameDayNumber: 6,
+    interviewIntensity: "pg13",
     leagueId: "100",
+    modelJudgeEnabled: false,
     mode: "LEAGUE_GAME_DAY",
     qualityTier: "standard",
     season: 64,
@@ -1215,9 +1267,102 @@ test("getSingleGameSummary tolerates legacy requestJson qualityTier coercion err
 
   assert.deepStrictEqual(record?.requestJson, {
     approach: "LEGACY",
+    interviewIntensity: "pg13",
     matchId: "137828772",
+    modelJudgeEnabled: false,
     mode: "SINGLE_GAME",
     qualityTier: "standard",
+    winnerInterviewPersonalityType: null,
+    loserInterviewPersonalityType: null,
+  });
+});
+
+test("upsertSingleGameSummary and getSingleGameSummary round-trip interview overrides", async (t) => {
+  let storedRecord: Record<string, unknown> | null = null;
+  let createdInput: Record<string, unknown> | null = null;
+
+  t.mock.method(
+    repositoryTesting.runtime,
+    "getClient",
+    async () =>
+      ({
+        models: {
+          SingleGameSummary: {
+            get: async () => ({
+              data: storedRecord,
+            }),
+            create: async (input: Record<string, unknown>) => {
+              createdInput = input;
+              storedRecord = {
+                ...input,
+              };
+              return {
+                data: storedRecord,
+              };
+            },
+            update: async (input: Record<string, unknown>) => {
+              storedRecord = {
+                ...(storedRecord ?? {}),
+                ...input,
+              };
+              return {
+                data: storedRecord,
+              };
+            },
+          },
+        },
+      }) as any,
+  );
+
+  await upsertSingleGameSummary({} as any, {
+    gameDate: "2026-03-15",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: "137828772",
+    requestJson: {
+      approach: "FACT_LIBRARY_FIRST",
+      interviewIntensity: "full_heat",
+      loserInterviewPersonalityType: "rambling",
+      matchId: "137828772",
+      modelJudgeEnabled: true,
+      mode: "SINGLE_GAME",
+      qualityTier: "premium",
+      winnerInterviewPersonalityType: "reflective",
+    },
+    requestedAt: "2026-03-15T23:00:00.000Z",
+    season: 64,
+    status: "QUEUED",
+    targetKey:
+      "137828772#fact-library-first#quality-premium#intensity-full-heat#winner-voice-reflective#loser-voice-rambling#model-judge",
+    userId: "u1",
+  } as any);
+
+  assert.deepStrictEqual(createdInput?.requestJson, {
+    approach: "FACT_LIBRARY_FIRST",
+    interviewIntensity: "full_heat",
+    loserInterviewPersonalityType: "rambling",
+    matchId: "137828772",
+    modelJudgeEnabled: true,
+    mode: "SINGLE_GAME",
+    qualityTier: "premium",
+    winnerInterviewPersonalityType: "reflective",
+  });
+
+  const record = await getSingleGameSummary(
+    {} as any,
+    "u1",
+    "137828772#fact-library-first#quality-premium#intensity-full-heat#winner-voice-reflective#loser-voice-rambling#model-judge",
+  );
+
+  assert.deepStrictEqual(record?.requestJson, {
+    approach: "FACT_LIBRARY_FIRST",
+    interviewIntensity: "full_heat",
+    loserInterviewPersonalityType: "rambling",
+    matchId: "137828772",
+    modelJudgeEnabled: true,
+    mode: "SINGLE_GAME",
+    qualityTier: "premium",
+    winnerInterviewPersonalityType: "reflective",
   });
 });
 

@@ -1365,8 +1365,7 @@ export function RecapPanel({
                                   {isNonProdDebugUi ? (
                                     <RecapInterviewDebugBadges
                                       context={safeContext}
-                                      playerName={interview.playerName}
-                                      teamName={interview.teamName}
+                                      interview={interview}
                                     />
                                   ) : null}
                                 </div>
@@ -2867,8 +2866,9 @@ function formatEvidenceTag(tag: string): string {
 
 function RecapInterviewDebugBadges(args: {
   context: Partial<RecapPanelContext>;
-  playerName: string;
-  teamName: string;
+  interview: NonNullable<
+    NonNullable<GameDayRecapResultPayload["games"][number]["postgameInterview"]>
+  >;
 }) {
   const personality = resolveRecapInterviewPersonalityDebugState(args);
   if (!personality) {
@@ -2885,16 +2885,37 @@ function RecapInterviewDebugBadges(args: {
 
 function resolveRecapInterviewPersonalityDebugState(args: {
   context: Partial<RecapPanelContext>;
-  playerName: string;
-  teamName: string;
+  interview: Pick<
+    NonNullable<
+      NonNullable<GameDayRecapResultPayload["games"][number]["postgameInterview"]>
+    >,
+    "personalitySource" | "personalityType" | "playerName" | "teamName"
+  >;
 }): {
   sourceLabel: string;
   typeLabel: string;
 } | null {
+  const appliedPersonalityType = isInterviewPersonalityType(
+    args.interview.personalityType,
+  )
+    ? args.interview.personalityType
+    : null;
+  if (appliedPersonalityType) {
+    const appliedPersonalitySource = isInterviewPersonalitySource(
+      args.interview.personalitySource,
+    )
+      ? args.interview.personalitySource
+      : "auto";
+    return {
+      sourceLabel: INTERVIEW_PERSONALITY_SOURCE_LABELS[appliedPersonalitySource],
+      typeLabel: resolveInterviewPersonalityLabel(appliedPersonalityType),
+    };
+  }
+
   const matchedPlayer = args.context.playerLabPlayers?.find(
     (player) =>
       player.fullName.trim().toLowerCase() ===
-      args.playerName.trim().toLowerCase(),
+      args.interview.playerName.trim().toLowerCase(),
   );
   const matchedType = matchedPlayer?.interviewPersonalityType;
   const matchedSource = matchedPlayer?.interviewPersonalitySource;
@@ -2902,8 +2923,8 @@ function resolveRecapInterviewPersonalityDebugState(args: {
     ? matchedType
     : resolveDeterministicInterviewPersonality(
         buildInterviewPersonalitySeed({
-          playerName: args.playerName,
-          teamName: args.teamName,
+          playerName: args.interview.playerName,
+          teamName: args.interview.teamName,
         }),
       );
   const personalitySource = isInterviewPersonalitySource(matchedSource)

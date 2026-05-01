@@ -298,9 +298,17 @@ export const leagueComparisonsSchema = strictObject({
   .nullable()
   .optional();
 
+export const leagueIntelFreshnessStatusSchema = z.enum([
+  "FRESH",
+  "UNAVAILABLE",
+]);
+
 export const leagueIntelWorkspaceSchema = strictObject({
   comparisons: leagueComparisonsSchema,
+  freshnessMessage: nullableStringSchema,
+  freshnessStatus: leagueIntelFreshnessStatusSchema,
   league: nullableNamedReferenceSchema,
+  season: nullableNumberSchema,
   standings: z.array(leagueConferenceStandingSchema),
 });
 

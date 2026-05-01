@@ -53,6 +53,18 @@ const homeWorkspaceHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "get-home-workspace", "handler.ts"),
   "utf8",
 );
+const arenaWorkspaceHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "get-arena-workspace", "handler.ts"),
+  "utf8",
+);
+const lineupHelperHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "get-lineup-helper-workspace", "handler.ts"),
+  "utf8",
+);
+const playerLabHandlerSource = readFileSync(
+  join(repoRoot, "amplify", "data", "get-player-lab", "handler.ts"),
+  "utf8",
+);
 const scoutTeamSummaryHandlerSource = readFileSync(
   join(repoRoot, "amplify", "data", "get-scout-team-summary", "handler.ts"),
   "utf8",
@@ -108,6 +120,10 @@ const scoutScheduleSection =
 const syncWorkspaceSection =
   workspaceSource.match(
     /async function syncWorkspace[\s\S]*?async function persistWorkspace/,
+  )?.[0] ?? "";
+const leagueIntelSection =
+  workspaceSource.match(
+    /export async function getLeagueIntelWorkspace[\s\S]*?export async function generatePlayerCard/,
   )?.[0] ?? "";
 
 test("buildScoutWorkspace includes arbitrary scout targets, league options, and matchup history", () => {
@@ -354,10 +370,13 @@ test("league intel cache rehydrates persisted comparisons and refresh checks hon
           payroll: [],
           season: 72,
         },
+        freshnessMessage: null,
+        freshnessStatus: "FRESH",
         league: {
           id: "1000",
           name: "NBBA",
         },
+        season: 72,
         standings: [],
       },
     }),
@@ -367,6 +386,8 @@ test("league intel cache rehydrates persisted comparisons and refresh checks hon
 
   assert.ok(cachedWorkspace?.leagueIntel.comparisons);
   assert.equal(cachedWorkspace.leagueIntel.comparisons.season, 72);
+  assert.equal(cachedWorkspace.leagueIntel.freshnessStatus, "UNAVAILABLE");
+  assert.equal(cachedWorkspace.leagueIntel.season, 72);
   assert.equal(
     workspaceTesting.shouldRefreshLeagueComparisons({
       comparisons: cachedWorkspace.leagueIntel.comparisons ?? null,
@@ -383,6 +404,39 @@ test("league intel cache rehydrates persisted comparisons and refresh checks hon
     }),
     false,
   );
+});
+
+test("buildLeagueIntel hides standings when the returned standings season mismatches the current season", () => {
+  const leagueIntel = workspaceTesting.buildLeagueIntel({
+    currentSeason: 72,
+    standings: {
+      conferences: [
+        {
+          index: 0,
+          teams: [
+            {
+              id: "team-1",
+              losses: 4,
+              pa: 900,
+              pf: 950,
+              teamName: "Visionaries",
+              wins: 10,
+            },
+          ],
+        },
+      ],
+      league: {
+        id: "1000",
+        name: "NBBA",
+      },
+      season: 71,
+    },
+  } as any);
+
+  assert.equal(leagueIntel.freshnessStatus, "UNAVAILABLE");
+  assert.equal(leagueIntel.season, 72);
+  assert.equal(leagueIntel.standings.length, 0);
+  assert.equal(leagueIntel.comparisons, null);
 });
 
 test("repairOwnerRosterData upserts owner snapshots and patches only the cached team-hub roster", async () => {
@@ -535,6 +589,23 @@ test("browse-time workspace refresh defaults to app-only persistence while expli
   assert.match(
     workspaceSource,
     /syncActiveTrackedTeams:\s*args\.syncActiveTrackedTeams \?\? false/,
+  );
+  assert.match(leagueIntelSection, /syncActiveTrackedTeams:\s*false/);
+  assert.match(homeWorkspaceHandlerSource, /syncActiveTrackedTeams:\s*false/);
+  assert.match(arenaWorkspaceHandlerSource, /syncActiveTrackedTeams:\s*false/);
+  assert.match(lineupHelperHandlerSource, /syncActiveTrackedTeams:\s*false/);
+  assert.match(playerLabHandlerSource, /syncActiveTrackedTeams:\s*false/);
+  assert.doesNotMatch(
+    homeWorkspaceHandlerSource,
+    /syncActiveTrackedTeams:\s*force/,
+  );
+  assert.doesNotMatch(
+    arenaWorkspaceHandlerSource,
+    /syncActiveTrackedTeams:\s*event\.arguments\.force/,
+  );
+  assert.doesNotMatch(
+    playerLabHandlerSource,
+    /syncActiveTrackedTeams:\s*event\.arguments\.force/,
   );
   assert.match(
     refreshWorkspaceHandlerSource,
@@ -883,7 +954,7 @@ test("workspace boxscore helpers tolerate missing starter details and minute pos
 test("scout section handlers forward force flags and refresh home/core first when requested", () => {
   assert.match(
     workspaceSource,
-    /const baseWorkspace = await getOrRefreshWorkspace\(\{\s*env: args\.env,\s*force: args\.force \?\? false,\s*identity: args\.identity,\s*syncActiveTrackedTeams: args\.force \?\? false,\s*\}\);/s,
+    /const baseWorkspace = await getOrRefreshWorkspace\(\{\s*env: args\.env,\s*force: args\.force \?\? false,\s*identity: args\.identity,\s*syncActiveTrackedTeams: false,\s*\}\);/s,
   );
   assert.match(
     scoutTeamSummaryHandlerSource,
@@ -1016,6 +1087,15 @@ test("live-match workspace refresh falls back to cached data instead of flipping
   assert.match(syncWorkspaceSection, /status:\s*"CONNECTED"/);
   assert.match(syncWorkspaceSection, /usedCachedWorkspace:\s*true/);
   assert.match(
+    workspaceSource,
+    /function buildMatchInProgressWorkspaceWarning\(\): string/,
+  );
+  assert.match(
+    workspaceSource,
+    /A live BuzzerBeater match is in progress, so we're showing your last saved club snapshot until the current game window ends\./,
+  );
+  assert.match(syncWorkspaceSection, /const lastSyncError = buildMatchInProgressWorkspaceWarning\(\);/);
+  assert.match(
     syncWorkspaceSection,
     /projectHomeWorkspaceConnection\(\s*connection,\s*cachedWorkspace\.home\.connection,/s,
   );
@@ -1042,6 +1122,15 @@ test("workspace cache-hit logs explain which cached workspace bundle was reused"
     workspaceSource,
     /reason:\s*"force=false and cached workspace exists"/,
   );
+});
+
+test("league intel converts cached fallback league data into an unavailable payload", () => {
+  assert.match(leagueIntelSection, /meta\.usedCachedWorkspace/);
+  assert.match(
+    leagueIntelSection,
+    /getLeagueIntel\.cached_workspace_unavailable/,
+  );
+  assert.match(leagueIntelSection, /return buildUnavailableLeagueIntel/);
 });
 
 test("scout loaders degrade to cached or partial data when a live match blocks current workspace reads", () => {

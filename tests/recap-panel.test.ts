@@ -580,7 +580,7 @@ test("didRecapRequestRunModelJudge reads the viewed recap request state", () => 
   );
 });
 
-test("non-prod recap interview debug state prefers stored player personality and falls back to auto", () => {
+test("non-prod recap interview debug state prefers stored interview metadata over player lab defaults", () => {
   const storedDebugState = recapTesting.resolveRecapInterviewPersonalityDebugState({
     context: {
       ...createContext(),
@@ -604,18 +604,59 @@ test("non-prod recap interview debug state prefers stored player personality and
         },
       ],
     },
-    playerName: "Home Hero",
-    teamName: "Home",
+    interview: {
+      personalitySource: "request_override",
+      personalityType: "reflective",
+      playerName: "Home Hero",
+      teamName: "Home",
+    },
   });
   assert.deepStrictEqual(storedDebugState, {
+    sourceLabel: "Debug override",
+    typeLabel: "Reflective",
+  });
+});
+
+test("non-prod recap interview debug state falls back to player lab and auto for legacy recaps", () => {
+  const playerLabDebugState = recapTesting.resolveRecapInterviewPersonalityDebugState({
+    context: {
+      ...createContext(),
+      playerLabPlayers: [
+        {
+          age: 25,
+          bestPosition: "SF",
+          dmi: 1000,
+          fullName: "Home Hero",
+          gameShape: "proficient",
+          injuryWeeks: 0,
+          interviewPersonalitySource: "user_override",
+          interviewPersonalityType: "deadpan",
+          nationalityName: "USA",
+          playerId: "p-1",
+          ppg: 22,
+          projectedStarterCount: 5,
+          recentAvgMinutes: 38,
+          recentStartCount: 5,
+          salary: 12000,
+        },
+      ],
+    },
+    interview: {
+      playerName: "Home Hero",
+      teamName: "Home",
+    },
+  });
+  assert.deepStrictEqual(playerLabDebugState, {
     sourceLabel: "Custom",
     typeLabel: "Deadpan",
   });
 
   const fallbackDebugState = recapTesting.resolveRecapInterviewPersonalityDebugState({
     context: createContext(),
-    playerName: "Road Spark",
-    teamName: "Away",
+    interview: {
+      playerName: "Road Spark",
+      teamName: "Away",
+    },
   });
   assert.equal(typeof fallbackDebugState?.typeLabel, "string");
   assert.equal(fallbackDebugState?.sourceLabel, "Auto");

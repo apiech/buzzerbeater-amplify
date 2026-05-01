@@ -12,7 +12,7 @@ export const handler: Handler = async (event) => {
       env,
       force: true,
       identity: event.identity,
-      syncActiveTrackedTeams: true,
+      syncActiveTrackedTeams: false,
     });
   }
 

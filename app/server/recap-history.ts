@@ -19,6 +19,10 @@ import {
   RecapGenerationApproach,
   RecapInterviewIntensity,
 } from "@/amplify/data/schema-enums";
+import {
+  isInterviewPersonalitySource,
+  isInterviewPersonalityType,
+} from "@/lib/interview-personalities";
 import { safeJsonParse } from "@/lib/json-parsing";
 
 export type RecapStreamState = {
@@ -278,6 +282,7 @@ export function adaptSingleGameSummary(
 export function normalizeGameDayRecapRecord(
   record: GameDayRecapRecord,
 ): GameDayRecapRecord {
+  const requestJson = readLegacyField(record.requestJson);
   return {
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
@@ -285,18 +290,16 @@ export function normalizeGameDayRecapRecord(
     failureJson: normalizeRecapFailure(record.failureJson),
     requestJson: {
       approach:
-        readOptionalRecapGenerationApproach(
-          readLegacyField(record.requestJson)?.approach,
-        ) ?? RecapGenerationApproach.LEGACY,
-      gameDate: normalizeDateString(readLegacyField(record.requestJson)?.gameDate) ?? record.gameDate,
+        readOptionalRecapGenerationApproach(requestJson?.approach) ??
+        RecapGenerationApproach.LEGACY,
+      gameDate: normalizeDateString(requestJson?.gameDate) ?? record.gameDate,
       interviewIntensity: normalizeRecapInterviewIntensity(
-        readLegacyField(record.requestJson)?.interviewIntensity,
+        requestJson?.interviewIntensity,
       ),
-      leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
+      leagueId: asNonEmptyString(requestJson?.leagueId) ?? record.leagueId,
+      modelJudgeEnabled: asBoolean(requestJson?.modelJudgeEnabled) ?? false,
       mode: "FULL_SLATE",
-      qualityTier: normalizeRecapQualityTier(
-        readLegacyField(record.requestJson)?.qualityTier,
-      ),
+      qualityTier: normalizeRecapQualityTier(requestJson?.qualityTier),
     },
     resultJson: normalizeRecapResult(record.resultJson),
   };
@@ -305,6 +308,7 @@ export function normalizeGameDayRecapRecord(
 export function normalizeLeagueGameDayRecapRecord(
   record: LeagueGameDayRecapRecord,
 ): LeagueGameDayRecapRecord {
+  const requestJson = readLegacyField(record.requestJson);
   return {
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
@@ -312,24 +316,17 @@ export function normalizeLeagueGameDayRecapRecord(
     failureJson: normalizeRecapFailure(record.failureJson),
     requestJson: {
       approach:
-        readOptionalRecapGenerationApproach(
-          readLegacyField(record.requestJson)?.approach,
-        ) ?? RecapGenerationApproach.LEGACY,
-      gameDayNumber:
-        asFiniteNumber(readLegacyField(record.requestJson)?.gameDayNumber) ??
-        record.gameDayNumber,
+        readOptionalRecapGenerationApproach(requestJson?.approach) ??
+        RecapGenerationApproach.LEGACY,
+      gameDayNumber: asFiniteNumber(requestJson?.gameDayNumber) ?? record.gameDayNumber,
       interviewIntensity: normalizeRecapInterviewIntensity(
-        readLegacyField(record.requestJson)?.interviewIntensity,
+        requestJson?.interviewIntensity,
       ),
-      leagueId: asNonEmptyString(readLegacyField(record.requestJson)?.leagueId) ?? record.leagueId,
+      leagueId: asNonEmptyString(requestJson?.leagueId) ?? record.leagueId,
+      modelJudgeEnabled: asBoolean(requestJson?.modelJudgeEnabled) ?? false,
       mode: "LEAGUE_GAME_DAY",
-      qualityTier: normalizeRecapQualityTier(
-        readLegacyField(record.requestJson)?.qualityTier,
-      ),
-      season:
-        asFiniteNumber(readLegacyField(record.requestJson)?.season) ??
-        record.season ??
-        null,
+      qualityTier: normalizeRecapQualityTier(requestJson?.qualityTier),
+      season: asFiniteNumber(requestJson?.season) ?? record.season ?? null,
     },
     resultJson: normalizeRecapResult(record.resultJson),
   };
@@ -361,6 +358,7 @@ export function normalizeLeagueGameDayPerformancesRecord(
 export function normalizeSingleGameSummaryRecord(
   record: SingleGameSummaryRecord,
 ): SingleGameSummaryRecord {
+  const requestJson = readLegacyField(record.requestJson);
   return {
     ...record,
     coverageJson: normalizeRecapCoverage(record.coverageJson),
@@ -368,18 +366,25 @@ export function normalizeSingleGameSummaryRecord(
     failureJson: normalizeRecapFailure(record.failureJson),
     requestJson: {
       approach:
-        readOptionalRecapGenerationApproach(
-          readLegacyField(record.requestJson)?.approach,
-        ) ?? RecapGenerationApproach.LEGACY,
+        readOptionalRecapGenerationApproach(requestJson?.approach) ??
+        RecapGenerationApproach.LEGACY,
       interviewIntensity: normalizeRecapInterviewIntensity(
-        readLegacyField(record.requestJson)?.interviewIntensity,
+        requestJson?.interviewIntensity,
       ),
-      matchId:
-        asNonEmptyString(readLegacyField(record.requestJson)?.matchId) ?? record.matchId,
+      loserInterviewPersonalityType: isInterviewPersonalityType(
+        requestJson?.loserInterviewPersonalityType,
+      )
+        ? requestJson.loserInterviewPersonalityType
+        : null,
+      matchId: asNonEmptyString(requestJson?.matchId) ?? record.matchId,
+      modelJudgeEnabled: asBoolean(requestJson?.modelJudgeEnabled) ?? false,
       mode: "SINGLE_GAME",
-      qualityTier: normalizeRecapQualityTier(
-        readLegacyField(record.requestJson)?.qualityTier,
-      ),
+      qualityTier: normalizeRecapQualityTier(requestJson?.qualityTier),
+      winnerInterviewPersonalityType: isInterviewPersonalityType(
+        requestJson?.winnerInterviewPersonalityType,
+      )
+        ? requestJson.winnerInterviewPersonalityType
+        : null,
     },
     resultJson: normalizeRecapResult(record.resultJson),
   };
@@ -727,6 +732,15 @@ function normalizeRecapPostgameInterview(
   GameDayRecapResultPayload["games"][number]["postgameInterview"]
 > | null {
   const record = toRecord(readLegacyField(value));
+  const personalityType = isInterviewPersonalityType(record?.personalityType)
+    ? record.personalityType
+    : null;
+  const personalitySource = personalityType &&
+      isInterviewPersonalitySource(record?.personalitySource)
+    ? record.personalitySource
+    : personalityType
+      ? "auto"
+      : null;
   const playerName = asNonEmptyString(record?.playerName);
   const teamName = asNonEmptyString(record?.teamName);
   const teamSide = record?.teamSide === "away" || record?.teamSide === "home"
@@ -756,6 +770,8 @@ function normalizeRecapPostgameInterview(
   }
 
   return {
+    ...(personalitySource ? { personalitySource } : {}),
+    ...(personalityType ? { personalityType } : {}),
     playerName,
     qa,
     teamName,

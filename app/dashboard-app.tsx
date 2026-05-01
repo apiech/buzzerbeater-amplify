@@ -93,7 +93,10 @@ import { WorkInProgressNotice } from "@/app/ui/primitives/work-in-progress-notic
 import { PlayerTrendChart } from "@/app/ui/workspace/player-trend-chart";
 import { ThemeSelect } from "@/app/ui/theme/theme-select";
 import { WorkspaceRouteNav } from "@/app/ui/workspace/workspace-route-nav";
-import { formatConnectionStatus } from "@/app/ui/presentation";
+import {
+  formatConnectionHealthStatus,
+  hasConnectionSnapshotWarning,
+} from "@/app/ui/presentation";
 import { hasFeature } from "@/lib/billing/plans";
 import {
   INTERVIEW_PERSONALITY_SOURCE_LABELS,
@@ -251,6 +254,14 @@ function AuthenticatedWorkspace({
   const viewerLabelText = viewerLabel ?? "Signed in";
   const connectedConnection = connection as BbConnectionRecord;
   const hasWorkspace = Boolean(workspace);
+  const connectionSnapshotWarning = hasConnectionSnapshotWarning(
+    connection?.status,
+    connection?.lastSyncError,
+  );
+  const connectionHealthStatus = formatConnectionHealthStatus(
+    connection?.status,
+    connection?.lastSyncError,
+  );
   const currentTeamName =
     workspace?.home.team.teamName ?? connection?.teamName ?? null;
 
@@ -383,9 +394,13 @@ function AuthenticatedWorkspace({
                 actions={
                   <>
                     <StatusBadge
-                      tone={statusToneFromValue(connectedConnection.status)}
+                      tone={
+                        connectionSnapshotWarning
+                          ? "note"
+                          : statusToneFromValue(connectedConnection.status)
+                      }
                     >
-                      {formatConnectionStatus(connectedConnection.status)}
+                      {connectionHealthStatus}
                     </StatusBadge>
                     {activeSection !== "next-game" ? (
                       <Button
@@ -449,7 +464,7 @@ function AuthenticatedWorkspace({
                       : "No validation has run yet."
                   }
                   label="Connection health"
-                  value={formatConnectionStatus(connectedConnection.status)}
+                  value={connectionHealthStatus}
                 />
                 <StatCard
                   detail={
@@ -484,6 +499,7 @@ function AuthenticatedWorkspace({
                 billingError={billingError}
                 billingSummary={billingSummary}
                 isLoadingBilling={isLoadingBilling}
+                isLoadingWorkspace={isLoadingWorkspace}
                 lineupHelperDependencyState={lineupHelperDependencyState}
                 viewerLabel={viewerLabel}
                 workspace={workspace}
@@ -664,6 +680,7 @@ function WorkspaceDashboard({
   billingError,
   billingSummary,
   isLoadingBilling,
+  isLoadingWorkspace,
   lineupHelperDependencyState,
   viewerLabel,
   workspace,
@@ -672,6 +689,7 @@ function WorkspaceDashboard({
   billingError: string | null;
   billingSummary: BillingSummary | null;
   isLoadingBilling: boolean;
+  isLoadingWorkspace: boolean;
   lineupHelperDependencyState: ReturnType<
     typeof useAuthenticatedWorkspace
   >["lineupHelperDependencyState"];
@@ -1474,7 +1492,9 @@ function WorkspaceDashboard({
       {activeSection === "league" ? (
         <PanelErrorBoundary
           resetKeys={[
+            workspace.leagueIntel?.freshnessStatus ?? null,
             workspace.leagueIntel?.league?.id ?? null,
+            workspace.leagueIntel?.season ?? null,
             workspace.leagueIntel?.standings.length ?? 0,
             workspace.leagueIntel?.comparisons?.builtAt ?? null,
           ]}
@@ -1482,6 +1502,7 @@ function WorkspaceDashboard({
         >
           <LeaguePanel
             currentTeamId={workspace.home.team.teamId ?? null}
+            isRefreshingLeague={isLoadingWorkspace}
             league={workspace.leagueIntel ?? null}
           />
         </PanelErrorBoundary>

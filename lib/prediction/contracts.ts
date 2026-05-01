@@ -73,12 +73,30 @@ export const predictionPlannerMatrixViewSchema = z.object({
   viewId: z.string().trim().min(1),
 });
 
-export const predictionPlannerResponseSchema = z.object({
+const predictionPlannerResponseBaseSchema = z.object({
   expectedMatrix: predictionPlannerMatrixViewSchema,
   modelKey: z.string().trim().min(1).optional(),
   modelVersion: z.string().trim().min(1),
+});
+
+export const predictionPlannerExpectedOnlyResponseSchema =
+  predictionPlannerResponseBaseSchema;
+
+export const predictionPlannerResponseSchema =
+  predictionPlannerResponseBaseSchema.extend({
   planEvaluations: z.array(predictionPlannerPlanEvaluationSchema).min(1),
   scenarioMatrices: z.array(predictionPlannerMatrixViewSchema).min(1),
+  });
+
+export const predictionPlannerBatchItemResponseSchema = z.object({
+  requestId: z.string().trim().min(1),
+  response: predictionPlannerResponseSchema,
+});
+
+export const predictionPlannerBatchResponseSchema = z.object({
+  modelKey: z.string().trim().min(1).optional(),
+  modelVersion: z.string().trim().min(1).optional(),
+  responses: z.array(predictionPlannerBatchItemResponseSchema).min(1),
 });
 
 export const currentPredictionForecastContextSchema = z.object({
@@ -124,6 +142,12 @@ export type PredictionEndpointTacticsGrid = z.infer<
 >;
 export type PredictionPlannerResponse = z.infer<
   typeof predictionPlannerResponseSchema
+>;
+export type PredictionPlannerExpectedOnlyResponse = z.infer<
+  typeof predictionPlannerExpectedOnlyResponseSchema
+>;
+export type PredictionPlannerBatchResponse = z.infer<
+  typeof predictionPlannerBatchResponseSchema
 >;
 export type CurrentPredictionForecastContextShape = z.infer<
   typeof currentPredictionForecastContextSchema

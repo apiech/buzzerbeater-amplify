@@ -189,3 +189,134 @@ test("BBXmlApiClient classifies malformed boxscore payloads as parse errors", as
     },
   );
 });
+
+test("BBXmlApiClient getCurrentWorkspace prefers the schedule season over the highest season id", async () => {
+  let requestedStandingsSeason: number | null = null;
+  let requestedTeamStatsSeason: number | null = null;
+
+  class StubClient extends BBXmlApiClient {
+    async getSeasons() {
+      return {
+        seasons: [{ id: 72 }, { id: 71 }],
+        version: "1",
+      } as any;
+    }
+
+    async getTeamInfo() {
+      return {
+        league: { id: "league-1", name: "NBBA" },
+        teamId: "team-1",
+      } as any;
+    }
+
+    async getRoster() {
+      return {
+        players: [],
+      } as any;
+    }
+
+    async getSchedule() {
+      return {
+        matches: [],
+        season: 71,
+      } as any;
+    }
+
+    async getTeamStats(_teamId?: string, season?: number) {
+      requestedTeamStatsSeason = season ?? null;
+      return null as any;
+    }
+
+    async getStandings(_leagueId?: string, season?: number) {
+      requestedStandingsSeason = season ?? null;
+      return {
+        conferences: [],
+        season,
+      } as any;
+    }
+
+    async getArena() {
+      return {} as any;
+    }
+
+    async getEconomy() {
+      return {} as any;
+    }
+  }
+
+  const client = new StubClient({
+    username: "coach",
+    securityCode: "secret",
+    fetchImpl: async () => new Response(""),
+  });
+
+  const workspace = await client.getCurrentWorkspace();
+
+  assert.equal(workspace.currentSeason, 71);
+  assert.equal(requestedTeamStatsSeason, 71);
+  assert.equal(requestedStandingsSeason, 71);
+});
+
+test("BBXmlApiClient getCurrentWorkspace falls back to the highest season id when the schedule season is missing", async () => {
+  let requestedStandingsSeason: number | null = null;
+
+  class StubClient extends BBXmlApiClient {
+    async getSeasons() {
+      return {
+        seasons: [{ id: 72 }, { id: 71 }],
+        version: "1",
+      } as any;
+    }
+
+    async getTeamInfo() {
+      return {
+        league: { id: "league-1", name: "NBBA" },
+        teamId: "team-1",
+      } as any;
+    }
+
+    async getRoster() {
+      return {
+        players: [],
+      } as any;
+    }
+
+    async getSchedule() {
+      return {
+        matches: [],
+        season: null,
+      } as any;
+    }
+
+    async getTeamStats() {
+      return null as any;
+    }
+
+    async getStandings(_leagueId?: string, season?: number) {
+      requestedStandingsSeason = season ?? null;
+      return {
+        conferences: [],
+        season,
+      } as any;
+    }
+
+    async getArena() {
+      return {} as any;
+    }
+
+    async getEconomy() {
+      return {} as any;
+    }
+  }
+
+  const client = new StubClient({
+    username: "coach",
+    securityCode: "secret",
+    fetchImpl: async () => new Response(""),
+  });
+
+  const workspace = await client.getCurrentWorkspace();
+
+  assert.equal(workspace.currentSeason, 72);
+  assert.equal(requestedStandingsSeason, 72);
+});

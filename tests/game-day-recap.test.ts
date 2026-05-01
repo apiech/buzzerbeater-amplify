@@ -7938,6 +7938,169 @@ test("processSingleGameSummary summarizes one finished match without standings o
   );
 });
 
+test("processSingleGameSummary keeps full-heat request overrides through fallback interviews", async () => {
+  const summaryRecord = {
+    matchId: "137828772",
+    requestJson: {
+      approach: "FACT_LIBRARY_FIRST",
+      interviewIntensity: "full_heat",
+      loserInterviewPersonalityType: "rambling",
+      matchId: "137828772",
+      modelJudgeEnabled: false,
+      mode: "SINGLE_GAME",
+      qualityTier: "standard",
+      winnerInterviewPersonalityType: "reflective",
+    },
+    requestedAt: "2026-03-17T10:49:14.585Z",
+    status: "QUEUED" as const,
+    targetKey:
+      "137828772#fact-library-first#intensity-full-heat#winner-voice-reflective#loser-voice-rambling",
+    userId: "user-1",
+  };
+  const updates: Array<Record<string, unknown>> = [];
+
+  await processSingleGameSummary(
+    {
+      env: {},
+      messageBody: JSON.stringify({
+        kind: "SINGLE_GAME",
+        modelJudgeEnabled: false,
+        qualityTier: "standard",
+        requestedAt: summaryRecord.requestedAt,
+        targetKey: summaryRecord.targetKey,
+        userId: summaryRecord.userId,
+      }),
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      region: "us-east-1",
+    },
+    {
+      createBbClient: () => ({
+        getBoxScore: async () =>
+          createBoxScore({
+            awayScore: 98,
+            awayTeamId: "28479",
+            awayTeamName: "Delta 9",
+            homeScore: 114,
+            homeTeamId: "29656",
+            homeTeamName: "Visionaries",
+            matchId: "137828772",
+          }),
+        getSchedule: async () => {
+          throw new Error("single-game summaries should not load schedules");
+        },
+        getSeasons: async () => {
+          throw new Error("single-game summaries should not load seasons");
+        },
+        getStandings: async () => {
+          throw new Error("single-game summaries should not load standings");
+        },
+        getTeamInfo: async () => {
+          throw new Error("single-game summaries should not load team info");
+        },
+      }),
+      createProvider: ({ stage }) => ({
+        generate: async (payload) => {
+          if (isStylePolishPayloadForTest(payload)) {
+            return {
+              writeup: payload.recapGame.writeup,
+            };
+          }
+          if (isPostgameInterviewPayloadForTest(payload)) {
+            return {
+              title: "",
+            };
+          }
+          if (!isMainRecapWriterPayloadForTest(payload)) {
+            throw new Error("expected main recap writer payload");
+          }
+
+          return createRecapCandidateResult({
+            headline: "Visionaries pull away late",
+            matchId: "137828772",
+            writeup:
+              "Visionaries built the margin in the closing possessions and kept Delta 9 from finding another answer.",
+          });
+        },
+        modelId: DEFAULT_RECAP_MODEL_ID,
+        providerName: "bedrock",
+        stage,
+      }),
+      fetchPublicMatchPlayByPlay: async (matchId) =>
+        createPublicPlayByPlay({
+          matchId: String(matchId),
+        }),
+      getBbConnection: async () => ({
+        bbLoginName: "coach-alpha",
+        leagueId: "1",
+        leagueName: "NBBA",
+        leagueTimeZone: "America/New_York",
+        refreshSortAt: "2026-03-17T10:49:23.000Z",
+        status: "CONNECTED",
+        userId: "user-1",
+      }),
+      getSingleGameSummary: async () => summaryRecord,
+      now: () => new Date("2026-03-17T10:49:23.000Z"),
+      resolveBbAccessKey: async () => "secret",
+      updateSingleGameSummary: async (_env, input) => {
+        updates.push(input);
+      },
+    },
+  );
+
+  const finalUpdate = expectPresent(
+    updates.at(-1),
+    "expected a persisted single-game summary update",
+  ) as {
+    resultJson?: {
+      games?: Array<{
+        postgameInterview?: {
+          personalitySource?: string;
+          personalityType?: string;
+        } | null;
+        postgameInterviews?: Array<{
+          personalitySource?: string;
+          personalityType?: string;
+          qa?: Array<{ answer?: string | null }>;
+          teamSide?: "away" | "home";
+        }>;
+      }>;
+    };
+    status?: string;
+  };
+  assert.equal(finalUpdate.status, "SUCCEEDED");
+  const game = expectPresent(
+    finalUpdate.resultJson?.games?.[0],
+    "expected a generated single-game recap",
+  );
+  const interviews = expectPresent(
+    game.postgameInterviews,
+    "expected persisted postgame interviews",
+  );
+  const winnerInterview = expectPresent(
+    interviews.find((interview) => interview.teamSide === "home"),
+    "expected winner interview",
+  );
+  const loserInterview = expectPresent(
+    interviews.find((interview) => interview.teamSide === "away"),
+    "expected loser interview",
+  );
+
+  assert.equal(winnerInterview.personalityType, "reflective");
+  assert.equal(winnerInterview.personalitySource, "request_override");
+  assert.match(
+    winnerInterview.qa?.[0]?.answer ?? "",
+    /Heraclitus said everything flows/i,
+  );
+  assert.equal(loserInterview.personalityType, "rambling");
+  assert.equal(loserInterview.personalitySource, "request_override");
+  assert.match(
+    loserInterview.qa?.[0]?.answer ?? "",
+    /door kept swinging open just wide enough/i,
+  );
+  assert.equal(game.postgameInterview?.personalityType, "reflective");
+  assert.equal(game.postgameInterview.personalitySource, "request_override");
+});
+
 test("processSingleGameSummary persists estimated cost tracking for the generated summary", async () => {
   const summaryRecord = {
     matchId: "137828772",
@@ -8645,6 +8808,8 @@ test("fallback postgame interviews change voice with interview intensity", () =>
     fullHeatInterview.qa[0]?.answer ?? "",
     /best player in the building by a disrespectful margin/i,
   );
+  assert.equal(fullHeatInterview.personalityType, "braggart");
+  assert.equal(fullHeatInterview.personalitySource, "auto");
 });
 
 test("generateResolvedGameDayRecap lets request overrides beat stored interview personalities", async () => {

@@ -145,6 +145,9 @@ type TeamHubWorkspaceResult = Schema["TeamHubWorkspace"]["type"];
 type ScoutWorkspaceResult = ScoutTeamSummaryResult;
 type ScoutScheduleResult = NonNullable<ScoutWorkspaceResult["schedule"]>;
 type LeagueIntelWorkspaceResult = Schema["LeagueIntelWorkspace"]["type"];
+type LeagueIntelFreshnessStatus = NonNullable<
+  LeagueIntelWorkspaceResult["freshnessStatus"]
+>;
 type PlayerLabWorkspaceResult = Schema["PlayerLabWorkspace"]["type"];
 type ArenaWorkspaceResult = Schema["ArenaWorkspace"]["type"];
 type PlayerTrendResult = ResolverResult<"getPlayerTrend">;
@@ -258,6 +261,11 @@ const defaultOwnerRosterRepairDependencies: OwnerRosterRepairDependencies = {
   upsertPlayerSkillObservation,
   upsertTrackedPlayer,
 };
+
+const LIVE_LEAGUE_DATA_UNAVAILABLE_MESSAGE =
+  "Live league standings are unavailable right now. League tables and projections stay hidden until a fresh refresh succeeds.";
+const LIVE_LEAGUE_SEASON_MISMATCH_MESSAGE =
+  "Live league standings did not match the current season. League tables and projections stay hidden until a fresh refresh succeeds.";
 
 export type WorkspaceRefreshMeta = {
   cacheState: "forced" | "hit" | "miss";
@@ -742,18 +750,45 @@ export async function getLeagueIntelWorkspace(args: {
   }
 
   const force = args.force ?? false;
-  const { workspace } = await getOrRefreshWorkspaceWithMeta({
+  const { meta, workspace } = await getOrRefreshWorkspaceWithMeta({
     env: args.env,
     force,
     identity: args.identity,
-    syncActiveTrackedTeams: force,
+    syncActiveTrackedTeams: false,
   });
+
+  const connection = workspace.connectionRecord;
+  if (meta.usedCachedWorkspace) {
+    logWorkspaceWarn("getLeagueIntel.cached_workspace_unavailable", {
+      cacheState: meta.cacheState,
+      force,
+      lastSyncAt: connection.lastSyncAt ?? null,
+      lastSyncError: connection.lastSyncError ?? null,
+      usedCachedWorkspace: true,
+      userId,
+    });
+    return buildUnavailableLeagueIntel({
+      league: workspace.leagueIntel.league ?? null,
+      message: LIVE_LEAGUE_DATA_UNAVAILABLE_MESSAGE,
+      season: workspace.leagueIntel.season ?? null,
+    });
+  }
+
+  if (workspace.leagueIntel.freshnessStatus === "UNAVAILABLE") {
+    logWorkspaceWarn("getLeagueIntel.live_unavailable", {
+      force,
+      freshnessMessage: workspace.leagueIntel.freshnessMessage ?? null,
+      lastSyncAt: connection.lastSyncAt ?? null,
+      season: workspace.leagueIntel.season ?? null,
+      userId,
+    });
+    return workspace.leagueIntel;
+  }
 
   if (!workspace.leagueIntel.standings.length) {
     return workspace.leagueIntel;
   }
 
-  const connection = workspace.connectionRecord;
   if (
     !shouldRefreshLeagueComparisons({
       comparisons: workspace.leagueIntel.comparisons ?? null,
@@ -922,7 +957,7 @@ async function _getScoutWorkspaceForTeam(args: {
     env: args.env,
     force: args.force ?? false,
     identity: args.identity,
-    syncActiveTrackedTeams: args.force ?? false,
+    syncActiveTrackedTeams: false,
   });
 
   const requestedTeamId = normalizeScoutRequestedTeamId(args.teamId);
@@ -1045,7 +1080,7 @@ export async function getScoutTeamSummaryForTeamWithMeta(args: {
     env: args.env,
     force: args.force ?? false,
     identity: args.identity,
-    syncActiveTrackedTeams: args.force ?? false,
+    syncActiveTrackedTeams: false,
   });
 
   const requestedTeamId = normalizeScoutRequestedTeamId(args.teamId);
@@ -1183,7 +1218,7 @@ export async function getScoutScheduleForTeamWithMeta(args: {
     env: args.env,
     force: args.force ?? false,
     identity: args.identity,
-    syncActiveTrackedTeams: args.force ?? false,
+    syncActiveTrackedTeams: false,
   });
   const baseWorkspaceMs = elapsedMs(baseWorkspaceStartedAt);
   logWorkspaceInfo("getScoutSchedule.base_workspace.ready", {
@@ -1740,7 +1775,10 @@ async function syncWorkspace(args: {
       nextOpponentTeamId,
       connectionForViews.lastSyncAt ?? null,
     );
-    const leagueIntel = buildLeagueIntel(currentWorkspace.standings);
+    const leagueIntel = buildLeagueIntel({
+      currentSeason: currentWorkspace.currentSeason,
+      standings: currentWorkspace.standings,
+    });
     const playerLab = buildPlayerLab(
       currentWorkspace,
       currentBoxScores,
@@ -1890,6 +1928,7 @@ async function syncWorkspace(args: {
   } catch (error) {
     if (cachedWorkspace && isMatchInProgressWorkspaceError(error)) {
       const now = new Date().toISOString();
+      const lastSyncError = buildMatchInProgressWorkspaceWarning();
       const fallbackHomeConnection = projectEmbeddedConnectionResult(
         {
           ...projectHomeWorkspaceConnection(
@@ -1897,7 +1936,7 @@ async function syncWorkspace(args: {
             cachedWorkspace.home.connection,
             "match-in-progress fallback home connection base",
           ),
-          lastSyncError: null,
+          lastSyncError,
           status: "CONNECTED",
         },
         "match-in-progress fallback home connection",
@@ -1909,7 +1948,7 @@ async function syncWorkspace(args: {
         countryId: fallbackHomeConnection.countryId,
         countryName: fallbackHomeConnection.countryName,
         lastSyncAt: fallbackHomeConnection.lastSyncAt,
-        lastSyncError: null,
+        lastSyncError,
         leagueId: fallbackHomeConnection.leagueId,
         leagueName: fallbackHomeConnection.leagueName,
         leagueTimeZone: fallbackHomeConnection.leagueTimeZone,
@@ -2195,6 +2234,10 @@ function isMatchInProgressWorkspaceError(error: unknown): boolean {
     error instanceof BBXmlApiError &&
     /match[\s_-]*in[\s_-]*progress/i.test(error.message)
   );
+}
+
+function buildMatchInProgressWorkspaceWarning(): string {
+  return "A live BuzzerBeater match is in progress, so we're showing your last saved club snapshot until the current game window ends.";
 }
 
 function buildScoutFallback(
@@ -2859,7 +2902,10 @@ function buildHomeWorkspace(
         Boolean(match.id && cachedMatchIds.has(match.id)),
       ),
     ),
-    league: buildLeagueIntel(workspace.standings),
+    league: buildLeagueIntel({
+      currentSeason: workspace.currentSeason,
+      standings: workspace.standings,
+    }),
   };
 }
 
@@ -3061,21 +3107,53 @@ export function buildScoutWorkspace(
   };
 }
 
-function buildLeagueIntel(
-  standings: BBApiStandings | null,
-): LeagueIntelWorkspaceResult {
-  if (!standings) {
-    return {
-      comparisons: null,
+function buildUnavailableLeagueIntel(args: {
+  league: NamedReference | null;
+  message?: string | null;
+  season: number | null;
+}): LeagueIntelWorkspaceResult {
+  return {
+    comparisons: null,
+    freshnessMessage: args.message ?? LIVE_LEAGUE_DATA_UNAVAILABLE_MESSAGE,
+    freshnessStatus: "UNAVAILABLE",
+    league: args.league,
+    season: args.season,
+    standings: [],
+  };
+}
+
+function buildLeagueIntel(args: {
+  currentSeason: number | null | undefined;
+  standings: BBApiStandings | null;
+}): LeagueIntelWorkspaceResult {
+  const currentSeason = asFiniteInteger(args.currentSeason) ?? null;
+  if (!args.standings) {
+    return buildUnavailableLeagueIntel({
       league: null,
-      standings: [],
-    };
+      season: currentSeason,
+    });
+  }
+
+  const projectedLeague = projectNamedReference(args.standings.league);
+  if (
+    currentSeason !== null &&
+    args.standings.season !== null &&
+    args.standings.season !== currentSeason
+  ) {
+    return buildUnavailableLeagueIntel({
+      league: projectedLeague,
+      message: LIVE_LEAGUE_SEASON_MISMATCH_MESSAGE,
+      season: currentSeason,
+    });
   }
 
   return {
     comparisons: null,
-    league: projectNamedReference(standings.league),
-    standings: standings.conferences.map((conference) => ({
+    freshnessMessage: null,
+    freshnessStatus: "FRESH",
+    league: projectedLeague,
+    season: args.standings.season ?? currentSeason,
+    standings: args.standings.conferences.map((conference) => ({
       index: conference.index,
       teams: conference.teams.map((team) => ({
         teamId: team.id,
@@ -4372,6 +4450,11 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function asFiniteInteger(value: unknown): number | null {
+  const parsed = asNumber(value);
+  return parsed === null ? null : Math.trunc(parsed);
+}
+
 function asBoolean(value: unknown): boolean | null {
   const stringValue = asString(value)?.toLowerCase();
   if (!stringValue) {
@@ -4425,7 +4508,7 @@ function rehydrateHomeWorkspace(
     nextScoutMatch: home.nextScoutMatch ?? null,
     nextOpponent: home.nextOpponent ?? null,
     recentMatches: home.recentMatches,
-    league: home.league,
+    league: rehydrateLeagueIntelWorkspace(home.league),
   } satisfies HomeWorkspaceResult;
 }
 
@@ -4499,9 +4582,27 @@ function rehydrateScoutWorkspace(
 function rehydrateLeagueIntelWorkspace(
   leagueIntel: CachedLeagueIntelWorkspace,
 ): LeagueIntelWorkspaceResult {
+  const season =
+    asFiniteInteger(leagueIntel.season) ??
+    asFiniteInteger(leagueIntel.comparisons?.season) ??
+    null;
+  const freshnessStatus: LeagueIntelFreshnessStatus =
+    leagueIntel.freshnessStatus === "UNAVAILABLE"
+      ? "UNAVAILABLE"
+      : leagueIntel.standings.length
+        ? "FRESH"
+        : "UNAVAILABLE";
+
   return {
     comparisons: leagueIntel.comparisons ?? null,
+    freshnessMessage:
+      freshnessStatus === "UNAVAILABLE"
+        ? asString(leagueIntel.freshnessMessage) ??
+          LIVE_LEAGUE_DATA_UNAVAILABLE_MESSAGE
+        : null,
+    freshnessStatus,
     league: leagueIntel.league ?? null,
+    season,
     standings: leagueIntel.standings,
   } satisfies LeagueIntelWorkspaceResult;
 }

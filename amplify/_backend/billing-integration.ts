@@ -14,120 +14,22 @@ type FunctionResource = {
   };
 };
 
-type BillingBackend = {
+type BillingBackend = Record<string, unknown> & {
   billingAdminOverride: FunctionResource;
   billingWebhook: FunctionResource;
-  clearMyTeamHighlightsData: FunctionResource;
-  createBillingCheckoutSession: FunctionResource;
-  createBillingPortalSession: FunctionResource;
   createStack(name: string): Stack;
-  evaluatePredictionMatrix: FunctionResource;
-  gameDayRecapSubmit: FunctionResource;
-  getBillingSummary: FunctionResource;
-  nextGameRecommendationSubmit: FunctionResource;
-  opponentForecastSubmit: FunctionResource;
-  predictionSubmit: FunctionResource;
-  setTrackedPlayerInterviewPersonality: FunctionResource;
-  submitLeagueGameDayRecap: FunctionResource;
-  submitMyTeamHighlightsScan: FunctionResource;
-  submitSingleGameSummary: FunctionResource;
+};
+
+export const __testing = {
+  applyBillingEnvironmentToFunctions,
+  collectFunctionResources,
 };
 
 export function configureBillingIntegration(
   backend: BillingBackend,
   config: BillingSynthConfig,
 ): void {
-  backend.getBillingSummary.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.nextGameRecommendationSubmit.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.predictionSubmit.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.evaluatePredictionMatrix.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.gameDayRecapSubmit.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.opponentForecastSubmit.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.submitLeagueGameDayRecap.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.submitSingleGameSummary.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.submitMyTeamHighlightsScan.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.clearMyTeamHighlightsData.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-  backend.setTrackedPlayerInterviewPersonality.addEnvironment(
-    "COMMERCIAL_MODE_ENABLED",
-    String(config.commercialModeEnabled),
-  );
-
-  if (config.defaultPlanId) {
-    backend.getBillingSummary.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.nextGameRecommendationSubmit.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.predictionSubmit.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.evaluatePredictionMatrix.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.gameDayRecapSubmit.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.opponentForecastSubmit.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.submitLeagueGameDayRecap.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.submitSingleGameSummary.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.submitMyTeamHighlightsScan.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.clearMyTeamHighlightsData.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-    backend.setTrackedPlayerInterviewPersonality.addEnvironment(
-      "BILLING_DEFAULT_PLAN",
-      config.defaultPlanId,
-    );
-  }
+  applyBillingEnvironmentToFunctions(backend, config);
 
   const stack = backend.createStack("billing-integration");
   const webhookLambda = backend.billingWebhook.resources
@@ -148,4 +50,50 @@ export function configureBillingIntegration(
   new CfnOutput(stack, "BillingAdminOverrideUrl", {
     value: adminOverrideUrl.url,
   });
+}
+
+function applyBillingEnvironmentToFunctions(
+  backend: Record<string, unknown>,
+  config: BillingSynthConfig,
+): void {
+  const functionResources = collectFunctionResources(backend);
+  for (const resource of functionResources) {
+    resource.addEnvironment(
+      "COMMERCIAL_MODE_ENABLED",
+      String(config.commercialModeEnabled),
+    );
+  }
+
+  if (!config.defaultPlanId) {
+    return;
+  }
+
+  for (const resource of functionResources) {
+    resource.addEnvironment("BILLING_DEFAULT_PLAN", config.defaultPlanId);
+  }
+}
+
+function collectFunctionResources(
+  backend: Record<string, unknown>,
+): FunctionResource[] {
+  return Object.values(backend).filter(isFunctionResource);
+}
+
+function isFunctionResource(value: unknown): value is FunctionResource {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (
+    !("addEnvironment" in value) ||
+    typeof value.addEnvironment !== "function"
+  ) {
+    return false;
+  }
+
+  if (!("resources" in value) || !value.resources || typeof value.resources !== "object") {
+    return false;
+  }
+
+  return "lambda" in value.resources;
 }

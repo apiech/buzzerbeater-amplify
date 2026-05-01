@@ -24,7 +24,7 @@ export const handler: Handler = async (event) => {
       env,
       force,
       identity: event.identity,
-      syncActiveTrackedTeams: force,
+      syncActiveTrackedTeams: false,
     });
 
     logWorkspaceInfo("getHomeWorkspace.completed", {

@@ -10,6 +10,7 @@ import {
   partitionLegacyWorkspaceCacheCoercionErrors,
   readWorkspaceCachePayload,
 } from "./workspace-cache";
+import { isInterviewPersonalityType } from "../../../lib/interview-personalities";
 import {
   assertSharedPlayerCardPayload,
   assertStoredOwnedRosterPlayer,
@@ -18,7 +19,10 @@ import {
 } from "../../../lib/owned-data/contracts";
 import type { PredictionInputShape } from "../../../lib/prediction/normalization";
 import type { Schema } from "../resource";
-import { RecapGenerationApproach } from "../schema-enums";
+import {
+  RecapGenerationApproach,
+  RecapInterviewIntensity,
+} from "../schema-enums";
 
 type StoredTeamInfo = Schema["StoredTeamInfo"]["type"];
 type ErrorWithMessage = {
@@ -50,6 +54,18 @@ type NextGameRecommendationStoredProgress = NonNullable<
 >;
 type NextGameRecommendationStoredResult = NonNullable<
   Schema["NextGameRecommendationJob"]["type"]["resultJson"]
+>;
+type LeagueSeasonSimulationStoredRequest = NonNullable<
+  Schema["LeagueSeasonSimulationJob"]["type"]["requestJson"]
+>;
+type LeagueSeasonSimulationStoredProgress = NonNullable<
+  Schema["LeagueSeasonSimulationJob"]["type"]["progressJson"]
+>;
+type LeagueSeasonSimulationStoredResult = NonNullable<
+  Schema["LeagueSeasonSimulationJob"]["type"]["resultJson"]
+>;
+type LeagueSeasonSimulationArtifactPayload = NonNullable<
+  Schema["LeagueSeasonSimulationArtifact"]["type"]["payloadJson"]
 >;
 type StoredPlannerEvaluatedScenario = NonNullable<
   Schema["NextGamePlannerArtifact"]["type"]["evaluatedScenariosJson"]
@@ -125,6 +141,15 @@ export type NextGameRecommendationStatus =
   | "EVALUATING_CANDIDATES"
   | "SCORING_MATCHUPS"
   | "BUILDING_PLANNER"
+  | "SUCCEEDED"
+  | "FAILED";
+
+export type LeagueSeasonSimulationJobStatus =
+  | "QUEUED"
+  | "RESOLVING_CONTEXT"
+  | "COLLECTING_SNAPSHOTS"
+  | "SCORING_GAMES"
+  | "RUNNING_SIMULATIONS"
   | "SUCCEEDED"
   | "FAILED";
 
@@ -379,6 +404,42 @@ export type NextGameRecommendationJobRecord = {
   progressJson?: NextGameRecommendationStoredProgress | null;
   resultJson?: NextGameRecommendationStoredResult | null;
   error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  expiryKey: string;
+  expiresAt: string;
+};
+
+export type LeagueSeasonSimulationJobRecord = {
+  id: string;
+  userId: string;
+  leagueId: string;
+  leagueName?: string | null;
+  season: number;
+  teamId: string;
+  teamName?: string | null;
+  status: LeagueSeasonSimulationJobStatus;
+  requestedAt: string;
+  executionArn?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  requestJson: LeagueSeasonSimulationStoredRequest;
+  progressJson?: LeagueSeasonSimulationStoredProgress | null;
+  resultJson?: LeagueSeasonSimulationStoredResult | null;
+  error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  expiryKey: string;
+  expiresAt: string;
+};
+
+export type LeagueSeasonSimulationArtifactRecord = {
+  jobId: string;
+  artifactType: string;
+  artifactKey: string;
+  artifactOrder: number;
+  userId: string;
+  payloadJson: LeagueSeasonSimulationArtifactPayload;
   createdAt?: string;
   updatedAt?: string;
   expiryKey: string;
@@ -1406,6 +1467,243 @@ export async function deleteNextGameRecommendationJob(
   await assertSuccessful(
     model.delete({ id }),
     "delete next game recommendation job",
+  );
+}
+
+export async function createLeagueSeasonSimulationJob(
+  env: RepositoryEnv,
+  input: Omit<
+    LeagueSeasonSimulationJobRecord,
+    "createdAt" | "updatedAt" | "requestedAt" | "expiryKey" | "expiresAt"
+  > & {
+    requestedAt?: string | null;
+    expiryKey?: string | null;
+    expiresAt?: string | null;
+  },
+): Promise<LeagueSeasonSimulationJobRecord> {
+  const model = await getModel<LeagueSeasonSimulationJobRecord>(
+    env,
+    "LeagueSeasonSimulationJob",
+  );
+  const now = new Date().toISOString();
+  const record = assertPresent(
+    await assertSuccessful(
+      model.create(
+        prepareModelInput("LeagueSeasonSimulationJob", {
+          ...input,
+          requestedAt: input.requestedAt ?? now,
+          expiryKey: input.expiryKey ?? "EXPIRABLE",
+          expiresAt: input.expiresAt ?? addDays(now, 30),
+        }),
+      ),
+      "create league season simulation job",
+    ),
+    "create league season simulation job",
+  );
+
+  return decodeAwsJsonFields("LeagueSeasonSimulationJob", record);
+}
+
+export async function getLeagueSeasonSimulationJob(
+  env: RepositoryEnv,
+  id: string,
+): Promise<LeagueSeasonSimulationJobRecord | null> {
+  const record = await getModelRecord<LeagueSeasonSimulationJobRecord>(
+    env,
+    "LeagueSeasonSimulationJob",
+    { id },
+    "load league season simulation job",
+  );
+
+  return decodeAwsJsonFields("LeagueSeasonSimulationJob", record);
+}
+
+export async function updateLeagueSeasonSimulationJob(
+  env: RepositoryEnv,
+  input: Partial<LeagueSeasonSimulationJobRecord> &
+    Pick<LeagueSeasonSimulationJobRecord, "id">,
+): Promise<void> {
+  const model = await getModel<LeagueSeasonSimulationJobRecord>(
+    env,
+    "LeagueSeasonSimulationJob",
+  );
+  await assertSuccessful(
+    model.update(prepareModelInput("LeagueSeasonSimulationJob", input)),
+    "update league season simulation job",
+  );
+}
+
+export async function listLeagueSeasonSimulationJobsByUser(
+  env: RepositoryEnv,
+  userId: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<LeagueSeasonSimulationJobRecord>> {
+  const page = await queryModelIndexPage<LeagueSeasonSimulationJobRecord>(
+    env,
+    "LeagueSeasonSimulationJob",
+    "listLeagueSeasonSimulationJobsByUserAndRequestedAt",
+    { userId },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "DESC",
+    },
+    "list league season simulation jobs by user",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("LeagueSeasonSimulationJob", page.records),
+  };
+}
+
+export async function listExpiredLeagueSeasonSimulationJobs(
+  env: RepositoryEnv,
+  expiresBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<LeagueSeasonSimulationJobRecord>> {
+  const page = await queryModelIndexPage<LeagueSeasonSimulationJobRecord>(
+    env,
+    "LeagueSeasonSimulationJob",
+    "listLeagueSeasonSimulationJobsByExpiryKeyAndExpiresAt",
+    {
+      expiryKey: "EXPIRABLE",
+      expiresAt: { lt: expiresBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list expired league season simulation jobs",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("LeagueSeasonSimulationJob", page.records),
+  };
+}
+
+export async function deleteLeagueSeasonSimulationJob(
+  env: RepositoryEnv,
+  id: string,
+): Promise<void> {
+  const model = await getModel<LeagueSeasonSimulationJobRecord>(
+    env,
+    "LeagueSeasonSimulationJob",
+  );
+  await assertSuccessful(
+    model.delete({ id }),
+    "delete league season simulation job",
+  );
+}
+
+export async function upsertLeagueSeasonSimulationArtifact(
+  env: RepositoryEnv,
+  input: LeagueSeasonSimulationArtifactRecord,
+): Promise<void> {
+  await upsertModelRecord(
+    env,
+    "LeagueSeasonSimulationArtifact",
+    ["jobId", "artifactType", "artifactKey"],
+    input,
+  );
+}
+
+export async function getLeagueSeasonSimulationArtifact(
+  env: RepositoryEnv,
+  input: Pick<
+    LeagueSeasonSimulationArtifactRecord,
+    "jobId" | "artifactType" | "artifactKey"
+  >,
+): Promise<LeagueSeasonSimulationArtifactRecord | null> {
+  const record = await getModelRecord<LeagueSeasonSimulationArtifactRecord>(
+    env,
+    "LeagueSeasonSimulationArtifact",
+    input,
+    "load league season simulation artifact",
+  );
+
+  return decodeAwsJsonFields("LeagueSeasonSimulationArtifact", record);
+}
+
+export async function listLeagueSeasonSimulationArtifactsByJobId(
+  env: RepositoryEnv,
+  jobId: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<LeagueSeasonSimulationArtifactRecord>> {
+  const page = await queryModelIndexPage<LeagueSeasonSimulationArtifactRecord>(
+    env,
+    "LeagueSeasonSimulationArtifact",
+    "listLeagueSeasonSimulationArtifactsByJobIdAndArtifactOrder",
+    { jobId },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list league season simulation artifacts by job",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("LeagueSeasonSimulationArtifact", page.records),
+  };
+}
+
+export async function listExpiredLeagueSeasonSimulationArtifacts(
+  env: RepositoryEnv,
+  expiresBefore: string,
+  input: {
+    limit?: number;
+    nextToken?: string | null;
+  } = {},
+): Promise<PagedRecords<LeagueSeasonSimulationArtifactRecord>> {
+  const page = await queryModelIndexPage<LeagueSeasonSimulationArtifactRecord>(
+    env,
+    "LeagueSeasonSimulationArtifact",
+    "listLeagueSeasonSimulationArtifactsByExpiryKeyAndExpiresAt",
+    {
+      expiryKey: "EXPIRABLE",
+      expiresAt: { lt: expiresBefore },
+    },
+    {
+      limit: input.limit,
+      nextToken: input.nextToken,
+      sortDirection: "ASC",
+    },
+    "list expired league season simulation artifacts",
+  );
+
+  return {
+    nextToken: page.nextToken,
+    records: decodeAwsJsonList("LeagueSeasonSimulationArtifact", page.records),
+  };
+}
+
+export async function deleteLeagueSeasonSimulationArtifact(
+  env: RepositoryEnv,
+  input: Pick<
+    LeagueSeasonSimulationArtifactRecord,
+    "jobId" | "artifactType" | "artifactKey"
+  >,
+): Promise<void> {
+  const model = await getModel<LeagueSeasonSimulationArtifactRecord>(
+    env,
+    "LeagueSeasonSimulationArtifact",
+  );
+  await assertSuccessful(
+    model.delete(input),
+    "delete league season simulation artifact",
   );
 }
 
@@ -2621,7 +2919,11 @@ function normalizeGameDayRecapStoredRequest(
         readOptionalRecapGenerationApproach(requestJson?.approach) ??
         RecapGenerationApproach.LEGACY,
       gameDate: readOptionalString(requestJson?.gameDate) ?? record.gameDate,
+      interviewIntensity:
+        readOptionalRecapInterviewIntensity(requestJson?.interviewIntensity) ??
+        RecapInterviewIntensity.PG13,
       leagueId: readOptionalString(requestJson?.leagueId) ?? record.leagueId,
+      modelJudgeEnabled: readOptionalBoolean(requestJson?.modelJudgeEnabled) ?? false,
       mode: "FULL_SLATE",
       qualityTier: normalizeLegacyRecapQualityTier(requestJson?.qualityTier),
     },
@@ -2640,7 +2942,11 @@ function normalizeLeagueGameDayRecapStoredRequest(
         RecapGenerationApproach.LEGACY,
       gameDayNumber:
         readOptionalInteger(requestJson?.gameDayNumber) ?? record.gameDayNumber,
+      interviewIntensity:
+        readOptionalRecapInterviewIntensity(requestJson?.interviewIntensity) ??
+        RecapInterviewIntensity.PG13,
       leagueId: readOptionalString(requestJson?.leagueId) ?? record.leagueId,
+      modelJudgeEnabled: readOptionalBoolean(requestJson?.modelJudgeEnabled) ?? false,
       mode: "LEAGUE_GAME_DAY",
       qualityTier: normalizeLegacyRecapQualityTier(requestJson?.qualityTier),
       season: readOptionalInteger(requestJson?.season) ?? record.season ?? null,
@@ -2681,9 +2987,19 @@ function normalizeSingleGameSummaryStoredRequest(
       approach:
         readOptionalRecapGenerationApproach(requestJson?.approach) ??
         RecapGenerationApproach.LEGACY,
+      interviewIntensity:
+        readOptionalRecapInterviewIntensity(requestJson?.interviewIntensity) ??
+        RecapInterviewIntensity.PG13,
+      loserInterviewPersonalityType: readOptionalInterviewPersonalityType(
+        requestJson?.loserInterviewPersonalityType,
+      ),
       matchId: readOptionalString(requestJson?.matchId) ?? record.matchId,
+      modelJudgeEnabled: readOptionalBoolean(requestJson?.modelJudgeEnabled) ?? false,
       mode: "SINGLE_GAME",
       qualityTier: normalizeLegacyRecapQualityTier(requestJson?.qualityTier),
+      winnerInterviewPersonalityType: readOptionalInterviewPersonalityType(
+        requestJson?.winnerInterviewPersonalityType,
+      ),
     },
   };
 }
@@ -2715,8 +3031,26 @@ function readOptionalRecapGenerationApproach(
     : null;
 }
 
+function readOptionalRecapInterviewIntensity(
+  value: unknown,
+): RecapInterviewIntensity | null {
+  return value === RecapInterviewIntensity.CLEAN ||
+    value === RecapInterviewIntensity.FULL_HEAT ||
+    value === RecapInterviewIntensity.PG13
+    ? value
+    : null;
+}
+
+function readOptionalInterviewPersonalityType(value: unknown): string | null {
+  return isInterviewPersonalityType(value) ? value : null;
+}
+
 function readOptionalInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function readOptionalBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function readErrorMessage(error: unknown): string {

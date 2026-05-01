@@ -21,6 +21,7 @@ import type {
   LeagueHistoryAuditPayload,
   LeagueHistoryPayload,
   LeagueIntelPayload,
+  LeagueSeasonSimulationSnapshot,
   LineupHelperEvaluationRecord,
   LineupHelperWorkspaceRecord,
   MatchBoxscorePayload,
@@ -41,6 +42,7 @@ import type {
   RecapHistoryRecord,
   RecapInterviewIntensity,
   SubmitLeagueGameDayPerformancesResult,
+  SubmitLeagueSeasonSimulationJobResult,
   RivalsWorkspacePayload,
   SalaryCalculatorSeed,
   SalaryCalculatorSkillsInput,
@@ -432,7 +434,10 @@ const leagueIntelSchema = z
       .passthrough()
       .nullable()
       .optional(),
+    freshnessMessage: nullableStringSchema,
+    freshnessStatus: z.enum(["FRESH", "UNAVAILABLE"]),
     league: namedReferenceSchema,
+    season: nullableNumberSchema,
     standings: z.array(
       z
         .object({
@@ -984,6 +989,160 @@ const nextGameRecommendationSchema = z
       .optional(),
     startedAt: nullableStringSchema,
     status: z.string(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const leagueSeasonSimulationCompletedPhaseSchema = z
+  .object({
+    completedAt: z.string(),
+    durationMs: z.number(),
+    phaseKey: z.string(),
+    startedAt: z.string(),
+    summary: z.string(),
+  })
+  .passthrough();
+
+const leagueSeasonSimulationProgressContextSchema = z
+  .object({
+    candidateGameCount: nullableNumberSchema,
+    currentSeason: nullableNumberSchema,
+    lowSampleTeamCount: nullableNumberSchema,
+    remainingGameCount: nullableNumberSchema,
+    scoredGameCount: nullableNumberSchema,
+    simulationCount: nullableNumberSchema,
+    teamCount: nullableNumberSchema,
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const leagueSeasonSimulationProgressSchema = z
+  .object({
+    completedPhases: z.array(leagueSeasonSimulationCompletedPhaseSchema),
+    completedUnits: nullableNumberSchema,
+    context: leagueSeasonSimulationProgressContextSchema,
+    currentPhaseStartedAt: nullableStringSchema,
+    phaseCount: z.number(),
+    phaseIndex: z.number(),
+    phaseKey: z.string(),
+    summary: z.string(),
+    totalUnits: nullableNumberSchema,
+    unitLabel: nullableStringSchema,
+    updatedAt: z.string(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const leagueSeasonSimulationFinishProbabilitySchema = z
+  .object({
+    place: z.number(),
+    probability: z.number(),
+  })
+  .passthrough();
+
+const leagueSeasonSimulationSourceSnapshotSchema = z
+  .object({
+    candidateGameCount: z.number(),
+    defense: z.string(),
+    offense: z.string(),
+    sampleWarning: nullableStringSchema,
+    selectionStrategy: z.enum([
+      "BEST_AVAILABLE",
+      "CURRENT_SEASON_15TH_PERCENTILE",
+      "LEAGUE_AVERAGE_FALLBACK",
+      "MULTI_SEASON_THIRD_BEST",
+    ]),
+    sourceMatchId: nullableStringSchema,
+    sourceSeason: nullableNumberSchema,
+    sourceStartTime: nullableStringSchema,
+    teamId: z.string(),
+    teamName: nullableStringSchema,
+  })
+  .passthrough();
+
+const leagueSeasonSimulationTeamResultSchema = z
+  .object({
+    averageFinish: z.number(),
+    currentLosses: z.number(),
+    currentPointMargin: z.number(),
+    currentWins: z.number(),
+    expectedLosses: z.number(),
+    expectedPointMargin: z.number(),
+    expectedWins: z.number(),
+    finishProbabilities: z.array(leagueSeasonSimulationFinishProbabilitySchema),
+    firstPlaceProbability: z.number(),
+    snapshot: leagueSeasonSimulationSourceSnapshotSchema,
+    standingsIndex: z.number(),
+    teamId: z.string(),
+    teamName: nullableStringSchema,
+    winsP10: z.number(),
+    winsP50: z.number(),
+    winsP90: z.number(),
+  })
+  .passthrough();
+
+const leagueSeasonSimulationConferenceResultSchema = z
+  .object({
+    conferenceIndex: z.number(),
+    teams: z.array(leagueSeasonSimulationTeamResultSchema),
+  })
+  .passthrough();
+
+const leagueSeasonSimulationGameResultSchema = z
+  .object({
+    awayDefense: z.string(),
+    awayOffense: z.string(),
+    awayTeamId: z.string(),
+    awayTeamName: nullableStringSchema,
+    expectedAwayScore: z.number(),
+    expectedHomeScore: z.number(),
+    expectedMargin: z.number(),
+    homeDefense: z.string(),
+    homeOffense: z.string(),
+    homeTeamId: z.string(),
+    homeTeamName: nullableStringSchema,
+    homeWinProbability: z.number(),
+    matchId: z.string(),
+    startTime: nullableStringSchema,
+  })
+  .passthrough();
+
+const leagueSeasonSimulationResultSchema = z
+  .object({
+    conferences: z.array(leagueSeasonSimulationConferenceResultSchema),
+    generatedAt: z.string(),
+    leagueId: z.string(),
+    leagueName: nullableStringSchema,
+    lowSampleTeamCount: z.number(),
+    modelVersion: nullableStringSchema,
+    remainingGames: z.array(leagueSeasonSimulationGameResultSchema),
+    residualSigma: z.number(),
+    season: z.number(),
+    simulationCount: z.number(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const leagueSeasonSimulationSchema = z
+  .object({
+    completedAt: nullableStringSchema,
+    error: nullableStringSchema,
+    executionArn: nullableStringSchema,
+    jobId: z.string(),
+    leagueId: z.string(),
+    leagueName: nullableStringSchema,
+    progress: leagueSeasonSimulationProgressSchema,
+    requestedAt: z.string(),
+    result: leagueSeasonSimulationResultSchema,
+    season: z.number(),
+    startedAt: nullableStringSchema,
+    status: z.string(),
+    teamId: z.string(),
+    teamName: nullableStringSchema,
   })
   .passthrough()
   .nullable()
@@ -2113,7 +2272,9 @@ export const workspaceQueryKeys = {
     ] as const,
   leagueHistory: (leagueId: string | null | undefined) =>
     ["workspace", "leagueHistory", leagueId ?? "default"] as const,
+  leagueIntelAutoRefresh: ["workspace", "leagueIntel", "autoRefresh"] as const,
   leagueIntel: ["workspace", "leagueIntel"] as const,
+  leagueSeasonSimulation: ["workspace", "leagueSeasonSimulation"] as const,
   lineupHelper: ["workspace", "lineupHelper"] as const,
   lineupHelperEvaluation: (input: {
     assignments: readonly unknown[];
@@ -2557,6 +2718,15 @@ export async function fetchLatestOpponentForecastQuery(args: {
   ) as OpponentForecastSnapshot | null;
 }
 
+export async function fetchLatestLeagueSeasonSimulationQuery(): Promise<LeagueSeasonSimulationSnapshot | null> {
+  const response = await client.queries.getLatestLeagueSeasonSimulation();
+
+  return readAmplifyNullableDataOrThrow(
+    response,
+    leagueSeasonSimulationSchema,
+  ) as LeagueSeasonSimulationSnapshot | null;
+}
+
 export async function fetchLatestNextGameRecommendationQuery(args: {
   forecastJobId: string;
   input: NextGameRecommendationInput;
@@ -2896,6 +3066,20 @@ export async function submitOpponentForecastJobMutation(input: {
       .passthrough(),
     "Unable to submit the opponent forecast job.",
   ) as SubmitOpponentForecastJobResult;
+}
+
+export async function submitLeagueSeasonSimulationJobMutation(): Promise<SubmitLeagueSeasonSimulationJobResult> {
+  const response = await client.mutations.submitLeagueSeasonSimulationJob();
+  return readAmplifyDataOrThrow(
+    response,
+    z
+      .object({
+        executionArn: nullableStringSchema,
+        jobId: z.string(),
+      })
+      .passthrough(),
+    "Unable to submit the league season simulation job.",
+  ) as SubmitLeagueSeasonSimulationJobResult;
 }
 
 export async function repairOwnerRosterDataMutation(): Promise<RepairOwnerRosterDataResult> {
@@ -3292,6 +3476,13 @@ export function opponentForecastQueryOptions(args: { teamId: string }) {
   });
 }
 
+export function leagueSeasonSimulationQueryOptions() {
+  return queryOptions({
+    queryFn: fetchLatestLeagueSeasonSimulationQuery,
+    queryKey: workspaceQueryKeys.leagueSeasonSimulation,
+  });
+}
+
 export function nextGameRecommendationQueryOptions(args: {
   forecastJobId: string;
   input: NextGameRecommendationInput;
@@ -3451,6 +3642,12 @@ export async function refreshSharedWorkspaceSection(
 
   const data = await fetchPlayerLabQuery({ force: true });
   queryClient.setQueryData(workspaceQueryKeys.playerLab, data);
+  return data;
+}
+
+export async function refreshLeagueIntelWorkspace(queryClient: QueryClient) {
+  const data = await fetchLeagueIntelQuery({ force: true });
+  queryClient.setQueryData(workspaceQueryKeys.leagueIntel, data);
   return data;
 }
 

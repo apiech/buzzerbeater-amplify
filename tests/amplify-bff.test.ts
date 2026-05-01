@@ -116,6 +116,34 @@ test("submitLeagueGameDayPerformances is routed through the mutation BFF", async
   });
 });
 
+test("submitLeagueSeasonSimulationJob is routed through the mutation BFF", async (t) => {
+  let calls = 0;
+
+  installServerDataClient(t, {
+    mutations: {
+      submitLeagueSeasonSimulationJob: async () => {
+        calls += 1;
+        return {
+          data: {
+            executionArn: "arn:simulation-1",
+            jobId: "simulation-1",
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(isMutationName("submitLeagueSeasonSimulationJob"), true);
+
+  const result = await runMutationOperation("submitLeagueSeasonSimulationJob");
+
+  assert.equal(calls, 1);
+  assert.deepStrictEqual(result.data, {
+    executionArn: "arn:simulation-1",
+    jobId: "simulation-1",
+  });
+});
+
 test("connectBbAccount BFF logs redact the access key while preserving useful metadata", async (t) => {
   const logs = installLoggerSpies(t);
 
@@ -290,6 +318,35 @@ test("getLatestNextGameRecommendation is routed through the query BFF", async (t
     opponentTeamId: "opp-1",
   });
   assert.equal((result.data as { jobId: string }).jobId, "recommendation-1");
+});
+
+test("getLatestLeagueSeasonSimulation is routed through the query BFF", async (t) => {
+  let calls = 0;
+
+  installServerDataClient(t, {
+    queries: {
+      getLatestLeagueSeasonSimulation: async () => {
+        calls += 1;
+        return {
+          data: {
+            jobId: "simulation-1",
+            leagueId: "league-1",
+            requestedAt: "2026-05-01T00:00:00.000Z",
+            season: 68,
+            status: "QUEUED",
+            teamId: "our-1",
+          },
+        };
+      },
+    },
+  });
+
+  assert.equal(isQueryName("getLatestLeagueSeasonSimulation"), true);
+
+  const result = await runQueryOperation("getLatestLeagueSeasonSimulation");
+
+  assert.equal(calls, 1);
+  assert.equal((result.data as { jobId: string }).jobId, "simulation-1");
 });
 
 test("getNextGamePlannerDetail is routed through the query BFF", async (t) => {

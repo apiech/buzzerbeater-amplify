@@ -17,7 +17,9 @@ import {
   lineupHelperWorkspaceQueryOptions,
   playerLabQueryOptions,
   refreshHomeWorkspace,
+  refreshLeagueIntelWorkspace,
   refreshSharedWorkspaceSection,
+  workspaceQueryKeys,
 } from "@/app/dashboard/workspace-query-client";
 import type {
   ArenaWorkspacePayload,
@@ -34,6 +36,8 @@ type WorkspaceExtraSectionKey =
   | "lineupHelper"
   | "leagueIntel"
   | "playerLab";
+
+const LEAGUE_INTEL_AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 const sectionDependencies: Record<
   WorkspaceSection,
@@ -135,6 +139,29 @@ function shouldAutoRefreshWorkspace(args: {
   return !args.isLoadingWorkspaceData;
 }
 
+function shouldAutoRefreshLeagueIntel(args: {
+  activeSection: WorkspaceSection;
+  connected: boolean;
+  freshnessStatus: "FRESH" | "UNAVAILABLE" | null;
+  isLoadingWorkspaceData: boolean;
+  isRefreshingWorkspace: boolean;
+  showCredentialForm: boolean;
+}) {
+  if (
+    args.activeSection !== "league" ||
+    !args.connected ||
+    args.showCredentialForm
+  ) {
+    return false;
+  }
+
+  if (args.freshnessStatus !== "UNAVAILABLE") {
+    return false;
+  }
+
+  return !args.isLoadingWorkspaceData && !args.isRefreshingWorkspace;
+}
+
 export function useAuthenticatedWorkspace(args: {
   activeSection: WorkspaceSection;
   commercialModeEnabled: boolean;
@@ -180,6 +207,40 @@ export function useAuthenticatedWorkspace(args: {
     mutationFn: disconnectBbAccountMutation,
   });
 
+  const baseIsLoadingWorkspaceData =
+    connected &&
+    (homeQuery.isPending ||
+      (requiredSections.includes("arena") && arenaQuery.isPending) ||
+      (requiredSections.includes("lineupHelper") &&
+        lineupHelperQuery.isPending) ||
+      (requiredSections.includes("leagueIntel") &&
+        leagueIntelQuery.isPending) ||
+      (requiredSections.includes("playerLab") && playerLabQuery.isPending));
+  const shouldRunLeagueIntelAutoRefresh = shouldAutoRefreshLeagueIntel({
+    activeSection: args.activeSection,
+    connected,
+    freshnessStatus: leagueIntelQuery.data?.freshnessStatus ?? null,
+    isLoadingWorkspaceData: baseIsLoadingWorkspaceData,
+    isRefreshingWorkspace,
+    showCredentialForm,
+  });
+  const leagueIntelAutoRefreshQuery = useQuery({
+    enabled: shouldRunLeagueIntelAutoRefresh,
+    queryFn: () => refreshLeagueIntelWorkspace(queryClient),
+    queryKey: workspaceQueryKeys.leagueIntelAutoRefresh,
+    refetchInterval: (query) => {
+      const data = query.state.data ?? leagueIntelQuery.data ?? null;
+      if (data?.freshnessStatus !== "UNAVAILABLE") {
+        return false;
+      }
+
+      return shouldRunLeagueIntelAutoRefresh
+        ? LEAGUE_INTEL_AUTO_REFRESH_INTERVAL_MS
+        : false;
+    },
+    retry: false,
+  });
+
   useEffect(() => {
     if (connectionQuery.data?.status !== "CONNECTED") {
       setShowCredentialForm(false);
@@ -220,19 +281,15 @@ export function useAuthenticatedWorkspace(args: {
     (requiredSections.includes("leagueIntel")
       ? formatQueryErrorMessage(leagueIntelQuery.error)
       : null) ??
+    (requiredSections.includes("leagueIntel")
+      ? formatQueryErrorMessage(leagueIntelAutoRefreshQuery.error)
+      : null) ??
     (requiredSections.includes("playerLab")
       ? formatQueryErrorMessage(playerLabQuery.error)
       : null);
 
   const isLoadingWorkspaceData =
-    connected &&
-    (homeQuery.isPending ||
-      (requiredSections.includes("arena") && arenaQuery.isPending) ||
-      (requiredSections.includes("lineupHelper") &&
-        lineupHelperQuery.isPending) ||
-      (requiredSections.includes("leagueIntel") &&
-        leagueIntelQuery.isPending) ||
-      (requiredSections.includes("playerLab") && playerLabQuery.isPending));
+    baseIsLoadingWorkspaceData || leagueIntelAutoRefreshQuery.isFetching;
   const isLoadingWorkspace =
     connected && (isLoadingWorkspaceData || isRefreshingWorkspace);
   const hasWorkspace = Boolean(workspace);
@@ -379,5 +436,6 @@ export function useAuthenticatedWorkspace(args: {
 export const __testing = {
   createWorkspaceFromHome,
   resolveLineupHelperDependencyState,
+  shouldAutoRefreshLeagueIntel,
   shouldAutoRefreshWorkspace,
 };

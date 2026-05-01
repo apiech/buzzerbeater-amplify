@@ -8,6 +8,7 @@ import {
   boxscoreQueryOptions,
   fetchConnectionRecord,
   fetchLeagueIntelQuery,
+  fetchLatestLeagueSeasonSimulationQuery,
   fetchManualSalaryEstimateQuery,
   fetchMatchBoxscoreQuery,
   fetchSalaryCalculatorSeedQuery,
@@ -16,6 +17,7 @@ import {
   refreshNextGameAfterConnectionUpdate,
   refreshLineupHelperAfterOwnerRosterRepair,
   fetchScoutTeamSummaryQuery,
+  submitLeagueSeasonSimulationJobMutation,
   submitProductFeedbackMutation,
   fetchTeamHighlightsQuery,
   workspaceQueryKeys,
@@ -67,10 +69,13 @@ test("home workspace parsing accepts key-based tendencies and omits home connect
         teamName: "Visionaries",
       },
       league: {
+        freshnessMessage: null,
+        freshnessStatus: "FRESH",
         league: {
           id: "nbba",
           name: "NBBA",
         },
+        season: 72,
         standings: [],
       },
       nextMatch: null,
@@ -309,10 +314,13 @@ test("league intel parsing accepts enriched comparison payloads and still tolera
         ],
         season: 72,
       },
+      freshnessMessage: null,
+      freshnessStatus: "FRESH",
       league: {
         id: "nbba",
         name: "NBBA",
       },
+      season: 72,
       standings: [],
     },
     errors: null,
@@ -326,13 +334,109 @@ test("league intel parsing accepts enriched comparison payloads and still tolera
   assert.equal(league.comparisons.arena[0]?.totalCapacity, 20793);
 });
 
+test("league season simulation parsing accepts current-season selection strategies", async (t) => {
+  installQueryMock(t, "getLatestLeagueSeasonSimulation", async () => ({
+    data: {
+      completedAt: "2026-05-01T00:10:00.000Z",
+      executionArn: "arn:simulation-1",
+      jobId: "simulation-1",
+      leagueId: "league-1",
+      leagueName: "NBBA",
+      progress: {
+        completedPhases: [],
+        phaseCount: 7,
+        phaseIndex: 5,
+        phaseKey: "SUCCEEDED",
+        summary: "Projected final standings are ready.",
+        updatedAt: "2026-05-01T00:10:00.000Z",
+      },
+      requestedAt: "2026-05-01T00:00:00.000Z",
+      result: {
+        conferences: [
+          {
+            conferenceIndex: 0,
+            teams: [
+              {
+                averageFinish: 1.7,
+                currentLosses: 2,
+                currentPointMargin: 41,
+                currentWins: 4,
+                expectedLosses: 6.2,
+                expectedPointMargin: 88.4,
+                expectedWins: 10.8,
+                finishProbabilities: [{ place: 1, probability: 0.62 }],
+                firstPlaceProbability: 0.62,
+                snapshot: {
+                  candidateGameCount: 4,
+                  defense: "23Zone",
+                  offense: "Motion",
+                  selectionStrategy: "CURRENT_SEASON_15TH_PERCENTILE",
+                  teamId: "our-1",
+                },
+                standingsIndex: 0,
+                teamId: "our-1",
+                teamName: "Visionaries",
+                winsP10: 9.4,
+                winsP50: 10.7,
+                winsP90: 12.1,
+              },
+            ],
+          },
+        ],
+        generatedAt: "2026-05-01T00:10:00.000Z",
+        leagueId: "league-1",
+        leagueName: "NBBA",
+        lowSampleTeamCount: 0,
+        modelVersion: "sim-v1",
+        remainingGames: [],
+        residualSigma: 10,
+        season: 68,
+        simulationCount: 10000,
+      },
+      season: 68,
+      status: "SUCCEEDED",
+      teamId: "our-1",
+      teamName: "Visionaries",
+    },
+    errors: null,
+  }));
+
+  const snapshot = await fetchLatestLeagueSeasonSimulationQuery();
+
+  assert.equal(
+    snapshot!.result!.conferences[0]!.teams[0]!.snapshot.selectionStrategy,
+    "CURRENT_SEASON_15TH_PERCENTILE",
+  );
+  assert.equal(snapshot!.result!.simulationCount, 10000);
+  assert.equal(snapshot!.result!.residualSigma, 10);
+  assert.equal(snapshot!.result!.conferences[0]!.teams[0]!.winsP50, 10.7);
+});
+
+test("league season simulation mutation returns the queued job envelope", async (t) => {
+  installMutationMock(t, "submitLeagueSeasonSimulationJob", async () => ({
+    data: {
+      executionArn: "arn:simulation-1",
+      jobId: "simulation-1",
+    },
+    errors: null,
+  }));
+
+  const result = await submitLeagueSeasonSimulationJobMutation();
+
+  assert.equal(result.jobId, "simulation-1");
+  assert.equal(result.executionArn, "arn:simulation-1");
+});
+
 test("league intel parsing still accepts standings-only payloads", async (t) => {
   installQueryMock(t, "getLeagueIntel", async () => ({
     data: {
+      freshnessMessage: null,
+      freshnessStatus: "FRESH",
       league: {
         id: "nbba",
         name: "NBBA",
       },
+      season: 72,
       standings: [
         {
           index: 0,
@@ -356,6 +460,31 @@ test("league intel parsing still accepts standings-only payloads", async (t) => 
   assert.ok(league);
   assert.equal(league.comparisons, undefined);
   assert.equal(league.standings[0]?.teams[0]?.teamId, "our-1");
+});
+
+test("league intel parsing accepts an explicit unavailable freshness payload", async (t) => {
+  installQueryMock(t, "getLeagueIntel", async () => ({
+    data: {
+      comparisons: null,
+      freshnessMessage:
+        "Live league standings are unavailable right now. League tables and projections stay hidden until a fresh refresh succeeds.",
+      freshnessStatus: "UNAVAILABLE",
+      league: {
+        id: "nbba",
+        name: "NBBA",
+      },
+      season: 72,
+      standings: [],
+    },
+    errors: null,
+  }));
+
+  const league = await fetchLeagueIntelQuery();
+
+  assert.ok(league);
+  assert.equal(league.freshnessStatus, "UNAVAILABLE");
+  assert.equal(league.season, 72);
+  assert.equal(league.standings.length, 0);
 });
 
 test("team highlights parsing accepts string periods from the generated API contract", async (t) => {
@@ -621,10 +750,13 @@ test("next-game reconnect refresh clears wizard caches and reloads the current n
         teamName: "Visionaries",
       },
       league: {
+        freshnessMessage: null,
+        freshnessStatus: "FRESH",
         league: {
           id: "nbba",
           name: "NBBA",
         },
+        season: 72,
         standings: [],
       },
       nextMatch: {

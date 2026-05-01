@@ -1,10 +1,14 @@
 import { env } from "$amplify/env/prune-operational-data";
 
 import {
+  deleteLeagueSeasonSimulationArtifact,
+  deleteLeagueSeasonSimulationJob,
   deleteNextGamePlannerArtifact,
   deleteNextGamePlannerArtifactRow,
   deleteNextGameRecommendationJob,
   deleteOpponentForecastJob,
+  listExpiredLeagueSeasonSimulationArtifacts,
+  listExpiredLeagueSeasonSimulationJobs,
   listExpiredNextGamePlannerArtifacts,
   listExpiredNextGameRecommendationJobs,
   listExpiredOpponentForecastJobs,
@@ -14,6 +18,8 @@ import {
 } from "../_backend/repository";
 
 export const handler = async (): Promise<{
+  deletedLeagueSeasonSimulationJobs: number;
+  deletedLeagueSeasonSimulationArtifacts: number;
   deletedNextGamePlannerArtifacts: number;
   deletedNextGamePlannerArtifactRows: number;
   deletedNextGameRecommendationJobs: number;
@@ -52,6 +58,42 @@ export const handler = async (): Promise<{
 
     opponentForecastJobNextToken = page.nextToken;
   } while (opponentForecastJobNextToken);
+
+  let deletedLeagueSeasonSimulationJobs = 0;
+  let deletedLeagueSeasonSimulationArtifacts = 0;
+  let leagueSeasonSimulationArtifactNextToken: string | null = null;
+  do {
+    const page = await listExpiredLeagueSeasonSimulationArtifacts(env, now, {
+      limit: 100,
+      nextToken: leagueSeasonSimulationArtifactNextToken,
+    });
+
+    for (const artifact of page.records) {
+      await deleteLeagueSeasonSimulationArtifact(env, {
+        artifactKey: artifact.artifactKey,
+        artifactType: artifact.artifactType,
+        jobId: artifact.jobId,
+      });
+      deletedLeagueSeasonSimulationArtifacts += 1;
+    }
+
+    leagueSeasonSimulationArtifactNextToken = page.nextToken;
+  } while (leagueSeasonSimulationArtifactNextToken);
+
+  let leagueSeasonSimulationNextToken: string | null = null;
+  do {
+    const page = await listExpiredLeagueSeasonSimulationJobs(env, now, {
+      limit: 100,
+      nextToken: leagueSeasonSimulationNextToken,
+    });
+
+    for (const job of page.records) {
+      await deleteLeagueSeasonSimulationJob(env, job.id);
+      deletedLeagueSeasonSimulationJobs += 1;
+    }
+
+    leagueSeasonSimulationNextToken = page.nextToken;
+  } while (leagueSeasonSimulationNextToken);
 
   let deletedNextGameRecommendationJobs = 0;
   let nextGameRecommendationNextToken: string | null = null;
@@ -110,6 +152,8 @@ export const handler = async (): Promise<{
   } while (nextGamePlannerArtifactNextToken);
 
   return {
+    deletedLeagueSeasonSimulationArtifacts,
+    deletedLeagueSeasonSimulationJobs,
     deletedNextGamePlannerArtifacts,
     deletedNextGamePlannerArtifactRows,
     deletedNextGameRecommendationJobs,

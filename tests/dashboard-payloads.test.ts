@@ -387,6 +387,53 @@ test("workspace bootstrap auto-refreshes only once after connected empty states 
   );
 });
 
+test("league workspace auto-refreshes unavailable live standings", () => {
+  assert.equal(
+    workspaceHookTesting.shouldAutoRefreshLeagueIntel({
+      activeSection: "league",
+      connected: true,
+      freshnessStatus: "UNAVAILABLE",
+      isLoadingWorkspaceData: false,
+      isRefreshingWorkspace: false,
+      showCredentialForm: false,
+    }),
+    true,
+  );
+  assert.equal(
+    workspaceHookTesting.shouldAutoRefreshLeagueIntel({
+      activeSection: "home",
+      connected: true,
+      freshnessStatus: "UNAVAILABLE",
+      isLoadingWorkspaceData: false,
+      isRefreshingWorkspace: false,
+      showCredentialForm: false,
+    }),
+    false,
+  );
+  assert.equal(
+    workspaceHookTesting.shouldAutoRefreshLeagueIntel({
+      activeSection: "league",
+      connected: true,
+      freshnessStatus: "FRESH",
+      isLoadingWorkspaceData: false,
+      isRefreshingWorkspace: false,
+      showCredentialForm: false,
+    }),
+    false,
+  );
+  assert.equal(
+    workspaceHookTesting.shouldAutoRefreshLeagueIntel({
+      activeSection: "league",
+      connected: true,
+      freshnessStatus: "UNAVAILABLE",
+      isLoadingWorkspaceData: false,
+      isRefreshingWorkspace: true,
+      showCredentialForm: false,
+    }),
+    false,
+  );
+});
+
 test("next-game usable roster copy separates loading, error, and exclusion-driven empty states", () => {
   assert.deepStrictEqual(
     nextGameWizardTesting.resolveUsableRosterState({
@@ -902,6 +949,25 @@ test("dashboard onboarding refreshes the workspace immediately after a successfu
     source,
     /onConnected=\{async \(status\) => \{[\s\S]*if \(status === "CONNECTED"\) \{[\s\S]*if \(activeSection === "next-game"\) \{[\s\S]*await refreshNextGameAfterConnectionUpdate\(queryClient\);[\s\S]*return;[\s\S]*\}[\s\S]*await handleRefresh\(\);/,
   );
+});
+
+test("dashboard app keeps saved-snapshot warnings on the connection card and lets the league panel use payload freshness", () => {
+  const source = readFileSync(
+    new URL("../app/dashboard-app.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /formatConnectionHealthStatus\(\s*connection\?\.status,\s*connection\?\.lastSyncError,/s,
+  );
+  assert.match(
+    source,
+    /connectedConnection\.lastSyncError \?\?\s*"Club data is up to date\."/,
+  );
+  assert.doesNotMatch(source, /syncWarning=\{/);
+  assert.match(source, /workspace\.leagueIntel\?\.freshnessStatus \?\? null/);
+  assert.match(source, /isRefreshingLeague=\{isLoadingWorkspace\}/);
 });
 
 test("forecast context can still resolve from scout summary when schedule data is absent", () => {

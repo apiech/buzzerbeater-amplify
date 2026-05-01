@@ -1,8 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { LeagueIntelPayload } from "@/app/types";
+import {
+  leagueSeasonSimulationQueryOptions,
+  submitLeagueSeasonSimulationJobMutation,
+  workspaceQueryKeys,
+} from "@/app/dashboard/workspace-query-client";
+import type {
+  LeagueIntelPayload,
+  LeagueSeasonSimulationProgress,
+  LeagueSeasonSimulationResult,
+  LeagueSeasonSimulationSnapshot,
+} from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { cn } from "@/app/ui/primitives/cn";
@@ -16,20 +27,38 @@ import {
 
 type LeaguePanelProps = {
   currentTeamId: string | null;
+  isRefreshingLeague?: boolean;
   league: LeagueIntelPayload | null;
 };
 
-type LeagueViewId = "standings" | "offense" | "defense" | "payroll" | "arena";
+type LeagueViewId =
+  | "standings"
+  | "projection"
+  | "offense"
+  | "defense"
+  | "payroll"
+  | "arena";
 
 type LeagueComparisonMetricTriplet = NonNullable<
   NonNullable<LeagueIntelPayload["comparisons"]>["offense"][number]["points"]
 >;
+
+const activeProjectionStatuses = new Set<
+  LeagueSeasonSimulationSnapshot["status"]
+>([
+  "QUEUED",
+  "RESOLVING_CONTEXT",
+  "COLLECTING_SNAPSHOTS",
+  "SCORING_GAMES",
+  "RUNNING_SIMULATIONS",
+]);
 
 const leagueViewOptions: Array<{
   id: LeagueViewId;
   label: string;
 }> = [
   { id: "standings", label: "Standings" },
+  { id: "projection", label: "Projection" },
   { id: "offense", label: "Offense" },
   { id: "defense", label: "Defense" },
   { id: "payroll", label: "Payroll" },
@@ -39,14 +68,48 @@ const leagueViewOptions: Array<{
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
+const decimalFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+  minimumFractionDigits: 0,
+});
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: 0,
   style: "currency",
 });
 
-export function LeaguePanel({ currentTeamId, league }: LeaguePanelProps) {
+export function LeaguePanel({
+  currentTeamId,
+  isRefreshingLeague = false,
+  league,
+}: LeaguePanelProps) {
   const [activeViewId, setActiveViewId] = useState<LeagueViewId>("standings");
+  const freshnessStatus =
+    league?.freshnessStatus ??
+    (league?.standings.length ? "FRESH" : "UNAVAILABLE");
+  const isFreshLeague = freshnessStatus === "FRESH";
+  const queryClient = useQueryClient();
+  const projectionQuery = useQuery({
+    ...leagueSeasonSimulationQueryOptions(),
+    enabled: Boolean(league) && isFreshLeague && activeViewId === "projection",
+    placeholderData: (previous) => previous,
+    refetchInterval: (query) => {
+      const snapshot = query.state.data;
+      if (!snapshot || !activeProjectionStatuses.has(snapshot.status)) {
+        return false;
+      }
+      return 4000;
+    },
+    retry: false,
+  });
+  const submitProjectionMutation = useMutation({
+    mutationFn: submitLeagueSeasonSimulationJobMutation,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: workspaceQueryKeys.leagueSeasonSimulation,
+      });
+    },
+  });
 
   if (!league) {
     return (
@@ -60,57 +123,109 @@ export function LeaguePanel({ currentTeamId, league }: LeaguePanelProps) {
   }
 
   const standingsRows = flattenLeagueStandings(league);
-  const comparisons = league.comparisons ?? null;
+  const comparisons = isFreshLeague ? (league.comparisons ?? null) : null;
+  const projection = projectionQuery.data ?? null;
+  const seasonLabel = league.season ?? comparisons?.season ?? null;
 
   return (
     <Panel>
       <SectionHeading
         eyebrow="League"
         title={league.league?.name ?? "League"}
-        description="Standings plus team-by-team offense, defense, payroll, and arena comparisons from the latest synced league snapshot."
+        description={
+          isFreshLeague
+            ? "Standings plus team-by-team offense, defense, payroll, and arena comparisons from the latest synced league snapshot."
+            : "Live league standings, team comparisons, and season projection for your current conference."
+        }
         actions={
-          <div className="flex flex-wrap gap-2">
-            {leagueViewOptions.map((option) => (
-              <Button
-                key={option.id}
-                onClick={() => setActiveViewId(option.id)}
-                size="sm"
-                variant={activeViewId === option.id ? "secondary" : "ghost"}
-              >
-                {option.label}
-              </Button>
-            ))}
-          </div>
+          isFreshLeague ? (
+            <div className="flex flex-wrap gap-2">
+              {leagueViewOptions.map((option) => (
+                <Button
+                  key={option.id}
+                  onClick={() => setActiveViewId(option.id)}
+                  size="sm"
+                  variant={activeViewId === option.id ? "secondary" : "ghost"}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          ) : null
         }
       />
 
-      {comparisons ? (
+      {isFreshLeague && (seasonLabel !== null || comparisons) ? (
         <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
-          <span>Season {comparisons.season ?? "Current"}</span>
-          <span>
-            Built {new Date(comparisons.builtAt).toLocaleString("en-US")}
-          </span>
+          {seasonLabel !== null ? <span>Season {seasonLabel}</span> : null}
+          {comparisons ? (
+            <span>
+              Built {new Date(comparisons.builtAt).toLocaleString("en-US")}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
-      {comparisons?.incompleteTeamCount ? (
+      {!isFreshLeague ? (
+        isRefreshingLeague ? (
+          <Alert aria-busy="true" tone="note">
+            <span className="inline-flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="size-2 rounded-full bg-current opacity-70 motion-safe:animate-pulse"
+              />
+              Refreshing live league standings now. Tables and projections will
+              appear as soon as current-season data is ready.
+            </span>
+          </Alert>
+        ) : (
+          <Alert tone="note">
+            {describeUnavailableLeagueState(league.freshnessMessage ?? null)}
+          </Alert>
+        )
+      ) : null}
+
+      {isFreshLeague && comparisons?.incompleteTeamCount ? (
         <Alert tone="note">
           {describeLeagueComparisonState(comparisons.incompleteTeamCount)}
         </Alert>
       ) : null}
 
-      {!standingsRows.length ? (
+      {!isFreshLeague ? (
+        <p className="text-sm leading-7 text-ink-muted">
+          This section refreshes itself when live standings are missing, and it
+          keeps previous-season league membership hidden until the current table
+          is confirmed.
+        </p>
+      ) : null}
+
+      {isFreshLeague && !standingsRows.length ? (
         <p className="text-sm leading-7 text-ink-muted">
           No league standings are ready yet.
         </p>
       ) : null}
 
-      {standingsRows.length ? (
+      {isFreshLeague && standingsRows.length ? (
         <>
           {activeViewId === "standings" ? (
             <StandingsTable
               currentTeamId={currentTeamId}
               rows={standingsRows}
+            />
+          ) : null}
+          {activeViewId === "projection" ? (
+            <ProjectionView
+              currentTeamId={currentTeamId}
+              projection={projection}
+              runProjection={() => submitProjectionMutation.mutate()}
+              runningError={
+                projectionQuery.error instanceof Error
+                  ? projectionQuery.error.message
+                  : submitProjectionMutation.error instanceof Error
+                    ? submitProjectionMutation.error.message
+                    : null
+              }
+              submitPending={submitProjectionMutation.isPending}
             />
           ) : null}
           {activeViewId === "offense" ? (
@@ -153,6 +268,302 @@ export function LeaguePanel({ currentTeamId, league }: LeaguePanelProps) {
         </>
       ) : null}
     </Panel>
+  );
+}
+
+function ProjectionView({
+  currentTeamId,
+  projection,
+  runProjection,
+  runningError,
+  submitPending,
+}: {
+  currentTeamId: string | null;
+  projection: LeagueSeasonSimulationSnapshot | null;
+  runProjection: () => void;
+  runningError: string | null;
+  submitPending: boolean;
+}) {
+  const result = projection?.result ?? null;
+  const progress = projection?.progress ?? null;
+  const active = projection ? activeProjectionStatuses.has(projection.status) : false;
+  const currentTeamProjection = result
+    ? findCurrentTeamProjection(result, currentTeamId)
+    : null;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-1">
+          <p className="text-sm leading-7 text-ink-muted">
+            Run a Monte Carlo rest-of-season projection with current standings,
+            remaining league games, and per-matchup minimax tactic probabilities.
+          </p>
+          {projection ? (
+            <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
+              <span>Season {projection.season}</span>
+              <span>Status {projection.status}</span>
+              <span>
+                Requested {new Date(projection.requestedAt).toLocaleString("en-US")}
+              </span>
+            </div>
+          ) : null}
+        </div>
+        <Button
+          loading={submitPending}
+          onClick={runProjection}
+          size="sm"
+          variant="secondary"
+        >
+          {projection ? "Rerun projection" : "Run projection"}
+        </Button>
+      </div>
+
+      {runningError ? <Alert tone="danger">{runningError}</Alert> : null}
+
+      {projection?.status === "FAILED" && projection.error ? (
+        <Alert tone="danger">{projection.error}</Alert>
+      ) : null}
+
+      {active && progress ? (
+        <Alert tone="note">{describeProjectionProgress(progress)}</Alert>
+      ) : null}
+
+      {!projection ? (
+        <Alert tone="note">
+          No season projection has been generated for the current league yet.
+        </Alert>
+      ) : null}
+
+      {currentTeamProjection ? (
+        <Alert tone="note">
+          {currentTeamProjection.teamName ?? "Your team"} projects to{" "}
+          {formatProjectedRecord(
+            currentTeamProjection.expectedWins,
+            currentTeamProjection.expectedLosses,
+          )}{" "}
+          with an average finish of{" "}
+          {decimalFormatter.format(currentTeamProjection.averageFinish)} and a{" "}
+          {formatProbability(currentTeamProjection.firstPlaceProbability)} chance
+          to finish first.
+        </Alert>
+      ) : null}
+
+      {result ? (
+        <>
+          <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
+            <span>
+              Built {new Date(result.generatedAt).toLocaleString("en-US")}
+            </span>
+            <span>
+              {numberFormatter.format(result.simulationCount)} simulations
+            </span>
+            <span>
+              Residual sigma {decimalFormatter.format(result.residualSigma)}
+            </span>
+            {result.modelVersion ? <span>{result.modelVersion}</span> : null}
+          </div>
+
+          {result.lowSampleTeamCount > 0 ? (
+            <Alert tone="note">
+              {result.lowSampleTeamCount} team
+              {result.lowSampleTeamCount === 1 ? "" : "s"} relied on a small or
+              fallback historical sample. Check the snapshot notes in the table
+              below.
+            </Alert>
+          ) : null}
+
+          <Alert tone="note">
+            Canonical standings rank teams by expected wins and expected point
+            margin. Finish odds and win ranges come from{" "}
+            {numberFormatter.format(result.simulationCount)} simulated seasons.
+          </Alert>
+
+          {result.conferences.map((conference) => (
+            <ProjectionConferenceTable
+              conference={conference}
+              currentTeamId={currentTeamId}
+              key={conference.conferenceIndex}
+            />
+          ))}
+
+          <ProjectionGamesTable games={result.remainingGames} />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectionConferenceTable({
+  conference,
+  currentTeamId,
+}: {
+  conference: LeagueSeasonSimulationResult["conferences"][number];
+  currentTeamId: string | null;
+}) {
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-semibold tracking-[0.08em] text-ink uppercase">
+        Conference {conference.conferenceIndex + 1}
+      </h3>
+      <TableShell>
+        <thead>
+          <tr>
+            <TableHeadCell className="pl-0">Team</TableHeadCell>
+            <TableHeadCell className="text-right">Current</TableHeadCell>
+            <TableHeadCell className="text-right">Projected</TableHeadCell>
+            <TableHeadCell className="text-right">Wins range</TableHeadCell>
+            <TableHeadCell className="text-right">Avg finish</TableHeadCell>
+            <TableHeadCell className="text-right">1st</TableHeadCell>
+            <TableHeadCell>Finish odds</TableHeadCell>
+            <TableHeadCell>Snapshot</TableHeadCell>
+          </tr>
+        </thead>
+        <tbody>
+          {conference.teams.map((team) => {
+            const highlighted = isCurrentLeagueTeamRow(team.teamId, currentTeamId);
+            return (
+              <tr key={buildLeagueRowKey(team.teamId, team.standingsIndex)}>
+                <TableCell className={leagueRowCellClassName(highlighted, "pl-0")}>
+                  <span className={highlighted ? "font-semibold" : undefined}>
+                    {team.teamName ?? "Unknown team"}
+                  </span>
+                </TableCell>
+                <TableCell
+                  className={leagueRowCellClassName(
+                    highlighted,
+                    "text-right tabular-nums",
+                  )}
+                >
+                  {formatRecord(team.currentWins, team.currentLosses)}
+                </TableCell>
+                <TableCell
+                  className={leagueRowCellClassName(
+                    highlighted,
+                    "text-right tabular-nums",
+                  )}
+                >
+                  {formatProjectedRecord(team.expectedWins, team.expectedLosses)}
+                </TableCell>
+                <TableCell
+                  className={leagueRowCellClassName(
+                    highlighted,
+                    "text-right tabular-nums",
+                  )}
+                >
+                  {formatWinsPercentiles(team.winsP10, team.winsP50, team.winsP90)}
+                </TableCell>
+                <TableCell
+                  className={leagueRowCellClassName(
+                    highlighted,
+                    "text-right tabular-nums",
+                  )}
+                >
+                  {decimalFormatter.format(team.averageFinish)}
+                </TableCell>
+                <TableCell
+                  className={leagueRowCellClassName(
+                    highlighted,
+                    "text-right tabular-nums",
+                  )}
+                >
+                  {formatProbability(team.firstPlaceProbability)}
+                </TableCell>
+                <TableCell className={leagueRowCellClassName(highlighted)}>
+                  <span className="text-sm leading-6 text-ink-muted">
+                    {formatFinishDistribution(team.finishProbabilities)}
+                  </span>
+                </TableCell>
+                <TableCell className={leagueRowCellClassName(highlighted)}>
+                  <div className="space-y-1 text-sm leading-6">
+                    <div>
+                      Source tactics: {team.snapshot.offense} /{" "}
+                      {team.snapshot.defense}
+                    </div>
+                    <div className="text-ink-muted">
+                      {describeProjectionSelectionStrategy(
+                        team.snapshot.selectionStrategy,
+                      )}
+                    </div>
+                    {team.snapshot.sourceMatchId ? (
+                      <div className="text-ink-muted">
+                        Source {team.snapshot.sourceMatchId}
+                        {typeof team.snapshot.sourceSeason === "number"
+                          ? ` · S${team.snapshot.sourceSeason}`
+                          : ""}
+                      </div>
+                    ) : null}
+                    {team.snapshot.sampleWarning ? (
+                      <div className="text-ink-muted">
+                        {team.snapshot.sampleWarning}
+                      </div>
+                    ) : null}
+                  </div>
+                </TableCell>
+              </tr>
+            );
+          })}
+        </tbody>
+      </TableShell>
+    </div>
+  );
+}
+
+function ProjectionGamesTable({
+  games,
+}: {
+  games: LeagueSeasonSimulationResult["remainingGames"];
+}) {
+  if (!games.length) {
+    return (
+      <Alert tone="note">
+        No remaining regular-season league games were found for this projection.
+      </Alert>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-semibold tracking-[0.08em] text-ink uppercase">
+        Remaining game probabilities
+      </h3>
+      <TableShell>
+        <thead>
+          <tr>
+            <TableHeadCell className="pl-0">Tip-off</TableHeadCell>
+            <TableHeadCell>Matchup</TableHeadCell>
+            <TableHeadCell>Minimax tactics</TableHeadCell>
+            <TableHeadCell className="text-right">Expected</TableHeadCell>
+            <TableHeadCell className="text-right">Home win</TableHeadCell>
+          </tr>
+        </thead>
+        <tbody>
+          {games.map((game) => (
+            <tr key={game.matchId}>
+              <TableCell className="pl-0 text-sm text-ink-muted">
+                {game.startTime
+                  ? new Date(game.startTime).toLocaleString("en-US")
+                  : "TBD"}
+              </TableCell>
+              <TableCell>
+                {game.homeTeamName ?? "Home"} vs {game.awayTeamName ?? "Away"}
+              </TableCell>
+              <TableCell className="text-sm text-ink-muted">
+                Home {game.homeOffense} / {game.homeDefense} · Away{" "}
+                {game.awayOffense} / {game.awayDefense}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {decimalFormatter.format(game.expectedHomeScore)}-
+                {decimalFormatter.format(game.expectedAwayScore)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {formatProbability(game.homeWinProbability)}
+              </TableCell>
+            </tr>
+          ))}
+        </tbody>
+      </TableShell>
+    </div>
   );
 }
 
@@ -623,6 +1034,17 @@ function formatRecord(
   return `${wins}-${losses}`;
 }
 
+function formatProjectedRecord(
+  wins: number | null | undefined,
+  losses: number | null | undefined,
+): string {
+  if (typeof wins !== "number" || typeof losses !== "number") {
+    return "—";
+  }
+
+  return `${formatProjectionNumber(wins)}-${formatProjectionNumber(losses)}`;
+}
+
 function formatSignedNumber(value: number | null | undefined): string {
   if (typeof value !== "number") {
     return "—";
@@ -651,6 +1073,110 @@ function formatTripletMetric(
   return value.toFixed(1);
 }
 
+function formatProjectionNumber(value: number): string {
+  return Number.isInteger(value)
+    ? numberFormatter.format(value)
+    : decimalFormatter.format(value);
+}
+
+function formatWinsPercentiles(
+  p10: number | null | undefined,
+  p50: number | null | undefined,
+  p90: number | null | undefined,
+): string {
+  if (
+    typeof p10 !== "number" ||
+    typeof p50 !== "number" ||
+    typeof p90 !== "number"
+  ) {
+    return "—";
+  }
+
+  return `${formatProjectionNumber(p10)} / ${formatProjectionNumber(p50)} / ${formatProjectionNumber(p90)}`;
+}
+
+function formatProbability(value: number | null | undefined): string {
+  if (typeof value !== "number") {
+    return "—";
+  }
+
+  return `${decimalFormatter.format(value * 100)}%`;
+}
+
+function formatFinishDistribution(
+  probabilities: ReadonlyArray<{
+    place: number;
+    probability: number;
+  }>,
+): string {
+  const formatted = probabilities
+    .filter((entry) => entry.probability > 0.01)
+    .map((entry) => `${entry.place}: ${formatProbability(entry.probability)}`)
+    .join(" · ");
+  return formatted || "—";
+}
+
+function describeUnavailableLeagueState(message: string | null): string {
+  if (
+    message &&
+    !/fresh refresh succeeds/i.test(message) &&
+    !/Live league standings are unavailable right now/i.test(message)
+  ) {
+    return message;
+  }
+
+  return "Live league standings could not be confirmed after the latest refresh. This section will retry automatically and will not show previous-season league membership as current.";
+}
+
+function describeProjectionSelectionStrategy(
+  strategy:
+    | "BEST_AVAILABLE"
+    | "CURRENT_SEASON_15TH_PERCENTILE"
+    | "LEAGUE_AVERAGE_FALLBACK"
+    | "MULTI_SEASON_THIRD_BEST",
+): string {
+  switch (strategy) {
+    case "CURRENT_SEASON_15TH_PERCENTILE":
+      return "Current-season 15th percentile snapshot";
+    case "MULTI_SEASON_THIRD_BEST":
+      return "Multi-season third-best fallback snapshot";
+    case "BEST_AVAILABLE":
+      return "Best available historical snapshot";
+    case "LEAGUE_AVERAGE_FALLBACK":
+      return "League-average fallback snapshot";
+  }
+}
+
+function describeProjectionProgress(
+  progress: LeagueSeasonSimulationProgress,
+): string {
+  const unitSummary =
+    typeof progress.completedUnits === "number" &&
+    typeof progress.totalUnits === "number" &&
+    progress.unitLabel
+      ? ` ${numberFormatter.format(progress.completedUnits)} of ${numberFormatter.format(progress.totalUnits)} ${progress.unitLabel}.`
+      : "";
+  return `${progress.summary}${unitSummary}`;
+}
+
+function findCurrentTeamProjection(
+  result: LeagueSeasonSimulationResult,
+  currentTeamId: string | null,
+) {
+  if (!currentTeamId) {
+    return null;
+  }
+
+  for (const conference of result.conferences) {
+    const match = conference.teams.find((team) => team.teamId === currentTeamId);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
 export function isCurrentLeagueTeamRow(
   rowTeamId: string | null | undefined,
   currentTeamId: string | null,
@@ -659,7 +1185,11 @@ export function isCurrentLeagueTeamRow(
 }
 
 export const __testing = {
+  describeUnavailableLeagueState,
+  describeProjectionProgress,
+  describeProjectionSelectionStrategy,
   describeLeagueComparisonState,
+  formatFinishDistribution,
   flattenLeagueStandings,
   isCurrentLeagueTeamRow,
 };

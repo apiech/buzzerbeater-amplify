@@ -19,6 +19,7 @@ type QueryName =
   | "getHomeWorkspace"
   | "getLeagueHistory"
   | "getLeagueIntel"
+  | "getLatestLeagueSeasonSimulation"
   | "getLatestNextGameRecommendation"
   | "getNextGamePlannerDetail"
   | "getLatestOpponentForecast"
@@ -53,6 +54,7 @@ type MutationName =
   | "submitLeagueHistoryBackfill"
   | "submitLeagueGameDayRecap"
   | "submitLeagueGameDayPerformances"
+  | "submitLeagueSeasonSimulationJob"
   | "submitMyTeamHighlightsScan"
   | "submitNextGameRecommendationJob"
   | "submitOpponentForecastJob"
@@ -118,6 +120,10 @@ const queryOperations = {
         queryInput?: QueryInput<"getLeagueIntel">,
       ) => Promise<OperationResult<QueryOutput<"getLeagueIntel">>>
     )(optionalInput(input)),
+  getLatestLeagueSeasonSimulation: async () =>
+    (
+      await runtime.getServerDataClient()
+    ).queries.getLatestLeagueSeasonSimulation(),
   getLatestNextGameRecommendation: async (
     input: QueryInput<"getLatestNextGameRecommendation">,
   ) =>
@@ -278,6 +284,10 @@ const mutationOperations = {
     (
       await runtime.getServerDataClient()
     ).mutations.submitLeagueGameDayPerformances(requiredInput(input)),
+  submitLeagueSeasonSimulationJob: async () =>
+    (
+      await runtime.getServerDataClient()
+    ).mutations.submitLeagueSeasonSimulationJob(),
   submitMyTeamHighlightsScan: async () =>
     (
       await runtime.getServerDataClient()

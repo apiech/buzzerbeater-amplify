@@ -74,6 +74,24 @@ export function formatConnectionStatus(
   return humanizeTechnicalText(status);
 }
 
+export function hasConnectionSnapshotWarning(
+  status: string | null | undefined,
+  lastSyncError: string | null | undefined,
+): boolean {
+  return normalizeStatusValue(status) === "connected" && Boolean(lastSyncError?.trim());
+}
+
+export function formatConnectionHealthStatus(
+  status: string | null | undefined,
+  lastSyncError: string | null | undefined,
+): string {
+  if (hasConnectionSnapshotWarning(status, lastSyncError)) {
+    return "Using saved snapshot";
+  }
+
+  return formatConnectionStatus(status);
+}
+
 export function formatPreviewStatus(
   status: string | null | undefined,
 ): string {

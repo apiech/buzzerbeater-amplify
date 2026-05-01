@@ -6,6 +6,10 @@ declare module "$amplify/env/get-latest-next-game-recommendation" {
   export const env: Record<string, string | undefined>;
 }
 
+declare module "$amplify/env/get-latest-league-season-simulation" {
+  export const env: Record<string, string | undefined>;
+}
+
 declare module "$amplify/env/get-next-game-planner-detail" {
   export const env: Record<string, string | undefined>;
 }
@@ -27,6 +31,18 @@ declare module "$amplify/env/next-game-recommendation-submit" {
 }
 
 declare module "$amplify/env/next-game-recommendation-worker" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/league-season-simulation-submit" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/league-season-simulation-worker" {
+  export const env: Record<string, string | undefined>;
+}
+
+declare module "$amplify/env/league-season-simulation-failure-finalizer" {
   export const env: Record<string, string | undefined>;
 }
 

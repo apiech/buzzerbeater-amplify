@@ -219,6 +219,9 @@ export type RepairOwnerRosterDataResult = NonNullable<
 export type SubmitNextGameRecommendationJobResult = NonNullable<
   Schema["submitNextGameRecommendationJob"]["returnType"]
 >;
+export type SubmitLeagueSeasonSimulationJobResult = NonNullable<
+  Schema["submitLeagueSeasonSimulationJob"]["returnType"]
+>;
 export type SubmitPredictionJobResult = NonNullable<
   Schema["submitPredictionJob"]["returnType"]
 >;
@@ -270,6 +273,9 @@ export type LeagueHistoryAuditPayload = NonNullable<
 >;
 export type LeagueHistoryPayload = NonNullable<
   Schema["getLeagueHistory"]["returnType"]
+>;
+export type LeagueSeasonSimulationSnapshot = NonNullable<
+  Schema["getLatestLeagueSeasonSimulation"]["returnType"]
 >;
 export type OpponentForecastSnapshot = NonNullable<
   Schema["getLatestOpponentForecast"]["returnType"]
@@ -355,8 +361,14 @@ export type OpponentForecastResult = NonNullable<
 export type NextGameRecommendationResult = NonNullable<
   NextGameRecommendationSnapshot["result"]
 >;
+export type LeagueSeasonSimulationResult = NonNullable<
+  LeagueSeasonSimulationSnapshot["result"]
+>;
 export type NextGameRecommendationProgress = NonNullable<
   NextGameRecommendationSnapshot["progress"]
+>;
+export type LeagueSeasonSimulationProgress = NonNullable<
+  LeagueSeasonSimulationSnapshot["progress"]
 >;
 export type NextGameRecommendationCompletedPhase =
   NextGameRecommendationProgress["completedPhases"][number];

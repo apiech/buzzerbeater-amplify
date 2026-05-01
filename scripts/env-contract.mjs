@@ -362,6 +362,16 @@ export const envContract = {
         "Backend-injected Step Functions state machine ARN wired during synth for next-game recommendation submit lambdas.",
     },
     {
+      name: "LEAGUE_SEASON_SIMULATION_JOB_STATE_MACHINE_ARN",
+      purpose:
+        "Backend-injected Step Functions state machine ARN wired during synth for league season simulation submit lambdas.",
+    },
+    {
+      name: "LEAGUE_SEASON_SIMULATION_PLANNER_CONCURRENCY",
+      purpose:
+        "Backend-injected worker concurrency cap for league season simulation planner batches, with sandbox-safe defaults applied during synth.",
+    },
+    {
       name: "RIVALS_BACKFILL_STATE_MACHINE_ARN",
       purpose:
         "Backend-injected Step Functions state machine ARN wired during synth for rivals backfill submit lambdas.",

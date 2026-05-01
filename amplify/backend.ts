@@ -8,6 +8,7 @@ import { configureCostVisibility } from "./_backend/cost-visibility.js";
 import { configureFeedbackNotifications } from "./_backend/feedback-notifications.js";
 import { configureGameDayRecapJobs } from "./_backend/game-day-recap-jobs.js";
 import { configureHostedComputeRole } from "./_backend/hosted-compute-role.js";
+import { configureLeagueSeasonSimulationJobs } from "./_backend/league-season-simulation-jobs.js";
 import { configureLeagueHistoryJobs } from "./_backend/league-history-jobs.js";
 import { configureMaintenanceControlPlane } from "./_backend/maintenance-control-plane.js";
 import { configureMatchStoreIntegration } from "./_backend/match-store-integration.js";
@@ -43,6 +44,7 @@ import {
   getHomeWorkspace,
   getLeagueIntel,
   getLeagueHistory,
+  getLatestLeagueSeasonSimulation,
   getLatestOpponentForecast,
   getLatestNextGameRecommendation,
   getNextGamePlannerDetail,
@@ -73,6 +75,9 @@ import {
   submitSingleGameSummary,
   lookupSharedPlayerCard,
 } from "./data/resource.js";
+import { leagueSeasonSimulationSubmit } from "./league-season-simulation-submit/resource.js";
+import { leagueSeasonSimulationFailureFinalizer } from "./league-season-simulation-failure-finalizer/resource.js";
+import { leagueSeasonSimulationWorker } from "./league-season-simulation-worker/resource.js";
 import { getAccessibleMatch } from "./get-accessible-match/resource.js";
 import { getAccessiblePlayByPlay } from "./get-accessible-play-by-play/resource.js";
 import { gameDayRecapSubmit } from "./game-day-recap-submit/resource.js";
@@ -105,6 +110,7 @@ const backend = defineBackend({
   getScoutSchedule,
   getLeagueIntel,
   getLeagueHistory,
+  getLatestLeagueSeasonSimulation,
   getLatestOpponentForecast,
   getLatestNextGameRecommendation,
   getNextGamePlannerDetail,
@@ -125,6 +131,9 @@ const backend = defineBackend({
   generateSharedPlayerCard,
   revokeSharedPlayerCard,
   lookupSharedPlayerCard,
+  leagueSeasonSimulationSubmit,
+  leagueSeasonSimulationFailureFinalizer,
+  leagueSeasonSimulationWorker,
   nextGameRecommendationSubmit,
   nextGameRecommendationWorker,
   pruneOperationalData,
@@ -170,6 +179,7 @@ configureBbConnectionSecretAccess([
   backend.getNextGamePlannerDetail,
   backend.getLeagueIntel,
   backend.getLeagueHistory,
+  backend.getLatestLeagueSeasonSimulation,
   backend.getPlayerLab,
   backend.getLineupHelperWorkspace,
   backend.evaluateLineupHelper,
@@ -187,6 +197,9 @@ configureBbConnectionSecretAccess([
   backend.pruneOperationalData,
   backend.getMatchBoxscoreDetails,
   backend.gameDayRecapWorker,
+  backend.leagueSeasonSimulationSubmit,
+  backend.leagueSeasonSimulationFailureFinalizer,
+  backend.leagueSeasonSimulationWorker,
   backend.nextGameRecommendationSubmit,
   backend.nextGameRecommendationWorker,
   backend.opponentForecastWorker,
@@ -204,6 +217,7 @@ configureMaintenanceControlPlane(backend, [
   backend.getNextGamePlannerDetail,
   backend.getLeagueIntel,
   backend.getLeagueHistory,
+  backend.getLatestLeagueSeasonSimulation,
   backend.getPlayerLab,
   backend.getRivalsWorkspace,
   backend.getLineupHelperWorkspace,
@@ -241,6 +255,8 @@ configureMaintenanceControlPlane(backend, [
   backend.gameDayRecapSubmit,
   backend.gameDayRecapFailureFinalizer,
   backend.gameDayRecapWorker,
+  backend.leagueSeasonSimulationSubmit,
+  backend.leagueSeasonSimulationWorker,
   backend.nextGameRecommendationSubmit,
   backend.nextGameRecommendationWorker,
   backend.opponentForecastSubmit,
@@ -267,6 +283,11 @@ configureGameDayRecapJobs(
 );
 configureLeagueHistoryJobs(backend, appResourceRemovalPolicy);
 configureRivalsJobs(backend, appResourceRemovalPolicy);
+configureLeagueSeasonSimulationJobs(
+  backend,
+  sharedInfraBindings,
+  appResourceRemovalPolicy,
+);
 configureOpponentForecastJobs(
   backend,
   sharedInfraBindings,

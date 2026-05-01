@@ -85,7 +85,10 @@ export function createWorkspaceCachePayload(
   const defaultHome = {
     connection: createWorkspaceCacheConnection(),
     league: {
+      freshnessMessage: null,
+      freshnessStatus: "FRESH",
       league: null,
+      season: null,
       standings: [],
     },
     nextMatch: null,
@@ -121,7 +124,10 @@ export function createWorkspaceCachePayload(
   };
 
   const defaultLeagueIntel = {
+    freshnessMessage: null,
+    freshnessStatus: "FRESH",
     league: null,
+    season: null,
     standings: [],
   };
 

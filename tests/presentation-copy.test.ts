@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatConnectionHealthStatus,
   formatConnectionStatus,
   formatHighlightsStatus,
+  hasConnectionSnapshotWarning,
   formatNextGameRecommendationStatus,
   formatOpponentForecastStatus,
   formatPreviewStatus,
@@ -16,6 +18,24 @@ test("status labels use plain-language connection copy", () => {
   assert.equal(formatConnectionStatus("CONNECTED"), "Up to date");
   assert.equal(formatConnectionStatus("SYNCING"), "Updating club data");
   assert.equal(formatConnectionStatus("FAILED"), "Needs attention");
+  assert.equal(
+    formatConnectionHealthStatus(
+      "CONNECTED",
+      "Showing your last saved club snapshot.",
+    ),
+    "Using saved snapshot",
+  );
+  assert.equal(
+    hasConnectionSnapshotWarning(
+      "CONNECTED",
+      "Showing your last saved club snapshot.",
+    ),
+    true,
+  );
+  assert.equal(
+    hasConnectionSnapshotWarning("FAILED", "Something broke."),
+    false,
+  );
 });
 
 test("status labels use plain-language preview, writeup, and highlights copy", () => {
