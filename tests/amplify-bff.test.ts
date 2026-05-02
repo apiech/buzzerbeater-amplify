@@ -117,12 +117,12 @@ test("submitLeagueGameDayPerformances is routed through the mutation BFF", async
 });
 
 test("submitLeagueSeasonSimulationJob is routed through the mutation BFF", async (t) => {
-  let calls = 0;
+  let input: Record<string, unknown> | null = null;
 
   installServerDataClient(t, {
     mutations: {
-      submitLeagueSeasonSimulationJob: async () => {
-        calls += 1;
+      submitLeagueSeasonSimulationJob: async (value: Record<string, unknown>) => {
+        input = value;
         return {
           data: {
             executionArn: "arn:simulation-1",
@@ -135,9 +135,13 @@ test("submitLeagueSeasonSimulationJob is routed through the mutation BFF", async
 
   assert.equal(isMutationName("submitLeagueSeasonSimulationJob"), true);
 
-  const result = await runMutationOperation("submitLeagueSeasonSimulationJob");
+  const result = await runMutationOperation("submitLeagueSeasonSimulationJob", {
+    leagueId: "league-2",
+  });
 
-  assert.equal(calls, 1);
+  assert.deepStrictEqual(input, {
+    leagueId: "league-2",
+  });
   assert.deepStrictEqual(result.data, {
     executionArn: "arn:simulation-1",
     jobId: "simulation-1",
@@ -321,12 +325,12 @@ test("getLatestNextGameRecommendation is routed through the query BFF", async (t
 });
 
 test("getLatestLeagueSeasonSimulation is routed through the query BFF", async (t) => {
-  let calls = 0;
+  let input: Record<string, unknown> | null = null;
 
   installServerDataClient(t, {
     queries: {
-      getLatestLeagueSeasonSimulation: async () => {
-        calls += 1;
+      getLatestLeagueSeasonSimulation: async (value: Record<string, unknown>) => {
+        input = value;
         return {
           data: {
             jobId: "simulation-1",
@@ -343,9 +347,13 @@ test("getLatestLeagueSeasonSimulation is routed through the query BFF", async (t
 
   assert.equal(isQueryName("getLatestLeagueSeasonSimulation"), true);
 
-  const result = await runQueryOperation("getLatestLeagueSeasonSimulation");
+  const result = await runQueryOperation("getLatestLeagueSeasonSimulation", {
+    leagueId: "league-2",
+  });
 
-  assert.equal(calls, 1);
+  assert.deepStrictEqual(input, {
+    leagueId: "league-2",
+  });
   assert.equal((result.data as { jobId: string }).jobId, "simulation-1");
 });
 

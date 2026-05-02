@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  leagueIntelQueryOptions,
   leagueSeasonSimulationQueryOptions,
   submitLeagueSeasonSimulationJobMutation,
   workspaceQueryKeys,
@@ -17,6 +18,7 @@ import type {
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
 import { cn } from "@/app/ui/primitives/cn";
+import { Field, Input } from "@/app/ui/primitives/field";
 import { Panel } from "@/app/ui/primitives/panel";
 import { SectionHeading } from "@/app/ui/primitives/section-heading";
 import {
@@ -84,14 +86,33 @@ export function LeaguePanel({
   league,
 }: LeaguePanelProps) {
   const [activeViewId, setActiveViewId] = useState<LeagueViewId>("standings");
+  const connectedLeagueId = normalizeLeagueId(league?.league?.id ?? null);
+  const [leagueIdInput, setLeagueIdInput] = useState("");
+  const [requestedLeagueId, setRequestedLeagueId] = useState<string | null>(null);
+  const selectedLeagueId = requestedLeagueId ?? connectedLeagueId;
+  const selectedLeagueArgs =
+    selectedLeagueId && selectedLeagueId !== connectedLeagueId
+      ? { leagueId: selectedLeagueId }
+      : undefined;
+  const isUsingConnectedLeague = !selectedLeagueArgs;
+  const leagueOverrideQuery = useQuery({
+    ...leagueIntelQueryOptions(selectedLeagueArgs),
+    enabled: Boolean(selectedLeagueArgs?.leagueId),
+    placeholderData: (previous) => previous,
+    retry: false,
+  });
+  const activeLeague = isUsingConnectedLeague
+    ? league
+    : (leagueOverrideQuery.data ?? null);
   const freshnessStatus =
-    league?.freshnessStatus ??
-    (league?.standings.length ? "FRESH" : "UNAVAILABLE");
+    activeLeague?.freshnessStatus ??
+    (activeLeague?.standings.length ? "FRESH" : "UNAVAILABLE");
   const isFreshLeague = freshnessStatus === "FRESH";
   const queryClient = useQueryClient();
   const projectionQuery = useQuery({
-    ...leagueSeasonSimulationQueryOptions(),
-    enabled: Boolean(league) && isFreshLeague && activeViewId === "projection",
+    ...leagueSeasonSimulationQueryOptions(selectedLeagueArgs),
+    enabled:
+      Boolean(activeLeague) && isFreshLeague && activeViewId === "projection",
     placeholderData: (previous) => previous,
     refetchInterval: (query) => {
       const snapshot = query.state.data;
@@ -103,13 +124,76 @@ export function LeaguePanel({
     retry: false,
   });
   const submitProjectionMutation = useMutation({
-    mutationFn: submitLeagueSeasonSimulationJobMutation,
+    mutationFn: () =>
+      submitLeagueSeasonSimulationJobMutation(selectedLeagueArgs),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: workspaceQueryKeys.leagueSeasonSimulation,
+        queryKey: workspaceQueryKeys.leagueSeasonSimulation(selectedLeagueArgs),
       });
     },
   });
+
+  useEffect(() => {
+    if (!requestedLeagueId && connectedLeagueId) {
+      setLeagueIdInput(connectedLeagueId);
+    }
+  }, [connectedLeagueId, requestedLeagueId]);
+
+  function handleLeagueSelectionSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const leagueId = normalizeLeagueId(leagueIdInput);
+    if (!leagueId || leagueId === connectedLeagueId) {
+      setRequestedLeagueId(null);
+      setLeagueIdInput(connectedLeagueId ?? "");
+      return;
+    }
+
+    setRequestedLeagueId(leagueId);
+    setLeagueIdInput(leagueId);
+    void queryClient.invalidateQueries({
+      queryKey: workspaceQueryKeys.leagueIntel({ leagueId }),
+    });
+  }
+
+  function handleUseConnectedLeague() {
+    setRequestedLeagueId(null);
+    setLeagueIdInput(connectedLeagueId ?? "");
+  }
+
+  const leaguePicker = (
+    <form
+      className="grid gap-3 rounded-[1.25rem] border border-border-soft bg-white/45 p-4 md:grid-cols-[minmax(14rem,24rem)_auto] md:items-end"
+      onSubmit={handleLeagueSelectionSubmit}
+    >
+      <Field
+        hint="Enter any BuzzerBeater league ID to inspect standings and run a projection."
+        label="League ID"
+      >
+        <Input
+          inputMode="numeric"
+          onChange={(event) => setLeagueIdInput(event.target.value)}
+          placeholder={connectedLeagueId ?? "League ID"}
+          value={leagueIdInput}
+        />
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" type="submit" variant="secondary">
+          Load league
+        </Button>
+        {connectedLeagueId && !isUsingConnectedLeague ? (
+          <Button
+            onClick={handleUseConnectedLeague}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Use my league
+          </Button>
+        ) : null}
+      </div>
+    </form>
+  );
 
   if (!league) {
     return (
@@ -122,20 +206,41 @@ export function LeaguePanel({
     );
   }
 
-  const standingsRows = flattenLeagueStandings(league);
-  const comparisons = isFreshLeague ? (league.comparisons ?? null) : null;
+  if (!activeLeague) {
+    return (
+      <Panel>
+        <SectionHeading
+          eyebrow="League"
+          title="Loading requested league"
+          description="Checking live standings for the selected league ID."
+        />
+        {leaguePicker}
+        <Alert aria-busy="true" tone="note">
+          Loading league {selectedLeagueId ?? "details"}.
+        </Alert>
+        {leagueOverrideQuery.error instanceof Error ? (
+          <Alert tone="danger">{leagueOverrideQuery.error.message}</Alert>
+        ) : null}
+      </Panel>
+    );
+  }
+
+  const standingsRows = flattenLeagueStandings(activeLeague);
+  const comparisons = isFreshLeague
+    ? (activeLeague.comparisons ?? null)
+    : null;
   const projection = projectionQuery.data ?? null;
-  const seasonLabel = league.season ?? comparisons?.season ?? null;
+  const seasonLabel = activeLeague.season ?? comparisons?.season ?? null;
 
   return (
     <Panel>
       <SectionHeading
         eyebrow="League"
-        title={league.league?.name ?? "League"}
+        title={activeLeague.league?.name ?? "League"}
         description={
           isFreshLeague
             ? "Standings plus team-by-team offense, defense, payroll, and arena comparisons from the latest synced league snapshot."
-            : "Live league standings, team comparisons, and season projection for your current conference."
+            : "Live league standings, team comparisons, and season projection for the selected league."
         }
         actions={
           isFreshLeague ? (
@@ -154,6 +259,18 @@ export function LeaguePanel({
           ) : null
         }
       />
+
+      {leaguePicker}
+
+      {leagueOverrideQuery.isFetching && selectedLeagueArgs ? (
+        <Alert aria-busy="true" tone="note">
+          Loading league {selectedLeagueArgs.leagueId}.
+        </Alert>
+      ) : null}
+
+      {leagueOverrideQuery.error instanceof Error ? (
+        <Alert tone="danger">{leagueOverrideQuery.error.message}</Alert>
+      ) : null}
 
       {isFreshLeague && (seasonLabel !== null || comparisons) ? (
         <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
@@ -180,7 +297,7 @@ export function LeaguePanel({
           </Alert>
         ) : (
           <Alert tone="note">
-            {describeUnavailableLeagueState(league.freshnessMessage ?? null)}
+            {describeUnavailableLeagueState(activeLeague.freshnessMessage ?? null)}
           </Alert>
         )
       ) : null}
@@ -1184,6 +1301,11 @@ export function isCurrentLeagueTeamRow(
   return Boolean(rowTeamId && currentTeamId && rowTeamId === currentTeamId);
 }
 
+function normalizeLeagueId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 export const __testing = {
   describeUnavailableLeagueState,
   describeProjectionProgress,
@@ -1192,4 +1314,5 @@ export const __testing = {
   formatFinishDistribution,
   flattenLeagueStandings,
   isCurrentLeagueTeamRow,
+  normalizeLeagueId,
 };

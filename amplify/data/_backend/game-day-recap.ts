@@ -91,7 +91,10 @@ import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
 } from "./maintenance";
-import { classifyCompetition } from "./match-importance";
+import {
+  classifyCompetition,
+  isLeagueRegularSeasonCompetition,
+} from "./match-importance";
 import {
   loadGameDayRecapPlayByPlayFacts,
   type GameDayRecapPlayByPlayFacts,
@@ -3841,13 +3844,7 @@ function isLeagueScheduleMatchType(type: string | null | undefined): boolean {
 function isRegularSeasonLeagueMatchType(
   type: string | null | undefined,
 ): boolean {
-  const normalizedType = type?.trim().toLowerCase();
-  return Boolean(
-    normalizedType &&
-    (normalizedType === "league" ||
-      normalizedType === "league.rs" ||
-      normalizedType === "league.regularseason"),
-  );
+  return isLeagueRegularSeasonCompetition(type);
 }
 
 function toSlateGameFromScheduleMatch(args: {

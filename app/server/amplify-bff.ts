@@ -120,10 +120,12 @@ const queryOperations = {
         queryInput?: QueryInput<"getLeagueIntel">,
       ) => Promise<OperationResult<QueryOutput<"getLeagueIntel">>>
     )(optionalInput(input)),
-  getLatestLeagueSeasonSimulation: async () =>
+  getLatestLeagueSeasonSimulation: async (
+    input?: QueryInput<"getLatestLeagueSeasonSimulation">,
+  ) =>
     (
       await runtime.getServerDataClient()
-    ).queries.getLatestLeagueSeasonSimulation(),
+    ).queries.getLatestLeagueSeasonSimulation(optionalInput(input)),
   getLatestNextGameRecommendation: async (
     input: QueryInput<"getLatestNextGameRecommendation">,
   ) =>
@@ -284,10 +286,12 @@ const mutationOperations = {
     (
       await runtime.getServerDataClient()
     ).mutations.submitLeagueGameDayPerformances(requiredInput(input)),
-  submitLeagueSeasonSimulationJob: async () =>
+  submitLeagueSeasonSimulationJob: async (
+    input?: QueryInput<"submitLeagueSeasonSimulationJob">,
+  ) =>
     (
       await runtime.getServerDataClient()
-    ).mutations.submitLeagueSeasonSimulationJob(),
+    ).mutations.submitLeagueSeasonSimulationJob(optionalInput(input)),
   submitMyTeamHighlightsScan: async () =>
     (
       await runtime.getServerDataClient()

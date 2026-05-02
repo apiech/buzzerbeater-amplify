@@ -334,8 +334,11 @@ test("league intel parsing accepts enriched comparison payloads and still tolera
   assert.equal(league.comparisons.arena[0]?.totalCapacity, 20793);
 });
 
-test("league season simulation parsing accepts current-season selection strategies", async (t) => {
-  installQueryMock(t, "getLatestLeagueSeasonSimulation", async () => ({
+test("league season simulation parsing forwards league ids and accepts current-season selection strategies", async (t) => {
+  let input: Record<string, unknown> | undefined;
+  installQueryMock(t, "getLatestLeagueSeasonSimulation", async (value) => {
+    input = value as Record<string, unknown> | undefined;
+    return {
     data: {
       completedAt: "2026-05-01T00:10:00.000Z",
       executionArn: "arn:simulation-1",
@@ -399,10 +402,14 @@ test("league season simulation parsing accepts current-season selection strategi
       teamName: "Visionaries",
     },
     errors: null,
-  }));
+    };
+  });
 
-  const snapshot = await fetchLatestLeagueSeasonSimulationQuery();
+  const snapshot = await fetchLatestLeagueSeasonSimulationQuery({
+    leagueId: "league-2",
+  });
 
+  assert.deepStrictEqual(input, { leagueId: "league-2" });
   assert.equal(
     snapshot!.result!.conferences[0]!.teams[0]!.snapshot.selectionStrategy,
     "CURRENT_SEASON_15TH_PERCENTILE",
@@ -412,23 +419,33 @@ test("league season simulation parsing accepts current-season selection strategi
   assert.equal(snapshot!.result!.conferences[0]!.teams[0]!.winsP50, 10.7);
 });
 
-test("league season simulation mutation returns the queued job envelope", async (t) => {
-  installMutationMock(t, "submitLeagueSeasonSimulationJob", async () => ({
+test("league season simulation mutation forwards league ids and returns the queued job envelope", async (t) => {
+  let input: Record<string, unknown> | undefined;
+  installMutationMock(t, "submitLeagueSeasonSimulationJob", async (value) => {
+    input = value as Record<string, unknown> | undefined;
+    return {
     data: {
       executionArn: "arn:simulation-1",
       jobId: "simulation-1",
     },
     errors: null,
-  }));
+    };
+  });
 
-  const result = await submitLeagueSeasonSimulationJobMutation();
+  const result = await submitLeagueSeasonSimulationJobMutation({
+    leagueId: "league-2",
+  });
 
+  assert.deepStrictEqual(input, { leagueId: "league-2" });
   assert.equal(result.jobId, "simulation-1");
   assert.equal(result.executionArn, "arn:simulation-1");
 });
 
 test("league intel parsing still accepts standings-only payloads", async (t) => {
-  installQueryMock(t, "getLeagueIntel", async () => ({
+  let input: Record<string, unknown> | undefined;
+  installQueryMock(t, "getLeagueIntel", async (value) => {
+    input = value as Record<string, unknown> | undefined;
+    return {
     data: {
       freshnessMessage: null,
       freshnessStatus: "FRESH",
@@ -453,10 +470,12 @@ test("league intel parsing still accepts standings-only payloads", async (t) => 
       ],
     },
     errors: null,
-  }));
+    };
+  });
 
-  const league = await fetchLeagueIntelQuery();
+  const league = await fetchLeagueIntelQuery({ leagueId: "league-2" });
 
+  assert.deepStrictEqual(input, { leagueId: "league-2" });
   assert.ok(league);
   assert.equal(league.comparisons, undefined);
   assert.equal(league.standings[0]?.teams[0]?.teamId, "our-1");

@@ -29,7 +29,11 @@ import {
   assertMaintenanceInactive,
   toMaintenanceAwareErrorMessage,
 } from "./maintenance";
-import { isScrimmageLike, matchIncludesTeam } from "./match-importance";
+import {
+  isLeagueRegularSeasonCompetition,
+  isScrimmageLike,
+  matchIncludesTeam,
+} from "./match-importance";
 import { buildPlannerPairDefinitions } from "./next-game-recommendation";
 import { selectBoxscorePerspective } from "./neutral-boxscore";
 import { invokePlannerRequests } from "./prediction-planner";
@@ -108,6 +112,21 @@ type RemainingLeagueGame = {
   homeTeamName: string | null;
   matchId: string;
   startTime: string | null;
+};
+
+type LeagueSeasonSlateCoverageIssue = {
+  currentGames: number;
+  expectedGames: number;
+  remainingGames: number;
+  teamId: string;
+  teamName: string | null;
+  totalGames: number;
+};
+
+type LeagueSeasonSlateCoverage = {
+  expectedGamesPerTeam: number;
+  issues: LeagueSeasonSlateCoverageIssue[];
+  teamCount: number;
 };
 
 type SnapshotCandidate = {
@@ -287,6 +306,28 @@ type LeagueSeasonSimulationArtifactStore = {
   upsert: typeof upsertLeagueSeasonSimulationArtifact;
 };
 
+type SimulationArtifactWriteArgsBase = {
+  deps: Pick<ProcessDependencies, "artifactStore">;
+  env: GraphqlEnv;
+  job: LeagueSeasonSimulationJobRecord;
+  key: string;
+  order: number;
+};
+
+type SimulationArtifactWriteArgs =
+  | (SimulationArtifactWriteArgsBase & {
+      payload: SimulationContextArtifact;
+      type: "CONTEXT";
+    })
+  | (SimulationArtifactWriteArgsBase & {
+      payload: PersistedTeamSnapshot;
+      type: "FINALIZED_SNAPSHOT" | "SNAPSHOT";
+    })
+  | (SimulationArtifactWriteArgsBase & {
+      payload: ScoredRemainingGame;
+      type: "SCORED_GAME";
+    });
+
 type SeasonSimulationRuntimeConfig = {
   plannerBatchConcurrency: number;
 };
@@ -310,6 +351,7 @@ const MAX_FUTURE_REGRESSION = 0.2;
 const DEFAULT_RESIDUAL_SIGMA = 10;
 const DEFAULT_SIMULATION_COUNT = 10_000;
 const DEFAULT_PLANNER_BATCH_CONCURRENCY = 2;
+const EXPECTED_REGULAR_SEASON_GAMES_PER_TEAM = 22;
 const LEAGUE_SEASON_SIMULATION_PLANNER_CONCURRENCY_ENV_NAME =
   "LEAGUE_SEASON_SIMULATION_PLANNER_CONCURRENCY";
 const SEASON_SIMULATION_RESPONSE_TOO_LARGE_ERROR_MESSAGE =
@@ -415,6 +457,7 @@ export async function submitLeagueSeasonSimulationJob(
   args: {
     env: GraphqlEnv;
     identity: unknown;
+    leagueId?: string | null;
     stateMachineArn: string;
   },
   dependencies: Partial<SubmitDependencies> = {},
@@ -437,10 +480,12 @@ export async function submitLeagueSeasonSimulationJob(
   });
 
   const connection = await deps.getBbConnection(args.env, userId);
-  const leagueId = normalizeRequiredString(
-    connection?.leagueId,
-    "A connected league id",
-  );
+  const requestedLeagueId = normalizeOptionalString(args.leagueId);
+  const connectedLeagueId = normalizeOptionalString(connection?.leagueId);
+  const leagueId = requestedLeagueId ?? connectedLeagueId;
+  if (!leagueId) {
+    throw new Error("A league ID is required to submit a season projection.");
+  }
   const teamId = normalizeRequiredString(
     connection?.teamId,
     "A connected team id",
@@ -472,7 +517,10 @@ export async function submitLeagueSeasonSimulationJob(
     executionArn: null,
     id: jobId,
     leagueId,
-    leagueName: connection?.leagueName ?? null,
+    leagueName:
+      leagueId === connectedLeagueId
+        ? normalizeOptionalString(connection?.leagueName)
+        : null,
     progressJson: buildQueuedProgress(requestedAt),
     requestJson,
     requestedAt,
@@ -520,6 +568,7 @@ export async function getLatestLeagueSeasonSimulation(
   args: {
     env: GraphqlEnv;
     identity: unknown;
+    leagueId?: string | null;
   },
   dependencies: Partial<GetLatestDependencies> = {},
 ): Promise<SimulationSnapshot | null> {
@@ -535,7 +584,9 @@ export async function getLatestLeagueSeasonSimulation(
   }
 
   const connection = await deps.getBbConnection(args.env, userId);
-  const leagueId = normalizeOptionalString(connection?.leagueId);
+  const leagueId =
+    normalizeOptionalString(args.leagueId) ??
+    normalizeOptionalString(connection?.leagueId);
   const bbLoginName = normalizeOptionalString(connection?.bbLoginName);
   if (!leagueId || !bbLoginName) {
     return null;
@@ -725,6 +776,26 @@ async function prepareLeagueSeasonSimulationContext(args: {
   const remainingGames = buildRemainingRegularSeasonLeagueGames({
     schedulesByTeamId: teamSchedules,
   });
+  const slateCoverage = buildLeagueSeasonSlateCoverage({
+    remainingGames,
+    teams,
+  });
+  if (slateCoverage.issues.length) {
+    const errorMessage = formatLeagueSeasonSlateCoverageError(slateCoverage);
+    const completedAt = new Date().toISOString();
+    await args.deps.updateLeagueSeasonSimulationJob(args.env, {
+      completedAt,
+      error: errorMessage,
+      id: args.job.id,
+      progressJson: buildFailedProgress({
+        currentProgress: resolvingProgress,
+        errorMessage,
+        updatedAt: completedAt,
+      }),
+      status: "FAILED",
+    });
+    throw new Error(errorMessage);
+  }
   const context: SimulationContextArtifact = {
     candidateGameCount: 0,
     currentSeason: effectiveSeason,
@@ -1217,6 +1288,10 @@ export async function processLeagueSeasonSimulationJob(
     });
     const remainingGames = buildRemainingRegularSeasonLeagueGames({
       schedulesByTeamId: teamSchedules,
+    });
+    assertCompleteLeagueSeasonSlateCoverage({
+      remainingGames,
+      teams,
     });
 
     const selectedSnapshots = await mapWithConcurrency(
@@ -2283,6 +2358,84 @@ export function buildRemainingRegularSeasonLeagueGames(args: {
   );
 }
 
+function buildLeagueSeasonSlateCoverage(args: {
+  expectedGamesPerTeam?: number;
+  remainingGames: readonly RemainingLeagueGame[];
+  teams: readonly TeamStanding[];
+}): LeagueSeasonSlateCoverage {
+  const expectedGamesPerTeam =
+    args.expectedGamesPerTeam ?? EXPECTED_REGULAR_SEASON_GAMES_PER_TEAM;
+  const remainingGamesByTeamId = new Map<string, number>(
+    args.teams.map((team) => [team.teamId, 0] as const),
+  );
+
+  for (const game of args.remainingGames) {
+    if (remainingGamesByTeamId.has(game.homeTeamId)) {
+      remainingGamesByTeamId.set(
+        game.homeTeamId,
+        (remainingGamesByTeamId.get(game.homeTeamId) ?? 0) + 1,
+      );
+    }
+    if (remainingGamesByTeamId.has(game.awayTeamId)) {
+      remainingGamesByTeamId.set(
+        game.awayTeamId,
+        (remainingGamesByTeamId.get(game.awayTeamId) ?? 0) + 1,
+      );
+    }
+  }
+
+  const issues = args.teams
+    .map<LeagueSeasonSlateCoverageIssue>((team) => {
+      const currentGames = Math.max(0, team.currentWins + team.currentLosses);
+      const remainingGames = remainingGamesByTeamId.get(team.teamId) ?? 0;
+      return {
+        currentGames,
+        expectedGames: expectedGamesPerTeam,
+        remainingGames,
+        teamId: team.teamId,
+        teamName: team.teamName,
+        totalGames: currentGames + remainingGames,
+      };
+    })
+    .filter((issue) => issue.totalGames !== expectedGamesPerTeam);
+
+  return {
+    expectedGamesPerTeam,
+    issues,
+    teamCount: args.teams.length,
+  };
+}
+
+function assertCompleteLeagueSeasonSlateCoverage(args: {
+  expectedGamesPerTeam?: number;
+  remainingGames: readonly RemainingLeagueGame[];
+  teams: readonly TeamStanding[];
+}): void {
+  const coverage = buildLeagueSeasonSlateCoverage(args);
+  if (coverage.issues.length) {
+    throw new Error(formatLeagueSeasonSlateCoverageError(coverage));
+  }
+}
+
+function formatLeagueSeasonSlateCoverageError(
+  coverage: LeagueSeasonSlateCoverage,
+): string {
+  const sample = coverage.issues
+    .slice(0, 5)
+    .map((issue) => {
+      const label = issue.teamName
+        ? `${issue.teamName} (${issue.teamId})`
+        : issue.teamId;
+      return `${label}: ${issue.currentGames} current + ${issue.remainingGames} remaining = ${issue.totalGames}`;
+    })
+    .join("; ");
+  const suffix =
+    coverage.issues.length > 5
+      ? `; ${coverage.issues.length - 5} more teams`
+      : "";
+  return `League season simulation slate coverage is incomplete. Expected ${coverage.expectedGamesPerTeam} regular-season games per team, but ${coverage.issues.length} of ${coverage.teamCount} teams did not match. ${sample}${suffix}`;
+}
+
 export function selectSeasonSimulationSnapshotCandidate(
   candidates: readonly SnapshotCandidate[],
 ): SnapshotCandidate | null {
@@ -2649,7 +2802,12 @@ async function loadSimulationContextArtifact(args: {
   if (!artifact) {
     throw new Error("League season simulation context artifact is missing.");
   }
-  return normalizeSimulationContextArtifact(artifact.payloadJson);
+  if (!artifact.contextPayload) {
+    throw new Error(
+      "League season simulation context artifact payload is missing.",
+    );
+  }
+  return normalizeSimulationContextArtifact(artifact.contextPayload);
 }
 
 async function loadPersistedSnapshots(
@@ -2661,9 +2819,14 @@ async function loadPersistedSnapshots(
   artifactType: "SNAPSHOT" | "FINALIZED_SNAPSHOT",
 ): Promise<PersistedTeamSnapshot[]> {
   const artifacts = await listAllSimulationArtifactsByType(args, artifactType);
-  return artifacts.map((artifact) =>
-    normalizePersistedTeamSnapshot(artifact.payloadJson),
-  );
+  return artifacts.map((artifact) => {
+    if (!artifact.snapshotPayload) {
+      throw new Error(
+        "League season simulation snapshot artifact payload is missing.",
+      );
+    }
+    return normalizePersistedTeamSnapshot(artifact.snapshotPayload);
+  });
 }
 
 async function loadScoredGameArtifacts(args: {
@@ -2672,9 +2835,14 @@ async function loadScoredGameArtifacts(args: {
   job: LeagueSeasonSimulationJobRecord;
 }): Promise<ScoredRemainingGame[]> {
   const artifacts = await listAllSimulationArtifactsByType(args, "SCORED_GAME");
-  return artifacts.map((artifact) =>
-    normalizeScoredRemainingGame(artifact.payloadJson),
-  );
+  return artifacts.map((artifact) => {
+    if (!artifact.scoredGamePayload) {
+      throw new Error(
+        "League season simulation scored game artifact payload is missing.",
+      );
+    }
+    return normalizeScoredRemainingGame(artifact.scoredGamePayload);
+  });
 }
 
 async function listAllSimulationArtifactsByType(
@@ -2705,25 +2873,34 @@ async function listAllSimulationArtifactsByType(
   return records.sort((left, right) => left.artifactOrder - right.artifactOrder);
 }
 
-async function writeSimulationArtifact(args: {
-  deps: Pick<ProcessDependencies, "artifactStore">;
-  env: GraphqlEnv;
-  job: LeagueSeasonSimulationJobRecord;
-  key: string;
-  order: number;
-  payload: unknown;
-  type: SimulationArtifactType;
-}): Promise<void> {
+async function writeSimulationArtifact(
+  args: SimulationArtifactWriteArgs,
+): Promise<void> {
   await args.deps.artifactStore.upsert(args.env, {
     artifactKey: args.key,
     artifactOrder: args.order,
     artifactType: args.type,
+    ...buildSimulationArtifactPayloadFields(args),
     expiresAt: args.job.expiresAt,
     expiryKey: args.job.expiryKey,
     jobId: args.job.id,
-    payloadJson: args.payload as LeagueSeasonSimulationArtifactRecord["payloadJson"],
     userId: args.job.userId,
   });
+}
+
+function buildSimulationArtifactPayloadFields(
+  args: SimulationArtifactWriteArgs,
+): Pick<
+  LeagueSeasonSimulationArtifactRecord,
+  "contextPayload" | "scoredGamePayload" | "snapshotPayload"
+> {
+  if (args.type === "CONTEXT") {
+    return { contextPayload: args.payload };
+  }
+  if (args.type === "SCORED_GAME") {
+    return { scoredGamePayload: args.payload };
+  }
+  return { snapshotPayload: args.payload };
 }
 
 function buildProgressContext(args: {
@@ -3052,12 +3229,8 @@ function isUsableSnapshotMatch(
 }
 
 function isRemainingRegularSeasonLeagueMatch(match: BBApiScheduleMatch): boolean {
-  const normalizedType = normalizeOptionalString(match.type)?.toLowerCase();
   return Boolean(
-    normalizedType &&
-      (normalizedType === "league" ||
-        normalizedType === "league.rs" ||
-        normalizedType === "league.regularseason") &&
+    isLeagueRegularSeasonCompetition(match.type) &&
       !isCompletedMatch(match),
   );
 }
@@ -3328,6 +3501,7 @@ const numberFormatter = new Intl.NumberFormat("en-US");
 
 export const __testing = {
   buildDeterministicExpectedOutcomes,
+  buildLeagueSeasonSlateCoverage,
   buildRemainingRegularSeasonLeagueGames,
   buildSeasonSimulationPlannerRequest,
   buildSeasonBackfillOrder,

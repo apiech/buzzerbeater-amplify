@@ -19,7 +19,7 @@ const ENCODED_AWS_JSON_FIELDS = {
   OpponentForecastJob: [],
   NextGameRecommendationJob: [],
   LeagueSeasonSimulationJob: [],
-  LeagueSeasonSimulationArtifact: ["payloadJson"],
+  LeagueSeasonSimulationArtifact: [],
   NextGamePlannerArtifact: [],
   NextGamePlannerArtifactRow: [],
   GameDayRecap: [],
@@ -48,7 +48,7 @@ const LEGACY_DECODE_AWS_JSON_FIELDS = {
   OpponentForecastJob: ["requestJson", "resolvedContextJson", "resultJson"],
   NextGameRecommendationJob: ["requestJson", "progressJson", "resultJson"],
   LeagueSeasonSimulationJob: ["requestJson", "progressJson", "resultJson"],
-  LeagueSeasonSimulationArtifact: ["payloadJson"],
+  LeagueSeasonSimulationArtifact: [],
   NextGamePlannerArtifact: [
     "evaluatedScenariosJson",
     "ourPairsJson",

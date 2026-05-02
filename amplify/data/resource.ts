@@ -2122,6 +2122,84 @@ const schema = a
       result: a.ref("LeagueSeasonSimulationResult"),
     }),
 
+    LeagueSeasonSimulationArtifactTeamStanding: a.customType({
+      conferenceIndex: a.integer().required(),
+      currentLosses: a.integer().required(),
+      currentPointMargin: a.float().required(),
+      currentWins: a.integer().required(),
+      stableRank: a.integer().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+    }),
+
+    LeagueSeasonSimulationArtifactRemainingGame: a.customType({
+      awayTeamId: a.string().required(),
+      awayTeamName: a.string(),
+      homeTeamId: a.string().required(),
+      homeTeamName: a.string(),
+      matchId: a.string().required(),
+      startTime: a.datetime(),
+    }),
+
+    LeagueSeasonSimulationContextArtifact: a.customType({
+      candidateGameCount: a.integer().required(),
+      currentSeason: a.integer().required(),
+      leagueId: a.string().required(),
+      leagueName: a.string(),
+      remainingGames: a
+        .ref("LeagueSeasonSimulationArtifactRemainingGame")
+        .required()
+        .array()
+        .required(),
+      teamCount: a.integer().required(),
+      teams: a
+        .ref("LeagueSeasonSimulationArtifactTeamStanding")
+        .required()
+        .array()
+        .required(),
+    }),
+
+    LeagueSeasonSimulationTeamSnapshotArtifact: a.customType({
+      conferenceIndex: a.integer().required(),
+      currentLosses: a.integer().required(),
+      currentPointMargin: a.float().required(),
+      currentWins: a.integer().required(),
+      stableRank: a.integer().required(),
+      teamId: a.string().required(),
+      teamName: a.string(),
+      candidateGameCount: a.integer().required(),
+      normalizedRatings: a.ref("MatchBoxscoreTeamRatings"),
+      sourceDefense: a.string().required(),
+      sourceOffense: a.string().required(),
+      sampleWarning: a.string(),
+      selectionStrategy: a
+        .ref("LeagueSeasonSimulationSelectionStrategy")
+        .required(),
+      sourceMatchId: a.string(),
+      sourceSeason: a.integer(),
+      sourceStartTime: a.datetime(),
+    }),
+
+    LeagueSeasonSimulationScoredGameArtifact: a.customType({
+      awayTeamId: a.string().required(),
+      awayTeamName: a.string(),
+      homeTeamId: a.string().required(),
+      homeTeamName: a.string(),
+      matchId: a.string().required(),
+      startTime: a.datetime(),
+      awayTeamIndex: a.integer().required(),
+      expectedAwayScore: a.float().required(),
+      expectedHomeScore: a.float().required(),
+      expectedMargin: a.float().required(),
+      awayDefense: a.string().required(),
+      awayOffense: a.string().required(),
+      homeTeamIndex: a.integer().required(),
+      homeDefense: a.string().required(),
+      homeOffense: a.string().required(),
+      homeWinProbability: a.float().required(),
+      modelVersion: a.string(),
+    }),
+
     GameDayRecapSubmitResult: a.customType({
       targetKey: a.string().required(),
       executionArn: a.string(),
@@ -3713,7 +3791,9 @@ const schema = a
           .authorization((allow) => [
             allow.ownerDefinedIn("userId").to(["read"]),
           ]),
-        payloadJson: a.json().required(),
+        contextPayload: a.ref("LeagueSeasonSimulationContextArtifact"),
+        snapshotPayload: a.ref("LeagueSeasonSimulationTeamSnapshotArtifact"),
+        scoredGamePayload: a.ref("LeagueSeasonSimulationScoredGameArtifact"),
         expiryKey: a.string().required(),
         expiresAt: a.datetime().required(),
       })
@@ -4017,6 +4097,9 @@ const schema = a
 
     getLatestLeagueSeasonSimulation: a
       .query()
+      .arguments({
+        leagueId: a.string(),
+      })
       .returns(a.ref("LeagueSeasonSimulationSnapshot"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(getLatestLeagueSeasonSimulation)),
@@ -4034,6 +4117,7 @@ const schema = a
       .query()
       .arguments({
         force: a.boolean(),
+        leagueId: a.string(),
       })
       .returns(a.ref("LeagueIntelWorkspace"))
       .authorization((allow) => [allow.authenticated()])
@@ -4343,6 +4427,9 @@ const schema = a
 
     submitLeagueSeasonSimulationJob: a
       .mutation()
+      .arguments({
+        leagueId: a.string(),
+      })
       .returns(a.ref("LeagueSeasonSimulationSubmitResult"))
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(leagueSeasonSimulationSubmit)),

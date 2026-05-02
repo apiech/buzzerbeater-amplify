@@ -64,8 +64,17 @@ type LeagueSeasonSimulationStoredProgress = NonNullable<
 type LeagueSeasonSimulationStoredResult = NonNullable<
   Schema["LeagueSeasonSimulationJob"]["type"]["resultJson"]
 >;
-type LeagueSeasonSimulationArtifactPayload = NonNullable<
-  Schema["LeagueSeasonSimulationArtifact"]["type"]["payloadJson"]
+type LeagueSeasonSimulationArtifactType = NonNullable<
+  Schema["LeagueSeasonSimulationArtifact"]["type"]["artifactType"]
+>;
+type LeagueSeasonSimulationContextArtifactPayload = NonNullable<
+  Schema["LeagueSeasonSimulationArtifact"]["type"]["contextPayload"]
+>;
+type LeagueSeasonSimulationTeamSnapshotArtifactPayload = NonNullable<
+  Schema["LeagueSeasonSimulationArtifact"]["type"]["snapshotPayload"]
+>;
+type LeagueSeasonSimulationScoredGameArtifactPayload = NonNullable<
+  Schema["LeagueSeasonSimulationArtifact"]["type"]["scoredGamePayload"]
 >;
 type StoredPlannerEvaluatedScenario = NonNullable<
   Schema["NextGamePlannerArtifact"]["type"]["evaluatedScenariosJson"]
@@ -435,11 +444,13 @@ export type LeagueSeasonSimulationJobRecord = {
 
 export type LeagueSeasonSimulationArtifactRecord = {
   jobId: string;
-  artifactType: string;
+  artifactType: LeagueSeasonSimulationArtifactType;
   artifactKey: string;
   artifactOrder: number;
   userId: string;
-  payloadJson: LeagueSeasonSimulationArtifactPayload;
+  contextPayload?: LeagueSeasonSimulationContextArtifactPayload | null;
+  snapshotPayload?: LeagueSeasonSimulationTeamSnapshotArtifactPayload | null;
+  scoredGamePayload?: LeagueSeasonSimulationScoredGameArtifactPayload | null;
   createdAt?: string;
   updatedAt?: string;
   expiryKey: string;

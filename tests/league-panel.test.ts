@@ -168,4 +168,8 @@ test("league panel renders all five tabs, row highlighting, and scrollable table
   assert.match(source, /Source tactics:/);
   assert.match(source, /Minimax tactics/);
   assert.match(source, /Remaining game probabilities/);
+  assert.match(source, /League ID/);
+  assert.match(source, /leagueIntelQueryOptions\(selectedLeagueArgs\)/);
+  assert.match(source, /leagueSeasonSimulationQueryOptions\(selectedLeagueArgs\)/);
+  assert.match(source, /submitLeagueSeasonSimulationJobMutation\(selectedLeagueArgs\)/);
 });

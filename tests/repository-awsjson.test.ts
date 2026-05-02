@@ -397,7 +397,7 @@ test("planner artifact upserts serialize planner AWSJSON payloads", async (t) =>
   });
 });
 
-test("league season simulation artifacts serialize JSON payloads", async (t) => {
+test("league season simulation artifacts persist typed payload fields", async (t) => {
   let createInput: Record<string, unknown> | null = null;
 
   t.mock.method(
@@ -421,13 +421,33 @@ test("league season simulation artifacts serialize JSON payloads", async (t) => 
     artifactKey: "context",
     artifactOrder: 0,
     artifactType: "CONTEXT",
+    contextPayload: {
+      candidateGameCount: 0,
+      currentSeason: 72,
+      leagueId: "league-1",
+      leagueName: "NBBA",
+      remainingGames: [
+        {
+          awayTeamId: "away",
+          homeTeamId: "home",
+          matchId: "m-1",
+        },
+      ],
+      teamCount: 1,
+      teams: [
+        {
+          conferenceIndex: 0,
+          currentLosses: 0,
+          currentPointMargin: 10,
+          currentWins: 1,
+          stableRank: 0,
+          teamId: "home",
+        },
+      ],
+    },
     expiresAt: "2026-06-01T00:00:00.000Z",
     expiryKey: "EXPIRABLE",
     jobId: "job-1",
-    payloadJson: {
-      remainingGames: [{ matchId: "m-1" }],
-      season: 72,
-    } as any,
     userId: "user-1",
   });
 
@@ -435,10 +455,33 @@ test("league season simulation artifacts serialize JSON payloads", async (t) => 
     artifactKey: "context",
     artifactOrder: 0,
     artifactType: "CONTEXT",
+    contextPayload: {
+      candidateGameCount: 0,
+      currentSeason: 72,
+      leagueId: "league-1",
+      leagueName: "NBBA",
+      remainingGames: [
+        {
+          awayTeamId: "away",
+          homeTeamId: "home",
+          matchId: "m-1",
+        },
+      ],
+      teamCount: 1,
+      teams: [
+        {
+          conferenceIndex: 0,
+          currentLosses: 0,
+          currentPointMargin: 10,
+          currentWins: 1,
+          stableRank: 0,
+          teamId: "home",
+        },
+      ],
+    },
     expiresAt: "2026-06-01T00:00:00.000Z",
     expiryKey: "EXPIRABLE",
     jobId: "job-1",
-    payloadJson: '{"remainingGames":[{"matchId":"m-1"}],"season":72}',
     userId: "user-1",
   });
 });

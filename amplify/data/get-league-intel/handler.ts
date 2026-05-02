@@ -10,5 +10,6 @@ export const handler: Handler = async (event) => {
     env,
     force: event.arguments.force ?? false,
     identity: event.identity,
+    leagueId: event.arguments.leagueId,
   });
 };

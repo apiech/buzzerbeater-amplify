@@ -280,8 +280,9 @@ export const client = {
     submitLeagueGameDayPerformances: (
       input: OperationInput<"submitLeagueGameDayPerformances">,
     ) => requestMutation("submitLeagueGameDayPerformances", input),
-    submitLeagueSeasonSimulationJob: () =>
-      requestMutation("submitLeagueSeasonSimulationJob"),
+    submitLeagueSeasonSimulationJob: (
+      input?: OperationInput<"submitLeagueSeasonSimulationJob">,
+    ) => requestMutation("submitLeagueSeasonSimulationJob", input),
     submitMyTeamHighlightsScan: () =>
       requestMutation("submitMyTeamHighlightsScan"),
     submitNextGameRecommendationJob: (
@@ -311,8 +312,9 @@ export const client = {
       requestQuery("getLeagueHistory", input),
     getLeagueIntel: (input?: OperationInput<"getLeagueIntel">) =>
       requestQuery("getLeagueIntel", input),
-    getLatestLeagueSeasonSimulation: () =>
-      requestQuery("getLatestLeagueSeasonSimulation"),
+    getLatestLeagueSeasonSimulation: (
+      input?: OperationInput<"getLatestLeagueSeasonSimulation">,
+    ) => requestQuery("getLatestLeagueSeasonSimulation", input),
     getLatestNextGameRecommendation: (
       input: OperationInput<"getLatestNextGameRecommendation">,
     ) => requestQuery("getLatestNextGameRecommendation", input),

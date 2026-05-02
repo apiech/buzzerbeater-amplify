@@ -741,12 +741,22 @@ export async function getLeagueIntelWorkspace(args: {
   env: GraphqlEnv;
   force?: boolean;
   identity: unknown;
+  leagueId?: string | null;
 }): Promise<LeagueIntelWorkspaceResult> {
   await assertMaintenanceInactive();
 
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
+  }
+
+  const requestedLeagueId = normalizeOptionalLeagueId(args.leagueId);
+  if (requestedLeagueId) {
+    return buildLeagueIntelForRequestedLeague({
+      env: args.env,
+      leagueId: requestedLeagueId,
+      userId,
+    });
   }
 
   const force = args.force ?? false;
@@ -834,6 +844,63 @@ export async function getLeagueIntelWorkspace(args: {
   }
 
   return enrichedLeagueIntel;
+}
+
+async function buildLeagueIntelForRequestedLeague(args: {
+  env: GraphqlEnv;
+  leagueId: string;
+  userId: string;
+}): Promise<LeagueIntelWorkspaceResult> {
+  const connection = await getBbConnection(args.env, args.userId);
+  if (!connection) {
+    throw new Error(
+      "Connect a BuzzerBeater account before loading league standings.",
+    );
+  }
+
+  const bbLoginName = connection.bbLoginName?.trim();
+  if (!bbLoginName) {
+    throw new Error("The saved BuzzerBeater login is unavailable.");
+  }
+
+  const accessKey = await resolveAccessKey(args.env, args.userId);
+  const client = new BBXmlApiClient({
+    securityCode: accessKey,
+    username: bbLoginName,
+  });
+
+  let standings: BBApiStandings;
+  try {
+    standings = await client.getStandings(args.leagueId);
+  } catch {
+    return buildUnavailableLeagueIntel({
+      league: { id: args.leagueId, name: null },
+      message: LIVE_LEAGUE_DATA_UNAVAILABLE_MESSAGE,
+      season: null,
+    });
+  }
+
+  const leagueIntel = buildLeagueIntel({
+    currentSeason: standings.season,
+    standings,
+  });
+  if (leagueIntel.freshnessStatus !== "FRESH" || !leagueIntel.standings.length) {
+    return leagueIntel;
+  }
+
+  const builtAt = new Date().toISOString();
+  const teamSnapshots = await fetchLeagueComparisonTeamSnapshots(
+    client,
+    leagueIntel.standings,
+  );
+
+  return {
+    ...leagueIntel,
+    comparisons: buildLeagueComparisons({
+      builtAt,
+      teamSnapshots,
+    }),
+  } satisfies LeagueIntelWorkspaceResult;
 }
 
 export async function generatePlayerCard(args: {
@@ -4428,6 +4495,11 @@ function normalizeSharedCardText(
   value: string | null | undefined,
 ): string | null {
   const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeOptionalLeagueId(value: unknown): string | null {
+  const trimmed = asString(value)?.trim();
   return trimmed ? trimmed : null;
 }
 

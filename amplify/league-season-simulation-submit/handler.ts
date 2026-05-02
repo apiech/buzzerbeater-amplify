@@ -19,6 +19,7 @@ export const handler: Handler = async (event) => {
   return submitLeagueSeasonSimulationJob({
     env,
     identity: event.identity,
+    leagueId: event.arguments.leagueId,
     stateMachineArn,
   });
 };

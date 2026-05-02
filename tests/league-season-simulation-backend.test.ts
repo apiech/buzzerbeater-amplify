@@ -128,6 +128,13 @@ test("remaining league slate dedupes by match id and keeps only unfinished regul
               startTime: "2026-04-01T00:00:00.000Z",
               type: "league.rs",
             },
+            {
+              awayTeam: { id: "away", score: null, teamName: "Away" },
+              homeTeam: { id: "home", score: null, teamName: "Home" },
+              id: "tv",
+              startTime: "2026-05-04T00:00:00.000Z",
+              type: "LEAGUE.RS.TV",
+            },
           ],
         } as any,
       ],
@@ -149,6 +156,13 @@ test("remaining league slate dedupes by match id and keeps only unfinished regul
               startTime: "2026-05-03T00:00:00.000Z",
               type: "friendly",
             },
+            {
+              awayTeam: { id: "away", score: null, teamName: "Away" },
+              homeTeam: { id: "home", score: null, teamName: "Home" },
+              id: "playoffs",
+              startTime: "2026-05-05T00:00:00.000Z",
+              type: "league.semifinal",
+            },
           ],
         } as any,
       ],
@@ -157,8 +171,131 @@ test("remaining league slate dedupes by match id and keeps only unfinished regul
 
   assert.deepStrictEqual(
     games.map((game) => game.matchId),
-    ["m-1"],
+    ["m-1", "tv"],
   );
+});
+
+test("remaining league slate keeps all 176 games for a fresh 16-team regular season", () => {
+  const { schedulesByTeamId, teams } = createRegularSeasonScheduleFixture();
+  const games = seasonSimulationTesting.buildRemainingRegularSeasonLeagueGames({
+    schedulesByTeamId,
+  });
+  const coverage = seasonSimulationTesting.buildLeagueSeasonSlateCoverage({
+    remainingGames: games,
+    teams,
+  });
+
+  assert.equal(games.length, 176);
+  assert.deepStrictEqual(coverage.issues, []);
+});
+
+test("slate coverage accepts a partial season only when standings account for completed games", () => {
+  const { schedulesByTeamId, teams } = createRegularSeasonScheduleFixture({
+    completedRounds: 3,
+    currentGamesPerTeam: 3,
+  });
+  const games = seasonSimulationTesting.buildRemainingRegularSeasonLeagueGames({
+    schedulesByTeamId,
+  });
+  const coverage = seasonSimulationTesting.buildLeagueSeasonSlateCoverage({
+    remainingGames: games,
+    teams,
+  });
+
+  assert.equal(games.length, 152);
+  assert.deepStrictEqual(coverage.issues, []);
+});
+
+test("prepare context fails incomplete regular-season slate coverage instead of simulating partial totals", async () => {
+  let update: Record<string, unknown> | null = null;
+  const schedulesByTeamId = createIncompleteTwoTeamSchedules();
+  const job = {
+    id: "job-incomplete",
+    leagueId: "league-1",
+    leagueName: "NBBA",
+    progressJson: null,
+    requestedAt: "2026-05-01T19:30:10.000Z",
+    season: 72,
+    status: "RESOLVING_CONTEXT",
+    teamId: "home",
+    userId: "user-1",
+  };
+
+  await assert.rejects(
+    () =>
+      processLeagueSeasonSimulationWorkerAction(
+        {
+          endpointName: "endpoint",
+          env: {},
+          event: {
+            action: "PREPARE_CONTEXT",
+            jobId: job.id,
+            userId: job.userId,
+          },
+        },
+        {
+          assertMaintenanceInactive: async () => undefined,
+          artifactStore: {
+            get: async () => null,
+            listByJobId: async () => ({ nextToken: null, records: [] }),
+            upsert: async () => {
+              throw new Error("incomplete coverage should fail before artifacts are written");
+            },
+          },
+          createBbClient: () =>
+            ({
+              getSchedule: async (teamId: string) =>
+                schedulesByTeamId.get(teamId) ?? { matches: [], season: 72 },
+              getSeasons: async () => ({
+                seasons: [{ id: 72 }],
+                version: "1",
+              }),
+              getStandings: async () => ({
+                conferences: [
+                  {
+                    index: 0,
+                    teams: [
+                      {
+                        id: "home",
+                        losses: 0,
+                        pa: 0,
+                        pf: 0,
+                        teamName: "Home",
+                        wins: 0,
+                      },
+                      {
+                        id: "away",
+                        losses: 0,
+                        pa: 0,
+                        pf: 0,
+                        teamName: "Away",
+                        wins: 0,
+                      },
+                    ],
+                  },
+                ],
+                league: { id: "league-1", name: "NBBA" },
+                season: 72,
+              }),
+            }) as any,
+          getBbConnection: async () =>
+            ({
+              bbLoginName: "coach",
+              status: "CONNECTED",
+            }) as any,
+          getLeagueSeasonSimulationJob: async () => job as any,
+          resolveBbAccessKey: async () => "secret",
+          updateLeagueSeasonSimulationJob: async (_env, input) => {
+            update = input;
+          },
+        } as any,
+      ),
+    /slate coverage is incomplete/,
+  );
+
+  assert.ok(update);
+  assert.equal(update.status, "FAILED");
+  assert.match(String(update.error), /19 remaining = 19/);
 });
 
 test("future regression starts at zero and caps at twenty percent", () => {
@@ -531,11 +668,67 @@ test("submitLeagueSeasonSimulationJob queues work for premium users", async () =
   assert.equal(result.executionArn, "arn:simulation-1");
   assert.equal(createdRecord!.status, "QUEUED");
   assert.equal(createdRecord!.leagueId, "league-1");
+  assert.equal(createdRecord!.leagueName, "NBBA");
   assert.equal(createdRecord!.season, 71);
   assert.deepStrictEqual(queuedMessage, {
     jobId: result.jobId,
     userId: "user-1",
   });
+});
+
+test("submitLeagueSeasonSimulationJob can target an explicit league id", async () => {
+  let createdRecord: Record<string, unknown> | null = null;
+
+  const result = await submitLeagueSeasonSimulationJob(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+      leagueId: "league-2",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:league-season-simulation",
+    },
+    {
+      createBbClient: () =>
+        ({
+          getSchedule: async () => ({
+            matches: [],
+            season: 71,
+          }),
+          getSeasons: async () => ({
+            seasons: [{ id: 72 }, { id: 71 }],
+            version: "1",
+          }),
+        }) as any,
+      createLeagueSeasonSimulationJob: async (_env, input) => {
+        createdRecord = input as Record<string, unknown>;
+        return {
+          ...(input as Record<string, unknown>),
+          createdAt: "2026-05-01T00:00:00.000Z",
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        } as any;
+      },
+      getBbConnection: async () =>
+        ({
+          bbLoginName: "apiech",
+          leagueId: "league-1",
+          leagueName: "NBBA",
+          teamId: "our-1",
+          teamName: "Visionaries",
+        }) as any,
+      requireFeatureAccess: async () => "premium",
+      resolveBbAccessKey: async () => "secret",
+      startWorkflowExecution: async () => "arn:simulation-2",
+      updateLeagueSeasonSimulationJob: async () => {},
+    },
+  );
+
+  assert.equal(result.executionArn, "arn:simulation-2");
+  assert.equal(createdRecord!.leagueId, "league-2");
+  assert.equal(createdRecord!.leagueName, null);
+  assert.deepStrictEqual(
+    (createdRecord!.requestJson as Record<string, unknown>).leagueId,
+    "league-2",
+  );
 });
 
 test("getLatestLeagueSeasonSimulation filters jobs using the effective live season", async () => {
@@ -595,6 +788,66 @@ test("getLatestLeagueSeasonSimulation filters jobs using the effective live seas
   assert.ok(result);
   assert.equal(result.jobId, "job-72");
   assert.equal(result.season, 72);
+});
+
+test("getLatestLeagueSeasonSimulation can target an explicit league id", async () => {
+  const result = await getLatestLeagueSeasonSimulation(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+      leagueId: "league-2",
+    },
+    {
+      createBbClient: () =>
+        ({
+          getSchedule: async () => ({
+            matches: [],
+            season: 72,
+          }),
+          getSeasons: async () => ({
+            seasons: [{ id: 73 }, { id: 72 }],
+            version: "1",
+          }),
+        }) as any,
+      getBbConnection: async () =>
+        ({
+          bbLoginName: "apiech",
+          leagueId: "league-1",
+          teamId: "our-1",
+        }) as any,
+      listLeagueSeasonSimulationJobsByUser: async () => ({
+        records: [
+          {
+            id: "connected-league-job",
+            leagueId: "league-1",
+            progressJson: null,
+            requestedAt: "2026-05-01T00:00:00.000Z",
+            season: 72,
+            status: "SUCCEEDED",
+            teamId: "our-1",
+            teamName: "Visionaries",
+            userId: "user-1",
+          },
+          {
+            id: "requested-league-job",
+            leagueId: "league-2",
+            progressJson: null,
+            requestedAt: "2026-05-01T00:01:00.000Z",
+            season: 72,
+            status: "SUCCEEDED",
+            teamId: "our-1",
+            teamName: "Visionaries",
+            userId: "user-1",
+          },
+        ],
+      }) as any,
+      resolveBbAccessKey: async () => "secret",
+    },
+  );
+
+  assert.ok(result);
+  assert.equal(result.jobId, "requested-league-job");
+  assert.equal(result.leagueId, "league-2");
 });
 
 test("season simulation runtime config parses planner concurrency overrides", () => {
@@ -713,6 +966,19 @@ test("league simulation failure finalizer is bound to the data API", () => {
     dataResourceSource,
     /allow\.resource\(resource\)\.to\(\["query", "mutate"\]\)/,
   );
+});
+
+test("league simulation artifacts use typed payload fields instead of opaque JSON", () => {
+  const artifactModelBlock =
+    /LeagueSeasonSimulationArtifact: a\s+\.model\(\{([\s\S]*?)\}\)\s+\.identifier/.exec(
+      dataResourceSource,
+    )?.[1] ?? "";
+
+  assert.doesNotMatch(artifactModelBlock, /payloadJson/);
+  assert.doesNotMatch(artifactModelBlock, /a\.json/);
+  assert.match(artifactModelBlock, /contextPayload/);
+  assert.match(artifactModelBlock, /snapshotPayload/);
+  assert.match(artifactModelBlock, /scoredGamePayload/);
 });
 
 test("getLatestLeagueSeasonSimulation reconciles terminal workflow failures", async () => {
@@ -852,8 +1118,7 @@ test("league simulation scoring chunks skip persisted games on retry", async () 
     artifactKey: "context",
     artifactOrder: 0,
     artifactType: "CONTEXT",
-    jobId: job.id,
-    payloadJson: {
+    contextPayload: {
       candidateGameCount: 0,
       currentSeason: 72,
       leagueId: "league-1",
@@ -898,14 +1163,15 @@ test("league simulation scoring chunks skip persisted games on retry", async () 
         },
       ],
     },
+    jobId: job.id,
     userId: job.userId,
   };
-  const snapshots = context.payloadJson.teams.map((team, index) => ({
+  const snapshots = context.contextPayload.teams.map((team, index) => ({
     artifactKey: team.teamId,
     artifactOrder: 2_000 + index,
     artifactType: "FINALIZED_SNAPSHOT",
     jobId: job.id,
-    payloadJson: {
+    snapshotPayload: {
       ...team,
       candidateGameCount: 3,
       normalizedRatings: {
@@ -931,8 +1197,8 @@ test("league simulation scoring chunks skip persisted games on retry", async () 
     artifactOrder: 3_000,
     artifactType: "SCORED_GAME",
     jobId: job.id,
-    payloadJson: {
-      ...context.payloadJson.remainingGames[0],
+    scoredGamePayload: {
+      ...context.contextPayload.remainingGames[0],
       awayDefense: "ManToMan",
       awayOffense: "Base",
       awayTeamIndex: 1,
@@ -1015,3 +1281,137 @@ test("league simulation scoring chunks skip persisted games on retry", async () 
   assert.equal(result.scoringComplete, true);
   assert.ok(artifacts.get(`${job.id}|SCORED_GAME|m-2`));
 });
+
+function createRegularSeasonScheduleFixture(args: {
+  completedRounds?: number;
+  currentGamesPerTeam?: number;
+} = {}): {
+  schedulesByTeamId: Map<string, any>;
+  teams: any[];
+} {
+  const teams = Array.from({ length: 16 }, (_, index) => ({
+    conferenceIndex: index < 8 ? 0 : 1,
+    currentLosses: 0,
+    currentPointMargin: 0,
+    currentWins: args.currentGamesPerTeam ?? 0,
+    stableRank: index % 8,
+    teamId: `team-${index + 1}`,
+    teamName: `Team ${index + 1}`,
+  }));
+  const schedulesByTeamId = new Map(
+    teams.map((team) => [
+      team.teamId,
+      {
+        matches: [],
+        retrievedAt: null,
+        season: 72,
+        teamId: team.teamId,
+        version: "test",
+      },
+    ] as const),
+  );
+  const baseRounds = buildRoundRobinRounds(teams.map((team) => team.teamId));
+  const regularSeasonRounds = [
+    ...baseRounds,
+    ...baseRounds.slice(0, 7).map((round) =>
+      round.map((pair) => ({
+        awayTeamId: pair.homeTeamId,
+        homeTeamId: pair.awayTeamId,
+      })),
+    ),
+  ];
+
+  regularSeasonRounds.forEach((round, roundIndex) => {
+    const completed = roundIndex < (args.completedRounds ?? 0);
+    const type = roundIndex % 5 === 0 ? "LEAGUE.RS.TV" : "league.rs";
+    round.forEach((pair, gameIndex) => {
+      addFixtureMatch(schedulesByTeamId, {
+        awayScore: completed ? 80 : null,
+        awayTeamId: pair.awayTeamId,
+        homeScore: completed ? 84 : null,
+        homeTeamId: pair.homeTeamId,
+        matchId: `round-${roundIndex + 1}-game-${gameIndex + 1}`,
+        startTime: `2026-05-${String(roundIndex + 1).padStart(2, "0")}T00:00:00.000Z`,
+        type,
+      });
+    });
+  });
+
+  return { schedulesByTeamId, teams };
+}
+
+function buildRoundRobinRounds(teamIds: string[]): Array<
+  Array<{ awayTeamId: string; homeTeamId: string }>
+> {
+  let rotation = [...teamIds];
+  const rounds: Array<Array<{ awayTeamId: string; homeTeamId: string }>> = [];
+  for (let roundIndex = 0; roundIndex < teamIds.length - 1; roundIndex += 1) {
+    const round: Array<{ awayTeamId: string; homeTeamId: string }> = [];
+    for (let index = 0; index < teamIds.length / 2; index += 1) {
+      const left = rotation[index]!;
+      const right = rotation[rotation.length - 1 - index]!;
+      round.push(
+        roundIndex % 2 === 0
+          ? { awayTeamId: right, homeTeamId: left }
+          : { awayTeamId: left, homeTeamId: right },
+      );
+    }
+    rounds.push(round);
+    rotation = [
+      rotation[0]!,
+      rotation[rotation.length - 1]!,
+      ...rotation.slice(1, rotation.length - 1),
+    ];
+  }
+  return rounds;
+}
+
+function createIncompleteTwoTeamSchedules(): Map<string, any> {
+  const schedulesByTeamId = new Map([
+    ["home", { matches: [], season: 72, teamId: "home" }],
+    ["away", { matches: [], season: 72, teamId: "away" }],
+  ]);
+  for (let index = 0; index < 19; index += 1) {
+    addFixtureMatch(schedulesByTeamId, {
+      awayScore: null,
+      awayTeamId: "away",
+      homeScore: null,
+      homeTeamId: "home",
+      matchId: `missing-round-${index + 1}`,
+      startTime: `2026-05-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+      type: index % 3 === 0 ? "LEAGUE.RS.TV" : "league.rs",
+    });
+  }
+  return schedulesByTeamId;
+}
+
+function addFixtureMatch(
+  schedulesByTeamId: Map<string, any>,
+  args: {
+    awayScore: number | null;
+    awayTeamId: string;
+    homeScore: number | null;
+    homeTeamId: string;
+    matchId: string;
+    startTime: string;
+    type: string;
+  },
+): void {
+  const match = {
+    awayTeam: {
+      id: args.awayTeamId,
+      score: args.awayScore,
+      teamName: args.awayTeamId,
+    },
+    homeTeam: {
+      id: args.homeTeamId,
+      score: args.homeScore,
+      teamName: args.homeTeamId,
+    },
+    id: args.matchId,
+    startTime: args.startTime,
+    type: args.type,
+  };
+  schedulesByTeamId.get(args.homeTeamId)?.matches.push(match);
+  schedulesByTeamId.get(args.awayTeamId)?.matches.push(match);
+}

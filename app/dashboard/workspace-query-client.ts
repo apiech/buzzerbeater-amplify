@@ -2273,8 +2273,14 @@ export const workspaceQueryKeys = {
   leagueHistory: (leagueId: string | null | undefined) =>
     ["workspace", "leagueHistory", leagueId ?? "default"] as const,
   leagueIntelAutoRefresh: ["workspace", "leagueIntel", "autoRefresh"] as const,
-  leagueIntel: ["workspace", "leagueIntel"] as const,
-  leagueSeasonSimulation: ["workspace", "leagueSeasonSimulation"] as const,
+  leagueIntel: (input?: { leagueId?: string | null }) =>
+    ["workspace", "leagueIntel", input?.leagueId ?? "connected"] as const,
+  leagueSeasonSimulation: (input?: { leagueId?: string | null }) =>
+    [
+      "workspace",
+      "leagueSeasonSimulation",
+      input?.leagueId ?? "connected",
+    ] as const,
   lineupHelper: ["workspace", "lineupHelper"] as const,
   lineupHelperEvaluation: (input: {
     assignments: readonly unknown[];
@@ -2579,9 +2585,15 @@ export async function optimizeLineupHelperQuery(input: {
 
 export async function fetchLeagueIntelQuery(args?: {
   force?: boolean;
+  leagueId?: string | null;
 }): Promise<LeagueIntelPayload | null> {
+  const leagueId = args?.leagueId?.trim() ?? "";
+  const input = {
+    ...(args?.force ? { force: true } : {}),
+    ...(leagueId ? { leagueId } : {}),
+  };
   const response = await client.queries.getLeagueIntel(
-    args?.force ? { force: true } : undefined,
+    Object.keys(input).length ? input : undefined,
   );
 
   return readAmplifyNullableDataOrThrow(
@@ -2718,8 +2730,13 @@ export async function fetchLatestOpponentForecastQuery(args: {
   ) as OpponentForecastSnapshot | null;
 }
 
-export async function fetchLatestLeagueSeasonSimulationQuery(): Promise<LeagueSeasonSimulationSnapshot | null> {
-  const response = await client.queries.getLatestLeagueSeasonSimulation();
+export async function fetchLatestLeagueSeasonSimulationQuery(args?: {
+  leagueId?: string | null;
+}): Promise<LeagueSeasonSimulationSnapshot | null> {
+  const leagueId = args?.leagueId?.trim() ?? "";
+  const response = await client.queries.getLatestLeagueSeasonSimulation(
+    leagueId ? { leagueId } : undefined,
+  );
 
   return readAmplifyNullableDataOrThrow(
     response,
@@ -3068,8 +3085,13 @@ export async function submitOpponentForecastJobMutation(input: {
   ) as SubmitOpponentForecastJobResult;
 }
 
-export async function submitLeagueSeasonSimulationJobMutation(): Promise<SubmitLeagueSeasonSimulationJobResult> {
-  const response = await client.mutations.submitLeagueSeasonSimulationJob();
+export async function submitLeagueSeasonSimulationJobMutation(args?: {
+  leagueId?: string | null;
+}): Promise<SubmitLeagueSeasonSimulationJobResult> {
+  const leagueId = args?.leagueId?.trim() ?? "";
+  const response = await client.mutations.submitLeagueSeasonSimulationJob(
+    leagueId ? { leagueId } : undefined,
+  );
   return readAmplifyDataOrThrow(
     response,
     z
@@ -3396,10 +3418,10 @@ export function lineupHelperEvaluationQueryOptions(input: {
   });
 }
 
-export function leagueIntelQueryOptions() {
+export function leagueIntelQueryOptions(args?: { leagueId?: string | null }) {
   return queryOptions({
-    queryFn: () => fetchLeagueIntelQuery(),
-    queryKey: workspaceQueryKeys.leagueIntel,
+    queryFn: () => fetchLeagueIntelQuery(args),
+    queryKey: workspaceQueryKeys.leagueIntel(args),
   });
 }
 
@@ -3476,10 +3498,12 @@ export function opponentForecastQueryOptions(args: { teamId: string }) {
   });
 }
 
-export function leagueSeasonSimulationQueryOptions() {
+export function leagueSeasonSimulationQueryOptions(args?: {
+  leagueId?: string | null;
+}) {
   return queryOptions({
-    queryFn: fetchLatestLeagueSeasonSimulationQuery,
-    queryKey: workspaceQueryKeys.leagueSeasonSimulation,
+    queryFn: () => fetchLatestLeagueSeasonSimulationQuery(args),
+    queryKey: workspaceQueryKeys.leagueSeasonSimulation(args),
   });
 }
 
@@ -3636,7 +3660,7 @@ export async function refreshSharedWorkspaceSection(
   }
   if (sectionKey === "leagueIntel") {
     const data = await fetchLeagueIntelQuery({ force: true });
-    queryClient.setQueryData(workspaceQueryKeys.leagueIntel, data);
+    queryClient.setQueryData(workspaceQueryKeys.leagueIntel(), data);
     return data;
   }
 
@@ -3647,7 +3671,7 @@ export async function refreshSharedWorkspaceSection(
 
 export async function refreshLeagueIntelWorkspace(queryClient: QueryClient) {
   const data = await fetchLeagueIntelQuery({ force: true });
-  queryClient.setQueryData(workspaceQueryKeys.leagueIntel, data);
+  queryClient.setQueryData(workspaceQueryKeys.leagueIntel(), data);
   return data;
 }
 

@@ -187,6 +187,12 @@ export function isScrimmageLike(
   return classifyCompetition(type).competitionKey === "SCRIMMAGE";
 }
 
+export function isLeagueRegularSeasonCompetition(
+  type: string | null | undefined,
+): boolean {
+  return classifyCompetition(type).competitionKey === "LEAGUE_REGULAR_SEASON";
+}
+
 export function matchIncludesTeam(
   match: BBApiScheduleMatch,
   teamId: string | null,
