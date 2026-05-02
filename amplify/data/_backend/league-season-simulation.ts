@@ -2263,7 +2263,7 @@ export function runSeasonMonteCarlo(args: {
   }
 
   return {
-    conferences: [...conferences.entries()]
+    conferences: Array.from(conferences.entries())
       .sort((left, right) => left[0] - right[0])
       .map(([conferenceIndex, teams]) => ({
         conferenceIndex,
@@ -2316,7 +2316,7 @@ export function buildSeasonBackfillOrder(
       ordered.add(id);
     }
   }
-  return [...ordered].sort((left, right) => right - left);
+  return Array.from(ordered).sort((left, right) => right - left);
 }
 
 export function buildRemainingRegularSeasonLeagueGames(args: {
@@ -2353,7 +2353,7 @@ export function buildRemainingRegularSeasonLeagueGames(args: {
     }
   }
 
-  return [...byMatchId.values()].sort((left, right) =>
+  return Array.from(byMatchId.values()).sort((left, right) =>
     compareNullableTimestamps(left.startTime, right.startTime),
   );
 }
