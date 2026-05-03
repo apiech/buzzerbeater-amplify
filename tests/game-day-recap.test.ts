@@ -3796,29 +3796,96 @@ test("facts library curates a star-led game story with injury and unusual stat c
   assert.ok(issueKinds.has("game_flow_time_clutter"));
   assert.ok(issueKinds.has("missing_game_story_beat"));
   assert.ok(issueKinds.has("unsupported_balanced_attack"));
-  const supportedInjuryAssessment = __testing.assessGameDayRecapDeterministicPayload(
-    createRecapCandidateResult({
-      headline: "Visionaries beat TarTeam 101-81",
-      matchId: "m-story",
-      writeup:
-        "TarTeam paired Motion with 2-3 Zone, while Visionaries answered with Push the Ball and Man-to-man.\n\nHichem Zamit scored 9 straight early, Finn Fisher, a starter for TarTeam, left injured in the third quarter, and Visionaries used a 24-10 run from 4:45 left in the 3rd quarter to 7:04 left in the 4th quarter to take control.\n\nHichem Zamit carried Visionaries with 43 points while three teammates reached double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
-    }),
-    [expectedGame],
-  );
-  assert.equal(
-    supportedInjuryAssessment.issues.some(
-      (issue) => issue.kind === "missing_game_story_beat",
-    ),
-    false,
-  );
-});
+	  const supportedInjuryAssessment = __testing.assessGameDayRecapDeterministicPayload(
+	    createRecapCandidateResult({
+	      headline: "Visionaries beat TarTeam 101-81",
+	      matchId: "m-story",
+	      writeup:
+	        "TarTeam paired Motion with 2-3 Zone, while Visionaries answered with Push the Ball and Man-to-man.\n\nHichem Zamit scored 9 straight early, Finn Fisher, a starter for TarTeam, left injured in the third quarter while TarTeam was down 58-61, and Visionaries used a 24-10 run across 9 minutes in the 3rd and 4th quarters to take control.\n\nHichem Zamit carried Visionaries with 43 points while three teammates reached double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
+	    }),
+	    [expectedGame],
+	  );
+	  assert.equal(
+	    supportedInjuryAssessment.issues.some(
+	      (issue) => issue.kind === "missing_game_story_beat",
+	    ),
+	    false,
+	  );
+	  assert.equal(
+	    supportedInjuryAssessment.issues.some(
+	      (issue) => issue.kind === "missing_run_timing",
+	    ),
+	    false,
+	  );
+	  assert.equal(
+	    supportedInjuryAssessment.issues.some(
+	      (issue) => issue.kind === "missing_explicit_event_score_state",
+	    ),
+	    false,
+	  );
+	  assert.equal(
+	    supportedInjuryAssessment.issues.some(
+	      (issue) => issue.kind === "choppy_fact_stack",
+	    ),
+	    false,
+	  );
+	  const ambiguousScoreStateAssessment =
+	    __testing.assessGameDayRecapDeterministicPayload(
+	      createRecapCandidateResult({
+	        headline: "Visionaries beat TarTeam 101-81",
+	        matchId: "m-story",
+	        writeup:
+	          "TarTeam paired Motion with 2-3 Zone, while Visionaries answered with Push the Ball and Man-to-man.\n\nHichem Zamit scored 9 straight early, Finn Fisher, a starter for TarTeam, left injured in the third quarter at 58-61, and Visionaries used a 24-10 run across 9 minutes in the 3rd and 4th quarters to take control.\n\nHichem Zamit carried Visionaries with 43 points while three teammates reached double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
+	      }),
+	      [expectedGame],
+	    );
+	  assert.ok(
+	    ambiguousScoreStateAssessment.issues.some(
+	      (issue) => issue.kind === "missing_explicit_event_score_state",
+	    ),
+	  );
+	  const bareInjuryAssessment = __testing.assessGameDayRecapDeterministicPayload(
+	    createRecapCandidateResult({
+	      headline: "Visionaries beat TarTeam 101-81",
+	      matchId: "m-story",
+	      writeup:
+	        "TarTeam paired Motion with 2-3 Zone, while Visionaries answered with Push the Ball and Man-to-man.\n\nHichem Zamit scored 9 straight early, Finn Fisher, a starter for TarTeam, left injured in the third quarter, and Visionaries used a 24-10 run across 9 minutes in the 3rd and 4th quarters to take control.\n\nHichem Zamit carried Visionaries with 43 points while three teammates reached double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
+	    }),
+	    [expectedGame],
+	  );
+	  assert.ok(
+	    bareInjuryAssessment.issues.some(
+	      (issue) => issue.kind === "missing_explicit_event_score_state",
+	    ),
+	  );
+	  const omittedInjuryAssessment = __testing.assessGameDayRecapDeterministicPayload(
+	    createRecapCandidateResult({
+	      headline: "Visionaries beat TarTeam 101-81",
+	      matchId: "m-story",
+	      writeup:
+	        "TarTeam paired Motion with 2-3 Zone, while Visionaries answered with Push the Ball and Man-to-man.\n\nHichem Zamit scored 9 straight early, and Visionaries used a 24-10 run across 9 minutes in the 3rd and 4th quarters to take control.\n\nHichem Zamit carried Visionaries with 43 points while three teammates reached double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
+	    }),
+	    [expectedGame],
+	  );
+	  assert.ok(
+	    omittedInjuryAssessment.issues.some(
+	      (issue) =>
+	        issue.kind === "missing_game_story_beat" &&
+	        /Finn Fisher/i.test(issue.actualValue ?? ""),
+	    ),
+	  );
+	});
 
 test("facts library suppresses separated last-lead and lead-for-good ledger facts in writer story", () => {
   const game = createExpectedPromptGame("m-separated-leads");
   game.finalMargin = 16;
   game.teams.away.name = "Splash Gang";
+  game.teams.away.offStrategy = "RunAndGun";
+  game.teams.away.defStrategy = "32Zone";
   game.teams.away.score = 97;
   game.teams.home.name = "LA Lions";
+  game.teams.home.offStrategy = "LookInside";
+  game.teams.home.defStrategy = "131Zone";
   game.teams.home.score = 81;
   game.quarterScores = {
     away: [18, 22, 24, 33],
@@ -3957,6 +4024,10 @@ test("facts library suppresses separated last-lead and lead-for-good ledger fact
     writerPayload.games[0]?.factsLibrary,
     "expected facts library",
   );
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game",
+  );
   const selectedClaimText = factsLibrary.gameStory.selectedBeats
     .map((beat) => beat.factId)
     .join(" ");
@@ -3977,6 +4048,57 @@ test("facts library suppresses separated last-lead and lead-for-good ledger fact
     factsLibrary.avoidFacts.some((fact) =>
       /Do not pair the losing team's last lead/i.test(fact),
     ),
+  );
+
+  const cleaned = __testing.cleanupFactLibraryWriteup(
+    createRecapCandidateResult({
+      headline: "Splash Gang beat LA Lions 97-81",
+      matchId: "m-separated-leads",
+      writeup:
+        "Splash Gang paired Run and Gun with 3-2 Zone, while LA Lions answered with Look Inside and 1-3-1 Zone.\n\nSplash Gang erased a 9-point deficit to win, with Roscoe Anderson leading the way. LA Lions led 41-40 at halftime. Splash Gang used a 28-10 run during a 7-minute surge in the 4th quarter to seize control.\n\nSplash Gang dominated the glass.",
+    }).games[0]!,
+    expectedGame,
+  );
+  const cleanedGameParagraph = cleaned.writeup.split(/\n{2,}/)[1] ?? "";
+  assert.match(
+    cleanedGameParagraph,
+    /^LA Lions led 41-40 at halftime\. Splash Gang erased a 9-point deficit to win/i,
+  );
+  assert.match(
+    cleanedGameParagraph,
+    /deficit to win[^.]+\. Splash Gang used a 28-10 run/i,
+  );
+
+  const normalizedHalftimeComeback = __testing.cleanupFactLibraryWriteup(
+    createRecapCandidateResult({
+      headline: "Splash Gang beat LA Lions 97-81",
+      matchId: "m-separated-leads",
+      writeup:
+        "Splash Gang paired Run and Gun with 3-2 Zone, while LA Lions answered with Look Inside and 1-3-1 Zone.\n\nLA Lions led 41-40 at halftime, but Splash Gang erased a 9-point deficit to win. Splash Gang used a 28-10 run during a 7-minute surge in the 4th quarter to seize control.\n\nSplash Gang dominated the glass.",
+    }).games[0]!,
+    expectedGame,
+  );
+  assert.match(
+    normalizedHalftimeComeback.writeup,
+    /LA Lions led 41-40 at halftime after Splash Gang had trailed by as many as 9\./i,
+  );
+  assert.doesNotMatch(
+    normalizedHalftimeComeback.writeup,
+    /halftime, but Splash Gang erased a 9-point deficit/i,
+  );
+
+  const normalizedControlComeback = __testing.cleanupFactLibraryWriteup(
+    createRecapCandidateResult({
+      headline: "Splash Gang beat LA Lions 97-81",
+      matchId: "m-separated-leads",
+      writeup:
+        "Splash Gang paired Run and Gun with 3-2 Zone, while LA Lions answered with Look Inside and 1-3-1 Zone.\n\nLA Lions led 41-40 at halftime, but Splash Gang erased a 9-point deficit to seize control down the stretch. Splash Gang used a 28-10 run during a 7-minute surge in the 4th quarter to seize control.\n\nSplash Gang dominated the glass.",
+    }).games[0]!,
+    expectedGame,
+  );
+  assert.match(
+    normalizedControlComeback.writeup,
+    /LA Lions led 41-40 at halftime after Splash Gang had trailed by as many as 9\./i,
   );
 });
 
@@ -4171,6 +4293,26 @@ test("deterministic recap review accepts equivalent selected-run timing anchors"
     broadAssessment.issues.some((issue) => issue.kind === "missing_run_timing"),
     false,
   );
+
+  const timedOutscoreAssessment =
+    __testing.assessGameDayRecapDeterministicPayload(
+      createRecapCandidateResult({
+        headline: "Philadelphia Cheesesteaks beat ElectricTriangles 97-81",
+        matchId: "m-run-timing",
+        writeup:
+          "Over roughly nine minutes in the third and fourth quarters, Philadelphia Cheesesteaks outscored ElectricTriangles 27-12 to seize control.",
+      }),
+      [game],
+    );
+  assert.equal(
+    timedOutscoreAssessment.issues.some(
+      (issue) =>
+        issue.kind === "quarter_score_mismatch" ||
+        issue.kind === "choppy_fact_stack" ||
+        issue.kind === "missing_primary_run_mention",
+    ),
+    false,
+  );
 });
 
 test("primary run omissions are draft quality only when gameStory did not select the run", () => {
@@ -4242,6 +4384,77 @@ test("primary run omissions are draft quality only when gameStory did not select
   );
 });
 
+test("selected primary run omissions are repaired even when the run is not hard-required", () => {
+  const game = createExpectedPromptGame("m-run-selected");
+  game.playByPlayFacts = {
+    ...createBackAndForthPlayByPlayFacts(),
+    primaryRun: createRunFact({
+      endAwayScore: 70,
+      endClock: "10:46",
+      endHomeScore: 76,
+      endQuarter: 4,
+      opponentPoints: 12,
+      runType: "swing",
+      startAwayScore: 58,
+      startClock: "08:19",
+      startHomeScore: 49,
+      startQuarter: 3,
+      teamName: "Home",
+      teamPoints: 27,
+      teamSide: "home",
+    }),
+  };
+  const request = createSingleGameRecapPayload("m-run-selected").request;
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [game],
+      request,
+    }),
+  });
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game",
+  );
+  const factsLibrary = expectPresent(
+    expectedGame.factsLibrary,
+    "expected facts library",
+  );
+  assert.ok(
+    factsLibrary.gameStory.selectedBeats.some((beat) =>
+      /primary_run/.test(beat.factId),
+    ),
+    "expected primary run to be selected",
+  );
+  factsLibrary.gameStory = {
+    ...factsLibrary.gameStory,
+    requiredFactIds: factsLibrary.gameStory.requiredFactIds.filter(
+      (factId) => !/primary_run/.test(factId),
+    ),
+  };
+
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beat Away 85-81",
+      matchId: "m-run-selected",
+      writeup:
+        "Away paired Motion with 2-3 Zone, while Home answered with Push the Ball and Man-to-man.\n\nHome took control after halftime and kept the game clean from there.\n\nHome protected the ball and finished the job.",
+    }),
+    [expectedGame],
+  );
+
+  assert.ok(
+    assessment.issues.some(
+      (issue) => issue.kind === "missing_primary_run_mention",
+    ),
+  );
+});
+
 test("saved validation payload reports draft-quality issues as valid but keeps hard fact issues", () => {
   const game = createExpectedPromptGame("m-validation-status");
   game.teams.home.name = "Home";
@@ -4290,6 +4503,101 @@ test("saved validation payload reports draft-quality issues as valid but keeps h
   assert.equal(hardValidation.issueCount, 1);
 });
 
+test("duplicate outcome detection catches winner-only final-score restatements", () => {
+  const game = createExpectedPromptGame("m-duplicate-winner-only");
+  game.teams.home.name = "Home";
+  game.teams.away.name = "Away";
+
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beat Away 85-81",
+      matchId: "m-duplicate-winner-only",
+      writeup:
+        "Home controlled the second half. Home pulled away from there, winning 85-81.",
+    }),
+    [game],
+  );
+
+  assert.ok(
+    assessment.issues.some(
+      (issue) => issue.kind === "duplicate_outcome_restatement",
+    ),
+  );
+});
+
+test("rating validation rejects irrelevant outside scoring claims for inside tactics", () => {
+  const game = createExpectedPromptGame("m-rating-tactic-relevance");
+  game.teams.away.name = "Splash Gang";
+  game.teams.away.score = 95;
+  game.teams.away.defStrategy = "32Zone";
+  game.teams.home.name = "The LA Lions";
+  game.teams.home.score = 75;
+  game.teams.home.offStrategy = "LookInside";
+  game.finalMargin = 20;
+
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Splash Gang beat The LA Lions 95-75",
+      matchId: "m-rating-tactic-relevance",
+      writeup:
+        "Splash Gang paired Run and Gun with 3-2 Zone, while The LA Lions answered with Look Inside and 1-3-1 Zone.\n\nSplash Gang took control in the fourth quarter.\n\nSplash Gang's sensational perimeter defense proved effective against The LA Lions' average outside scoring.",
+    }),
+    [game],
+  );
+
+  assert.ok(
+    assessment.issues.some(
+      (issue) => issue.kind === "unsupported_scoring_context",
+    ),
+  );
+
+  const stifledAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Splash Gang beat The LA Lions 95-75",
+      matchId: "m-rating-tactic-relevance",
+      writeup:
+        "Splash Gang won the rebounding battle with a sensational perimeter defense that stifled The LA Lions' average outside scoring.",
+    }),
+    [game],
+  );
+
+  assert.ok(
+    stifledAssessment.issues.some(
+      (issue) => issue.kind === "unsupported_scoring_context",
+    ),
+  );
+
+  const ratingCausalityAssessment =
+    __testing.assessGameDayRecapDeterministicPayload(
+      createRecapCandidateResult({
+        headline: "Splash Gang beat The LA Lions 95-75",
+        matchId: "m-rating-tactic-relevance",
+        writeup:
+          "Splash Gang paired Run and Gun with 3-2 Zone, while The LA Lions answered with Look Inside and 1-3-1 Zone.\n\nSplash Gang took control in the fourth quarter.\n\nDespite The LA Lions holding the team talent edge, Splash Gang's sensational perimeter defense and stronger rebounding rating proved decisive in the 95-75 victory.",
+      }),
+      [game],
+    );
+  assert.ok(
+    ratingCausalityAssessment.issues.some(
+      (issue) => issue.kind === "unsupported_scoring_context",
+    ),
+  );
+});
+
+test("fact-library headline cleanup fixes plural team verb agreement", () => {
+  const game = createExpectedPromptGame("m-plural-headline");
+  game.teams.home.name = "Visionaries";
+  game.teams.away.name = "TarTeam";
+
+  assert.equal(
+    __testing.normalizeFactLibraryHeadline(
+      "Visionaries erases 10-point deficit to beat TarTeam 101-81",
+      game,
+    ),
+    "Visionaries erase 10-point deficit to beat TarTeam 101-81",
+  );
+});
+
 test("salvageGameDayRecapResult removes duplicate final-score restatements", async () => {
   const expectedGame = createExpectedPromptGame("m-duplicate-cleanup");
   expectedGame.teams.home.name = "Visionaries";
@@ -4324,6 +4632,87 @@ test("salvageGameDayRecapResult removes duplicate final-score restatements", asy
     1,
   );
   assert.match(writeup, /controlled the fourth quarter/i);
+});
+
+test("salvageGameDayRecapResult restores missing fact-library manager setup and selected run", async () => {
+  const game = createExpectedPromptGame("m-structure-repair");
+  game.teams.home.name = "Visionaries";
+  game.teams.away.name = "TarTeam";
+  game.teams.home.score = 101;
+  game.teams.away.score = 81;
+  game.finalMargin = 20;
+  game.playByPlayFacts = {
+    ...createBackAndForthPlayByPlayFacts(),
+    primaryRun: createRunFact({
+      endAwayScore: 70,
+      endClock: "07:04",
+      endHomeScore: 84,
+      endQuarter: 4,
+      opponentPoints: 10,
+      runType: "swing",
+      startAwayScore: 60,
+      startClock: "04:45",
+      startHomeScore: 60,
+      startQuarter: 3,
+      teamName: "Visionaries",
+      teamPoints: 24,
+      teamSide: "home",
+    }),
+  };
+  const request = createSingleGameRecapPayload("m-structure-repair").request;
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [game],
+      request,
+    }),
+  });
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game",
+  );
+  const invalidResult = createRecapCandidateResult({
+    headline: "Visionaries beat TarTeam 101-81",
+    matchId: "m-structure-repair",
+    writeup:
+      "The game stayed tight into halftime.\n\nVisionaries found separation after the break.\n\nVisionaries protected the ball and finished the job.",
+  });
+  const deterministic = __testing.assessGameDayRecapDeterministicPayload(
+    invalidResult,
+    [expectedGame],
+  );
+  assert.ok(
+    deterministic.issues.some(
+      (issue) => issue.kind === "missing_pregame_tactical_setup",
+    ),
+  );
+  assert.ok(
+    deterministic.issues.some(
+      (issue) => issue.kind === "missing_primary_run_mention",
+    ),
+  );
+
+  const repaired = await __testing.salvageGameDayRecapResult({
+    deterministicIssues: deterministic.issues,
+    expectedGames: [expectedGame],
+    judgeIssues: [],
+    judgeProvider: createPassingJudgeProvider(),
+    request,
+    result: invalidResult,
+  });
+  const writeup = repaired.result.games[0]?.writeup ?? "";
+  const paragraphs = writeup.split(/\n{2,}/).filter(Boolean);
+
+  assert.match(writeup, /TarTeam paired Motion with 2-3 Zone/i);
+  assert.match(writeup, /Visionaries answered with Push the Ball and Man-to-man/i);
+  assert.match(writeup, /24-10 run/i);
+  assert.match(writeup, /\b(?:across 9 minutes|9-minute push|9-minute surge)\b/i);
+  assert.equal(paragraphs.length, 3);
 });
 
 test("buildGameDayRecapPromptPayload ignores non-regular-season competitions in league context", async () => {
