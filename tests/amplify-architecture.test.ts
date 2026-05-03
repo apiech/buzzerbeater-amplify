@@ -271,7 +271,25 @@ test("lineup helper workspace receives snapshot-table wiring", () => {
   assert.match(integrationSource, /getLineupHelperWorkspace: FunctionResource/);
   assert.match(
     integrationSource,
-    /const playerSnapshotReadFunctions = \[[\s\S]*backend\.getLineupHelperWorkspace[\s\S]*\];/,
+    /const workspaceSnapshotWriteFunctions = \[[\s\S]*backend\.getLineupHelperWorkspace[\s\S]*\];/,
+  );
+});
+
+test("owner roster repair receives snapshot-table write wiring", () => {
+  const backendSource = readFileSync(
+    join(repoRoot, "amplify", "backend.ts"),
+    "utf8",
+  );
+  const integrationSource = readFileSync(
+    join(repoRoot, "amplify", "_backend", "match-store-integration.ts"),
+    "utf8",
+  );
+
+  assert.match(backendSource, /repairOwnerRosterData/);
+  assert.match(integrationSource, /repairOwnerRosterData: FunctionResource/);
+  assert.match(
+    integrationSource,
+    /const workspaceSnapshotWriteFunctions = \[[\s\S]*backend\.repairOwnerRosterData[\s\S]*\];/,
   );
 });
 

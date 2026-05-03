@@ -63,8 +63,16 @@ type AggregateSortKey =
   | "averageMargin"
   | "games"
   | "lastMatch"
+  | "homeLosses"
+  | "homeWins"
+  | "leagueLosses"
   | "leagueWins"
+  | "losses"
   | "opponent"
+  | "playoffLosses"
+  | "playoffWins"
+  | "roadLosses"
+  | "roadWins"
   | "tvGames"
   | "winPct"
   | "wins";
@@ -104,9 +112,17 @@ const aggregateSortOptions: Array<{
   label: string;
 }> = [
   { key: "wins", label: "Wins" },
+  { key: "losses", label: "Losses" },
   { key: "winPct", label: "Win %" },
   { key: "games", label: "Meetings" },
   { key: "leagueWins", label: "League wins" },
+  { key: "leagueLosses", label: "League losses" },
+  { key: "homeWins", label: "Home wins" },
+  { key: "homeLosses", label: "Home losses" },
+  { key: "roadWins", label: "Road wins" },
+  { key: "roadLosses", label: "Road losses" },
+  { key: "playoffWins", label: "Playoff wins" },
+  { key: "playoffLosses", label: "Playoff losses" },
   { key: "averageMargin", label: "Average margin" },
   { key: "tvGames", label: "TV games" },
   { key: "lastMatch", label: "Last match" },
@@ -158,12 +174,16 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
     mutationFn: submitRivalsBackfillMutation,
   });
   const [searchText, setSearchText] = useState("");
-  const [selectedCompetitions, setSelectedCompetitions] = useState<string[] | null>(
+  const [selectedCompetitions, setSelectedCompetitions] = useState<
+    string[] | null
+  >(null);
+  const [selectedVenues, setSelectedVenues] = useState<string[] | null>(null);
+  const [selectedOutcomes, setSelectedOutcomes] = useState<string[] | null>(
     null,
   );
-  const [selectedVenues, setSelectedVenues] = useState<string[] | null>(null);
-  const [selectedOutcomes, setSelectedOutcomes] = useState<string[] | null>(null);
-  const [selectedTvScopes, setSelectedTvScopes] = useState<string[] | null>(null);
+  const [selectedTvScopes, setSelectedTvScopes] = useState<string[] | null>(
+    null,
+  );
   const [startSeason, setStartSeason] = useState<string | null>(null);
   const [endSeason, setEndSeason] = useState<string | null>(null);
   const [minimumGames, setMinimumGames] = useState("");
@@ -182,8 +202,7 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
     }),
     [],
   );
-  const effectiveCompetitionOptions =
-    payloadDefaults.competitionOptions;
+  const effectiveCompetitionOptions = payloadDefaults.competitionOptions;
   const effectiveSeasonValues = payloadDefaults.seasonValues;
   const defaultSeasonRange = payloadDefaults.seasonRange;
 
@@ -191,8 +210,7 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
     () => ({
       competitionKeys:
         selectedCompetitions === null ? undefined : selectedCompetitions,
-      endSeason:
-        endSeason === null ? undefined : parseSeasonValue(endSeason),
+      endSeason: endSeason === null ? undefined : parseSeasonValue(endSeason),
       outcomes: selectedOutcomes === null ? undefined : selectedOutcomes,
       selectedOpponentId: selectedOpponentId || undefined,
       startSeason:
@@ -427,7 +445,8 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   setEndSeason(nextRange.endSeason);
                 }}
                 value={
-                  effectiveSeasonRange.startSeason || defaultSeasonRange.startSeason
+                  effectiveSeasonRange.startSeason ||
+                  defaultSeasonRange.startSeason
                 }
               >
                 {seasonValues.length ? (
@@ -451,7 +470,9 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   setStartSeason(nextRange.startSeason);
                   setEndSeason(nextRange.endSeason);
                 }}
-                value={effectiveSeasonRange.endSeason || defaultSeasonRange.endSeason}
+                value={
+                  effectiveSeasonRange.endSeason || defaultSeasonRange.endSeason
+                }
               >
                 {seasonValues.length ? (
                   seasonValues.map((season) => (
@@ -578,7 +599,7 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
         />
 
         {rivalryRows.length ? (
-          <TableShell tableClassName="min-w-[78rem]">
+          <TableShell tableClassName="min-w-[104rem]">
             <thead>
               <tr>
                 <SortHeadCell
@@ -596,8 +617,14 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                 <SortHeadCell
                   active={sortKey === "wins"}
                   direction={sortDirection}
-                  label="W-L"
+                  label="Wins"
                   onToggle={() => toggleAggregateSort("wins")}
+                />
+                <SortHeadCell
+                  active={sortKey === "losses"}
+                  direction={sortDirection}
+                  label="Losses"
+                  onToggle={() => toggleAggregateSort("losses")}
                 />
                 <SortHeadCell
                   active={sortKey === "winPct"}
@@ -605,15 +632,54 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   label="Win %"
                   onToggle={() => toggleAggregateSort("winPct")}
                 />
-                <TableHeadCell>Home</TableHeadCell>
-                <TableHeadCell>Road</TableHeadCell>
+                <SortHeadCell
+                  active={sortKey === "homeWins"}
+                  direction={sortDirection}
+                  label="Home W"
+                  onToggle={() => toggleAggregateSort("homeWins")}
+                />
+                <SortHeadCell
+                  active={sortKey === "homeLosses"}
+                  direction={sortDirection}
+                  label="Home L"
+                  onToggle={() => toggleAggregateSort("homeLosses")}
+                />
+                <SortHeadCell
+                  active={sortKey === "roadWins"}
+                  direction={sortDirection}
+                  label="Road W"
+                  onToggle={() => toggleAggregateSort("roadWins")}
+                />
+                <SortHeadCell
+                  active={sortKey === "roadLosses"}
+                  direction={sortDirection}
+                  label="Road L"
+                  onToggle={() => toggleAggregateSort("roadLosses")}
+                />
                 <SortHeadCell
                   active={sortKey === "leagueWins"}
                   direction={sortDirection}
-                  label="League"
+                  label="League W"
                   onToggle={() => toggleAggregateSort("leagueWins")}
                 />
-                <TableHeadCell>Playoffs</TableHeadCell>
+                <SortHeadCell
+                  active={sortKey === "leagueLosses"}
+                  direction={sortDirection}
+                  label="League L"
+                  onToggle={() => toggleAggregateSort("leagueLosses")}
+                />
+                <SortHeadCell
+                  active={sortKey === "playoffWins"}
+                  direction={sortDirection}
+                  label="Playoff W"
+                  onToggle={() => toggleAggregateSort("playoffWins")}
+                />
+                <SortHeadCell
+                  active={sortKey === "playoffLosses"}
+                  direction={sortDirection}
+                  label="Playoff L"
+                  onToggle={() => toggleAggregateSort("playoffLosses")}
+                />
                 <SortHeadCell
                   active={sortKey === "averageMargin"}
                   direction={sortDirection}
@@ -647,7 +713,9 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                     <TableCell className="min-w-[15rem]">
                       <button
                         className="grid gap-1 text-left"
-                        onClick={() => setSelectedOpponentId(row.opponentTeamId)}
+                        onClick={() =>
+                          setSelectedOpponentId(row.opponentTeamId)
+                        }
                         type="button"
                       >
                         <strong className="text-ink text-sm">
@@ -659,20 +727,17 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                       </button>
                     </TableCell>
                     <TableCell>{row.games}</TableCell>
-                    <TableCell>{formatRecord(row.wins, row.losses)}</TableCell>
+                    <TableCell>{row.wins}</TableCell>
+                    <TableCell>{row.losses}</TableCell>
                     <TableCell>{formatWinPct(row.winPct)}</TableCell>
-                    <TableCell>
-                      {formatRecord(row.homeWins, row.homeLosses)}
-                    </TableCell>
-                    <TableCell>
-                      {formatRecord(row.roadWins, row.roadLosses)}
-                    </TableCell>
-                    <TableCell>
-                      {formatRecord(row.leagueWins, row.leagueLosses)}
-                    </TableCell>
-                    <TableCell>
-                      {formatRecord(row.playoffWins, row.playoffLosses)}
-                    </TableCell>
+                    <TableCell>{row.homeWins}</TableCell>
+                    <TableCell>{row.homeLosses}</TableCell>
+                    <TableCell>{row.roadWins}</TableCell>
+                    <TableCell>{row.roadLosses}</TableCell>
+                    <TableCell>{row.leagueWins}</TableCell>
+                    <TableCell>{row.leagueLosses}</TableCell>
+                    <TableCell>{row.playoffWins}</TableCell>
+                    <TableCell>{row.playoffLosses}</TableCell>
                     <TableCell>{formatMargin(row.averageMargin)}</TableCell>
                     <TableCell>{row.tvGames}</TableCell>
                     <TableCell>{formatSeasonList(row.seasons)}</TableCell>
@@ -701,34 +766,37 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                     {visibleAggregate.games}
                   </TableCell>
                   <TableCell className={aggregateRowCellClassName}>
-                    {formatRecord(visibleAggregate.wins, visibleAggregate.losses)}
+                    {visibleAggregate.wins}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {visibleAggregate.losses}
                   </TableCell>
                   <TableCell className={aggregateRowCellClassName}>
                     {formatWinPct(visibleAggregate.winPct)}
                   </TableCell>
                   <TableCell className={aggregateRowCellClassName}>
-                    {formatRecord(
-                      visibleAggregate.homeWins,
-                      visibleAggregate.homeLosses,
-                    )}
+                    {visibleAggregate.homeWins}
                   </TableCell>
                   <TableCell className={aggregateRowCellClassName}>
-                    {formatRecord(
-                      visibleAggregate.roadWins,
-                      visibleAggregate.roadLosses,
-                    )}
+                    {visibleAggregate.homeLosses}
                   </TableCell>
                   <TableCell className={aggregateRowCellClassName}>
-                    {formatRecord(
-                      visibleAggregate.leagueWins,
-                      visibleAggregate.leagueLosses,
-                    )}
+                    {visibleAggregate.roadWins}
                   </TableCell>
                   <TableCell className={aggregateRowCellClassName}>
-                    {formatRecord(
-                      visibleAggregate.playoffWins,
-                      visibleAggregate.playoffLosses,
-                    )}
+                    {visibleAggregate.roadLosses}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {visibleAggregate.leagueWins}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {visibleAggregate.leagueLosses}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {visibleAggregate.playoffWins}
+                  </TableCell>
+                  <TableCell className={aggregateRowCellClassName}>
+                    {visibleAggregate.playoffLosses}
                   </TableCell>
                   <TableCell className={aggregateRowCellClassName}>
                     {formatMargin(visibleAggregate.averageMargin)}
@@ -793,13 +861,16 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
           <div className={detailGridClassName}>
             <Panel as="article" padding="sm" variant="glass">
               <SectionHeading title="By competition" titleAs="h5" />
-              <TableShell compact tableClassName="min-w-[34rem]">
+              <TableShell compact tableClassName="min-w-[44rem]">
                 <thead>
                   <tr>
                     <TableHeadCell>Competition</TableHeadCell>
-                    <TableHeadCell>W-L</TableHeadCell>
-                    <TableHeadCell>Home</TableHeadCell>
-                    <TableHeadCell>Road</TableHeadCell>
+                    <TableHeadCell>Wins</TableHeadCell>
+                    <TableHeadCell>Losses</TableHeadCell>
+                    <TableHeadCell>Home W</TableHeadCell>
+                    <TableHeadCell>Home L</TableHeadCell>
+                    <TableHeadCell>Road W</TableHeadCell>
+                    <TableHeadCell>Road L</TableHeadCell>
                     <TableHeadCell>Avg margin</TableHeadCell>
                     <TableHeadCell>TV</TableHeadCell>
                   </tr>
@@ -808,13 +879,12 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   {competitionBreakdown.map((row) => (
                     <tr key={row.competitionKey}>
                       <TableCell>{row.competitionLabel}</TableCell>
-                      <TableCell>{formatRecord(row.wins, row.losses)}</TableCell>
-                      <TableCell>
-                        {formatRecord(row.homeWins, row.homeLosses)}
-                      </TableCell>
-                      <TableCell>
-                        {formatRecord(row.roadWins, row.roadLosses)}
-                      </TableCell>
+                      <TableCell>{row.wins}</TableCell>
+                      <TableCell>{row.losses}</TableCell>
+                      <TableCell>{row.homeWins}</TableCell>
+                      <TableCell>{row.homeLosses}</TableCell>
+                      <TableCell>{row.roadWins}</TableCell>
+                      <TableCell>{row.roadLosses}</TableCell>
                       <TableCell>{formatMargin(row.averageMargin)}</TableCell>
                       <TableCell>{row.tvGames}</TableCell>
                     </tr>
@@ -825,12 +895,14 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
 
             <Panel as="article" padding="sm" variant="glass">
               <SectionHeading title="By season" titleAs="h5" />
-              <TableShell compact tableClassName="min-w-[34rem]">
+              <TableShell compact tableClassName="min-w-[40rem]">
                 <thead>
                   <tr>
                     <TableHeadCell>Season</TableHeadCell>
-                    <TableHeadCell>W-L</TableHeadCell>
-                    <TableHeadCell>League</TableHeadCell>
+                    <TableHeadCell>Wins</TableHeadCell>
+                    <TableHeadCell>Losses</TableHeadCell>
+                    <TableHeadCell>League W</TableHeadCell>
+                    <TableHeadCell>League L</TableHeadCell>
                     <TableHeadCell>Avg margin</TableHeadCell>
                     <TableHeadCell>TV</TableHeadCell>
                     <TableHeadCell>Last match</TableHeadCell>
@@ -840,10 +912,10 @@ export function RivalsPanel({ context }: RivalsPanelProps) {
                   {seasonBreakdown.map((row) => (
                     <tr key={row.season}>
                       <TableCell>{row.season}</TableCell>
-                      <TableCell>{formatRecord(row.wins, row.losses)}</TableCell>
-                      <TableCell>
-                        {formatRecord(row.leagueWins, row.leagueLosses)}
-                      </TableCell>
+                      <TableCell>{row.wins}</TableCell>
+                      <TableCell>{row.losses}</TableCell>
+                      <TableCell>{row.leagueWins}</TableCell>
+                      <TableCell>{row.leagueLosses}</TableCell>
                       <TableCell>{formatMargin(row.averageMargin)}</TableCell>
                       <TableCell>{row.tvGames}</TableCell>
                       <TableCell>{formatDate(row.lastMatch)}</TableCell>
@@ -1216,12 +1288,28 @@ function sortRivalryRows(
         return left.averageMargin - right.averageMargin;
       case "games":
         return left.games - right.games;
+      case "homeLosses":
+        return left.homeLosses - right.homeLosses;
+      case "homeWins":
+        return left.homeWins - right.homeWins;
       case "lastMatch":
         return compareTimestamps(left.lastMatch, right.lastMatch);
+      case "leagueLosses":
+        return left.leagueLosses - right.leagueLosses;
       case "leagueWins":
         return left.leagueWins - right.leagueWins;
+      case "losses":
+        return left.losses - right.losses;
       case "opponent":
         return left.opponentTeamName.localeCompare(right.opponentTeamName);
+      case "playoffLosses":
+        return left.playoffLosses - right.playoffLosses;
+      case "playoffWins":
+        return left.playoffWins - right.playoffWins;
+      case "roadLosses":
+        return left.roadLosses - right.roadLosses;
+      case "roadWins":
+        return left.roadWins - right.roadWins;
       case "tvGames":
         return left.tvGames - right.tvGames;
       case "winPct":
@@ -1308,10 +1396,10 @@ function hasActiveRivalsStatus(
 ): boolean {
   return Boolean(
     status &&
-      (status.status === "QUEUED" ||
-        status.status === "FETCHING_SEASONS" ||
-        status.status === "FETCHING_SCHEDULES" ||
-        status.status === "BUILDING_DATASET"),
+    (status.status === "QUEUED" ||
+      status.status === "FETCHING_SEASONS" ||
+      status.status === "FETCHING_SCHEDULES" ||
+      status.status === "BUILDING_DATASET"),
   );
 }
 
@@ -1504,6 +1592,7 @@ export const __testing = {
   buildVisibleAggregate,
   buildDefaultSeasonRange,
   normalizeSeasonRange,
+  sortRivalryRows,
   toggleSelectedValue,
   updateSeasonRangeFromEnd,
   updateSeasonRangeFromStart,

@@ -856,7 +856,7 @@ test("splitRecapWriteupParagraphs falls back to readable story sections", () => 
   assert.match(paragraphs[2] ?? "", /Ari Away.*perimeter defense/i);
 });
 
-test("forum formatter omits suspect recaps from public copy", () => {
+test("forum formatter includes suspect recaps but omits unsafe recaps from public copy", () => {
   const record = {
     completedAt: "2026-03-15T23:15:00Z",
     coverageJson: null,
@@ -897,24 +897,57 @@ test("forum formatter omits suspect recaps from public copy", () => {
       },
       {
         evidenceTags: [],
-        headline: "Gamma wins with unsupported score",
+        headline: "Gamma wins with a messy middle",
         matchId: "137828773",
         surpriseFactor: 9.5,
+        postgameInterview: {
+          playerName: "Gina Gamma",
+          qa: [
+            {
+              answer: "We had to stop making it weird and play through contact.",
+              question: "How did you steady the game late?",
+            },
+          ],
+          teamName: "Gamma",
+          teamSide: "home",
+          title: "Gina Gamma on Gamma's late push",
+        },
         validation: {
           issueCount: 1,
           issues: [
             {
               field: "writeup",
-              kind: "wrong_final_score",
-              reason: "The writeup used a final score that does not match the box score.",
-              sentence: "Gamma beat Delta 101-99.",
+              kind: "choppy_fact_stack",
+              reason: "The writeup stacked short fact sentences.",
+              sentence: "Gamma led at halftime. Gamma won the third.",
               sentenceIndex: 0,
               source: "deterministic",
             },
           ],
           status: "SUSPECT",
         },
-        writeup: "Gamma beat Delta 101-99.",
+        writeup: "Gamma led at halftime. Gamma won the third.",
+      },
+      {
+        evidenceTags: [],
+        headline: "Delta wins with unsupported score",
+        matchId: "137828774",
+        surpriseFactor: 8.1,
+        validation: {
+          issueCount: 1,
+          issues: [
+            {
+              field: "headline",
+              kind: "wrong_final_score",
+              reason: "The headline used a final score that does not match the box score.",
+              sentence: "Delta wins with unsupported score",
+              sentenceIndex: 0,
+              source: "deterministic",
+            },
+          ],
+          status: "UNSAFE",
+        },
+        writeup: "Delta beat Echo 101-99.",
       },
     ],
     summary: {
@@ -926,10 +959,15 @@ test("forum formatter omits suspect recaps from public copy", () => {
   });
 
   assert.match(forumPost, /\[b]Alpha closes strong\[\/b]/);
-  assert.doesNotMatch(forumPost, /Game of the day:/);
-  assert.doesNotMatch(forumPost, /Gamma wins with unsupported score/);
+  assert.match(forumPost, /Game of the day: Gamma wins with a messy middle/);
+  assert.match(forumPost, /\[b]Gamma wins with a messy middle\[\/b]/);
+  assert.match(forumPost, /Gamma led at halftime\. Gamma won the third\./);
+  assert.match(forumPost, /\[i]Gina Gamma • Gamma\[\/i]/);
+  assert.match(forumPost, /How did you steady the game late\?/);
+  assert.doesNotMatch(forumPost, /Delta wins with unsupported score/);
   assert.doesNotMatch(forumPost, /101-99/);
-  assert.doesNotMatch(forumPost, /\[match=137828773]/);
+  assert.doesNotMatch(forumPost, /\[match=137828774]/);
+  assert.match(forumPost, /1 game recap was omitted because it has an unsafe validation warning/);
   assert.doesNotMatch(forumPost, /Fact library first/i);
 });
 
@@ -972,6 +1010,12 @@ test("forum formatter includes every interview in postgameInterviews while keepi
                 answer: "We stayed patient and trusted the defense.",
                 question: "What changed in the fourth quarter?",
               },
+              {
+                answer:
+                  "If momentum needed a job title, I would call it night manager.",
+                question:
+                  "If tonight's momentum had to file paperwork, what would it list as its occupation?",
+              },
             ],
             teamName: "Alpha",
             teamSide: "home",
@@ -1005,6 +1049,7 @@ test("forum formatter includes every interview in postgameInterviews while keepi
 
   assert.match(forumPost, /\[i]Ari Alpha • Alpha\[\/i]/);
   assert.match(forumPost, /\[i]Bex Beta • Beta\[\/i]/);
+  assert.match(forumPost, /If tonight's momentum had to file paperwork/);
   assert.match(forumPost, /Where did the game turn\?/);
   assert.match(forumPost, /We have to handle that late swing better in Game 2\./);
 });

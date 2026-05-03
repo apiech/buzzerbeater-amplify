@@ -41,6 +41,15 @@ test("normalizeSingleGameSummaryRecord preserves interview overrides and stored 
                 answer: "Heraclitus said everything flows.",
                 question: "What was working for you tonight?",
               },
+              {
+                answer: "The fourth quarter was a river with elbows.",
+                question: "Where did the finish start to move your way?",
+              },
+              {
+                answer: "I would ask the scoreboard to stop wearing robes.",
+                question:
+                  "If the scoreboard briefly turned into a courtroom, what evidence would you want thrown out?",
+              },
             ],
             teamName: "Visionaries",
             teamSide: "home",
@@ -55,6 +64,15 @@ test("normalizeSingleGameSummaryRecord preserves interview overrides and stored 
                 {
                   answer: "Heraclitus said everything flows.",
                   question: "What was working for you tonight?",
+                },
+                {
+                  answer: "The fourth quarter was a river with elbows.",
+                  question: "Where did the finish start to move your way?",
+                },
+                {
+                  answer: "I would ask the scoreboard to stop wearing robes.",
+                  question:
+                    "If the scoreboard briefly turned into a courtroom, what evidence would you want thrown out?",
                 },
               ],
               teamName: "Visionaries",
@@ -108,6 +126,7 @@ test("normalizeSingleGameSummaryRecord preserves interview overrides and stored 
 
   assert.equal(resultGame.postgameInterview.personalityType, "reflective");
   assert.equal(resultGame.postgameInterview.personalitySource, "request_override");
+  assert.equal(resultGame.postgameInterview.qa.length, 3);
   assert.deepStrictEqual(
     resultGame.postgameInterviews?.map((interview) => ({
       personalitySource: interview.personalitySource,

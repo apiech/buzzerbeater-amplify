@@ -65,29 +65,29 @@ const INTERVIEW_PERSONALITY_PROMPTS: Record<
   string
 > = {
   braggart:
-    "The player answers must sound shamelessly self-glorifying, like the player is delivering a victory lap in real time without inventing new facts.",
+    "The player answers must sound shamelessly self-glorifying, like every sentence is a parade float built for one ego. Use grand claims of command, receipts, invoices, coronations, and victory-lap rhythm without inventing new basketball facts.",
   cagey:
-    "The player answers must sound guarded, slippery, and sly, as if the player knows more than he wants to hand over while still answering the question.",
+    "The player answers must sound guarded, sly, and deliberately under-revealing, like the player knows the secret floor plan and is smiling at the reporter for asking. Use hints, half-answers, and mischievous refusal while still answering the question.",
   curt:
-    "The player answers must stay brutally brief, clipped, and cold, with no wasted words.",
+    "The player answers must stay brutally brief, clipped, and cold, with no wasted words. The comedy comes from the hard stop: short sentence, sharp edge, done.",
   deadpan:
-    "The player answers must sound so dry and understated that the confidence lands as a joke without becoming a comedy sketch.",
+    "The player answers must sound so dry and understated that the absurdity lands by being treated as normal office paperwork. Use flat phrasing, tiny understatements, and sudden matter-of-fact punchlines.",
   earnest:
-    "The player answers must sound deeply sincere, team-first, and morally serious, like the player is giving testimony after a basketball sermon.",
+    "The player answers must sound deeply sincere, team-first, and almost too morally serious, like a locker-room speech accidentally wandered into a courtroom. Make ordinary possessions sound like civic duty.",
   excited:
-    "The player answers must sound electrically hyped, emotionally loud, and fully in the moment.",
+    "The player answers must sound electrically hyped, emotionally loud, and fully in the moment. Use exclamation-like rhythm, fast pivots, big feeling, and the sense that the player is still vibrating from the game.",
   friendly:
-    "The player answers must sound warm, charming, and loose, like a superstar happily telling the story over a long walk back to the locker room.",
+    "The player answers must sound warm, charming, loose, and funny, like a superstar happily turning the game into a story while grinning through every line.",
   nonsensical:
-    "The player answers must drift into bizarre, funny, surreal imagery while still staying tethered to the supplied facts.",
+    "The player answers must drift into bizarre, funny, surreal imagery while still staying tethered to the supplied facts. The player can talk about impossible objects, weather with opinions, haunted scoreboards, paperwork made of thunder, or other obviously comic images.",
   rambling:
-    "The player answers must sound gloriously long-winded, winding through side roads and analogies before finally landing on the basketball point.",
+    "The player answers must sound gloriously long-winded, winding through side roads, nested analogies, sudden detours, and one final clean basketball point. Make the journey entertaining, not generic.",
   reflective:
-    "The player answers must sound introspective, philosophical, and analytical about how the game unfolded.",
+    "The player answers must sound introspective, philosophical, and analytical about how the game unfolded. Use big concepts, ancient-sounding certainty, and calm overthinking, but keep the basketball claim grounded.",
   stoic:
-    "The player answers must sound icy, composed, and unfazed, like the player expected this outcome all along.",
+    "The player answers must sound icy, composed, and unfazed, like the player expected the whole night to resolve into a proof. Use short logic, pressure, order, and finality.",
   swaggering:
-    "The player answers must sound flamboyant, stylish, and coolly arrogant, with verbal flair but no invented facts.",
+    "The player answers must sound flamboyant, stylish, and coolly arrogant, like the game had a soundtrack only the player could hear. Use rhythm, shine, tempo, and verbal flair without invented facts.",
 };
 
 const INTERVIEW_PERSONALITY_EXAMPLES: Record<
@@ -120,11 +120,11 @@ const INTERVIEW_PERSONALITY_EXAMPLES: Record<
 
 const INTERVIEW_INTENSITY_PROMPTS: Record<InterviewIntensity, string> = {
   clean:
-    "Keep the voice vivid, funny, and highly distinctive, but broadcast-safe and non-insulting. The player can sound cocky, poetic, or theatrical without directly trashing the opponent.",
+    "Keep the voice vivid, funny, and highly distinctive, but broadcast-safe and non-insulting. The player can be theatrical, poetic, strange, and instantly quotable without directly trashing the opponent.",
   full_heat:
-    "Turn the volume all the way up. Let the player sound merciless, theatrical, and disrespectful in a sharp competitive way, with mocking lines, audacious self-belief, philosopher references, bar-like rhythm, and original trash talk. Keep every claim grounded in the supplied facts. Do not use slurs, hate speech, or copyrighted quotations.",
+    "Use the same wild theatrical imagination as PG-13, then add sharper disrespect, harder competitive mockery, audacious self-belief, original trash talk, and bigger verbal flexing. Keep every basketball claim grounded in the supplied facts. Do not use slurs, hate speech, or copyrighted quotations.",
   pg13:
-    "Push the answers hard. Let the player sound boldly self-confident, funny, quotable, and playful with the trash talk. Original bar-like boasts, philosopher references, and vivid analogies are encouraged. Keep every claim grounded in the supplied facts. Do not use slurs, hate speech, or copyrighted quotations.",
+    "Make this as entertaining as full heat: wild, funny, theatrical, surreal, highly quotable, and unmistakably personality-driven. The difference is that PG-13 should be less mean and less cutting, not less creative. Original boasts, philosopher references, absurd analogies, and playful trash talk are encouraged. Keep every basketball claim grounded in the supplied facts. Do not use slurs, hate speech, or copyrighted quotations.",
 };
 
 export function isInterviewPersonalityType(
@@ -212,7 +212,8 @@ export function resolveInterviewPersonalityPrompt(
     INTERVIEW_INTENSITY_PROMPTS[intensity],
     INTERVIEW_PERSONALITY_PROMPTS[personalityType],
     "Make the selected personality obvious enough that a reader can identify it instantly without any debug labels.",
-    "Use cadence, sentence length, rhythm, metaphor, attitude, and word choice to push the archetype far past generic athlete-speak.",
+    "Every answer should pass a silhouette test: even with the personality label removed, the cadence, sentence length, rhythm, metaphor, attitude, and word choice should make the archetype obvious.",
+    "Push the archetype far past generic athlete-speak. Safe blandness is a failure mode.",
     "Only the player answers should carry this personality styling; keep the title and reporter questions neutral.",
     "When the intensity allows it, the player can sound unstoppable, superior, mocking, philosophical, flowery, or absurd, so long as the facts stay grounded.",
     `Example answer flavor: "${INTERVIEW_PERSONALITY_EXAMPLES[personalityType]}"`,

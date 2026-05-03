@@ -29,22 +29,22 @@ test("season range normalization falls back to the available bounds", () => {
 
 test("toggleSelectedValue removes a value from the implicit all-selected state", () => {
   assert.deepStrictEqual(
-    rivalsPanelTesting.toggleSelectedValue(
-      null,
+    rivalsPanelTesting.toggleSelectedValue(null, "PLAYOFFS", [
+      "LEAGUE_REGULAR_SEASON",
       "PLAYOFFS",
-      ["LEAGUE_REGULAR_SEASON", "PLAYOFFS", "CUP"],
-    ),
+      "CUP",
+    ]),
     ["LEAGUE_REGULAR_SEASON", "CUP"],
   );
 });
 
 test("toggleSelectedValue adds a missing value back into the explicit selection", () => {
   assert.deepStrictEqual(
-    rivalsPanelTesting.toggleSelectedValue(
-      ["LEAGUE_REGULAR_SEASON"],
+    rivalsPanelTesting.toggleSelectedValue(["LEAGUE_REGULAR_SEASON"], "CUP", [
+      "LEAGUE_REGULAR_SEASON",
+      "PLAYOFFS",
       "CUP",
-      ["LEAGUE_REGULAR_SEASON", "PLAYOFFS", "CUP"],
-    ),
+    ]),
     ["LEAGUE_REGULAR_SEASON", "CUP"],
   );
 });
@@ -140,6 +140,38 @@ test("buildVisibleAggregate sums visible rivalry rows and derives summary values
 
 test("buildVisibleAggregate returns null when no visible rows remain", () => {
   assert.equal(rivalsPanelTesting.buildVisibleAggregate([]), null);
+});
+
+test("sortRivalryRows can rank opponents by losses", () => {
+  const sorted = rivalsPanelTesting.sortRivalryRows(
+    [
+      createRivalryRow({
+        losses: 2,
+        opponentTeamId: "opp-1",
+        opponentTeamName: "Beta",
+        wins: 5,
+      }),
+      createRivalryRow({
+        losses: 7,
+        opponentTeamId: "opp-2",
+        opponentTeamName: "Gamma",
+        wins: 1,
+      }),
+      createRivalryRow({
+        losses: 4,
+        opponentTeamId: "opp-3",
+        opponentTeamName: "Alpha",
+        wins: 3,
+      }),
+    ],
+    "losses",
+    "desc",
+  );
+
+  assert.deepStrictEqual(
+    sorted.map((row) => row.opponentTeamName),
+    ["Gamma", "Alpha", "Beta"],
+  );
 });
 
 function createRivalryRow(overrides: Partial<RivalryRow> = {}): RivalryRow {

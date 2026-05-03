@@ -441,7 +441,7 @@ export function RecapPanel({
         selectedRecap.kind !== "LEAGUE_GAME_DAY_PERFORMANCES" &&
         selectedWriteupResult
           ? selectedWriteupResult.games.some(
-              (game) => !isForumSafeRecapGame(game),
+              (game) => !isForumCopyableRecapGame(game),
             )
           : false;
       captureAnalyticsEvent("recap_forum_post_copied", {
@@ -453,7 +453,7 @@ export function RecapPanel({
           selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
             ? "Forum-ready performances copied."
             : omittedUnsafeWriteups
-              ? "Forum-ready recap copied without games that need fact review."
+              ? "Forum-ready recap copied without unsafe games."
             : "Forum-ready recap copied.",
         tone: omittedUnsafeWriteups ? "note" : "success",
       });
@@ -2396,7 +2396,8 @@ function formatRecapForumPost(
   record: RecapHistoryRecord,
   result: GameDayRecapResultPayload,
 ): string {
-  const forumGames = result.games.filter(isForumSafeRecapGame);
+  const forumGames = result.games.filter(isForumCopyableRecapGame);
+  const omittedUnsafeCount = result.games.length - forumGames.length;
   const gameOfTheDay = findGameOfTheDay({
     ...result,
     games: forumGames,
@@ -2458,6 +2459,13 @@ function formatRecapForumPost(
     }
   }
 
+  if (omittedUnsafeCount > 0) {
+    lines.push("");
+    lines.push(
+      `[i]${omittedUnsafeCount} game recap${omittedUnsafeCount === 1 ? " was" : "s were"} omitted because ${omittedUnsafeCount === 1 ? "it has" : "they have"} an unsafe validation warning in the app.[/i]`,
+    );
+  }
+
   return lines.join("\n").trim();
 }
 
@@ -2479,10 +2487,10 @@ function getRecapGameValidation(
   );
 }
 
-function isForumSafeRecapGame(
+function isForumCopyableRecapGame(
   game: GameDayRecapResultPayload["games"][number],
 ): boolean {
-  return getRecapGameValidation(game).status === "VALID";
+  return getRecapGameValidation(game).status !== "UNSAFE";
 }
 
 function formatRecapValidationStatus(status: string): string {

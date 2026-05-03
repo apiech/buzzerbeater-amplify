@@ -498,6 +498,35 @@ function createExpectedPromptGame(matchId: string) {
   };
 }
 
+function createRecapBoxScoreStats(
+  overrides: Partial<{
+    assists: number | null;
+    fieldGoalsAttempted: number | null;
+    fieldGoalsMade: number | null;
+    freeThrowsAttempted: number | null;
+    freeThrowsMade: number | null;
+    offensiveRebounds: number | null;
+    personalFouls: number | null;
+    rebounds: number | null;
+    threePointersAttempted: number | null;
+    threePointersMade: number | null;
+  }> = {},
+) {
+  return {
+    assists: null,
+    fieldGoalsAttempted: null,
+    fieldGoalsMade: null,
+    freeThrowsAttempted: null,
+    freeThrowsMade: null,
+    offensiveRebounds: null,
+    personalFouls: null,
+    rebounds: null,
+    threePointersAttempted: null,
+    threePointersMade: null,
+    ...overrides,
+  };
+}
+
 function createPlayoffSeriesMatch(args: {
   awayId: string;
   awayName: string;
@@ -877,14 +906,14 @@ function buildTestInterviewStatSummary(candidate: {
   };
 }): string {
   const parts: string[] = [];
-  if (candidate.statLine.points > 0) {
-    parts.push(`${candidate.statLine.points} points`);
+  if (candidate.statLine.points >= 16) {
+    parts.push("steady scoring pressure");
   }
-  if (candidate.statLine.rebounds > 0) {
-    parts.push(`${candidate.statLine.rebounds} rebounds`);
+  if (candidate.statLine.rebounds >= 6) {
+    parts.push("work on the glass");
   }
-  if (candidate.statLine.assists > 0) {
-    parts.push(`${candidate.statLine.assists} assists`);
+  if (candidate.statLine.assists >= 4) {
+    parts.push("useful creation");
   }
 
   if (parts.length === 0) {
@@ -921,7 +950,13 @@ function maybeHandleAuxiliaryWriterPayloadForTest(payload: unknown): {
         qa: [
           {
             answer: `I just tried to keep ${payload.candidate.teamName} steady with ${buildTestInterviewStatSummary(payload.candidate)} and make the right simple play.`,
-            question: "What was working for you tonight?",
+            question: "What did the game feel like once it started opening up?",
+          },
+          {
+            answer:
+              "If momentum had paperwork, I think we stamped it with a smile and kept moving.",
+            question:
+              "If tonight's momentum had to file paperwork, what would it list as its occupation?",
           },
         ],
         teamName: payload.candidate.teamName,
@@ -2927,12 +2962,72 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
     factsLibrary.winner.finalScoreFromWinnerPerspective,
     factStoreGame.winner.finalScoreWinnerFacing,
   );
+  assert.equal(factsLibrary.pregameBattle.teams.home.offense.strategy, "Push The Ball");
+  assert.equal(factsLibrary.pregameBattle.teams.home.offense.focus, "balanced");
+  assert.equal(factsLibrary.pregameBattle.teams.home.offense.pace, "fast");
+  assert.equal(factsLibrary.pregameBattle.teams.away.offense.strategy, "Motion");
+  assert.equal(factsLibrary.pregameBattle.teams.away.offense.focus, "outside");
+  assert.equal(
+    factsLibrary.pregameBattle.teams.away.defense.profileKey,
+    "inside_zone",
+  );
+  assert.ok(
+    factsLibrary.pregameBattle.summaryFacts.some((fact) =>
+      /Beta paired Motion with 23 Zone, while Alpha answered with Push The Ball and Man To Man/i.test(
+        fact,
+      ),
+    ),
+  );
+  assert.ok(
+    factsLibrary.rankedFacts.some(
+      (fact) =>
+        fact.claimKey === "pregame_tactics" &&
+        fact.mustMention &&
+        /Motion/.test(fact.text) &&
+        /Push The Ball/.test(fact.text),
+    ),
+  );
+  assert.ok(
+    factsLibrary.rankedFacts.some(
+      (fact) =>
+        fact.claimKey === "pregame_manager_verdict" &&
+        !/\b(?:held the (?:clear )?effort edge|prepared well for)\b/i.test(
+          fact.text,
+        ),
+    ),
+  );
   assert.equal(
     expectPresent(
       factsLibrary.periodStates.throughThreeQuarters,
       "expected facts-library through-three state",
     ).scoreFromLeaderPerspective,
     throughThreeState.scoreFromLeaderPerspective,
+  );
+  const topRankedFact = factsLibrary.rankedFacts[0];
+  assert.ok(topRankedFact);
+  assert.equal(topRankedFact.category, "ending");
+  assert.equal(topRankedFact.impactTier, "high");
+  assert.ok(
+    factsLibrary.leadFacts.some((fact) => fact.claimKey === "decisive_score"),
+  );
+  assert.ok(
+    factsLibrary.chronologicalFacts.some(
+      (fact) => fact.claimKey === "took_lead_for_good",
+    ),
+  );
+  assert.ok(
+    factsLibrary.analysisFacts.some((fact) => fact.category === "player"),
+  );
+  assert.deepStrictEqual(factsLibrary.recapSections.sectionOrder, [
+    "pregame",
+    "game",
+    "postgame",
+  ]);
+  assert.equal(factsLibrary.recapSections.visibleHeadings, false);
+  assert.ok(
+    factsLibrary.gameNarrativeBeats.some(
+      (beat) => beat.beatType === "closingSequence",
+    ),
   );
 });
 
@@ -3091,6 +3186,491 @@ test("buildGameDayRecapPromptPayload surfaces matchup-relevant rating edges", as
       /perimeter defense.*outside scoring from Splash Gang/i.test(fact),
     ),
   );
+  assert.ok(
+    factsLibrary.rankedFacts.some(
+      (fact) =>
+        fact.category === "matchup" &&
+        /perimeter defense.*outside scoring from Splash Gang/i.test(fact.text),
+    ),
+  );
+  assert.ok(Array.isArray(factsLibrary.avoidFacts));
+});
+
+test("facts library ranks slate-level closest, biggest-margin, and high-scoring facts", () => {
+  const closeGame = createExpectedPromptGame("m-close");
+  closeGame.finalMargin = 2;
+  closeGame.teams.home.score = 83;
+  closeGame.teams.away.score = 81;
+  closeGame.quarterScores.home = [20, 20, 20, 23];
+  closeGame.quarterScores.away = [20, 20, 20, 21];
+
+  const bigGame = createExpectedPromptGame("m-big");
+  bigGame.finalMargin = 32;
+  bigGame.teams.home.score = 116;
+  bigGame.teams.away.score = 84;
+  bigGame.quarterScores.home = [30, 28, 29, 29];
+  bigGame.quarterScores.away = [20, 20, 22, 22];
+  bigGame.teams.home.topPlayers = [
+    {
+      assists: 7,
+      blocks: 2,
+      fieldGoalsAttempted: 24,
+      fieldGoalsMade: 15,
+      freeThrowsAttempted: 6,
+      freeThrowsMade: 5,
+      minutes: 36,
+      name: "Slate Star",
+      personalFouls: 2,
+      points: 41,
+      rebounds: 9,
+      steals: 2,
+      threePointersAttempted: 10,
+      threePointersMade: 6,
+      turnovers: 3,
+    },
+  ];
+
+  const request = {
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    generationApproach: "FACT_LIBRARY_FIRST" as const,
+    interviewIntensity: "pg13" as const,
+    kind: "LEAGUE_DATE" as const,
+    label: "Elite League 2026-03-15",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    season: 64,
+    timeZone: "America/New_York",
+  };
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 2,
+      missingGames: [],
+      partial: false,
+      requestedGames: 2,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [closeGame, bigGame],
+      request,
+    }),
+  });
+
+  const closeFacts = expectPresent(
+    writerPayload.games.find((game) => game.matchId === "m-close")
+      ?.factsLibrary,
+    "expected close-game facts library",
+  );
+  const bigFacts = expectPresent(
+    writerPayload.games.find((game) => game.matchId === "m-big")
+      ?.factsLibrary,
+    "expected big-game facts library",
+  );
+
+  assert.ok(
+    closeFacts.rankedFacts.some(
+      (fact) => fact.claimKey === "slate_closest_game",
+    ),
+  );
+  assert.ok(
+    bigFacts.rankedFacts.some(
+      (fact) => fact.claimKey === "slate_biggest_margin",
+    ),
+  );
+  assert.ok(
+    bigFacts.rankedFacts.some(
+      (fact) => fact.claimKey === "slate_highest_scoring",
+    ),
+  );
+  assert.ok(
+    bigFacts.rankedFacts.some((fact) => fact.claimKey === "slate_high_scorer"),
+  );
+  assert.ok(
+    bigFacts.rankedFacts.some((fact) => fact.claimKey === "slate_most_threes"),
+  );
+});
+
+test("facts library ranks boxscore-derived team edges and player facts", () => {
+  const game = createExpectedPromptGame("m-boxscore");
+  game.finalMargin = 14;
+  game.teams.home.name = "Winners";
+  game.teams.home.score = 96;
+  game.teams.home.boxScoreStats = createRecapBoxScoreStats({
+    assists: 29,
+    fieldGoalsAttempted: 70,
+    fieldGoalsMade: 38,
+    freeThrowsAttempted: 24,
+    freeThrowsMade: 19,
+    offensiveRebounds: 15,
+    personalFouls: 17,
+    rebounds: 51,
+    threePointersAttempted: 26,
+    threePointersMade: 12,
+  });
+  game.teams.home.scoringDistribution = {
+    doubleFigureScorerCount: 5,
+    lowMinuteContributorPoints: 15,
+    lowMinuteContributors: [
+      {
+        minutes: 14,
+        name: "Pop Reserve",
+        points: 9,
+      },
+    ],
+    supportingCastPoints: 38,
+    topTwoPointShare: 55.2,
+  };
+  game.teams.home.topPlayers = [
+    {
+      assists: 4,
+      blocks: 1,
+      fieldGoalsAttempted: 16,
+      fieldGoalsMade: 11,
+      freeThrowsAttempted: 4,
+      freeThrowsMade: 3,
+      minutes: 33,
+      name: "Efficient Ed",
+      personalFouls: 2,
+      points: 27,
+      rebounds: 8,
+      steals: 1,
+      threePointersAttempted: 5,
+      threePointersMade: 2,
+      turnovers: 1,
+    },
+    {
+      assists: 11,
+      blocks: 0,
+      fieldGoalsAttempted: 8,
+      fieldGoalsMade: 4,
+      freeThrowsAttempted: 2,
+      freeThrowsMade: 2,
+      minutes: 31,
+      name: "Pass First",
+      personalFouls: 1,
+      points: 12,
+      rebounds: 5,
+      steals: 2,
+      threePointersAttempted: 4,
+      threePointersMade: 2,
+      turnovers: 2,
+    },
+  ];
+  game.teams.away.name = "Losers";
+  game.teams.away.score = 82;
+  game.teams.away.boxScoreStats = createRecapBoxScoreStats({
+    assists: 20,
+    fieldGoalsAttempted: 69,
+    fieldGoalsMade: 30,
+    freeThrowsAttempted: 18,
+    freeThrowsMade: 11,
+    offensiveRebounds: 8,
+    personalFouls: 24,
+    rebounds: 39,
+    threePointersAttempted: 24,
+    threePointersMade: 6,
+  });
+  game.teams.away.scoringDistribution = {
+    doubleFigureScorerCount: 2,
+    lowMinuteContributorPoints: 0,
+    lowMinuteContributors: [],
+    supportingCastPoints: 18,
+    topTwoPointShare: 67.1,
+  };
+  game.teams.away.topPlayers = [
+    {
+      assists: 2,
+      blocks: 1,
+      fieldGoalsAttempted: 12,
+      fieldGoalsMade: 5,
+      freeThrowsAttempted: 4,
+      freeThrowsMade: 3,
+      minutes: 30,
+      name: "Board Boss",
+      personalFouls: 3,
+      points: 13,
+      rebounds: 14,
+      steals: 1,
+      threePointersAttempted: 2,
+      threePointersMade: 0,
+      turnovers: 3,
+    },
+  ];
+
+  const request = createSingleGameRecapPayload("m-boxscore").request;
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [game],
+      request,
+    }),
+  });
+  const factsLibrary = expectPresent(
+    writerPayload.games[0]?.factsLibrary,
+    "expected facts library",
+  );
+  const claimKeys = new Set(
+    factsLibrary.rankedFacts.map((fact) => fact.claimKey),
+  );
+
+  assert.ok(claimKeys.has("rebound_edge"));
+  assert.ok(claimKeys.has("assist_edge"));
+  assert.ok(claimKeys.has("three_point_edge"));
+  assert.ok(claimKeys.has("free_throw_edge"));
+  assert.ok(claimKeys.has("field_goal_accuracy_edge"));
+  assert.ok(claimKeys.has("efficient_scorer_efficient_ed"));
+  assert.ok(claimKeys.has("assists_leader"));
+  assert.ok(claimKeys.has("rebounds_leader"));
+  assert.ok(claimKeys.has("balanced_scoring"));
+  assert.ok(claimKeys.has("supporting_cast_scoring"));
+  assert.ok(claimKeys.has("low_minute_contributor_scoring"));
+  assert.ok(claimKeys.has("top_two_scoring_burden_loser"));
+  assert.doesNotMatch(
+    factsLibrary.rankedFacts.map((fact) => fact.text).join(" "),
+    /\b(?:bench|starter|points in the paint)\b/i,
+  );
+});
+
+test("facts library curates a star-led game story with injury and unusual stat contrasts", () => {
+  const game = createExpectedPromptGame("m-story");
+  game.finalMargin = 20;
+  game.teams.home.name = "Visionaries";
+  game.teams.home.score = 101;
+  game.teams.home.turnovers = 1;
+  game.teams.home.boxScoreStats = createRecapBoxScoreStats({
+    assists: 21,
+    freeThrowsAttempted: 9,
+    freeThrowsMade: 7,
+    threePointersAttempted: 29,
+    threePointersMade: 11,
+  });
+  game.teams.home.scoringDistribution = {
+    doubleFigureScorerCount: 4,
+    lowMinuteContributorPoints: 0,
+    lowMinuteContributors: [],
+    supportingCastPoints: 42,
+    topScorer: {
+      name: "Hichem Zamit",
+      points: 43,
+    },
+    topScorerPointShare: 42.6,
+    topTwoPointShare: 58.4,
+    totalPoints: 101,
+  };
+  game.teams.home.topPlayers = [
+    {
+      assists: 3,
+      blocks: 0,
+      fieldGoalsAttempted: 26,
+      fieldGoalsMade: 16,
+      freeThrowsAttempted: 5,
+      freeThrowsMade: 4,
+      isStarter: true,
+      minutes: 39,
+      name: "Hichem Zamit",
+      personalFouls: 2,
+      playerId: "zamit",
+      plusMinus: 18,
+      points: 43,
+      ratingValue: 16,
+      rebounds: 10,
+      steals: 1,
+      threePointersAttempted: 9,
+      threePointersMade: 5,
+      turnovers: 0,
+    },
+    {
+      assists: 2,
+      blocks: 1,
+      fieldGoalsAttempted: 12,
+      fieldGoalsMade: 6,
+      freeThrowsAttempted: 2,
+      freeThrowsMade: 2,
+      isStarter: true,
+      minutes: 34,
+      name: "Kenyon Lerat",
+      personalFouls: 3,
+      playerId: "lerat",
+      plusMinus: 14,
+      points: 16,
+      ratingValue: 14,
+      rebounds: 17,
+      steals: 0,
+      threePointersAttempted: 1,
+      threePointersMade: 0,
+      turnovers: 0,
+    },
+  ];
+  game.teams.away.name = "TarTeam";
+  game.teams.away.score = 81;
+  game.teams.away.turnovers = 10;
+  game.teams.away.boxScoreStats = createRecapBoxScoreStats({
+    assists: 11,
+    freeThrowsAttempted: 33,
+    freeThrowsMade: 24,
+    threePointersAttempted: 19,
+    threePointersMade: 3,
+  });
+  game.teams.away.notablePlayers = [
+    {
+      isStarter: true,
+      minutes: 23,
+      name: "Finn Fisher",
+      playerId: "fisher",
+      plusMinus: 8,
+      points: 9,
+      ratingValue: 15,
+    },
+  ];
+  game.quarterFacts.decisiveQuarter = {
+    awayScore: 14,
+    homeScore: 22,
+    label: "3rd quarter",
+    margin: 8,
+    period: 3,
+    winningSide: "home",
+  };
+  game.playByPlayFacts = {
+    bestCompetitiveSwingRun: createEmptyRunFact("swing"),
+    endingFacts: {
+      decisiveScore: null,
+      opponentLastChance: null,
+    },
+    explicitEventFacts: [
+      {
+        clock: "07:42",
+        eventText: "Finn Fisher left the game injured.",
+        eventType: "injury",
+        playerName: "Finn Fisher",
+        quarter: 3,
+        teamName: "TarTeam",
+        teamSide: "away",
+      },
+    ],
+    lateGameMoments: [],
+    largestLead: {
+      points: 20,
+      teamName: "Visionaries",
+      teamSide: "home",
+    },
+    leadChangeCount: 3,
+    leadChangeFacts: {
+      bigComebackLeadChange: null,
+      highVolumeLeadChangeGame: {
+        leadChangeCount: 3,
+        qualifies: false,
+      },
+      rapidLeadChangeBurst: null,
+    },
+    longestUnansweredRun: createEmptyRunFact("unanswered"),
+    playerScoringSpurts: [
+      {
+        endAwayScore: 7,
+        endClock: "08:58",
+        endHomeScore: 9,
+        endQuarter: 1,
+        eventCount: 4,
+        playerName: "Hichem Zamit",
+        points: 9,
+        startAwayScore: 0,
+        startClock: "11:18",
+        startHomeScore: 0,
+        startQuarter: 1,
+        teamName: "Visionaries",
+        teamSide: "home",
+      },
+    ],
+    primaryRun: createRunFact({
+      endAwayScore: 68,
+      endClock: "07:04",
+      endHomeScore: 84,
+      endQuarter: 4,
+      opponentPoints: 10,
+      runType: "swing",
+      startAwayScore: 58,
+      startClock: "04:45",
+      startHomeScore: 60,
+      startQuarter: 3,
+      teamName: "Visionaries",
+      teamPoints: 24,
+      teamSide: "home",
+    }),
+    secondaryRun: null,
+    summaryLines: [
+      "Visionaries used a 24-10 run from 4:45 left in the 3rd quarter to 7:04 left in the 4th quarter to seize control.",
+    ],
+    tookLeadForGood: {
+      awayScore: 58,
+      clock: "04:45",
+      deficitErased: 10,
+      eventText: "Visionaries took the lead for good.",
+      homeScore: 60,
+      previousLeaderSide: "away",
+      quarter: 3,
+      scoringTeamName: "Visionaries",
+      scoringTeamSide: "home",
+    },
+    winnerComebackDeficit: 10,
+  };
+  game.playByPlaySummaryLines = game.playByPlayFacts.summaryLines;
+
+  const request = createSingleGameRecapPayload("m-story").request;
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [game],
+      request,
+    }),
+  });
+  const factsLibrary = expectPresent(
+    writerPayload.games[0]?.factsLibrary,
+    "expected facts library",
+  );
+  const claimKeys = new Set(
+    factsLibrary.rankedFacts.map((fact) => fact.claimKey),
+  );
+
+  const mainCharacter = expectPresent(
+    factsLibrary.gameStory.mainCharacter,
+    "expected game story main character",
+  );
+  assert.equal(mainCharacter.playerName, "Hichem Zamit");
+  assert.match(mainCharacter.supportingText, /carried/i);
+  assert.match(factsLibrary.gameStory.injurySwing?.text ?? "", /Finn Fisher.*starter.*left injured.*\+8/i);
+  assert.ok(factsLibrary.gameStory.selectedBeats.length <= 5);
+  assert.ok(factsLibrary.gameStory.suppressedFactIds.some((factId) => /decisive_quarter/.test(factId)));
+  assert.equal(claimKeys.has("balanced_scoring"), false);
+  assert.ok(claimKeys.has("star_led_scoring_distribution"));
+  assert.ok(claimKeys.has("very_low_turnover_win"));
+  assert.ok(claimKeys.has("won_despite_free_throw_attempt_gap"));
+
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game",
+  );
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Visionaries beat TarTeam 101-81",
+      matchId: "m-story",
+      writeup:
+        "TarTeam paired Motion with 23 Zone, while Visionaries answered with Push The Ball and Man To Man.\n\nHichem Zamit scored 9 straight with 11:18 left in the 1st quarter, TarTeam led 52-49 at halftime, TarTeam's last lead came with 9:31 left in the 3rd quarter, Visionaries took the lead for good with 4:45 left in the 3rd quarter, and Visionaries used a 24-10 run from 4:45 left in the 3rd quarter to 7:04 left in the 4th quarter.\n\nVisionaries's balanced attack featured four players in double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
+    }),
+    [expectedGame],
+  );
+  const issueKinds = new Set(assessment.issues.map((issue) => issue.kind));
+  assert.ok(issueKinds.has("game_flow_time_clutter"));
+  assert.ok(issueKinds.has("missing_game_story_beat"));
+  assert.ok(issueKinds.has("unsupported_balanced_attack"));
 });
 
 test("buildGameDayRecapPromptPayload ignores non-regular-season competitions in league context", async () => {
@@ -3496,14 +4076,26 @@ test("buildGameDayRecapPromptPayload adds series context for league-date finals"
     finalsPromptGame.factsLibrary.storySignals.join(" "),
     /series state belongs in the headline/i,
   );
+  assert.equal(
+    finalsPromptGame.factsLibrary.rankedFacts.some((fact) =>
+      fact.claimKey.startsWith("streak_"),
+    ),
+    false,
+  );
   assert.deepStrictEqual(
     finalsPromptGame.factsLibrary.narrativePlan.paragraphOrder,
     [
-      "Paragraph 1: pregame tactics, effort, rotation, and game-day-prep context.",
-      "Paragraph 2: chronological game flow, period states, and approved non-overlapping runs.",
-      "Paragraph 3: player stat lines, team-rating edges, and why the winner won.",
+      "Paragraph 1: manager-battle setup in 1-2 sentences using pregameBattle, both teams' tactics, GDP/prep reads, effort posture, and rotation context when useful.",
+      "Paragraph 2: game flow in 3-5 connected cause-and-effect sentences using gameStory.selectedBeats, not a quarter-by-quarter checklist.",
+      "Paragraph 3, or paragraphs 3-4 when gameStory.paragraphPlan.targetParagraphs is 4: postgame explanation with player, team edge, slate, series, or unusual stat facts.",
     ],
   );
+  assert.deepStrictEqual(finalsPromptGame.factsLibrary.recapSections.sectionOrder, [
+    "pregame",
+    "game",
+    "postgame",
+  ]);
+  assert.equal(finalsPromptGame.factsLibrary.recapSections.visibleHeadings, false);
 });
 
 test("buildGameDayRecapPromptPayload omits series context for league-date semifinals", async () => {
@@ -3822,6 +4414,20 @@ test("prose recap request normalization defaults to fact-library-first and pg13 
     ).interviewIntensity,
     "clean",
   );
+
+  const factLibraryPayload = createSingleGameRecapPayload("legacy-check");
+  const legacyWriterPayload =
+    __testing.buildGameDayRecapWriterPayloadFromFactStore({
+      coverage: factLibraryPayload.coverage,
+      factStore: {
+        ...factLibraryPayload.factStore,
+        request: {
+          ...factLibraryPayload.factStore.request,
+          generationApproach: "LEGACY",
+        },
+      },
+    });
+  assert.equal("factsLibrary" in legacyWriterPayload.games[0]!, false);
 });
 
 test("submitGameDayRecap is idempotent while a recap is already active", async () => {
@@ -8585,6 +9191,10 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
   const userText = request.messages[0]?.content[0]?.text ?? "";
   assert.match(systemText, /never cite the raw effortDelta value/i);
   assert.match(systemText, /raw GDP codes/i);
+  assert.match(systemText, /factsLibrary\.pregameBattle/i);
+  assert.match(systemText, /manager-battle setup/i);
+  assert.match(systemText, /metaphor-only manager color/i);
+  assert.match(systemText, /held the effort edge/i);
   assert.match(systemText, /not a checklist of facts/i);
   assert.match(
     systemText,
@@ -8612,7 +9222,7 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
   assert.match(systemText, /overlapping run windows/i);
   assert.match(
     systemText,
-    /separate the setup, chronological game flow, and closing analysis with blank lines/i,
+    /hidden pregame, game, and postgame paragraphs separated by blank lines/i,
   );
   assert.match(
     systemText,
@@ -8628,6 +9238,185 @@ test("buildGameDayRecapBedrockRequest attaches a structured output schema", () =
   );
   assert.match(userText, /"endingFacts"/);
   assert.match(userText, /"buzzerbeater"/);
+});
+
+test("buildGameDayRecapBedrockRequest compacts fact-library-first full-slate writer prompts", () => {
+  const requestFacts = {
+    gameDate: "2026-03-15",
+    gameDayNumber: null,
+    generationApproach: "FACT_LIBRARY_FIRST" as const,
+    interviewIntensity: "pg13" as const,
+    kind: "LEAGUE_DATE" as const,
+    label: "Elite League 2026-03-15",
+    leagueId: "100",
+    leagueName: "Elite League",
+    matchId: null,
+    season: 64,
+    timeZone: "America/New_York",
+  };
+  const expectedGames = Array.from({ length: 12 }, (_value, index) => {
+    const game = createExpectedPromptGame(`m-${index + 1}`);
+    game.teams.home.name = `Home ${index + 1}`;
+    game.teams.away.name = `Away ${index + 1}`;
+    game.teams.home.gdp = {
+      focusGuess: "outside",
+      paceGuess: "fast",
+      rawCode: `home-gdp-${index}`.repeat(20),
+    };
+    game.teams.away.gdp = {
+      focusGuess: "inside",
+      paceGuess: "slow",
+      rawCode: `away-gdp-${index}`.repeat(20),
+    };
+    game.playByPlayFacts = createBackAndForthPlayByPlayFacts();
+    game.playByPlaySummaryLines = Array.from(
+      { length: 20 },
+      (_line, lineIndex) =>
+        `Synthetic play-by-play summary ${lineIndex} for game ${index}.`.repeat(
+          5,
+        ),
+    );
+    return game;
+  });
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: expectedGames.length,
+      missingGames: [],
+      partial: false,
+      requestedGames: expectedGames.length,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames,
+      request: requestFacts,
+    }),
+  });
+
+  for (const game of writerPayload.games) {
+    for (const side of ["away", "home"] as const) {
+      game.teams[side].notablePlayers = Array.from(
+        { length: 30 },
+        (_player, playerIndex) => ({
+          isStarter: playerIndex < 5,
+          minutes: 48 - playerIndex,
+          name: `${game.teams[side].name} Rotation Player ${playerIndex}`.repeat(
+            3,
+          ),
+          playerId: `${game.matchId}-${side}-${playerIndex}`,
+          plusMinus: playerIndex,
+          points: 20 - playerIndex,
+          ratingValue: 12 - playerIndex / 10,
+        }),
+      );
+      game.teams[side].topPlayers = Array.from(
+        { length: 12 },
+        (_player, playerIndex) => ({
+          assists: playerIndex,
+          blocks: 0,
+          fieldGoalsAttempted: 20,
+          fieldGoalsMade: 10,
+          freeThrowsAttempted: 8,
+          freeThrowsMade: 6,
+          isStarter: playerIndex < 5,
+          minutes: 48 - playerIndex,
+          name: `${game.teams[side].name} Top Player ${playerIndex}`.repeat(3),
+          personalFouls: 2,
+          playerId: `${game.matchId}-${side}-top-${playerIndex}`,
+          plusMinus: playerIndex,
+          points: 25 - playerIndex,
+          ratingValue: 15 - playerIndex / 10,
+          rebounds: 10,
+          steals: 1,
+          threePointersAttempted: 7,
+          threePointersMade: 4,
+          turnovers: 1,
+        }),
+      );
+    }
+
+    const factsLibrary = expectPresent(
+      game.factsLibrary,
+      "expected facts library for compact prompt test",
+    );
+    const baseFact = expectPresent(
+      factsLibrary.rankedFacts[0],
+      "expected ranked fact for compact prompt test",
+    );
+    const bulkyFacts = Array.from({ length: 90 }, (_fact, factIndex) => ({
+      ...baseFact,
+      claimKey: `synthetic_bulk_${factIndex}`,
+      id: `${game.matchId}-synthetic-bulk-${factIndex}`,
+      impactScore: Math.max(1, baseFact.impactScore - factIndex),
+      mustMention: false,
+      preferredPlacement: "body" as const,
+      sourceFields: Array.from(
+        { length: 12 },
+        (_source, sourceIndex) =>
+          `factStore.games[${game.matchId}].synthetic.${factIndex}.${sourceIndex}`,
+      ),
+      text: `Synthetic long fact ${factIndex} for ${game.matchId}: `.repeat(18),
+    }));
+    factsLibrary.rankedFacts = [...factsLibrary.rankedFacts, ...bulkyFacts];
+    factsLibrary.analysisFacts = [...factsLibrary.analysisFacts, ...bulkyFacts];
+    factsLibrary.chronologicalFacts = [
+      ...factsLibrary.chronologicalFacts,
+      ...bulkyFacts,
+    ];
+    factsLibrary.summaryFacts = Array.from(
+      { length: 90 },
+      (_fact, factIndex) =>
+        `Synthetic summary fact ${factIndex} for ${game.matchId}.`.repeat(15),
+    );
+    factsLibrary.storySignals = Array.from(
+      { length: 90 },
+      (_fact, factIndex) =>
+        `Synthetic story signal ${factIndex} for ${game.matchId}.`.repeat(15),
+    );
+  }
+
+  const rawPayloadText = JSON.stringify(writerPayload);
+  const request = __testing.buildGameDayRecapBedrockRequest({
+    modelId: DEFAULT_RECAP_MODEL_ID,
+    payload: writerPayload,
+  });
+  const userText = request.messages[0]?.content[0]?.text ?? "";
+  const parsed = JSON.parse(userText) as {
+    recapContext: {
+      games: Array<{
+        effortDelta: number | null;
+        factsLibrary: {
+          rankedFacts: unknown[];
+          storySignals: unknown[];
+          summaryFacts: unknown[];
+        };
+        postgameInterviewCandidates?: unknown;
+        teams: {
+          away: {
+            gdp: Record<string, unknown>;
+            notablePlayers?: unknown;
+            topPlayers: unknown[];
+          };
+          home: {
+            gdp: Record<string, unknown>;
+            notablePlayers?: unknown;
+            topPlayers: unknown[];
+          };
+        };
+      }>;
+    };
+  };
+  const compactGame = parsed.recapContext.games[0]!;
+
+  assert.equal(parsed.recapContext.games.length, expectedGames.length);
+  assert.equal(compactGame.effortDelta, null);
+  assert.deepStrictEqual(compactGame.teams.home.gdp, {});
+  assert.deepStrictEqual(compactGame.teams.away.gdp, {});
+  assert.equal(compactGame.teams.home.notablePlayers, undefined);
+  assert.equal(compactGame.postgameInterviewCandidates, undefined);
+  assert.ok(compactGame.teams.home.topPlayers.length <= 3);
+  assert.ok(compactGame.factsLibrary.rankedFacts.length <= 16);
+  assert.ok(compactGame.factsLibrary.summaryFacts.length <= 8);
+  assert.ok(compactGame.factsLibrary.storySignals.length <= 8);
+  assert.ok(userText.length < rawPayloadText.length * 0.45);
 });
 
 test("buildGameDayRecapBedrockRequest sanitizes playoff records from the writer payload and exposes back-and-forth evidence tags", () => {
@@ -8686,11 +9475,34 @@ test("buildGameDayRecapBedrockRequest sanitizes playoff records from the writer 
   );
 });
 
-test("buildGameDayRecapBedrockRequest keeps postgame interview questions in sportswriter tone and answers in player voice", () => {
+test("buildGameDayRecapBedrockRequest pushes playful postgame questions and loud PG-13 player voice", () => {
   const payload = createSingleGameRecapPayload("m-1");
-  payload.request.interviewIntensity = "full_heat";
+  payload.request.interviewIntensity = "pg13";
   refreshPayloadFactStore(payload);
   const gameFacts = payload.factStore.games[0]!;
+  const interviewFacts = {
+    absurdQuestionGuidance:
+      "Absurd questions must be impossible enough to read as jokes.",
+    bannedMechanicsTerms: ["outside defense", "offensive flow", "GDP"],
+    outcome: "Home beat Away 85-81.",
+    perspective: "winner" as const,
+    playerAngle: "Home Hero can talk about scoring pressure without numbers.",
+    playerRoleFacts: ["finding offense without forcing the interview into numbers"],
+    questionPlan: {
+      absurd: [
+        "If tonight's momentum had to file paperwork, what would it list as its occupation?",
+      ],
+      emotional: ["What did the game feel like once your group had control?"],
+      gameFlow: ["What changed when the game turned toward your group?"],
+      loserResponse: ["What do you want the group to carry into the next one?"],
+    },
+    safeContext: [],
+    statUsageGuidance:
+      "Use stats as private grounding; do not quote the stat bundle.",
+    storyBeats: [
+      "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+    ],
+  };
   const request = __testing.buildGameDayRecapBedrockRequest({
     modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     payload: {
@@ -8713,6 +9525,7 @@ test("buildGameDayRecapBedrockRequest keeps postgame interview questions in spor
         personalitySource: "user_override",
       },
       gameFacts,
+      interviewFacts,
       recapGame: {
         headline: "Home beats Away 85-81",
         matchId: "m-1",
@@ -8727,37 +9540,40 @@ test("buildGameDayRecapBedrockRequest keeps postgame interview questions in spor
   const systemText = request.system[0]?.text ?? "";
   const userText = request.messages[0]?.content[0]?.text ?? "";
 
-  assert.match(systemText, /questions in professional sportswriter tone/i);
+  assert.match(systemText, /questions in playful reporter tone/i);
   assert.match(
     systemText,
-    /personality guidance only for the player's answers/i,
+    /PG-13 should be just as entertaining as full heat/i,
   );
   assert.match(
     systemText,
-    /do not let the player's personality bleed into the title or reporter questions/i,
+    /Do not recite stat bundles or use internal game-mechanics language/i,
   );
   assert.match(
     userText,
-    /Write the title and every question in polished professional sportswriter tone/i,
+    /Use two or three short Q&A exchanges/i,
   );
   assert.match(
     userText,
-    /Let the supplied personality type shape only the player's answers/i,
+    /let the reporter questions be playful, varied, and occasionally strange/i,
   );
   assert.match(
     userText,
     /Make the selected personality unmistakable in every player answer/i,
   );
-  assert.match(userText, /Honor the requested interviewIntensity of full_heat/i);
+  assert.match(userText, /Honor the requested interviewIntensity of pg13/i);
   assert.match(
-    systemText,
-    /do not flatten the answers into generic athlete-speak/i,
+    userText,
+    /Do not lead questions with raw stat lines/i,
   );
   assert.match(
     userText,
-    /Keep any swagger, philosopher references, bar-like phrasing, and trash talk original/i,
+    /Do not use game-mechanics language/i,
   );
-  assert.match(userText, /"interviewIntensity": "full_heat"/);
+  assert.match(userText, /Absurd questions must be obviously impossible or surreal/i);
+  assert.match(userText, /"interviewIntensity": "pg13"/);
+  assert.match(userText, /"interviewFacts"/);
+  assert.match(userText, /"questionPlan"/);
   assert.match(userText, /dry and understated/i);
   assert.match(userText, /Example answer flavor:/i);
   assert.match(
@@ -9196,6 +10012,63 @@ test("describeEffortDeltaForRecap uses natural language for nonzero effort delta
       homeTeamName: "Alpha",
     }),
     null,
+  );
+});
+
+test("pregame tactic taxonomy maps manual offense and defense families", () => {
+  assert.deepStrictEqual(
+    __testing.resolveOffenseTaxonomy("Princeton"),
+    {
+      focus: "outside",
+      gdpFocus: "outside",
+      pace: "slow",
+      scorerTarget: null,
+      strategy: "Princeton",
+    },
+  );
+  assert.deepStrictEqual(
+    __testing.resolveOffenseTaxonomy("Inside Isolation"),
+    {
+      focus: "balanced",
+      gdpFocus: "balanced",
+      pace: "normal",
+      scorerTarget: "best_inside_scorer",
+      strategy: "Inside Isolation",
+    },
+  );
+  assert.deepStrictEqual(
+    __testing.resolveOffenseTaxonomy("Outside Isolation"),
+    {
+      focus: "balanced",
+      gdpFocus: "balanced",
+      pace: "normal",
+      scorerTarget: "best_outside_scorer",
+      strategy: "Outside Isolation",
+    },
+  );
+  assert.equal(
+    __testing.resolveDefenseTaxonomy("2-3 Zone").profileKey,
+    "inside_zone",
+  );
+  assert.equal(
+    __testing.resolveDefenseTaxonomy("3-2 Zone").profileKey,
+    "perimeter_zone",
+  );
+  assert.equal(
+    __testing.resolveDefenseTaxonomy("1-3-1 Zone").profileKey,
+    "perimeter_gamble",
+  );
+  assert.equal(
+    __testing.resolveDefenseTaxonomy("Full Court Press").profileKey,
+    "press",
+  );
+  assert.equal(
+    __testing.resolveDefenseTaxonomy("Inside Box-and-One").targetScorer,
+    "best_inside_scorer",
+  );
+  assert.equal(
+    __testing.resolveDefenseTaxonomy("Outside Box-and-One").targetScorer,
+    "best_outside_scorer",
   );
 });
 
@@ -10180,6 +11053,115 @@ test("validateGameDayRecapResult removes duplicated game-day prep paraphrases", 
   );
 });
 
+test("validateGameDayRecapResult lets fact-library pregameBattle replace legacy required prep sentences", () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  payload.games[0]!.requiredContextSentences = [
+    "Home held the effort edge over Away.",
+    "Home prepared well for Inside looks.",
+  ];
+  refreshPayloadFactStore(payload);
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: payload.coverage,
+    factStore: payload.factStore,
+  });
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game with pregameBattle",
+  );
+
+  const result = __testing.validateGameDayRecapResult(
+    createRecapCandidateResult({
+      headline: "Home beats Away 85-81",
+      writeup:
+        "Away paired Motion with 23 Zone, while Home answered with Push and Man To Man, leaving the manager card mostly even before tipoff.\n\nHome moved ahead after halftime and kept the game flow pointed toward the final margin.\n\nHome finished the 85-81 win with cleaner closing possessions.",
+    }),
+    [expectedGame],
+  );
+
+  assert.doesNotMatch(result.games[0]?.writeup ?? "", /held the effort edge/i);
+});
+
+test("assessGameDayRecapDeterministicPayload rejects raw or clunky pregame mechanics in fact-library recaps", () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: payload.coverage,
+    factStore: payload.factStore,
+  });
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game with pregameBattle",
+  );
+  const baseWriteup =
+    "Away paired Motion with 23 Zone, while Home answered with Push and Man To Man";
+
+  const rawAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beats Away 85-81",
+      writeup: `${baseWriteup}, and Home had GDP inside.hit on the board.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.`,
+    }),
+    [expectedGame],
+  );
+  assert.ok(
+    rawAssessment.issues.some(
+      (issue) => issue.kind === "raw_pregame_mechanics_language",
+    ),
+  );
+
+  const clunkyAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beats Away 85-81",
+      writeup: `${baseWriteup}, and Home held the effort edge over Away.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.`,
+    }),
+    [expectedGame],
+  );
+  assert.ok(
+    clunkyAssessment.issues.some(
+      (issue) => issue.kind === "clunky_pregame_mechanics_phrase",
+    ),
+  );
+});
+
+test("assessGameDayRecapDeterministicPayload rejects unsupported pregame color and missing tactics", () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: payload.coverage,
+    factStore: payload.factStore,
+  });
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game with pregameBattle",
+  );
+
+  const colorAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beats Away 85-81",
+      writeup:
+        "Away paired Motion with 23 Zone, while Home answered with Push and Man To Man after the coach told them this was personal.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.",
+    }),
+    [expectedGame],
+  );
+  assert.ok(
+    colorAssessment.issues.some(
+      (issue) => issue.kind === "unsupported_pregame_color",
+    ),
+  );
+
+  const missingTacticsAssessment =
+    __testing.assessGameDayRecapDeterministicPayload(
+      createRecapCandidateResult({
+        headline: "Home beats Away 85-81",
+        writeup:
+          "Home had the cleaner manager card before tipoff.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.",
+      }),
+      [expectedGame],
+    );
+  assert.ok(
+    missingTacticsAssessment.issues.some(
+      (issue) => issue.kind === "missing_pregame_tactical_setup",
+    ),
+  );
+});
+
 test("strict filler validation remains available for QA mode", () => {
   const assessed = __testing.assessGameDayRecapDeterministicPayload(
     {
@@ -10991,6 +11973,10 @@ test("generateResolvedGameDayRecap drops an invalid postgameInterview and logs t
                     answer: "We just kept competing.",
                     question: "Any final thought before the next game?",
                   },
+                  {
+                    answer: "We are already thinking about the next one.",
+                    question: "What comes next?",
+                  },
                 ],
                 teamName: "Home",
                 teamSide: "winner",
@@ -11035,7 +12021,7 @@ test("generateResolvedGameDayRecap drops an invalid postgameInterview and logs t
     details: [
       'teamSide must be "away" or "home".',
       "title was missing or empty.",
-      "qa must contain 1 or 2 exchanges, received 3.",
+      "qa must contain 1 to 3 exchanges, received 4.",
     ],
     matchId: "m-1",
     reason: 'teamSide must be "away" or "home".',
@@ -11066,6 +12052,7 @@ test("generateResolvedGameDayRecap adds a guaranteed postgameInterview when a ca
     teamName: "Home",
     teamSide: "home",
   };
+  let capturedInterviewPayload: unknown = null;
 
   const result = await __testing.generateResolvedGameDayRecap({
     judgeProvider: createPassingJudgeProvider(),
@@ -11074,6 +12061,9 @@ test("generateResolvedGameDayRecap adds a guaranteed postgameInterview when a ca
     retryProvider: null,
     writerProvider: {
       generate: async (payload) => {
+        if (isPostgameInterviewPayloadForTest(payload)) {
+          capturedInterviewPayload = payload;
+        }
         const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(payload);
         if (auxiliary) {
           return auxiliary.response;
@@ -11100,8 +12090,33 @@ test("generateResolvedGameDayRecap adds a guaranteed postgameInterview when a ca
   assert.equal(interview.teamSide, "home");
   assert.equal(interview.teamName, "Home");
   assert.match(interview.title, /on Home's win/);
-  assert.equal(interview.qa.length, 1);
-  assert.match(interview.qa[0]?.answer ?? "", /tried to keep Home steady/i);
+  assert.equal(interview.qa.length, 2);
+  assert.match(
+    interview.qa[0]?.question ?? "",
+    /started opening up/i,
+  );
+  assert.match(interview.qa[0]?.answer ?? "", /steady scoring pressure/i);
+  assert.match(interview.qa[1]?.question ?? "", /file paperwork/i);
+  assert.ok(
+    capturedInterviewPayload &&
+      typeof capturedInterviewPayload === "object" &&
+      "interviewFacts" in capturedInterviewPayload,
+    "expected generated interview request to include interview-safe facts",
+  );
+  const interviewFacts = (
+    capturedInterviewPayload as {
+      interviewFacts: {
+        safeContext: string[];
+        statUsageGuidance: string;
+        storyBeats: string[];
+      };
+    }
+  ).interviewFacts;
+  assert.match(interviewFacts.statUsageGuidance, /Do not quote a bundle/i);
+  assert.doesNotMatch(
+    [...interviewFacts.safeContext, ...interviewFacts.storyBeats].join(" "),
+    /\b(?:GDP|team talent|rating|inside looks|outside looks|normal pace|fast pace|slow pace)\b/i,
+  );
 });
 
 test("generateResolvedGameDayRecap retries from deterministic validation even when model judging is disabled", async () => {
@@ -11564,13 +12579,15 @@ test("generateResolvedGameDayRecap falls back to a deterministic interview when 
   );
   assert.equal(interview.teamSide, "home");
   assert.equal(interview.teamName, "Home");
-  assert.equal(interview.qa.length, 1);
+  assert.equal(interview.qa.length, 2);
   const fallbackExchange = interview.qa[0]!;
   assert.equal(
     fallbackExchange.question,
-    "You finished with 24 points, 8 rebounds, and 4 assists. What was working for you out there tonight?",
+    "What did the game feel like once it started opening up for you?",
   );
   assert.match(fallbackExchange.answer, /^Best player on the floor\./i);
+  assert.doesNotMatch(fallbackExchange.answer, /\b24 points\b/i);
+  assert.match(interview.qa[1]?.question ?? "", /file paperwork/i);
 });
 
 test("generateResolvedGameDayRecap skips polish and interview generation when remaining time is low", async () => {
@@ -11805,6 +12822,201 @@ test("validateGameDayRecapResult allows interviews to mention runs without timin
   );
 });
 
+test("validateGameDayRecapResult rejects interview mechanics language and stat dumps", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: ["late_game_swing"],
+              headline: "Home beats Away 85-81",
+              matchId: "m-1",
+              postgameInterview: {
+                playerName: "Home Hero",
+                qa: [
+                  {
+                    answer:
+                      "Our outside defense and offensive flow finally did the job.",
+                    question: "How did this matchup feel?",
+                  },
+                ],
+                teamName: "Home",
+                teamSide: "home",
+                title: "Home Hero on Home's win",
+              },
+              writeup:
+                "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+            },
+          ],
+          summary: {
+            headline: "Home beats Away 85-81",
+            lede: "Home held off a late push and finished the night cleanly.",
+          },
+        },
+        [expectedGame],
+      ),
+    /internal game-mechanics language/i,
+  );
+
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: ["late_game_swing"],
+              headline: "Home beats Away 85-81",
+              matchId: "m-1",
+              postgameInterview: {
+                playerName: "Home Hero",
+                qa: [
+                  {
+                    answer:
+                      "I had 24 points and 8 rebounds, so I felt pretty useful.",
+                    question: "How did this matchup feel?",
+                  },
+                ],
+                teamName: "Home",
+                teamSide: "home",
+                title: "Home Hero on Home's win",
+              },
+              writeup:
+                "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+            },
+          ],
+          summary: {
+            headline: "Home beats Away 85-81",
+            lede: "Home held off a late push and finished the night cleanly.",
+          },
+        },
+        [expectedGame],
+      ),
+    /raw player stat line/i,
+  );
+});
+
+test("validateGameDayRecapResult allows surreal interview bits but rejects plausible fake events", () => {
+  const expectedGame = createExpectedPromptGame("m-1");
+  expectedGame.postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+
+  const baseGame = {
+    evidenceTags: ["late_game_swing"],
+    headline: "Home beats Away 85-81",
+    matchId: "m-1",
+    teamName: "Home",
+    teamSide: "home",
+    title: "Home Hero on Home's win",
+    writeup:
+      "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+  } as const;
+
+  const surrealValidated = __testing.validateGameDayRecapResult(
+    {
+      games: [
+        {
+          evidenceTags: baseGame.evidenceTags,
+          headline: baseGame.headline,
+          matchId: baseGame.matchId,
+          postgameInterview: {
+            playerName: "Home Hero",
+            qa: [
+              {
+                answer:
+                  "I would ask the judge to strike the part where the scoreboard wore a wig.",
+                question:
+                  "If the scoreboard briefly turned into a courtroom, what evidence would you want thrown out?",
+              },
+            ],
+            teamName: baseGame.teamName,
+            teamSide: baseGame.teamSide,
+            title: baseGame.title,
+          },
+          writeup: baseGame.writeup,
+        },
+      ],
+      summary: {
+        headline: "Home beats Away 85-81",
+        lede: "Home held off a late push and finished the night cleanly.",
+      },
+    },
+    [expectedGame],
+  );
+  assert.equal(
+    surrealValidated.games[0]?.postgameInterview?.qa[0]?.question,
+    "If the scoreboard briefly turned into a courtroom, what evidence would you want thrown out?",
+  );
+
+  assert.throws(
+    () =>
+      __testing.validateGameDayRecapResult(
+        {
+          games: [
+            {
+              evidenceTags: baseGame.evidenceTags,
+              headline: baseGame.headline,
+              matchId: baseGame.matchId,
+              postgameInterview: {
+                playerName: "Home Hero",
+                qa: [
+                  {
+                    answer:
+                      "It got weird for a second, but we stayed locked in.",
+                    question:
+                      "When the streaker ran onto the court, did that disrupt your rhythm?",
+                  },
+                ],
+                teamName: baseGame.teamName,
+                teamSide: baseGame.teamSide,
+                title: baseGame.title,
+              },
+              writeup: baseGame.writeup,
+            },
+          ],
+          summary: {
+            headline: "Home beats Away 85-81",
+            lede: "Home held off a late push and finished the night cleanly.",
+          },
+        },
+        [expectedGame],
+      ),
+    /plausible event/i,
+  );
+});
+
 test("buildGameDayRecapCostPayload aggregates provider usage into total and per-game estimates", () => {
   const cost = __testing.buildGameDayRecapCostPayload({
     providers: [
@@ -11934,6 +13146,31 @@ test("assessGameDayRecapDeterministicPayload treats filler phrases as soft guida
       (issue) => issue.kind === "banned_style_phrase",
     ),
     true,
+  );
+});
+
+test("assessGameDayRecapDeterministicPayload rejects visible recap section headings when factsLibrary sections are present", () => {
+  const payload = createSingleGameRecapPayload("m-1");
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: payload.coverage,
+    factStore: payload.factStore,
+  });
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game with facts library",
+  );
+  const result = createRecapCandidateResult({
+    headline: "Home beats Away 85-81",
+    writeup:
+      "Pregame: Home had the setup edge before tipoff.\n\nGame: Home moved through the middle quarters and held the lead late.\n\nPostgame: Home finished the 85-81 win with the cleaner closing stretch.",
+  });
+
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(result, [
+    expectedGame,
+  ]);
+
+  assert.ok(
+    assessment.issues.some((issue) => issue.kind === "visible_section_heading"),
   );
 });
 

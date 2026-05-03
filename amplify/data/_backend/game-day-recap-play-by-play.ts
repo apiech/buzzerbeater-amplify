@@ -25,6 +25,8 @@ const BIG_COMEBACK_LEAD_CHANGE_THRESHOLD = 8;
 const RAPID_LEAD_CHANGE_BURST_MIN_COUNT = 4;
 const RAPID_LEAD_CHANGE_WINDOW_SECONDS = 120;
 const HIGH_VOLUME_LEAD_CHANGE_THRESHOLD = 10;
+const SCORING_DROUGHT_MIN_OPPONENT_POINTS = 8;
+const SCORING_DROUGHT_MIN_SECONDS = 120;
 const LATE_GAME_WINDOW_SECONDS = 120;
 const DECISIVE_LEAD_EXTENSION_MAX_SECONDS_REMAINING = 60;
 const DECISIVE_LEAD_EXTENSION_MAX_MARGIN = 3;
@@ -37,6 +39,13 @@ const MISSED_SHOT_PATTERN =
   /\b(?:shot missed|shot blocked|missed|misses|no good|off the rim|off the iron)\b/i;
 const TURNOVER_PATTERN =
   /\b(?:threw the ball away|turnover|traveled|traveling violation|three[- ]second violation|shot clock violation|out of bounds|offensive foul|intercepted|stole the ball|ball stolen|lost the handle)\b/i;
+const OFFENSIVE_REBOUND_PATTERN =
+  /\b(?:offensive rebound|offensive board|second-chance rebound|rebounds? (?:his|her|their|the) own miss|grabs? .* offensive board)\b/i;
+const FOUL_OUT_PATTERN = /\b(?:fouls? out|fouled out|foul out|disqualified)\b/i;
+const INJURY_PATTERN =
+  /\b(?:injur(?:y|ed)|hurt|limped|left .* game|helped .* off|went down)\b/i;
+const TECHNICAL_PATTERN = /\btechnical(?: foul)?\b/i;
+const EJECTION_PATTERN = /\b(?:eject(?:ed|ion)|tossed)\b/i;
 
 type TeamSide = "away" | "home";
 type RunType = "swing" | "unanswered";
@@ -92,6 +101,29 @@ export type GameDayRecapPlayByPlayLeadChange = {
   quarter: number;
   scoringTeamName: string | null;
   scoringTeamSide: TeamSide;
+};
+
+export type GameDayRecapPlayByPlayLeadForGood = {
+  awayScore: number;
+  clock: string | null;
+  deficitErased: number;
+  eventText: string | null;
+  homeScore: number;
+  previousLeaderSide: TeamSide | "tie";
+  quarter: number;
+  scoringTeamName: string | null;
+  scoringTeamSide: TeamSide;
+};
+
+export type GameDayRecapPlayByPlayLastLead = {
+  awayScore: number;
+  clock: string | null;
+  homeScore: number;
+  leadingTeamName: string | null;
+  leadingTeamSide: TeamSide;
+  quarter: number;
+  trailingTeamName: string | null;
+  trailingTeamSide: TeamSide;
 };
 
 export type GameDayRecapPlayByPlayRapidLeadChangeBurst = {
@@ -155,17 +187,90 @@ export type GameDayRecapPlayByPlayEndingFacts = {
   opponentLastChance: GameDayRecapPlayByPlayLastChance | null;
 };
 
+export type GameDayRecapPlayByPlayScoringDrought = {
+  durationSeconds: number | null;
+  endAwayScore: number;
+  endClock: string | null;
+  endHomeScore: number;
+  endQuarter: number | null;
+  opponentPointsDuringDrought: number;
+  scoringTeamName: string | null;
+  scoringTeamSide: TeamSide;
+  scorelessTeamName: string | null;
+  scorelessTeamSide: TeamSide;
+  startAwayScore: number;
+  startClock: string | null;
+  startHomeScore: number;
+  startQuarter: number | null;
+};
+
+export type GameDayRecapPlayByPlayPlayerScoringSpurt = {
+  endAwayScore: number;
+  endClock: string | null;
+  endHomeScore: number;
+  endQuarter: number | null;
+  eventCount: number;
+  playerName: string;
+  points: number;
+  startAwayScore: number;
+  startClock: string | null;
+  startHomeScore: number;
+  startQuarter: number | null;
+  teamName: string | null;
+  teamSide: TeamSide;
+};
+
+export type GameDayRecapPlayByPlayMadeThreeBurst = {
+  endClock: string | null;
+  endQuarter: number | null;
+  madeThrees: number;
+  startClock: string | null;
+  startQuarter: number | null;
+  teamName: string | null;
+  teamSide: TeamSide;
+};
+
+export type GameDayRecapPlayByPlayOffensiveReboundSequence = {
+  endAwayScore: number;
+  endClock: string | null;
+  endHomeScore: number;
+  endQuarter: number | null;
+  offensiveRebounds: number;
+  scoringEventText: string | null;
+  startClock: string | null;
+  startQuarter: number | null;
+  teamName: string | null;
+  teamSide: TeamSide;
+};
+
+export type GameDayRecapPlayByPlayExplicitEventFact = {
+  clock: string | null;
+  eventText: string;
+  eventType: "ejection" | "foul_out" | "injury" | "technical";
+  playerName: string | null;
+  quarter: number | null;
+  teamName: string | null;
+  teamSide: TeamSide | null;
+};
+
 export type GameDayRecapPlayByPlayFacts = {
   bestCompetitiveSwingRun: GameDayRecapPlayByPlayRun;
   endingFacts: GameDayRecapPlayByPlayEndingFacts;
+  explicitEventFacts?: GameDayRecapPlayByPlayExplicitEventFact[];
   lateGameMoments: GameDayRecapLateGameMoment[];
   largestLead: GameDayRecapPlayByPlayLargestLead;
+  lastLeadByLoser?: GameDayRecapPlayByPlayLastLead | null;
   leadChangeCount: number;
   leadChangeFacts: GameDayRecapPlayByPlayLeadChangeFacts;
   longestUnansweredRun: GameDayRecapPlayByPlayRun;
+  madeThreeBursts?: GameDayRecapPlayByPlayMadeThreeBurst[];
+  offensiveReboundSequences?: GameDayRecapPlayByPlayOffensiveReboundSequence[];
   primaryRun: GameDayRecapPlayByPlayRun | null;
+  playerScoringSpurts?: GameDayRecapPlayByPlayPlayerScoringSpurt[];
+  scoringDroughts?: GameDayRecapPlayByPlayScoringDrought[];
   secondaryRun: GameDayRecapPlayByPlayRun | null;
   summaryLines: string[];
+  tookLeadForGood?: GameDayRecapPlayByPlayLeadForGood | null;
   winnerComebackDeficit: number | null;
 };
 
@@ -185,7 +290,9 @@ export type GameDayRecapPlayByPlayLoadResult = {
 };
 
 type TeamNameContext = {
+  awayPlayers?: string[];
   awayTeamName?: string | null;
+  homePlayers?: string[];
   homeTeamName?: string | null;
 };
 
@@ -244,8 +351,10 @@ type ResolvedDecisiveEnding = {
 };
 
 export async function loadGameDayRecapPlayByPlayFacts(args: {
+  awayPlayers?: string[];
   awayTeamName?: string | null;
   fetchPublicMatchPlayByPlay?: typeof fetchPublicMatchPlayByPlay;
+  homePlayers?: string[];
   homeTeamName?: string | null;
   matchId: string;
 }): Promise<GameDayRecapPlayByPlayLoadResult> {
@@ -254,7 +363,9 @@ export async function loadGameDayRecapPlayByPlayFacts(args: {
   try {
     const playByPlay = await fetcher(args.matchId);
     const detailedFacts = buildGameDayRecapPlayByPlayFactsDetailed(playByPlay, {
+      awayPlayers: args.awayPlayers,
       awayTeamName: args.awayTeamName,
+      homePlayers: args.homePlayers,
       homeTeamName: args.homeTeamName,
     });
     return {
@@ -337,6 +448,13 @@ function buildGameDayRecapPlayByPlayFactsDetailed(
   const leadChanges = resolveLeadChanges(scoringEvents, teamNames);
   const leadChangeCount = leadChanges.length;
   const leadChangeFacts = resolveLeadChangeFacts(leadChanges);
+  const leadForGoodFacts =
+    finalLeader === "tie"
+      ? {
+          lastLeadByLoser: null,
+          tookLeadForGood: null,
+        }
+      : resolveLeadForGoodFacts(scoringEvents, finalLeader, teamNames);
   const largestLead = resolveLargestLead(scoringEvents, teamNames);
   const longestUnansweredRun = resolveLongestUnansweredRun(
     scoringEvents,
@@ -354,6 +472,17 @@ function buildGameDayRecapPlayByPlayFactsDetailed(
     scoreTimeline,
   );
   const lateGameMoments = resolveLateGameMoments(scoringEvents, teamNames);
+  const scoringDroughts = resolveScoringDroughts(scoringEvents, teamNames);
+  const playerScoringSpurts = resolvePlayerScoringSpurts(
+    scoringEvents,
+    teamNames,
+  );
+  const madeThreeBursts = resolveMadeThreeBursts(scoringEvents, teamNames);
+  const offensiveReboundSequences = resolveOffensiveReboundSequences(
+    scoreTimeline,
+    teamNames,
+  );
+  const explicitEventFacts = resolveExplicitEventFacts(scoreTimeline, teamNames);
   const { debug, endingFacts } = resolveEndingFactsWithDebug(
     scoreTimeline,
     teamNames,
@@ -378,14 +507,21 @@ function buildGameDayRecapPlayByPlayFactsDetailed(
     facts: {
       bestCompetitiveSwingRun,
       endingFacts,
+      explicitEventFacts,
       lateGameMoments,
       largestLead,
+      lastLeadByLoser: leadForGoodFacts.lastLeadByLoser,
       leadChangeCount,
       leadChangeFacts,
       longestUnansweredRun,
+      madeThreeBursts,
+      offensiveReboundSequences,
       primaryRun,
+      playerScoringSpurts,
+      scoringDroughts,
       secondaryRun,
       summaryLines,
+      tookLeadForGood: leadForGoodFacts.tookLeadForGood,
       winnerComebackDeficit,
     },
   };
@@ -517,6 +653,113 @@ function resolveLeadChanges(
   }
 
   return leadChanges;
+}
+
+function resolveLeadForGoodFacts(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  winnerSide: TeamSide,
+  teamNames: TeamNameContext,
+): {
+  lastLeadByLoser: GameDayRecapPlayByPlayLastLead | null;
+  tookLeadForGood: GameDayRecapPlayByPlayLeadForGood | null;
+} {
+  const loserSide = oppositeTeamSide(winnerSide);
+  let lastLeadByLoser: GameDayRecapPlayByPlayLastLead | null = null;
+  let tookLeadForGood: GameDayRecapPlayByPlayLeadForGood | null = null;
+  const largestDeficitBySide: Record<TeamSide, number> = {
+    away: 0,
+    home: 0,
+  };
+
+  for (let index = 0; index < scoringEvents.length; index += 1) {
+    const scoringEvent = scoringEvents[index]!;
+    largestDeficitBySide.home = Math.max(
+      largestDeficitBySide.home,
+      Math.max(
+        0,
+        scoringEvent.beforeAwayScore - scoringEvent.beforeHomeScore,
+      ),
+    );
+    largestDeficitBySide.away = Math.max(
+      largestDeficitBySide.away,
+      Math.max(
+        0,
+        scoringEvent.beforeHomeScore - scoringEvent.beforeAwayScore,
+      ),
+    );
+
+    const beforeLeader = resolveLeader(
+      scoringEvent.beforeHomeScore,
+      scoringEvent.beforeAwayScore,
+    );
+    const afterLeader = resolveLeader(
+      scoringEvent.afterHomeScore,
+      scoringEvent.afterAwayScore,
+    );
+
+    if (afterLeader === loserSide) {
+      lastLeadByLoser = {
+        awayScore: scoringEvent.afterAwayScore,
+        clock: scoringEvent.clock,
+        homeScore: scoringEvent.afterHomeScore,
+        leadingTeamName: resolveTeamName(loserSide, teamNames),
+        leadingTeamSide: loserSide,
+        quarter: scoringEvent.quarter,
+        trailingTeamName: resolveTeamName(winnerSide, teamNames),
+        trailingTeamSide: winnerSide,
+      };
+    }
+
+    if (
+      tookLeadForGood ||
+      afterLeader !== winnerSide ||
+      beforeLeader === winnerSide ||
+      !winnerHeldLeadForRestOfGame(scoringEvents, index, winnerSide)
+    ) {
+      continue;
+    }
+
+    const previousLeaderSide =
+      beforeLeader === "tie" && lastLeadByLoser ? loserSide : beforeLeader;
+
+    tookLeadForGood = {
+      awayScore: scoringEvent.afterAwayScore,
+      clock: scoringEvent.clock,
+      deficitErased:
+        previousLeaderSide === loserSide
+          ? largestDeficitBySide[winnerSide]
+          : 0,
+      eventText: scoringEvent.eventText,
+      homeScore: scoringEvent.afterHomeScore,
+      previousLeaderSide,
+      quarter: scoringEvent.quarter,
+      scoringTeamName: resolveTeamName(winnerSide, teamNames),
+      scoringTeamSide: winnerSide,
+    };
+  }
+
+  return {
+    lastLeadByLoser,
+    tookLeadForGood,
+  };
+}
+
+function winnerHeldLeadForRestOfGame(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  startIndex: number,
+  winnerSide: TeamSide,
+): boolean {
+  for (let index = startIndex + 1; index < scoringEvents.length; index += 1) {
+    const leader = resolveLeader(
+      scoringEvents[index]!.afterHomeScore,
+      scoringEvents[index]!.afterAwayScore,
+    );
+    if (leader !== winnerSide) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function resolveLargestLead(
@@ -743,6 +986,61 @@ function collectCompletedUnansweredRuns(
   }
 
   return runs;
+}
+
+function resolveScoringDroughts(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  teamNames: TeamNameContext,
+): GameDayRecapPlayByPlayScoringDrought[] {
+  return collectCompletedUnansweredRuns(scoringEvents, teamNames)
+    .filter((run) => {
+      if (
+        !run.teamSide ||
+        run.teamPoints < SCORING_DROUGHT_MIN_OPPONENT_POINTS
+      ) {
+        return false;
+      }
+      const durationSeconds = resolveRunDurationSeconds(run);
+      return (
+        durationSeconds === null ||
+        durationSeconds >= SCORING_DROUGHT_MIN_SECONDS
+      );
+    })
+    .sort((left, right) => {
+      if (right.teamPoints !== left.teamPoints) {
+        return right.teamPoints - left.teamPoints;
+      }
+      const leftOrdering =
+        left.startQuarter !== null
+          ? resolveAnchorOrdering(left.startQuarter, left.startClock)
+          : Number.POSITIVE_INFINITY;
+      const rightOrdering =
+        right.startQuarter !== null
+          ? resolveAnchorOrdering(right.startQuarter, right.startClock)
+          : Number.POSITIVE_INFINITY;
+      return leftOrdering - rightOrdering;
+    })
+    .slice(0, 2)
+    .map((run) => {
+      const scoringTeamSide = run.teamSide ?? "home";
+      const scorelessTeamSide = oppositeTeamSide(scoringTeamSide);
+      return {
+        durationSeconds: resolveRunDurationSeconds(run),
+        endAwayScore: run.endAwayScore,
+        endClock: run.endClock,
+        endHomeScore: run.endHomeScore,
+        endQuarter: run.endQuarter,
+        opponentPointsDuringDrought: run.teamPoints,
+        scoringTeamName: run.teamName,
+        scoringTeamSide,
+        scorelessTeamName: resolveTeamName(scorelessTeamSide, teamNames),
+        scorelessTeamSide,
+        startAwayScore: run.startAwayScore,
+        startClock: run.startClock,
+        startHomeScore: run.startHomeScore,
+        startQuarter: run.startQuarter,
+      };
+    });
 }
 
 function collectSwingRunCandidates(
@@ -1904,6 +2202,358 @@ function resolvePotentialAttemptPoints(
   return null;
 }
 
+function resolvePlayerScoringSpurts(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  teamNames: TeamNameContext,
+): GameDayRecapPlayByPlayPlayerScoringSpurt[] {
+  type ActiveSpurt = {
+    endEvent: EventContext & { scoringTeamSide: TeamSide };
+    eventCount: number;
+    playerName: string;
+    points: number;
+    startEvent: EventContext & { scoringTeamSide: TeamSide };
+    teamSide: TeamSide;
+  };
+
+  const spurts: ActiveSpurt[] = [];
+  const activeByTeam: Partial<Record<TeamSide, ActiveSpurt>> = {};
+  const finalize = (teamSide: TeamSide) => {
+    const active = activeByTeam[teamSide];
+    if (!active) {
+      return;
+    }
+    if (active.points >= 8 || (active.points >= 6 && active.eventCount >= 3)) {
+      spurts.push(active);
+    }
+    delete activeByTeam[teamSide];
+  };
+
+  for (const event of scoringEvents) {
+    const playerName = resolveNamedBoxScorePlayer(event, teamNames, {
+      teamSide: event.scoringTeamSide,
+    });
+    const active = activeByTeam[event.scoringTeamSide];
+
+    if (!playerName) {
+      finalize(event.scoringTeamSide);
+      continue;
+    }
+
+    if (active?.playerName === playerName) {
+      active.endEvent = event;
+      active.eventCount += 1;
+      active.points += event.points;
+      continue;
+    }
+
+    finalize(event.scoringTeamSide);
+    activeByTeam[event.scoringTeamSide] = {
+      endEvent: event,
+      eventCount: 1,
+      playerName,
+      points: event.points,
+      startEvent: event,
+      teamSide: event.scoringTeamSide,
+    };
+  }
+
+  finalize("away");
+  finalize("home");
+
+  return spurts
+    .map((spurt) => ({
+      endAwayScore: spurt.endEvent.afterAwayScore,
+      endClock: spurt.endEvent.clock,
+      endHomeScore: spurt.endEvent.afterHomeScore,
+      endQuarter: spurt.endEvent.quarter,
+      eventCount: spurt.eventCount,
+      playerName: spurt.playerName,
+      points: spurt.points,
+      startAwayScore: spurt.startEvent.beforeAwayScore,
+      startClock: spurt.startEvent.clock,
+      startHomeScore: spurt.startEvent.beforeHomeScore,
+      startQuarter: spurt.startEvent.quarter,
+      teamName: resolveTeamName(spurt.teamSide, teamNames),
+      teamSide: spurt.teamSide,
+    }))
+    .sort(
+      (left, right) =>
+        right.points - left.points ||
+        right.eventCount - left.eventCount ||
+        resolveNullableAnchorOrdering(left.startQuarter, left.startClock) -
+          resolveNullableAnchorOrdering(right.startQuarter, right.startClock),
+    )
+    .slice(0, 3);
+}
+
+function resolveMadeThreeBursts(
+  scoringEvents: Array<EventContext & { scoringTeamSide: TeamSide }>,
+  teamNames: TeamNameContext,
+): GameDayRecapPlayByPlayMadeThreeBurst[] {
+  type ActiveBurst = {
+    endEvent: EventContext & { scoringTeamSide: TeamSide };
+    madeThrees: number;
+    startEvent: EventContext & { scoringTeamSide: TeamSide };
+    teamSide: TeamSide;
+  };
+
+  const bursts: ActiveBurst[] = [];
+  const activeByTeam: Partial<Record<TeamSide, ActiveBurst>> = {};
+  const finalize = (teamSide: TeamSide) => {
+    const active = activeByTeam[teamSide];
+    if (active && active.madeThrees >= 3) {
+      bursts.push(active);
+    }
+    delete activeByTeam[teamSide];
+  };
+
+  for (const event of scoringEvents) {
+    if (!isMadeThreeScoringEvent(event)) {
+      finalize(event.scoringTeamSide);
+      continue;
+    }
+
+    const active = activeByTeam[event.scoringTeamSide];
+    if (active) {
+      active.endEvent = event;
+      active.madeThrees += 1;
+      continue;
+    }
+
+    activeByTeam[event.scoringTeamSide] = {
+      endEvent: event,
+      madeThrees: 1,
+      startEvent: event,
+      teamSide: event.scoringTeamSide,
+    };
+  }
+
+  finalize("away");
+  finalize("home");
+
+  return bursts
+    .map((burst) => ({
+      endClock: burst.endEvent.clock,
+      endQuarter: burst.endEvent.quarter,
+      madeThrees: burst.madeThrees,
+      startClock: burst.startEvent.clock,
+      startQuarter: burst.startEvent.quarter,
+      teamName: resolveTeamName(burst.teamSide, teamNames),
+      teamSide: burst.teamSide,
+    }))
+    .sort(
+      (left, right) =>
+        right.madeThrees - left.madeThrees ||
+        resolveNullableAnchorOrdering(left.startQuarter, left.startClock) -
+          resolveNullableAnchorOrdering(right.startQuarter, right.startClock),
+    )
+    .slice(0, 3);
+}
+
+function resolveOffensiveReboundSequences(
+  eventContexts: EventContext[],
+  teamNames: TeamNameContext,
+): GameDayRecapPlayByPlayOffensiveReboundSequence[] {
+  type ActiveSequence = {
+    offensiveRebounds: number;
+    startEvent: EventContext;
+    teamSide: TeamSide;
+  };
+
+  const sequences: GameDayRecapPlayByPlayOffensiveReboundSequence[] = [];
+  const activeByTeam: Partial<Record<TeamSide, ActiveSequence>> = {};
+
+  for (const event of eventContexts) {
+    if (isOffensiveReboundEvent(event) && event.actingTeamSide) {
+      const active = activeByTeam[event.actingTeamSide];
+      if (active) {
+        active.offensiveRebounds += 1;
+      } else {
+        activeByTeam[event.actingTeamSide] = {
+          offensiveRebounds: 1,
+          startEvent: event,
+          teamSide: event.actingTeamSide,
+        };
+      }
+      continue;
+    }
+
+    if (isScoringEvent(event)) {
+      const active = activeByTeam[event.scoringTeamSide];
+      if (active && active.offensiveRebounds >= 2) {
+        sequences.push({
+          endAwayScore: event.afterAwayScore,
+          endClock: event.clock,
+          endHomeScore: event.afterHomeScore,
+          endQuarter: event.quarter,
+          offensiveRebounds: active.offensiveRebounds,
+          scoringEventText: event.eventText,
+          startClock: active.startEvent.clock,
+          startQuarter: active.startEvent.quarter,
+          teamName: resolveTeamName(event.scoringTeamSide, teamNames),
+          teamSide: event.scoringTeamSide,
+        });
+      }
+      delete activeByTeam.away;
+      delete activeByTeam.home;
+      continue;
+    }
+
+    if (event.actingTeamSide) {
+      delete activeByTeam[oppositeTeamSide(event.actingTeamSide)];
+    }
+  }
+
+  return sequences
+    .sort(
+      (left, right) =>
+        right.offensiveRebounds - left.offensiveRebounds ||
+        resolveNullableAnchorOrdering(left.startQuarter, left.startClock) -
+          resolveNullableAnchorOrdering(right.startQuarter, right.startClock),
+    )
+    .slice(0, 3);
+}
+
+function resolveExplicitEventFacts(
+  eventContexts: EventContext[],
+  teamNames: TeamNameContext,
+): GameDayRecapPlayByPlayExplicitEventFact[] {
+  const facts: GameDayRecapPlayByPlayExplicitEventFact[] = [];
+
+  for (const event of eventContexts) {
+    const eventText = event.eventText?.trim();
+    if (!eventText) {
+      continue;
+    }
+
+    const eventType = explicitEventTypeForText(eventText, event.eventType);
+    if (!eventType) {
+      continue;
+    }
+
+    const teamSide = event.actingTeamSide ?? event.scoringTeamSide ?? null;
+    facts.push({
+      clock: event.clock,
+      eventText,
+      eventType,
+      playerName: resolveNamedBoxScorePlayer(event, teamNames, {
+        teamSide: teamSide ?? undefined,
+      }),
+      quarter: event.quarter,
+      teamName: teamSide ? resolveTeamName(teamSide, teamNames) : null,
+      teamSide,
+    });
+  }
+
+  return facts.slice(0, 5);
+}
+
+function isMadeThreeScoringEvent(
+  event: EventContext & { scoringTeamSide: TeamSide },
+): boolean {
+  const eventText = event.eventText ?? "";
+  const eventType = event.eventType ?? "";
+  return (
+    event.points === 3 &&
+    (THREE_POINT_ATTEMPT_PATTERN.test(eventText) ||
+      /\b(?:three|3pt|3_point|three_pointer|made_three)\b/i.test(eventType))
+  );
+}
+
+function isOffensiveReboundEvent(event: EventContext): boolean {
+  return (
+    OFFENSIVE_REBOUND_PATTERN.test(event.eventText ?? "") ||
+    /\boffensive[_ -]?rebound\b/i.test(event.eventType ?? "")
+  );
+}
+
+function explicitEventTypeForText(
+  eventText: string,
+  eventType: string | null,
+): GameDayRecapPlayByPlayExplicitEventFact["eventType"] | null {
+  const combined = `${eventText} ${eventType ?? ""}`;
+  if (EJECTION_PATTERN.test(combined)) {
+    return "ejection";
+  }
+  if (FOUL_OUT_PATTERN.test(combined)) {
+    return "foul_out";
+  }
+  if (INJURY_PATTERN.test(combined)) {
+    return "injury";
+  }
+  if (TECHNICAL_PATTERN.test(combined)) {
+    return "technical";
+  }
+  return null;
+}
+
+function resolveNamedBoxScorePlayer(
+  event: Pick<EventContext, "eventText">,
+  teamNames: TeamNameContext,
+  options: {
+    teamSide?: TeamSide;
+  } = {},
+): string | null {
+  const eventText = normalizePlayerNameForMatching(event.eventText ?? "");
+  if (!eventText) {
+    return null;
+  }
+
+  const sides: TeamSide[] = options.teamSide
+    ? [options.teamSide]
+    : ["away", "home"];
+  const matches = sides.flatMap((teamSide) =>
+    playerNamesForSide(teamNames, teamSide).filter((playerName) =>
+      playerAliasesForMatching(playerName).some((alias) =>
+        ` ${eventText} `.includes(` ${alias} `),
+      ),
+    ),
+  );
+  const uniqueMatches = Array.from(new Set(matches));
+  return uniqueMatches.length === 1 ? uniqueMatches[0]! : null;
+}
+
+function playerNamesForSide(
+  teamNames: TeamNameContext,
+  teamSide: TeamSide,
+): string[] {
+  return teamSide === "home"
+    ? (teamNames.homePlayers ?? [])
+    : (teamNames.awayPlayers ?? []);
+}
+
+function playerAliasesForMatching(playerName: string): string[] {
+  const normalized = normalizePlayerNameForMatching(playerName);
+  const parts = normalized.split(" ").filter(Boolean);
+  const lastName = parts.at(-1);
+  const firstName = parts[0];
+  return Array.from(
+    new Set(
+      [
+        normalized,
+        firstName && lastName ? `${firstName.slice(0, 1)} ${lastName}` : null,
+      ].filter((alias): alias is string => Boolean(alias && alias.length >= 3)),
+    ),
+  );
+}
+
+function normalizePlayerNameForMatching(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveNullableAnchorOrdering(
+  quarter: number | null,
+  clock: string | null,
+): number {
+  return quarter === null
+    ? Number.POSITIVE_INFINITY
+    : resolveAnchorOrdering(quarter, clock);
+}
+
 function buildSummaryLines(args: {
   bestCompetitiveSwingRun: GameDayRecapPlayByPlayRun;
   awayTeamName?: string | null;
@@ -2325,6 +2975,10 @@ function resolveTeamName(
   return teamSide === "home"
     ? (teamNames.homeTeamName ?? null)
     : (teamNames.awayTeamName ?? null);
+}
+
+function oppositeTeamSide(teamSide: TeamSide): TeamSide {
+  return teamSide === "home" ? "away" : "home";
 }
 
 function resolveTeamLabel(teamSide: TeamSide): string {

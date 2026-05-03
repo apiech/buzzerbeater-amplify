@@ -48,13 +48,16 @@ function createPlayByPlay(args: {
   };
 }
 
-function buildFacts(events: ReturnType<typeof createEvent>[]) {
+function buildFacts(
+  events: ReturnType<typeof createEvent>[],
+  teamContext: Parameters<typeof __testing.buildGameDayRecapPlayByPlayFacts>[1] = {
+    awayTeamName: "Beta",
+    homeTeamName: "Alpha",
+  },
+) {
   return __testing.buildGameDayRecapPlayByPlayFacts(
     createPlayByPlay({ events }),
-    {
-      awayTeamName: "Beta",
-      homeTeamName: "Alpha",
-    },
+    teamContext,
   );
 }
 
@@ -490,6 +493,278 @@ test("buildGameDayRecapPlayByPlayFacts captures a competitive answered swing run
   assert.ok(facts.primaryRun);
   assert.equal(facts.primaryRun.teamPoints, 16);
   assert.equal(facts.primaryRun.opponentPoints, 5);
+});
+
+test("buildGameDayRecapPlayByPlayFacts captures lead-for-good, last loser lead, and scoring drought facts", () => {
+  const facts = buildFacts([
+    createEvent({
+      awayScore: 0,
+      homeScore: 0,
+      id: -1,
+      isScoringPlay: false,
+      quarter: 1,
+      wallClock: 0,
+    }),
+    createEvent({
+      awayScore: 2,
+      clock: "11:30",
+      eventText: "Beta scores first.",
+      homeScore: 0,
+      id: 1,
+      quarter: 1,
+      wallClock: 30,
+    }),
+    createEvent({
+      awayScore: 5,
+      clock: "10:00",
+      eventText: "Beta stretches the lead.",
+      homeScore: 0,
+      id: 2,
+      quarter: 1,
+      wallClock: 120,
+    }),
+    createEvent({
+      awayScore: 5,
+      clock: "09:00",
+      eventText: "Alpha starts the drought.",
+      homeScore: 2,
+      id: 3,
+      quarter: 1,
+      wallClock: 180,
+    }),
+    createEvent({
+      awayScore: 5,
+      clock: "08:00",
+      eventText: "Alpha ties it.",
+      homeScore: 5,
+      id: 4,
+      quarter: 1,
+      wallClock: 240,
+    }),
+    createEvent({
+      awayScore: 5,
+      clock: "07:00",
+      eventText: "Alpha takes the lead for good.",
+      homeScore: 7,
+      id: 5,
+      quarter: 1,
+      wallClock: 300,
+    }),
+    createEvent({
+      awayScore: 5,
+      clock: "06:00",
+      eventText: "Alpha finishes the 10-0 burst.",
+      homeScore: 10,
+      id: 6,
+      quarter: 1,
+      wallClock: 360,
+    }),
+    createEvent({
+      awayScore: 7,
+      clock: "05:00",
+      eventText: "Beta finally scores.",
+      homeScore: 10,
+      id: 7,
+      quarter: 1,
+      wallClock: 420,
+    }),
+    createEvent({
+      awayScore: 7,
+      clock: "04:30",
+      eventText: "Alpha keeps the lead.",
+      homeScore: 12,
+      id: 8,
+      quarter: 1,
+      wallClock: 450,
+    }),
+  ]);
+
+  assert.deepStrictEqual(facts.lastLeadByLoser, {
+    awayScore: 5,
+    clock: "09:00",
+    homeScore: 2,
+    leadingTeamName: "Beta",
+    leadingTeamSide: "away",
+    quarter: 1,
+    trailingTeamName: "Alpha",
+    trailingTeamSide: "home",
+  });
+  assert.deepStrictEqual(facts.tookLeadForGood, {
+    awayScore: 5,
+    clock: "07:00",
+    deficitErased: 5,
+    eventText: "Alpha takes the lead for good.",
+    homeScore: 7,
+    previousLeaderSide: "away",
+    quarter: 1,
+    scoringTeamName: "Alpha",
+    scoringTeamSide: "home",
+  });
+  const drought = facts.scoringDroughts?.[0];
+  assert.ok(drought);
+  assert.equal(drought.scorelessTeamSide, "away");
+  assert.equal(drought.opponentPointsDuringDrought, 10);
+  assert.equal(drought.durationSeconds, 240);
+});
+
+test("buildGameDayRecapPlayByPlayFacts captures named player spurts and made-three bursts", () => {
+  const facts = buildFacts(
+    [
+      createEvent({
+        awayScore: 0,
+        homeScore: 0,
+        id: -1,
+        isScoringPlay: false,
+        quarter: 1,
+        wallClock: 0,
+      }),
+      createEvent({
+        awayScore: 0,
+        clock: "08:40",
+        eventText: "H. Hot drills a three from deep.",
+        homeScore: 3,
+        id: 1,
+        quarter: 3,
+        type: "THREE_POINTER_MADE",
+        wallClock: 200,
+      }),
+      createEvent({
+        awayScore: 2,
+        clock: "08:10",
+        eventText: "Beta answers inside.",
+        homeScore: 3,
+        id: 2,
+        quarter: 3,
+        wallClock: 210,
+      }),
+      createEvent({
+        awayScore: 2,
+        clock: "07:45",
+        eventText: "H. Hot hits another three-pointer.",
+        homeScore: 6,
+        id: 3,
+        quarter: 3,
+        type: "THREE_POINTER_MADE",
+        wallClock: 220,
+      }),
+      createEvent({
+        awayScore: 2,
+        clock: "07:05",
+        eventText: "H. Hot buries a three from the wing.",
+        homeScore: 9,
+        id: 4,
+        quarter: 3,
+        type: "THREE_POINTER_MADE",
+        wallClock: 230,
+      }),
+    ],
+    {
+      awayPlayers: ["Bert Blue"],
+      awayTeamName: "Beta",
+      homePlayers: ["Hana Hot"],
+      homeTeamName: "Alpha",
+    },
+  );
+
+  const playerSpurt = facts.playerScoringSpurts?.[0];
+  const madeThreeBurst = facts.madeThreeBursts?.[0];
+  assert.ok(playerSpurt);
+  assert.ok(madeThreeBurst);
+  assert.equal(playerSpurt.playerName, "Hana Hot");
+  assert.equal(playerSpurt.points, 9);
+  assert.equal(madeThreeBurst.teamName, "Alpha");
+  assert.equal(madeThreeBurst.madeThrees, 3);
+});
+
+test("buildGameDayRecapPlayByPlayFacts captures offensive-rebound possessions and explicit events only from text", () => {
+  const facts = buildFacts(
+    [
+      createEvent({
+        awayScore: 0,
+        homeScore: 0,
+        id: -1,
+        isScoringPlay: false,
+        quarter: 1,
+        wallClock: 0,
+      }),
+      createEvent({
+        awayScore: 0,
+        clock: "05:20",
+        eventText: "Hana Hot grabs an offensive rebound.",
+        homeScore: 0,
+        id: 1,
+        isHomePossession: true,
+        isScoringPlay: false,
+        quarter: 2,
+        type: "OFFENSIVE_REBOUND",
+        wallClock: 120,
+      }),
+      createEvent({
+        awayScore: 0,
+        clock: "05:08",
+        eventText: "Hana Hot grabs another offensive board.",
+        homeScore: 0,
+        id: 2,
+        isHomePossession: true,
+        isScoringPlay: false,
+        quarter: 2,
+        type: "OFFENSIVE_REBOUND",
+        wallClock: 132,
+      }),
+      createEvent({
+        awayScore: 0,
+        clock: "04:54",
+        eventText: "Alpha finally scores after the extra chances.",
+        homeScore: 2,
+        id: 3,
+        quarter: 2,
+        wallClock: 146,
+      }),
+      createEvent({
+        awayScore: 2,
+        clock: "03:40",
+        eventText: "Bert Blue fouled out after reaching the limit.",
+        homeScore: 2,
+        id: 4,
+        isHomePossession: false,
+        isScoringPlay: false,
+        quarter: 4,
+        type: "PERSONAL_FOUL",
+        wallClock: 300,
+      }),
+      createEvent({
+        awayScore: 2,
+        clock: "02:55",
+        eventText: "Hana Hot left the game injured.",
+        homeScore: 2,
+        id: 5,
+        isHomePossession: true,
+        isScoringPlay: false,
+        quarter: 4,
+        type: "INJURY",
+        wallClock: 345,
+      }),
+    ],
+    {
+      awayPlayers: ["Bert Blue"],
+      awayTeamName: "Beta",
+      homePlayers: ["Hana Hot"],
+      homeTeamName: "Alpha",
+    },
+  );
+
+  const offensiveReboundSequence = facts.offensiveReboundSequences?.[0];
+  const foulOutFact = facts.explicitEventFacts?.[0];
+  const injuryFact = facts.explicitEventFacts?.[1];
+  assert.ok(offensiveReboundSequence);
+  assert.ok(foulOutFact);
+  assert.ok(injuryFact);
+  assert.equal(offensiveReboundSequence.teamName, "Alpha");
+  assert.equal(offensiveReboundSequence.offensiveRebounds, 2);
+  assert.equal(foulOutFact.eventType, "foul_out");
+  assert.equal(foulOutFact.playerName, "Bert Blue");
+  assert.equal(injuryFact.eventType, "injury");
+  assert.equal(injuryFact.playerName, "Hana Hot");
 });
 
 test("buildGameDayRecapPlayByPlayFacts anchors answered runs to the starting score event", () => {

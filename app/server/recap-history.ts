@@ -762,7 +762,7 @@ function normalizeRecapPostgameInterview(
               ]
             : [];
         })
-        .slice(0, 2)
+        .slice(0, 3)
     : [];
 
   if (!playerName || !teamName || !teamSide || !title || qa.length === 0) {

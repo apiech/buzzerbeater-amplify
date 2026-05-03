@@ -46,7 +46,9 @@ test("browse-time workspace writers keep player snapshot access without active t
   assert.match(source, /const workspaceSnapshotWriteFunctions = \[/);
   assert.match(source, /backend\.getHomeWorkspace/);
   assert.match(source, /backend\.getLeagueIntel/);
+  assert.match(source, /backend\.getLineupHelperWorkspace/);
   assert.match(source, /backend\.getPlayerLab/);
+  assert.match(source, /backend\.repairOwnerRosterData/);
   assert.doesNotMatch(source, /backend\.getRivalsWorkspace/);
   assert.match(source, /PLAYER_SKILL_SNAPSHOT_TABLE_NAME/);
 });

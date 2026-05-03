@@ -32,6 +32,7 @@ type MatchStoreBackend = {
   getSalaryProjection: FunctionResource;
   listAccessibleMatches: FunctionResource;
   refreshWorkspace: FunctionResource;
+  repairOwnerRosterData: FunctionResource;
   submitMyTeamHighlightsScan: FunctionResource;
 };
 
@@ -96,11 +97,12 @@ export function configureMatchStoreIntegration(
     backend.connectBbAccount,
     backend.getHomeWorkspace,
     backend.getLeagueIntel,
+    backend.getLineupHelperWorkspace,
     backend.getPlayerLab,
+    backend.repairOwnerRosterData,
     backend.refreshWorkspace,
   ];
   const playerSnapshotReadFunctions = [
-    backend.getLineupHelperWorkspace,
     backend.getSalaryCalculatorSeed,
     backend.getPlayerTrend,
     backend.getSalaryProjection,

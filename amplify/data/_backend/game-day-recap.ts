@@ -12,6 +12,7 @@ import {
 import type {
   BBApiBoxScore,
   BBApiBoxScorePlayer,
+  BBApiBoxScorePlayerPerformanceStatKey,
   BBApiBoxScoreTeam,
   BBApiSchedule,
   BBApiScheduleMatch,
@@ -216,8 +217,194 @@ type GameDayRecapFactsLibraryNarrativePlan = {
   setupFacts: string[];
 };
 
+type GameDayRecapFactsLibrarySectionName = "game" | "postgame" | "pregame";
+
+type GameDayRecapFactsLibrarySectionPlan = {
+  factIds: string[];
+  guidance: string;
+  maxSentences: number;
+  optionalFactIds: string[];
+  requiredFactIds: string[];
+};
+
+type GameDayRecapTacticalFocus = "balanced" | "inside" | "outside";
+type GameDayRecapTacticalPace = "fast" | "normal" | "slow";
+type GameDayRecapDefenseProfileKey =
+  | "box_and_one_inside"
+  | "box_and_one_outside"
+  | "inside_zone"
+  | "normal"
+  | "perimeter_gamble"
+  | "perimeter_zone"
+  | "press";
+
+type GameDayRecapOffenseTaxonomy = {
+  focus: GameDayRecapTacticalFocus;
+  gdpFocus: GameDayRecapTacticalFocus;
+  pace: GameDayRecapTacticalPace;
+  scorerTarget: "best_inside_scorer" | "best_outside_scorer" | null;
+  strategy: string | null;
+};
+
+type GameDayRecapDefenseTaxonomy = {
+  pace: GameDayRecapTacticalPace;
+  profileKey: GameDayRecapDefenseProfileKey;
+  protects: GameDayRecapTacticalFocus[];
+  strategy: string | null;
+  targetScorer: "best_inside_scorer" | "best_outside_scorer" | null;
+  tradeoffs: string[];
+};
+
+type GameDayRecapPregameBattleGdpOutcome = {
+  aspect: GameDayPrepRecapAspect;
+  kind: GameDayPrepRecapOutcomeKind;
+  opponentOffense: string | null;
+  target: string;
+  text: string;
+};
+
+type GameDayRecapPregameBattleTeam = {
+  defense: GameDayRecapDefenseTaxonomy;
+  effortPosture: string | null;
+  gdpOutcomes: GameDayRecapPregameBattleGdpOutcome[];
+  managementSignals: string[];
+  name: string;
+  offense: GameDayRecapOffenseTaxonomy;
+  rotationSignals: string[];
+  side: "away" | "home";
+  tacticFitSignals: string[];
+};
+
+type GameDayRecapPregameBattleVerdict = {
+  confidence: "clear" | "mixed" | "slight";
+  reasons: string[];
+  teamName: string | null;
+  teamSide: "away" | "home" | "even";
+  text: string;
+};
+
+type GameDayRecapPregameBattle = {
+  guidance: string;
+  managerVerdict: GameDayRecapPregameBattleVerdict;
+  summaryFacts: string[];
+  teams: {
+    away: GameDayRecapPregameBattleTeam;
+    home: GameDayRecapPregameBattleTeam;
+  };
+};
+
+type GameDayRecapGameNarrativeBeatType =
+  | "closingSequence"
+  | "periodState"
+  | "response"
+  | "texture"
+  | "turningPoint";
+
+type GameDayRecapGameNarrativeBeat = {
+  beatType: GameDayRecapGameNarrativeBeatType;
+  combineGuidance: string;
+  factId: string;
+  impactScore: number;
+  sourceFields: string[];
+  text: string;
+  timeSort: number | null;
+};
+
+type GameDayRecapGameStoryBeatRole =
+  | "closingShape"
+  | "firstHalfShape"
+  | "injurySwing"
+  | "mainCharacter"
+  | "takeoverStretch"
+  | "turningPoint";
+
+type GameDayRecapGameStoryBeat = {
+  beatRole: GameDayRecapGameStoryBeatRole;
+  combineGuidance: string;
+  factId: string;
+  impactScore: number;
+  includeClock: "avoid" | "optional" | "required";
+  sourceFields: string[];
+  text: string;
+  timeBand: "early" | "first_half" | "late" | "second_half" | "unknown";
+  timeSort: number | null;
+};
+
+type GameDayRecapGameStoryMainCharacter = {
+  factId: string;
+  playerName: string;
+  pointShare: number | null;
+  supportingText: string;
+  teamName: string;
+  teamSide: "away" | "home";
+};
+
+type GameDayRecapGameStory = {
+  closingShape: GameDayRecapGameStoryBeat | null;
+  firstHalfShape: GameDayRecapGameStoryBeat | null;
+  guidance: string;
+  injurySwing: GameDayRecapGameStoryBeat | null;
+  mainCharacter: GameDayRecapGameStoryMainCharacter | null;
+  paragraphPlan: {
+    reason: string | null;
+    targetParagraphs: 3 | 4;
+  };
+  requiredFactIds: string[];
+  selectedBeats: GameDayRecapGameStoryBeat[];
+  suppressedFactIds: string[];
+  takeoverStretch: GameDayRecapGameStoryBeat | null;
+  timeAnchorBudget: {
+    defaultExactAnchors: number;
+    guidance: string;
+    maxExactAnchors: number;
+  };
+  turningPoint: GameDayRecapGameStoryBeat | null;
+};
+
+type GameDayRecapFactCategory =
+  | "boxscore"
+  | "ending"
+  | "game_flow"
+  | "league_context"
+  | "matchup"
+  | "player"
+  | "pre_game"
+  | "slate";
+
+type GameDayRecapFactImpactTier = "high" | "low" | "medium" | "must_lead";
+type GameDayRecapFactStoryPhase =
+  | "analysis"
+  | "game_flow"
+  | "lead"
+  | "setup";
+type GameDayRecapFactPreferredPlacement =
+  | "body"
+  | "closing"
+  | "headline"
+  | "opening";
+
+type GameDayRecapFactCandidate = {
+  category: GameDayRecapFactCategory;
+  chronologicalSort: number | null;
+  claimKey: string;
+  id: string;
+  impactScore: number;
+  impactTier: GameDayRecapFactImpactTier;
+  mustMention: boolean;
+  preferredPlacement: GameDayRecapFactPreferredPlacement;
+  sourceFields: string[];
+  storyPhase: GameDayRecapFactStoryPhase;
+  text: string;
+};
+
 type GameDayRecapFactsLibrary = {
+  analysisFacts: GameDayRecapFactCandidate[];
+  avoidFacts: string[];
+  chronologicalFacts: GameDayRecapFactCandidate[];
+  gameNarrativeBeats: GameDayRecapGameNarrativeBeat[];
+  gameStory: GameDayRecapGameStory;
   headlineCandidates: string[];
+  leadFacts: GameDayRecapFactCandidate[];
   matchupEdgeFacts: {
     suppressed: string[];
     supported: string[];
@@ -227,6 +414,15 @@ type GameDayRecapFactsLibrary = {
   periodStates: {
     afterPeriods: GameDayRecapFactsLibraryPeriodState[];
     throughThreeQuarters: GameDayRecapFactsLibraryPeriodState | null;
+  };
+  pregameBattle: GameDayRecapPregameBattle;
+  rankedFacts: GameDayRecapFactCandidate[];
+  recapSections: Record<
+    GameDayRecapFactsLibrarySectionName,
+    GameDayRecapFactsLibrarySectionPlan
+  > & {
+    sectionOrder: ["pregame", "game", "postgame"];
+    visibleHeadings: false;
   };
   requiredContextSentences: string[];
   storySignals: string[];
@@ -238,6 +434,40 @@ type GameDayRecapFactsLibrary = {
     winnerName: string;
   };
   gameFlow: GameDayRecapFactsLibraryGameFlow;
+};
+
+type GameDayRecapSlatePlayerLeaderFact = {
+  matchId: string;
+  playerName: string;
+  statLine?: GameDayRecapPromptInterviewCandidate["statLine"];
+  teamName: string;
+  value: number;
+};
+
+type GameDayRecapSlateTeamHighFact = {
+  matchId: string;
+  score: number;
+  teamName: string;
+};
+
+type GameDayRecapSlateFactContext = {
+  bestAllAroundPlayer: GameDayRecapSlatePlayerLeaderFact | null;
+  biggestComebackMatchIds: Set<string>;
+  biggestMarginMatchIds: Set<string>;
+  biggestRunMatchIds: Set<string>;
+  biggestSurpriseMatchIds: Set<string>;
+  closestMatchIds: Set<string>;
+  gameCount: number;
+  highestScoringTeam: GameDayRecapSlateTeamHighFact | null;
+  highestScoringMatchIds: Set<string>;
+  lowestScoringTeam: GameDayRecapSlateTeamHighFact | null;
+  mostLeadChangesMatchIds: Set<string>;
+  onlyOvertimeMatchIds: Set<string>;
+  topAssister: GameDayRecapSlatePlayerLeaderFact | null;
+  topRebounder: GameDayRecapSlatePlayerLeaderFact | null;
+  topScorer: GameDayRecapSlatePlayerLeaderFact | null;
+  topStocksPlayer: GameDayRecapSlatePlayerLeaderFact | null;
+  topThreesPlayer: GameDayRecapSlatePlayerLeaderFact | null;
 };
 
 type GameDayRecapPromptInterviewCandidate = {
@@ -259,6 +489,19 @@ type GameDayRecapPromptInterviewCandidate = {
   supportedFacts: string[];
   teamName: string;
   teamSide: "away" | "home";
+};
+
+type GameDayRecapBoxScoreTeamStats = {
+  assists: number | null;
+  fieldGoalsAttempted: number | null;
+  fieldGoalsMade: number | null;
+  freeThrowsAttempted: number | null;
+  freeThrowsMade: number | null;
+  offensiveRebounds: number | null;
+  personalFouls: number | null;
+  rebounds: number | null;
+  threePointersAttempted: number | null;
+  threePointersMade: number | null;
 };
 
 type GameDayRecapPromptGame = {
@@ -325,9 +568,28 @@ type GameDayRecapPolishRequestPayload = {
   task: "style_polish";
 };
 
+type GameDayRecapInterviewFacts = {
+  absurdQuestionGuidance: string;
+  bannedMechanicsTerms: string[];
+  outcome: string;
+  perspective: "loser" | "winner";
+  playerAngle: string;
+  playerRoleFacts: string[];
+  questionPlan: {
+    absurd: string[];
+    emotional: string[];
+    gameFlow: string[];
+    loserResponse: string[];
+  };
+  safeContext: string[];
+  statUsageGuidance: string;
+  storyBeats: string[];
+};
+
 type GameDayRecapPostgameInterviewRequestPayload = {
   candidate: GameDayRecapPromptInterviewCandidate;
   gameFacts: GameDayRecapPromptGame;
+  interviewFacts: GameDayRecapInterviewFacts;
   recapGame: Pick<
     GameDayRecapResultPayload["games"][number],
     "headline" | "matchId" | "writeup"
@@ -359,7 +621,26 @@ type RotationContextForRecap = {
   summaries: string[];
 };
 
+type GameDayRecapTeamScoringDistribution = {
+  doubleFigureScorerCount: number;
+  lowMinuteContributorPoints: number;
+  lowMinuteContributors: Array<{
+    minutes: number;
+    name: string;
+    points: number;
+  }>;
+  supportingCastPoints: number;
+  topScorer?: {
+    name: string;
+    points: number;
+  } | null;
+  topScorerPointShare?: number | null;
+  topTwoPointShare: number | null;
+  totalPoints?: number;
+};
+
 type GameDayRecapPromptTeam = {
+  boxScoreStats?: GameDayRecapBoxScoreTeamStats | null;
   conferenceIndex: number | null;
   conferencePosition: number | null;
   defStrategy: string | null;
@@ -378,6 +659,7 @@ type GameDayRecapPromptTeam = {
   recentSignalFlags: string[];
   record: TeamSeasonContextPromptField;
   recordEnteringGame: TeamSeasonContextPromptField;
+  scoringDistribution?: GameDayRecapTeamScoringDistribution;
   score: number;
   streak: TeamSeasonContextPromptField;
   streakEnteringGame: TeamSeasonContextPromptField;
@@ -385,12 +667,32 @@ type GameDayRecapPromptTeam = {
   topPlayers: Array<{
     assists: number;
     blocks: number;
+    fieldGoalsAttempted?: number;
+    fieldGoalsMade?: number;
+    freeThrowsAttempted?: number;
+    freeThrowsMade?: number;
     minutes: number;
     name: string;
+    personalFouls?: number;
+    playerId?: string | null;
+    plusMinus?: number | null;
     points: number;
+    ratingValue?: number | null;
     rebounds: number;
+    isStarter?: boolean;
     steals: number;
+    threePointersAttempted?: number;
+    threePointersMade?: number;
     turnovers: number;
+  }>;
+  notablePlayers?: Array<{
+    isStarter: boolean;
+    minutes: number;
+    name: string;
+    playerId: string | null;
+    plusMinus: number | null;
+    points: number;
+    ratingValue: number | null;
   }>;
 };
 
@@ -399,6 +701,9 @@ type GameDayRecapFactStorePeriodState = GameDayRecapFactsLibraryPeriodState & {
   leaderSide: "away" | "home" | "tie";
   trailerName: string | null;
 };
+
+type GameDayRecapNotablePlayer =
+  NonNullable<GameDayRecapPromptTeam["notablePlayers"]>[number];
 
 type GameDayRecapFactStorePlayerLeader = {
   playerName: string;
@@ -490,6 +795,7 @@ type GameDayRecapGameFactStore = {
   effortDelta: number | null;
   effortSummary: string | null;
   evidenceSignals: string[];
+  factsLibrary?: GameDayRecapFactsLibrary;
   finalMargin: number;
   gameScoringContext: "high_scoring_shootout" | "low_scoring_grind" | null;
   gameDayPrepSummaries: string[];
@@ -637,6 +943,7 @@ type GameDayRecapSemanticValidationIssueField =
   | "writeup";
 type GameDayRecapSemanticValidationIssueKind =
   | "banned_style_phrase"
+  | "clunky_pregame_mechanics_phrase"
   | "compact_streak_mismatch"
   | "choppy_fact_stack"
   | "duplicate_period_state_restatement"
@@ -644,27 +951,34 @@ type GameDayRecapSemanticValidationIssueKind =
   | "conflicting_series_summary_line"
   | "duplicate_outcome_restatement"
   | "missing_required_context_sentence"
+  | "game_flow_time_clutter"
+  | "missing_game_story_beat"
   | "missing_primary_run_mention"
   | "missing_run_timing"
   | "overlapping_run_claims"
   | "missing_decisive_ending_emphasis"
+  | "missing_pregame_tactical_setup"
   | "missing_series_summary_line"
   | "one_game_streak_language"
   | "playoff_record_language"
   | "playoff_streak_language"
   | "quarter_score_mismatch"
   | "quarter_winner_score_mismatch"
+  | "raw_pregame_mechanics_language"
   | "repetitive_sentence_start"
   | "record_mismatch"
   | "short_fact_sentence_cluster"
   | "through_three_quarters_mismatch"
   | "tied_quarter_claim"
   | "unsupported_interview_claim"
+  | "unsupported_balanced_attack"
+  | "unsupported_pregame_color"
   | "unsupported_lead_change_claim"
   | "unsupported_scoring_context"
   | "unsupported_run_framing"
   | "unsupported_run_claim"
   | "unsupported_tactic_contrast"
+  | "visible_section_heading"
   | "wrong_quarter_winner";
 type GameDayRecapSemanticValidationIssueSalvage =
   | "drop_only"
@@ -1006,6 +1320,7 @@ type GameDayRecapJudgeGameFactPacket = {
   evidenceSignals: string[];
   effortDelta: number | null;
   effortSummary: string | null;
+  factsLibrary: GameDayRecapFactsLibrary | null;
   finalMargin: number;
   gameScoringContext: "high_scoring_shootout" | "low_scoring_grind" | null;
   gameDayPrepSummaries: string[];
@@ -1033,21 +1348,25 @@ type GameDayRecapJudgeGameFactPacket = {
       GameDayRecapFactStoreTeam,
       | "name"
       | "score"
+      | "notablePlayers"
       | "topPlayers"
       | "turnovers"
       | "ratingLabels"
       | "ratingTotal"
       | "ratingValues"
+      | "scoringDistribution"
     >;
     home: Pick<
       GameDayRecapFactStoreTeam,
       | "name"
       | "score"
+      | "notablePlayers"
       | "topPlayers"
       | "turnovers"
       | "ratingLabels"
       | "ratingTotal"
       | "ratingValues"
+      | "scoringDistribution"
     >;
   };
   winner: GameDayRecapWinnerFacts;
@@ -1283,6 +1602,36 @@ const COMEBACK_SUMMARY_THRESHOLD = 8;
 const MIN_REMAINING_MS_FOR_STYLE_POLISH = 90_000;
 const MIN_REMAINING_MS_FOR_INTERVIEW_GENERATION = 60_000;
 const MIN_REMAINING_MS_FOR_INTERVIEW_RETRY = 35_000;
+const MAX_POSTGAME_INTERVIEW_QA_COUNT = 3;
+const INTERVIEW_BANNED_MECHANICS_TERMS = [
+  "balanced attack",
+  "outside defense",
+  "outside scoring",
+  "outside looks",
+  "inside defense",
+  "inside scoring",
+  "inside looks",
+  "inside attack",
+  "offensive flow",
+  "GDP",
+  "fast pace",
+  "game-day prep",
+  "game-day prep code",
+  "look inside",
+  "low post",
+  "matchup rating",
+  "motion offense",
+  "normal pace",
+  "patient offense",
+  "played motion",
+  "princeton offense",
+  "rating",
+  "ratings",
+  "run and gun",
+  "slow pace",
+  "team talent",
+  "talent total",
+] as const;
 const GAME_DAY_RECAP_POSTGAME_INTERVIEW_SCHEMA = {
   additionalProperties: false,
   properties: {
@@ -1324,6 +1673,8 @@ const GAME_DAY_RECAP_POSTGAME_INTERVIEW_SCHEMA = {
         required: ["question", "answer"],
         type: "object",
       },
+      minItems: 1,
+      maxItems: MAX_POSTGAME_INTERVIEW_QA_COUNT,
       type: "array",
     },
     teamName: {
@@ -3925,9 +4276,9 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "Write every recap in the voice of a polished professional sportswriter.",
     "Use the supplied final team scores and winner as the source of truth for every outcome claim.",
     "If a game has only four periods, do not mention overtime. If it has more than four periods, mention overtime only when it helps the story and keep the count accurate.",
-    "If a game includes requiredContextSentences, include each supplied requiredContextSentence exactly once in the writeup and keep the wording intact.",
-    "If a game includes effortSummary or gameDayPrepSummaries, use the supplied requiredContextSentences as the only effort and game-day-prep copy rather than inventing a paraphrase or citing raw effortDelta or GDP codes.",
-    "Do not write a separate tactical or GDP setup sentence that repeats a requiredContextSentence in different words.",
+    "If a game includes requiredContextSentences but does not include factsLibrary.pregameBattle, include each supplied requiredContextSentence exactly once in the writeup and keep the wording intact.",
+    "If a game includes factsLibrary.pregameBattle, use that packet for the first paragraph instead of printing legacy effortSummary, gameDayPrepSummaries, or requiredContextSentences verbatim.",
+    "Do not cite raw effortDelta values, raw GDP codes, or mechanical setup phrases such as held the effort edge or prepared well for.",
     "If a game includes rotationSummaries, fold that short-handed or foul-trouble context into the writeup in natural language without guessing why a player sat.",
     "Only call a game high-scoring or a shootout when gameScoringContext is high_scoring_shootout; only call it low-scoring or a defensive grind when gameScoringContext is low_scoring_grind.",
     "If a one-possession game includes playByPlayFacts.endingFacts, lead with that decisive ending in the headline or the opening sentence instead of burying it under broader context.",
@@ -3963,13 +4314,23 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     ...(useFactsLibraryFirst
       ? [
           "When factsLibrary is present for a game, treat it as the primary deterministic story source for headline, opener, period-state, and momentum claims.",
+          "Use factsLibrary.rankedFacts as the main story budget: lead with the highest-impact mustMention or leadFacts item, then include only the most useful remaining facts.",
+          "Use factsLibrary.gameStory.selectedBeats as the game-flow paragraph's primary outline; factsLibrary.chronologicalFacts are backup context only.",
+          "Use factsLibrary.analysisFacts for the closing explanation, not for the opening unless one is also a leadFact.",
+          "Honor factsLibrary.avoidFacts and do not turn those suppressed angles into positive claims.",
           "Prefer factsLibrary.headlineCandidates and factsLibrary.openingCandidates before inventing a new framing angle.",
-          "When factsLibrary.requiredContextSentences is present, include each requiredContextSentence exactly once.",
+          "Use factsLibrary.pregameBattle as the primary paragraph-1 source: mention both teams' tactics, fold in GDP/prep and effort naturally, and imply the manager verdict without a visible scorecard.",
+          "When factsLibrary.pregameBattle is present, legacy factsLibrary.requiredContextSentences are compatibility fields only; do not print them verbatim unless they are also restated in pregameBattle prose facts.",
+          "Use lively metaphor for the manager setup, but do not invent speeches, locker-room scenes, motives, rest decisions, injuries, or off-court reporting.",
           "Use factsLibrary.periodStates.throughThreeQuarters for any through-three-quarters claim instead of estimating from other context.",
           "Use only factsLibrary.matchupEdgeFacts.supported for why-the-winner-won explanations and avoid the suppressed explanations.",
           "If factsLibrary.gameFlow.doNotEmphasize includes guidance, follow it and avoid those angles.",
-          "Use factsLibrary.narrativePlan to organize the writeup into paragraphs in this order: setup, chronological game flow, then player and team-rating explanation.",
-          "Separate writeup paragraphs with a blank line. Paragraph 1 should cover pregame tactics, effort, and game-day prep context; paragraph 2 should move through the game in time order; paragraph 3 should close with player stat lines and why the winner won.",
+          "Use factsLibrary.recapSections as the internal template: paragraph 1 is pregame, paragraph 2 is game, paragraph 3 is postgame; when factsLibrary.gameStory.paragraphPlan.targetParagraphs is 4, split rich postgame material into a fourth short paragraph. Do not print Pregame, Game, or Postgame labels.",
+          "Separate the recap sections with blank lines. Pregame should be 1-2 sentences, game should be 3-5 connected sentences, and postgame should be 2-4 sentences across one or two paragraphs depending on gameStory.paragraphPlan.",
+          "Use factsLibrary.gameStory as the game paragraph spine; connect firstHalfShape, injurySwing, turningPoint, takeoverStretch, closingShape, and mainCharacter into flowing cause-and-effect prose instead of writing bullet-style score notes.",
+          "Honor factsLibrary.gameStory.timeAnchorBudget: use broad timing such as early, before halftime, after the break, late in the third, or down the stretch for secondary beats.",
+          "Do not stack halftime score, through-three score, decisive-quarter score, last-loser-lead, took-lead-for-good, and run facts as separate sentences; choose the story shape from gameStory.selectedBeats.",
+          "Use factsLibrary.narrativePlan and recapSections together: manager-battle setup first, chronological game flow second, and player/team/slate explanation last.",
           "Only mention runs, lead-change bursts, last-lead, or took-the-lead-for-good angles when they are explicitly present in factsLibrary.gameFlow or playByPlayFacts.",
         ]
       : []),
@@ -3980,9 +4341,9 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "Write in a natural sports-reporter voice with connected prose, not a checklist of facts.",
     "Favor smooth, transitional sentences over stacked score-note fragments.",
     "If the evidence suggests one side may have treated the game as lower priority, phrase it cautiously and never call it a punt unless the evidence is explicit.",
-    "When requiredContextSentences are present for a game, include each one exactly once in the writeup.",
-    "When requiredContextSentences cover effort or game-day prep, do not add a second paraphrase of that same prep or pace read.",
-    "Never cite the raw effortDelta value or raw GDP codes.",
+    "When requiredContextSentences are present for a game without factsLibrary.pregameBattle, include each one exactly once in the writeup.",
+    "When factsLibrary.pregameBattle is present, use that packet for effort and prep instead of printing requiredContextSentences verbatim.",
+    "Never cite the raw effortDelta value, raw GDP codes, the GDP acronym, or clunky setup phrases such as held the effort edge or prepared well for.",
     "When rotationSummaries are present for a game, mention that short-handed or foul-trouble context naturally and do not invent reasons such as injuries, load management, or discipline beyond the provided note.",
     "When playByPlayFacts.endingFacts are present for a close game, treat those structured ending facts as the preferred source for the lede.",
     "When playByPlaySummaryLines are present for a game, treat them as the preferred source for any supplied play-by-play mention.",
@@ -4021,11 +4382,14 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     ...(useFactsLibraryFirst
       ? [
           "When factsLibrary is present, treat it as the preferred deterministic source for headline candidates, opening candidates, matchup edges, and story-shape cues.",
-          "When factsLibrary.requiredContextSentences is present, keep those exact sentences intact.",
+          "Use factsLibrary.rankedFacts, leadFacts, gameStory, and analysisFacts to choose both priority and order; do not flatten every fact into the writeup.",
+          "Use factsLibrary.pregameBattle for the hidden first paragraph manager-battle setup: both teams' offense/defense choices, GDP/prep reads, effort posture, rotation context when useful, and an integrated manager verdict.",
+          "Use metaphor-only manager color; never invent a coach speech, locker-room moment, film-room note, injury, rest motive, or private message.",
           "Use factsLibrary.summaryFacts and factsLibrary.storySignals to guide the writeup, but keep the final prose connected and natural.",
           "Honor any factsLibrary.matchupEdgeFacts.suppressed guidance and do not present those angles as reasons the winner won.",
           "Honor any factsLibrary.gameFlow.doNotEmphasize guidance and do not force late-basket capper language when the payload warns against it.",
-          "Use factsLibrary.narrativePlan as the story outline and separate the setup, chronological game flow, and closing analysis with blank lines.",
+          "Use factsLibrary.recapSections and factsLibrary.gameStory as the story outline: hidden pregame, game, and postgame paragraphs separated by blank lines with no visible section headings.",
+          "In the game paragraph, write a story rather than a ledger: establish who or what changed the game, show the response, then show how control moved and why it stayed there.",
         ]
       : []),
     validationFeedback.length > 0
@@ -4109,20 +4473,27 @@ function buildGameDayRecapStylePolishBedrockRequest(args: {
                     "Preserve every supplied fact exactly.",
                     "Keep playoff series-score language out of the writeup; that state belongs in the headline.",
                     "Keep the exact supplied primary run mention and timing anchors.",
-                    "Keep every requiredContextSentence exactly once.",
-                    "Do not add a second paraphrase of a required effort, tactic, pace, or game-day-prep sentence.",
+                    "When gameFacts.factsLibrary.pregameBattle is present, preserve its manager-battle setup instead of forcing legacy requiredContextSentences verbatim.",
+                    "When no pregameBattle exists, keep every requiredContextSentence exactly once.",
+                    "Do not use raw GDP codes, raw effortDelta values, the GDP acronym, held-the-effort-edge phrasing, or prepared-well-for phrasing.",
                     "Remove duplicate quarter or outcome restatements when they are redundant.",
                     "Keep the timeline in chronological order once the writeup moves into game flow.",
                     "Use comeback language only when the cited run began with that team trailing.",
                     "Reserve contrasting or opposite offense language for materially different offensive families.",
                     "Condense same-sequence go-ahead scores and immediate lead-extension free throws into one closing-possession beat.",
-                    "Keep or create paragraph breaks between setup, chronological game flow, and closing analysis.",
+                    "Keep or create three natural paragraphs in hidden pregame, game, and postgame order, or four when gameFacts.factsLibrary.gameStory.paragraphPlan.targetParagraphs is 4; separate them with blank lines.",
+                    "Do not add visible Pregame, Game, or Postgame headings.",
+                    "The first paragraph should mention both teams' tactical choices when available and integrate the manager verdict without a scorecard.",
+                    "Preserve the ranked-fact priority: the opening should still reflect the strongest leadFact, and the game paragraph should follow gameStory.selectedBeats chronologically.",
+                    "Make the game paragraph connected cause-and-effect prose; remove checklist rhythm such as routine quarter-by-quarter score narration unless the quarter itself is the selected gameStory beat.",
+                    "Preserve gameStory.timeAnchorBudget by replacing secondary clock details with broad timing language.",
                     "Vary sentence openings and sentence length.",
                     "Use cleaner transitions and more connected prose.",
                   ],
                   restrictions: [
                     "Do not change the game result.",
                     "Do not add or remove any supported factual claim unless you are removing a redundant repetition.",
+                    "Do not invent coach speeches, locker-room scenes, film-room details, rest motives, injuries, or private pregame reporting.",
                     "Do not split the same late-game closing possession into multiple micro-event sentences.",
                     "Do not introduce any postgameInterview content.",
                     "Return only the rewritten writeup.",
@@ -4179,7 +4550,7 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
   return {
     inferenceConfig: {
       maxTokens: 1400,
-      temperature: 0.35,
+      temperature: 0.5,
     },
     messages: [
       {
@@ -4190,22 +4561,30 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
                 instructions: {
                   goals: [
                     "Write a short fact-grounded postgame interview for the supplied player.",
-                    "Use one or two short Q&A exchanges.",
-                    "Ground every answer only in the supplied candidate facts and game facts.",
-                    "Write the title and every question in polished professional sportswriter tone.",
-                    "For a loser-perspective candidate, ask what went wrong, where the game turned, and what changes for the next game.",
-                    "Let the supplied personality type shape only the player's answers, without changing the facts.",
+                    "Use two or three short Q&A exchanges.",
+                    "Use interviewFacts as the primary interview-safe outline; use candidate and gameFacts only to verify names, teams, side, perspective, and support.",
+                    "Ground every basketball claim only in interviewFacts, the supplied candidate facts, recapGame, and game facts.",
+                    "Write the title cleanly, but let the reporter questions be playful, varied, and occasionally strange.",
+                    "Choose from the supplied questionPlan: include at least one grounded game-flow or emotional question, and include one clearly absurd comic question when it fits.",
+                    "For a loser-perspective candidate, include accountability or adjustment without making every question sound the same.",
+                    "Let the supplied personality type shape every player answer without changing the facts.",
                     "Make the selected personality unmistakable in every player answer through cadence, rhythm, metaphor, and word choice.",
                     "Push the player's answers far enough that the voice is obvious without any debug labels.",
+                    "Make PG-13 answers as entertaining as full heat; PG-13 is less mean, not less creative.",
                     "Use the example sentence inside personalityGuidance as a style reference point, not as a fact to copy.",
                   ],
                   restrictions: [
                     `Honor the requested interviewIntensity of ${interviewIntensity}.`,
                     "Use the exact supplied playerName, teamName, and teamSide.",
+                    "Do not lead questions with raw stat lines, such as 'You finished with 25 points and 8 rebounds.'",
+                    "Do not have the player recite raw stat bundles such as 'I had 25 points and 8 rebounds'; a single stat may appear only when it is the clearest grounded point.",
+                    "Do not use game-mechanics language in title, questions, or answers: avoid ratings, GDP, team talent, offensive flow, outside/inside labels, game-day prep labels, matchup rating labels, and similar internal terms.",
                     "Do not invent exact shot-order details, streak counts, locker-room scenes, or coach quotes.",
+                    "Do not invent plausible fake events that could be mistaken for reporting, such as a real delay, fan incident, fight, injury, technical, coach confrontation, or arena problem.",
+                    "Absurd questions must be obviously impossible or surreal, so the reader understands they are a bit rather than a factual game event.",
                     "Do not overstate garbage-time baskets as game-sealing moments unless the supplied ending facts support that.",
                     "Do not contradict the supplied writeup or game facts.",
-                    "Do not let the player's personality spill into the title or the reporter questions.",
+                    "Do not let the player's personality spill into the title; reporter questions can be playful but should not imitate the player's voice.",
                     "Do not flatten the player's answers into generic athlete-speak when a personality type is supplied.",
                     "Keep any swagger, philosopher references, bar-like phrasing, and trash talk original rather than quoting recognizable lyrics or public lines verbatim.",
                     "Do not copy the example sentence verbatim unless the supplied facts make that wording naturally fit.",
@@ -4214,6 +4593,7 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
                 },
                 candidate: args.payload.candidate,
                 gameFacts: args.payload.gameFacts,
+                interviewFacts: args.payload.interviewFacts,
                 personalityGuidance: resolveInterviewPersonalityPrompt(
                   {
                     intensity: interviewIntensity,
@@ -4256,12 +4636,15 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
           "You are writing a fact-grounded postgame interview snippet for a basketball recap.",
           "Use only the supplied facts.",
           "Keep the interview short, concrete, and quotable.",
-          "Write the title and questions in professional sportswriter tone.",
-          "Use the supplied personality guidance only for the player's answers.",
+          "Write the title cleanly and the questions in playful reporter tone.",
+          "Use interviewFacts as the main interview outline.",
+          "Use the supplied personality guidance for every player answer.",
           "Make the selected personality obvious in every player answer through cadence, rhythm, metaphor, and word choice.",
           "Let the requested interview intensity control how wild, cocky, funny, or hostile the player's answers become.",
-          "Do not let the player's personality bleed into the title or reporter questions.",
+          "PG-13 should be just as entertaining as full heat, but less cruel.",
+          "Do not let the player's personality bleed into the title.",
           "Do not flatten the answers into generic athlete-speak when a personality type is supplied.",
+          "Do not recite stat bundles or use internal game-mechanics language.",
           "Do not quote copyrighted lyrics or famous lines verbatim.",
           "Treat any example sentence in personalityGuidance as style reference only, not text to copy.",
           "Return structured output only.",
@@ -4274,34 +4657,385 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
 function sanitizePromptPayloadForWriter(
   payload: GameDayRecapPromptPayload,
 ): GameDayRecapWriterPayload {
+  const useFactsLibraryFirst =
+    payload.request.generationApproach ===
+    RecapGenerationApproach.FACT_LIBRARY_FIRST;
   return {
     coverage: payload.coverage,
     request: payload.request,
     games: payload.games.map((game) => {
-      if (!isPlayoffRecapGame(game)) {
-        return game;
-      }
-
-      return {
-        ...game,
-        teams: {
-          away: {
-            ...game.teams.away,
-            record: null,
-            recordEnteringGame: null,
-            streak: null,
-            streakEnteringGame: null,
-          },
-          home: {
-            ...game.teams.home,
-            record: null,
-            recordEnteringGame: null,
-            streak: null,
-            streakEnteringGame: null,
-          },
-        },
-      };
+      const sanitizedGame = sanitizePlayoffPromptGameForWriter(game);
+      return useFactsLibraryFirst && sanitizedGame.factsLibrary
+        ? compactFactLibraryFirstPromptGameForWriter(sanitizedGame)
+        : sanitizedGame;
     }),
+  };
+}
+
+function sanitizePlayoffPromptGameForWriter(
+  game: GameDayRecapPromptGame,
+): GameDayRecapPromptGame {
+  if (!isPlayoffRecapGame(game)) {
+    return game;
+  }
+
+  return {
+    ...game,
+    teams: {
+      away: sanitizePlayoffPromptTeamForWriter(game.teams.away),
+      home: sanitizePlayoffPromptTeamForWriter(game.teams.home),
+    },
+  };
+}
+
+function sanitizePlayoffPromptTeamForWriter(
+  team: GameDayRecapPromptTeam,
+): GameDayRecapPromptTeam {
+  return {
+    ...team,
+    record: null,
+    recordEnteringGame: null,
+    streak: null,
+    streakEnteringGame: null,
+  };
+}
+
+const FACT_LIBRARY_WRITER_RANKED_FACT_LIMIT = 16;
+const FACT_LIBRARY_WRITER_ANALYSIS_FACT_LIMIT = 7;
+const FACT_LIBRARY_WRITER_CHRONOLOGICAL_FACT_LIMIT = 8;
+const FACT_LIBRARY_WRITER_TEXT_ARRAY_LIMIT = 8;
+
+function compactFactLibraryFirstPromptGameForWriter(
+  game: GameDayRecapPromptGame,
+): GameDayRecapPromptGame {
+  const factsLibrary = game.factsLibrary;
+  if (!factsLibrary) {
+    return game;
+  }
+
+  const compactFactsLibrary = compactFactsLibraryForWriter(factsLibrary);
+  return {
+    effortDelta: null,
+    effortSummary: null,
+    evidenceSignals: game.evidenceSignals.slice(0, 6),
+    factsLibrary: compactFactsLibrary,
+    finalMargin: game.finalMargin,
+    gameDayPrepSummaries: [],
+    gameScoringContext: game.gameScoringContext,
+    matchId: game.matchId,
+    neutral: game.neutral,
+    playByPlayFacts: compactPlayByPlayFactsForWriter(game.playByPlayFacts),
+    playByPlaySummaryLines: game.playByPlaySummaryLines.slice(0, 4),
+    quarterFacts: compactQuarterFactsForWriter(game.quarterFacts),
+    quarterScores: game.quarterScores,
+    requiredContextSentences: [],
+    rotationSummaries: game.rotationSummaries.slice(0, 3),
+    ...(game.seriesContext ? { seriesContext: game.seriesContext } : {}),
+    standingsContext: game.standingsContext.slice(0, 4),
+    teamTalent: game.teamTalent,
+    teams: {
+      away: compactFactLibraryFirstPromptTeamForWriter(game.teams.away),
+      home: compactFactLibraryFirstPromptTeamForWriter(game.teams.home),
+    },
+    type: game.type,
+  };
+}
+
+function compactFactLibraryFirstPromptTeamForWriter(
+  team: GameDayRecapPromptTeam,
+): GameDayRecapPromptTeam {
+  return {
+    boxScoreStats: team.boxScoreStats ?? null,
+    conferenceIndex: team.conferenceIndex,
+    conferencePosition: team.conferencePosition,
+    defStrategy: team.defStrategy,
+    efficiency: {},
+    foulTroubleLimitationCount: team.foulTroubleLimitationCount,
+    gdp: {},
+    keyAbsenceCount: team.keyAbsenceCount,
+    lastFive: team.lastFive,
+    lastFiveEnteringGame: team.lastFiveEnteringGame,
+    name: team.name,
+    offStrategy: team.offStrategy,
+    ratingLabels: {},
+    ratingTotal: null,
+    recentAverageMargin: team.recentAverageMargin,
+    recentSignalFlags: team.recentSignalFlags.slice(0, 3),
+    record: team.record,
+    recordEnteringGame: team.recordEnteringGame,
+    score: team.score,
+    scoringDistribution: team.scoringDistribution,
+    streak: team.streak,
+    streakEnteringGame: team.streakEnteringGame,
+    turnovers: team.turnovers,
+    topPlayers: team.topPlayers.slice(0, 3).map((player) => ({
+      assists: player.assists,
+      blocks: player.blocks,
+      isStarter: player.isStarter,
+      minutes: player.minutes,
+      name: player.name,
+      personalFouls: player.personalFouls,
+      plusMinus: player.plusMinus,
+      points: player.points,
+      rebounds: player.rebounds,
+      steals: player.steals,
+      threePointersAttempted: player.threePointersAttempted,
+      threePointersMade: player.threePointersMade,
+      turnovers: player.turnovers,
+    })),
+  };
+}
+
+function compactFactsLibraryForWriter(
+  factsLibrary: GameDayRecapFactsLibrary,
+): GameDayRecapFactsLibrary {
+  const requiredFactIds = new Set([
+    ...factsLibrary.gameStory.requiredFactIds,
+    ...factsLibrary.gameStory.selectedBeats.map((beat) => beat.factId),
+  ]);
+  const rankedFacts = selectCompactFactCandidatesForWriter(
+    factsLibrary.rankedFacts,
+    requiredFactIds,
+    FACT_LIBRARY_WRITER_RANKED_FACT_LIMIT,
+  );
+  const rankedFactIds = new Set(rankedFacts.map((fact) => fact.id));
+
+  return {
+    analysisFacts: selectCompactFactCandidatesForWriter(
+      factsLibrary.analysisFacts,
+      requiredFactIds,
+      FACT_LIBRARY_WRITER_ANALYSIS_FACT_LIMIT,
+    ),
+    avoidFacts: factsLibrary.avoidFacts.slice(0, FACT_LIBRARY_WRITER_TEXT_ARRAY_LIMIT),
+    chronologicalFacts: selectCompactFactCandidatesForWriter(
+      factsLibrary.chronologicalFacts,
+      requiredFactIds,
+      FACT_LIBRARY_WRITER_CHRONOLOGICAL_FACT_LIMIT,
+    ),
+    gameFlow: {
+      closingNote: factsLibrary.gameFlow.closingNote,
+      doNotEmphasize: factsLibrary.gameFlow.doNotEmphasize.slice(0, 4),
+      highlightLeadChanges: factsLibrary.gameFlow.highlightLeadChanges.slice(0, 3),
+      highlightRuns: factsLibrary.gameFlow.highlightRuns.slice(0, 3),
+      lastLeadByLoser: factsLibrary.gameFlow.lastLeadByLoser,
+      scoringDroughts: factsLibrary.gameFlow.scoringDroughts.slice(0, 3),
+      tookLeadForGood: factsLibrary.gameFlow.tookLeadForGood,
+    },
+    gameNarrativeBeats: factsLibrary.gameNarrativeBeats
+      .filter(
+        (beat) =>
+          requiredFactIds.has(beat.factId) ||
+          rankedFactIds.has(beat.factId) ||
+          beat.impactScore >= 70,
+      )
+      .slice(0, 8)
+      .map(compactGameNarrativeBeatForWriter),
+    gameStory: compactGameStoryForWriter(factsLibrary.gameStory),
+    headlineCandidates: factsLibrary.headlineCandidates.slice(0, 4),
+    leadFacts: selectCompactFactCandidatesForWriter(
+      factsLibrary.leadFacts,
+      requiredFactIds,
+      5,
+    ),
+    matchupEdgeFacts: {
+      supported: factsLibrary.matchupEdgeFacts.supported.slice(0, 5),
+      suppressed: factsLibrary.matchupEdgeFacts.suppressed.slice(0, 5),
+    },
+    narrativePlan: {
+      closingFacts: factsLibrary.narrativePlan.closingFacts.slice(0, 5),
+      gameFlowFacts: factsLibrary.narrativePlan.gameFlowFacts.slice(0, 5),
+      paragraphOrder: factsLibrary.narrativePlan.paragraphOrder,
+      setupFacts: factsLibrary.narrativePlan.setupFacts.slice(0, 4),
+    },
+    openingCandidates: factsLibrary.openingCandidates.slice(0, 4),
+    periodStates: factsLibrary.periodStates,
+    pregameBattle: compactPregameBattleForWriter(factsLibrary.pregameBattle),
+    rankedFacts,
+    recapSections: compactRecapSectionsForWriter(
+      factsLibrary.recapSections,
+      rankedFactIds,
+      requiredFactIds,
+    ),
+    requiredContextSentences: [],
+    storySignals: factsLibrary.storySignals.slice(
+      0,
+      FACT_LIBRARY_WRITER_TEXT_ARRAY_LIMIT,
+    ),
+    summaryFacts: factsLibrary.summaryFacts.slice(
+      0,
+      FACT_LIBRARY_WRITER_TEXT_ARRAY_LIMIT,
+    ),
+    winner: factsLibrary.winner,
+  };
+}
+
+function selectCompactFactCandidatesForWriter(
+  facts: GameDayRecapFactCandidate[],
+  requiredFactIds: Set<string>,
+  limit: number,
+): GameDayRecapFactCandidate[] {
+  const selected: GameDayRecapFactCandidate[] = [];
+  const seen = new Set<string>();
+  const addFact = (fact: GameDayRecapFactCandidate): void => {
+    if (seen.has(fact.id) || selected.length >= limit) {
+      return;
+    }
+    seen.add(fact.id);
+    selected.push(compactFactCandidateForWriter(fact));
+  };
+
+  for (const fact of facts) {
+    if (
+      fact.mustMention ||
+      requiredFactIds.has(fact.id) ||
+      fact.preferredPlacement === "headline" ||
+      fact.preferredPlacement === "opening"
+    ) {
+      addFact(fact);
+    }
+  }
+  for (const fact of facts) {
+    addFact(fact);
+  }
+
+  return selected;
+}
+
+function compactFactCandidateForWriter(
+  fact: GameDayRecapFactCandidate,
+): GameDayRecapFactCandidate {
+  return {
+    ...fact,
+    sourceFields: fact.sourceFields.slice(0, 3),
+  };
+}
+
+function compactGameNarrativeBeatForWriter(
+  beat: GameDayRecapGameNarrativeBeat,
+): GameDayRecapGameNarrativeBeat {
+  return {
+    ...beat,
+    sourceFields: beat.sourceFields.slice(0, 3),
+  };
+}
+
+function compactGameStoryBeatForWriter(
+  beat: GameDayRecapGameStoryBeat,
+): GameDayRecapGameStoryBeat {
+  return {
+    ...beat,
+    sourceFields: beat.sourceFields.slice(0, 3),
+  };
+}
+
+function compactGameStoryForWriter(
+  gameStory: GameDayRecapGameStory,
+): GameDayRecapGameStory {
+  return {
+    ...gameStory,
+    closingShape: gameStory.closingShape
+      ? compactGameStoryBeatForWriter(gameStory.closingShape)
+      : null,
+    firstHalfShape: gameStory.firstHalfShape
+      ? compactGameStoryBeatForWriter(gameStory.firstHalfShape)
+      : null,
+    injurySwing: gameStory.injurySwing
+      ? compactGameStoryBeatForWriter(gameStory.injurySwing)
+      : null,
+    selectedBeats: gameStory.selectedBeats.map(compactGameStoryBeatForWriter),
+    suppressedFactIds: gameStory.suppressedFactIds.slice(0, 12),
+    takeoverStretch: gameStory.takeoverStretch
+      ? compactGameStoryBeatForWriter(gameStory.takeoverStretch)
+      : null,
+    turningPoint: gameStory.turningPoint
+      ? compactGameStoryBeatForWriter(gameStory.turningPoint)
+      : null,
+  };
+}
+
+function compactPregameBattleForWriter(
+  pregameBattle: GameDayRecapPregameBattle,
+): GameDayRecapPregameBattle {
+  return {
+    guidance: pregameBattle.guidance,
+    managerVerdict: {
+      ...pregameBattle.managerVerdict,
+      reasons: pregameBattle.managerVerdict.reasons.slice(0, 4),
+    },
+    summaryFacts: pregameBattle.summaryFacts.slice(0, 4),
+    teams: {
+      away: compactPregameBattleTeamForWriter(pregameBattle.teams.away),
+      home: compactPregameBattleTeamForWriter(pregameBattle.teams.home),
+    },
+  };
+}
+
+function compactPregameBattleTeamForWriter(
+  team: GameDayRecapPregameBattleTeam,
+): GameDayRecapPregameBattleTeam {
+  return {
+    ...team,
+    gdpOutcomes: team.gdpOutcomes.slice(0, 3),
+    managementSignals: team.managementSignals.slice(0, 4),
+    rotationSignals: team.rotationSignals.slice(0, 3),
+    tacticFitSignals: team.tacticFitSignals.slice(0, 4),
+  };
+}
+
+function compactRecapSectionsForWriter(
+  recapSections: GameDayRecapFactsLibrary["recapSections"],
+  rankedFactIds: Set<string>,
+  requiredFactIds: Set<string>,
+): GameDayRecapFactsLibrary["recapSections"] {
+  const compactSection = (
+    section: GameDayRecapFactsLibrarySectionPlan,
+  ): GameDayRecapFactsLibrarySectionPlan => {
+    const keepFactId = (factId: string): boolean =>
+      rankedFactIds.has(factId) || requiredFactIds.has(factId);
+    return {
+      ...section,
+      factIds: section.factIds.filter(keepFactId).slice(0, 8),
+      optionalFactIds: section.optionalFactIds.filter(keepFactId).slice(0, 6),
+      requiredFactIds: section.requiredFactIds.filter(keepFactId),
+    };
+  };
+
+  return {
+    game: compactSection(recapSections.game),
+    postgame: compactSection(recapSections.postgame),
+    pregame: compactSection(recapSections.pregame),
+    sectionOrder: recapSections.sectionOrder,
+    visibleHeadings: recapSections.visibleHeadings,
+  };
+}
+
+function compactQuarterFactsForWriter(
+  quarterFacts: GameDayRecapPromptQuarterFacts,
+): GameDayRecapPromptQuarterFacts {
+  return {
+    decisiveQuarter: quarterFacts.decisiveQuarter,
+    fourthQuarterOutcome: quarterFacts.fourthQuarterOutcome,
+    periods: quarterFacts.periods,
+  };
+}
+
+function compactPlayByPlayFactsForWriter(
+  playByPlayFacts: GameDayRecapPlayByPlayFacts | null,
+): GameDayRecapPlayByPlayFacts | null {
+  if (!playByPlayFacts) {
+    return null;
+  }
+
+  return {
+    ...playByPlayFacts,
+    explicitEventFacts: playByPlayFacts.explicitEventFacts?.slice(0, 4),
+    lateGameMoments: playByPlayFacts.lateGameMoments.slice(0, 4),
+    madeThreeBursts: playByPlayFacts.madeThreeBursts?.slice(0, 3),
+    offensiveReboundSequences:
+      playByPlayFacts.offensiveReboundSequences?.slice(0, 3),
+    playerScoringSpurts: playByPlayFacts.playerScoringSpurts?.slice(0, 4),
+    scoringDroughts: playByPlayFacts.scoringDroughts?.slice(0, 4),
+    summaryLines: playByPlayFacts.summaryLines.slice(0, 4),
   };
 }
 
@@ -4357,6 +5091,7 @@ function buildGameDayRecapJudgeGameFactStore(
     effortDelta: game.effortDelta,
     effortSummary: game.effortSummary,
     evidenceSignals: game.evidenceSignals,
+    ...(game.factsLibrary ? { factsLibrary: game.factsLibrary } : {}),
     finalMargin: game.finalMargin,
     gameScoringContext: game.gameScoringContext,
     gameDayPrepSummaries: game.gameDayPrepSummaries,
@@ -4801,6 +5536,7 @@ function buildGameDayRecapJudgeGameFactPacket(
     evidenceSignals: game.evidenceSignals,
     effortDelta: game.effortDelta,
     effortSummary: game.effortSummary,
+    factsLibrary: game.factsLibrary ?? null,
     finalMargin: game.finalMargin,
     gameScoringContext: game.gameScoringContext,
     gameDayPrepSummaries: game.gameDayPrepSummaries,
@@ -4823,18 +5559,22 @@ function buildGameDayRecapJudgeGameFactPacket(
     teams: {
       away: {
         name: game.teams.away.name,
+        notablePlayers: game.teams.away.notablePlayers,
         ratingLabels: game.teams.away.ratingLabels,
         ratingTotal: game.teams.away.ratingTotal,
         ratingValues: game.teams.away.ratingValues,
+        scoringDistribution: game.teams.away.scoringDistribution,
         score: game.teams.away.score,
         topPlayers: game.teams.away.topPlayers,
         turnovers: game.teams.away.turnovers,
       },
       home: {
         name: game.teams.home.name,
+        notablePlayers: game.teams.home.notablePlayers,
         ratingLabels: game.teams.home.ratingLabels,
         ratingTotal: game.teams.home.ratingTotal,
         ratingValues: game.teams.home.ratingValues,
+        scoringDistribution: game.teams.home.scoringDistribution,
         score: game.teams.home.score,
         topPlayers: game.teams.home.topPlayers,
         turnovers: game.teams.home.turnovers,
@@ -4915,9 +5655,14 @@ function buildGameDayRecapJudgeBedrockRequest(args: {
                       "Use unsupported when the sentence conflicts with or overreaches the supplied gameFacts.",
                       "Use uncertain when the sentence appears factual but the supplied gameFacts do not fully support it.",
                       "Use style_only when the sentence contains no checkable factual claim.",
+                      "For postgameInterview questions, clearly impossible or surreal comic premises are style_only when they cannot reasonably be mistaken for real game reporting.",
+                      "For postgameInterview questions or answers, plausible invented events such as fan incidents, fights, injuries, ejections, delays, or locker-room scenes are unsupported unless explicitly supplied in gameFacts.",
                       "Winner truth comes only from gameFacts.winner.",
+                      "When gameFacts.factsLibrary is present, treat factsLibrary.rankedFacts, recapSections, gameNarrativeBeats, gameStory, and pregameBattle as additional supported fact IDs and wording anchors.",
+                      "Use the model judge as a factuality safety net only: do not reject a sentence for section order, prose style, or paragraph shape unless it creates an unsupported factual claim.",
                       "Use gameFacts.periodStates, quarterFacts, quarterScores, and overtime as the source of truth for period-state and overtime claims.",
                       "Use gameFacts.playByPlayFacts as the source of truth for ending, run, comeback, and lead-change claims.",
+                      "Use gameFacts.playByPlayFacts as the source of truth for player scoring spurts, made-three bursts, offensive-rebound sequences, foul-outs, injuries, technicals, and ejections; reject those claims when no matching structured fact exists.",
                       "Use gameFacts.playerLeaders, teams[].topPlayers, and postgameInterviewCandidates as the source of truth for player-attribution claims.",
                       "Treat game-high as supported only when the named player is the global leader in gameFacts.playerLeaders for that stat. Team-high or led [team] may be supported by teams[].topPlayers.",
                       "Use gameFacts.teamRatingFacts and gameFacts.teamTalent as the source of truth for team-rating, matchup-edge, turnover-flow, and team-talent claims.",
@@ -5332,9 +6077,15 @@ async function buildGameDayRecapPromptPayload(args: {
               }),
               args.fetchPublicMatchPlayByPlay
                 ? loadPromptGamePlayByPlay({
+                    awayPlayers: listBoxScorePlayerNamesForRecap(
+                      boxScore.awayTeam.players,
+                    ),
                     awayTeamName: requestedGame.awayTeamName,
                     cache: playByPlayCache,
                     fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
+                    homePlayers: listBoxScorePlayerNamesForRecap(
+                      boxScore.homeTeam.players,
+                    ),
                     homeTeamName: requestedGame.homeTeamName,
                     matchId: requestedGame.matchId,
                   })
@@ -5507,8 +6258,10 @@ async function buildSingleGameSummaryPromptPayload(args: {
   );
   const playByPlayResult = args.fetchPublicMatchPlayByPlay
     ? await loadGameDayRecapPlayByPlayFacts({
+        awayPlayers: listBoxScorePlayerNamesForRecap(args.boxScore.awayTeam.players),
         awayTeamName: requestedGame.awayTeamName,
         fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
+        homePlayers: listBoxScorePlayerNamesForRecap(args.boxScore.homeTeam.players),
         homeTeamName: requestedGame.homeTeamName,
         matchId: args.matchId,
       })
@@ -6008,6 +6761,7 @@ function buildGameDayRecapWriterPayloadFromFactStore(args: {
 }): GameDayRecapPromptPayload {
   // The writer only sees a projection of the canonical fact store.
   // Any truth used by prompts, validation, or repair must already exist here.
+  const slateContext = buildGameDayRecapSlateFactContext(args.factStore.games);
   return {
     coverage: args.coverage,
     factStore: args.factStore,
@@ -6015,6 +6769,7 @@ function buildGameDayRecapWriterPayloadFromFactStore(args: {
       buildGameDayRecapWriterGameFromFactStore({
         game,
         generationApproach: args.factStore.request.generationApproach,
+        slateContext,
       }),
     ),
     request: args.factStore.request,
@@ -6024,13 +6779,17 @@ function buildGameDayRecapWriterPayloadFromFactStore(args: {
 function buildGameDayRecapWriterGameFromFactStore(args: {
   game: GameDayRecapGameFactStore;
   generationApproach: RecapGenerationApproachValue;
+  slateContext: GameDayRecapSlateFactContext;
 }): GameDayRecapPromptGame {
   return {
     effortDelta: args.game.effortDelta,
     effortSummary: args.game.effortSummary,
     ...(args.generationApproach === RecapGenerationApproach.FACT_LIBRARY_FIRST
       ? {
-          factsLibrary: buildGameFactsLibraryFromFactStore(args.game),
+          factsLibrary: buildGameFactsLibraryFromFactStore(
+            args.game,
+            args.slateContext,
+          ),
         }
       : {}),
     gameDayPrepSummaries: args.game.gameDayPrepSummaries,
@@ -6075,6 +6834,256 @@ function toWriterFacingTeamTalentFacts(
     leaderSide: facts.leaderSide,
     summary: facts.summary,
   };
+}
+
+function buildGameDayRecapSlateFactContext(
+  games: GameDayRecapGameFactStore[],
+): GameDayRecapSlateFactContext {
+  const emptyContext = (): GameDayRecapSlateFactContext => ({
+    bestAllAroundPlayer: null,
+    biggestComebackMatchIds: new Set(),
+    biggestMarginMatchIds: new Set(),
+    biggestRunMatchIds: new Set(),
+    biggestSurpriseMatchIds: new Set(),
+    closestMatchIds: new Set(),
+    gameCount: games.length,
+    highestScoringMatchIds: new Set(),
+    highestScoringTeam: null,
+    lowestScoringTeam: null,
+    mostLeadChangesMatchIds: new Set(),
+    onlyOvertimeMatchIds: new Set(),
+    topAssister: null,
+    topRebounder: null,
+    topScorer: null,
+    topStocksPlayer: null,
+    topThreesPlayer: null,
+  });
+
+  if (games.length <= 1) {
+    return emptyContext();
+  }
+
+  const closestMargin = Math.min(...games.map((game) => game.finalMargin));
+  const biggestMargin = Math.max(...games.map((game) => game.finalMargin));
+  const highestCombinedScore = Math.max(
+    ...games.map((game) => game.teams.home.score + game.teams.away.score),
+  );
+  const overtimeGames = games.filter((game) => game.overtime);
+  const biggestComebackDeficit = Math.max(
+    ...games.map((game) => game.playByPlayFacts?.winnerComebackDeficit ?? 0),
+  );
+  const mostLeadChanges = Math.max(
+    ...games.map((game) => game.playByPlayFacts?.leadChangeCount ?? 0),
+  );
+  const surpriseFactors = games.map((game) => ({
+    matchId: game.matchId,
+    surpriseFactor: computeSurpriseFactorForGame(game),
+  }));
+  const biggestSurpriseFactor = Math.max(
+    ...surpriseFactors.map((entry) => entry.surpriseFactor),
+  );
+  const biggestRunPoints = Math.max(
+    ...games.map((game) =>
+      Math.max(
+        game.playByPlayFacts?.primaryRun?.teamPoints ?? 0,
+        game.playByPlayFacts?.longestUnansweredRun.teamPoints ?? 0,
+      ),
+    ),
+  );
+  const teamScores = games.flatMap((game) =>
+    (["home", "away"] as const).map((teamSide) => ({
+      matchId: game.matchId,
+      score: game.teams[teamSide].score,
+      teamName: game.teams[teamSide].name,
+    })),
+  );
+
+  return {
+    bestAllAroundPlayer: selectSlateLeader(
+      games.flatMap((game) =>
+        game.playerLeaders.bestAllAround
+          ? [
+              {
+                matchId: game.matchId,
+                playerName: game.playerLeaders.bestAllAround.playerName,
+                statLine: game.playerLeaders.bestAllAround.statLine,
+                teamName: game.playerLeaders.bestAllAround.teamName,
+                value: game.playerLeaders.bestAllAround.value,
+              },
+            ]
+          : [],
+      ),
+    ),
+    biggestComebackMatchIds: new Set(
+      biggestComebackDeficit > 0
+        ? games
+            .filter(
+              (game) =>
+                (game.playByPlayFacts?.winnerComebackDeficit ?? 0) ===
+                biggestComebackDeficit,
+            )
+            .map((game) => game.matchId)
+        : [],
+    ),
+    biggestMarginMatchIds: new Set(
+      games
+        .filter((game) => game.finalMargin === biggestMargin)
+        .map((game) => game.matchId),
+    ),
+    biggestRunMatchIds: new Set(
+      biggestRunPoints > 0
+        ? games
+            .filter(
+              (game) =>
+                Math.max(
+                  game.playByPlayFacts?.primaryRun?.teamPoints ?? 0,
+                  game.playByPlayFacts?.longestUnansweredRun.teamPoints ?? 0,
+                ) === biggestRunPoints,
+            )
+            .map((game) => game.matchId)
+        : [],
+    ),
+    biggestSurpriseMatchIds: new Set(
+      biggestSurpriseFactor >= 7
+        ? surpriseFactors
+            .filter(
+              (entry) => entry.surpriseFactor === biggestSurpriseFactor,
+            )
+            .map((entry) => entry.matchId)
+        : [],
+    ),
+    closestMatchIds: new Set(
+      games
+        .filter((game) => game.finalMargin === closestMargin)
+        .map((game) => game.matchId),
+    ),
+    gameCount: games.length,
+    highestScoringTeam: selectSlateTeamScore(teamScores, "highest"),
+    highestScoringMatchIds: new Set(
+      games
+        .filter(
+          (game) =>
+            game.teams.home.score + game.teams.away.score ===
+            highestCombinedScore,
+        )
+        .map((game) => game.matchId),
+    ),
+    lowestScoringTeam: selectSlateTeamScore(teamScores, "lowest"),
+    mostLeadChangesMatchIds: new Set(
+      mostLeadChanges > 0
+        ? games
+            .filter(
+              (game) =>
+                (game.playByPlayFacts?.leadChangeCount ?? 0) ===
+                mostLeadChanges,
+            )
+            .map((game) => game.matchId)
+        : [],
+    ),
+    onlyOvertimeMatchIds: new Set(
+      overtimeGames.length === 1 ? [overtimeGames[0]!.matchId] : [],
+    ),
+    topAssister: selectSlateLeader(
+      games.flatMap((game) =>
+        game.playerLeaders.assists
+          ? [
+              {
+                matchId: game.matchId,
+                playerName: game.playerLeaders.assists.playerName,
+                statLine: game.playerLeaders.assists.statLine,
+                teamName: game.playerLeaders.assists.teamName,
+                value: game.playerLeaders.assists.value,
+              },
+            ]
+          : [],
+      ),
+    ),
+    topRebounder: selectSlateLeader(
+      games.flatMap((game) =>
+        game.playerLeaders.rebounds
+          ? [
+              {
+                matchId: game.matchId,
+                playerName: game.playerLeaders.rebounds.playerName,
+                statLine: game.playerLeaders.rebounds.statLine,
+                teamName: game.playerLeaders.rebounds.teamName,
+                value: game.playerLeaders.rebounds.value,
+              },
+            ]
+          : [],
+      ),
+    ),
+    topScorer: selectSlateLeader(
+      games.flatMap((game) =>
+        game.playerLeaders.points
+          ? [
+              {
+                matchId: game.matchId,
+                playerName: game.playerLeaders.points.playerName,
+                statLine: game.playerLeaders.points.statLine,
+                teamName: game.playerLeaders.points.teamName,
+                value: game.playerLeaders.points.value,
+              },
+            ]
+          : [],
+      ),
+    ),
+    topStocksPlayer: selectSlateLeader(buildSlateTopPlayerStatCandidates(games, "stocks")),
+    topThreesPlayer: selectSlateLeader(buildSlateTopPlayerStatCandidates(games, "threes")),
+  };
+}
+
+function selectSlateLeader(
+  candidates: GameDayRecapSlatePlayerLeaderFact[],
+): GameDayRecapSlatePlayerLeaderFact | null {
+  return (
+    candidates
+      .filter((candidate) => candidate.value > 0)
+      .sort(
+        (left, right) =>
+          right.value - left.value ||
+          left.playerName.localeCompare(right.playerName) ||
+          left.matchId.localeCompare(right.matchId),
+      )[0] ?? null
+  );
+}
+
+function buildSlateTopPlayerStatCandidates(
+  games: GameDayRecapGameFactStore[],
+  stat: "stocks" | "threes",
+): GameDayRecapSlatePlayerLeaderFact[] {
+  return games.flatMap((game) =>
+    (["home", "away"] as const).flatMap((teamSide) =>
+      game.teams[teamSide].topPlayers.map((player) => ({
+        matchId: game.matchId,
+        playerName: player.name,
+        teamName: game.teams[teamSide].name,
+        value:
+          stat === "stocks"
+            ? player.steals + player.blocks
+            : (player.threePointersMade ?? 0),
+      })),
+    ),
+  );
+}
+
+function selectSlateTeamScore(
+  candidates: GameDayRecapSlateTeamHighFact[],
+  mode: "highest" | "lowest",
+): GameDayRecapSlateTeamHighFact | null {
+  return (
+    candidates
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) =>
+        mode === "highest"
+          ? right.score - left.score ||
+            left.teamName.localeCompare(right.teamName) ||
+            left.matchId.localeCompare(right.matchId)
+          : left.score - right.score ||
+            left.teamName.localeCompare(right.teamName) ||
+            left.matchId.localeCompare(right.matchId),
+      )[0] ?? null
+  );
 }
 
 function buildGameDayRecapFactStoreTeam(args: {
@@ -6292,6 +7301,7 @@ function compareFactStorePlayerLeaderEntries(
 
 function buildGameFactsLibraryFromFactStore(
   game: GameDayRecapGameFactStore,
+  slateContext: GameDayRecapSlateFactContext,
 ): GameDayRecapFactsLibrary {
   const winnerSide = game.winner.winnerSide ?? "home";
   const loserSide = winnerSide === "home" ? "away" : "home";
@@ -6354,23 +7364,78 @@ function buildGameFactsLibraryFromFactStore(
     winnerName,
     winnerSide,
   });
+  const pregameBattle = buildPregameBattleForFactsLibrary(game);
   const narrativePlan = buildFactsLibraryNarrativePlan({
     game,
     gameFlow,
     matchupEdgeFacts,
+    pregameBattle,
     summaryFacts,
+  });
+  const rankedFacts = buildFactsLibraryRankedFacts({
+    finalScoreFromWinnerPerspective,
+    game,
+    gameFlow,
+    loserName,
+    matchupEdgeFacts,
+    pregameBattle,
+    slateContext,
+    summaryFacts,
+    winnerName,
+    winnerSide,
+  });
+  const leadFacts = rankedFacts.filter(
+    (fact) =>
+      fact.storyPhase === "lead" ||
+      fact.preferredPlacement === "headline" ||
+      fact.preferredPlacement === "opening",
+  );
+  const chronologicalFacts = rankedFacts
+    .filter((fact) => fact.storyPhase === "game_flow")
+    .sort(compareFactCandidatesChronologically);
+  const analysisFacts = rankedFacts.filter(
+    (fact) => fact.storyPhase === "analysis" || fact.storyPhase === "setup",
+  );
+  const avoidFacts = uniqueRecapLines([
+    ...matchupEdgeFacts.suppressed,
+    ...gameFlow.doNotEmphasize,
+  ]);
+  const gameNarrativeBeats = buildFactsLibraryGameNarrativeBeats(rankedFacts);
+  const gameStory = buildFactsLibraryGameStory({
+    game,
+    gameNarrativeBeats,
+    rankedFacts,
+  });
+  const rankedNarrativePlan = buildRankedFactsLibraryNarrativePlan({
+    fallbackPlan: narrativePlan,
+    gameStory,
+    rankedFacts,
+  });
+  const recapSections = buildFactsLibraryRecapSections({
+    gameStory,
+    gameNarrativeBeats,
+    rankedFacts,
   });
 
   return {
+    analysisFacts,
+    avoidFacts,
+    chronologicalFacts,
+    gameNarrativeBeats,
+    gameStory,
     gameFlow,
     headlineCandidates,
+    leadFacts,
     matchupEdgeFacts,
-    narrativePlan,
+    narrativePlan: rankedNarrativePlan,
     openingCandidates,
     periodStates: {
       afterPeriods: periodStates,
       throughThreeQuarters,
     },
+    pregameBattle,
+    rankedFacts,
+    recapSections,
     requiredContextSentences: game.requiredContextSentences,
     storySignals,
     summaryFacts,
@@ -6455,7 +7520,7 @@ function buildPostgameInterviewCandidates(args: {
         winnerSide,
       }),
       teamName: winnerName,
-      teamSide: winnerSide,
+      teamSide: winnerSide ?? undefined,
     });
   }
 
@@ -7045,12 +8110,12 @@ function buildFactsLibraryNarrativePlan(args: {
   game: GameDayRecapGameFactStore;
   gameFlow: GameDayRecapFactsLibraryGameFlow;
   matchupEdgeFacts: GameDayRecapFactsLibrary["matchupEdgeFacts"];
+  pregameBattle: GameDayRecapPregameBattle;
   summaryFacts: string[];
 }): GameDayRecapFactsLibraryNarrativePlan {
   const setupFacts = uniqueRecapLines(
     [
-      buildTacticalSetupFact(args.game),
-      ...args.game.requiredContextSentences,
+      ...args.pregameBattle.summaryFacts,
       ...args.game.rotationSummaries,
     ].filter((fact): fact is string => Boolean(fact)),
   );
@@ -7084,31 +8149,690 @@ function buildFactsLibraryNarrativePlan(args: {
     closingFacts,
     gameFlowFacts,
     paragraphOrder: [
-      "Paragraph 1: pregame tactics, effort, rotation, and game-day-prep context.",
-      "Paragraph 2: chronological game flow, period states, and approved non-overlapping runs.",
-      "Paragraph 3: player stat lines, team-rating edges, and why the winner won.",
+      "Paragraph 1: integrated manager-battle setup with both teams' tactics, GDP/prep reads, effort posture, and rotation context when available.",
+      "Paragraph 2: game flow built from connected chronological beats, not a quarter-score checklist.",
+      "Paragraph 3: postgame explanation with player of the game, boxscore/team edges, and slate or standings consequence.",
     ],
     setupFacts,
   };
 }
 
-function buildTacticalSetupFact(
+function buildPregameBattleForFactsLibrary(
+  game: GameDayRecapGameFactStore,
+): GameDayRecapPregameBattle {
+  const away = buildPregameBattleTeam(game, "away");
+  const home = buildPregameBattleTeam(game, "home");
+  const score = scorePregameBattle(game, { away, home });
+  const managerVerdict = buildPregameBattleVerdict(game, { away, home }, score);
+  const summaryFacts = uniqueRecapLines(
+    [
+      buildPregameTacticSentence({ away, home }),
+      buildPregameGdpSentence({ away, home }),
+      buildPregameEffortSentence(game),
+      buildPregameRotationSentence({ away, home }),
+      managerVerdict.text,
+    ].filter((fact): fact is string => Boolean(fact)),
+  );
+
+  return {
+    guidance:
+      "Use this as the hidden first-paragraph manager-battle setup: mention both teams' tactics, fold in GDP/prep and effort naturally, use metaphor only, and do not invent speeches or motives.",
+    managerVerdict,
+    summaryFacts,
+    teams: {
+      away,
+      home,
+    },
+  };
+}
+
+function buildPregameBattleTeam(
+  game: GameDayRecapGameFactStore,
+  side: "away" | "home",
+): GameDayRecapPregameBattleTeam {
+  const team = game.teams[side];
+  const opponentSide = side === "home" ? "away" : "home";
+  const opponent = game.teams[opponentSide];
+  const offense = resolveOffenseTaxonomy(team.offStrategy);
+  const defense = resolveDefenseTaxonomy(team.defStrategy);
+  const gdpOutcomes = buildPregameBattleGdpOutcomes({
+    opponentName: opponent.name,
+    opponentOffStrategy: opponent.offStrategy,
+    team,
+  });
+
+  return {
+    defense,
+    effortPosture: describePregameEffortPosture(game, side),
+    gdpOutcomes,
+    managementSignals: buildPregameManagementSignals(game, side, gdpOutcomes),
+    name: team.name,
+    offense,
+    rotationSignals: buildPregameRotationSignals(team),
+    side,
+    tacticFitSignals: buildPregameTacticFitSignals({
+      opponent,
+      opponentOffense: resolveOffenseTaxonomy(opponent.offStrategy),
+      team,
+      teamDefense: defense,
+      teamOffense: offense,
+    }),
+  };
+}
+
+function resolveOffenseTaxonomy(
+  strategy: string | null,
+): GameDayRecapOffenseTaxonomy {
+  const normalized = normalizeStrategyName(strategy);
+  const base: GameDayRecapOffenseTaxonomy = {
+    focus: "balanced",
+    gdpFocus: "balanced",
+    pace: "normal",
+    scorerTarget: null,
+    strategy: strategy?.trim() || null,
+  };
+
+  if (!normalized || /\bbase offense\b/.test(normalized)) {
+    return base;
+  }
+  if (/\bpush the ball\b/.test(normalized)) {
+    return { ...base, pace: "fast" };
+  }
+  if (/\bpatient\b/.test(normalized)) {
+    return { ...base, pace: "slow" };
+  }
+  if (/\blook inside\b/.test(normalized)) {
+    return { ...base, focus: "inside", gdpFocus: "inside", pace: "fast" };
+  }
+  if (/\blow post\b/.test(normalized)) {
+    return { ...base, focus: "inside", gdpFocus: "inside", pace: "slow" };
+  }
+  if (/\bmotion\b/.test(normalized)) {
+    return { ...base, focus: "outside", gdpFocus: "outside" };
+  }
+  if (/\brun and gun\b/.test(normalized)) {
+    return { ...base, focus: "outside", gdpFocus: "outside", pace: "fast" };
+  }
+  if (/\bprinceton\b/.test(normalized)) {
+    return { ...base, focus: "outside", gdpFocus: "outside", pace: "slow" };
+  }
+  if (/\binside isolation\b/.test(normalized)) {
+    return { ...base, scorerTarget: "best_inside_scorer" };
+  }
+  if (/\boutside isolation\b/.test(normalized)) {
+    return { ...base, scorerTarget: "best_outside_scorer" };
+  }
+
+  return base;
+}
+
+function resolveDefenseTaxonomy(
+  strategy: string | null,
+): GameDayRecapDefenseTaxonomy {
+  const normalized = normalizeStrategyName(strategy);
+  const base: GameDayRecapDefenseTaxonomy = {
+    pace: "normal",
+    profileKey: "normal",
+    protects: ["balanced"],
+    strategy: strategy?.trim() || null,
+    targetScorer: null,
+    tradeoffs: [],
+  };
+
+  if (!normalized || /\b(?:normal|man to man|man-to-man)\b/.test(normalized)) {
+    return base;
+  }
+  if (/\b(?:2 3|23) zone\b/.test(normalized)) {
+    return {
+      ...base,
+      pace: "slow",
+      profileKey: "inside_zone",
+      protects: ["inside"],
+      tradeoffs: ["perimeter"],
+    };
+  }
+  if (/\b(?:3 2|32) zone\b/.test(normalized)) {
+    return {
+      ...base,
+      pace: "slow",
+      profileKey: "perimeter_zone",
+      protects: ["outside"],
+      tradeoffs: ["inside"],
+    };
+  }
+  if (/\b(?:1 3 1|131) zone\b/.test(normalized)) {
+    return {
+      ...base,
+      profileKey: "perimeter_gamble",
+      protects: ["outside"],
+      tradeoffs: ["inside", "rebounding"],
+    };
+  }
+  if (/\bfull court press\b/.test(normalized)) {
+    return {
+      ...base,
+      pace: "fast",
+      profileKey: "press",
+      protects: ["balanced"],
+      tradeoffs: ["stamina", "rebounding"],
+    };
+  }
+  if (/\binside box and one\b/.test(normalized)) {
+    return {
+      ...base,
+      profileKey: "box_and_one_inside",
+      protects: ["inside"],
+      targetScorer: "best_inside_scorer",
+    };
+  }
+  if (/\boutside box and one\b/.test(normalized)) {
+    return {
+      ...base,
+      profileKey: "box_and_one_outside",
+      protects: ["outside"],
+      targetScorer: "best_outside_scorer",
+    };
+  }
+
+  return base;
+}
+
+function normalizeStrategyName(value: string | null | undefined): string {
+  return (
+    value
+      ?.toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim() ?? ""
+  );
+}
+
+function buildPregameBattleGdpOutcomes(args: {
+  opponentName: string;
+  opponentOffStrategy: string | null;
+  team: GameDayRecapFactStoreTeam;
+}): GameDayRecapPregameBattleGdpOutcome[] {
+  const focus = parseGameDayPrepOutcome({
+    aspect: "focus",
+    opponentName: args.opponentName,
+    opponentOffStrategy: args.opponentOffStrategy,
+    teamName: args.team.name,
+    value: args.team.gdp.focus,
+  });
+  const pace = parseGameDayPrepOutcome({
+    aspect: "pace",
+    opponentName: args.opponentName,
+    opponentOffStrategy: args.opponentOffStrategy,
+    teamName: args.team.name,
+    value: args.team.gdp.pace,
+  });
+
+  return [focus, pace]
+    .filter((outcome): outcome is GameDayPrepRecapOutcome => Boolean(outcome))
+    .map((outcome) => ({
+      aspect: outcome.aspect,
+      kind: outcome.kind,
+      opponentOffense: outcome.opponentOffStrategy,
+      target: outcome.target,
+      text: describePregameGdpOutcome(outcome),
+    }));
+}
+
+function describePregameGdpOutcome(
+  outcome: GameDayPrepRecapOutcome,
+): string {
+  if (outcome.aspect === "focus") {
+    const target = formatPregameFocusTargetForProse(outcome.target);
+    return outcome.kind === "hit"
+      ? `${outcome.teamName} read the ${target}`
+      : `${outcome.teamName} got fooled on the ${target}`;
+  }
+
+  const target = outcome.target.toLowerCase();
+  return outcome.kind === "hit"
+    ? `${outcome.teamName} had the ${target} tempo call right`
+    : `${outcome.teamName} missed the ${target} tempo call`;
+}
+
+function formatPregameFocusTargetForProse(target: string): string {
+  switch (target) {
+    case "Inside":
+      return "interior plan";
+    case "Outside":
+      return "perimeter plan";
+    case "Balanced":
+      return "balanced plan";
+    default:
+      return `${target.toLowerCase()} plan`;
+  }
+}
+
+function buildPregameManagementSignals(
+  game: GameDayRecapGameFactStore,
+  side: "away" | "home",
+  gdpOutcomes: GameDayRecapPregameBattleGdpOutcome[],
+): string[] {
+  return uniqueRecapLines(
+    [
+      ...gdpOutcomes.map((outcome) => outcome.text),
+      describePregameEffortPosture(game, side),
+      ...buildPregameRotationSignals(game.teams[side]),
+    ].filter((signal): signal is string => Boolean(signal)),
+  );
+}
+
+function buildPregameTacticFitSignals(args: {
+  opponent: GameDayRecapFactStoreTeam;
+  opponentOffense: GameDayRecapOffenseTaxonomy;
+  team: GameDayRecapFactStoreTeam;
+  teamDefense: GameDayRecapDefenseTaxonomy;
+  teamOffense: GameDayRecapOffenseTaxonomy;
+}): string[] {
+  const signals: string[] = [];
+  const offense = args.teamOffense;
+  if (offense.focus === "inside" || offense.focus === "outside") {
+    const scoringKey =
+      offense.focus === "inside" ? "insideScoring" : "outsideScoring";
+    const otherScoringKey =
+      offense.focus === "inside" ? "outsideScoring" : "insideScoring";
+    const scoringValue = args.team.rawRatings?.[scoringKey];
+    const otherScoringValue = args.team.rawRatings?.[otherScoringKey];
+    if (
+      isFiniteRatingValue(scoringValue) &&
+      isFiniteRatingValue(otherScoringValue)
+    ) {
+      if (scoringValue >= otherScoringValue + 1) {
+        signals.push(
+          `${args.team.name} played toward its ${formatTacticalFocusNoun(
+            offense.focus,
+          )} strength.`,
+        );
+      } else if (scoringValue <= otherScoringValue - 1.5) {
+        signals.push(
+          `${args.team.name} played away from its clearer ${formatTacticalFocusNoun(
+            offense.focus === "inside" ? "outside" : "inside",
+          )} strength.`,
+        );
+      }
+    }
+
+    const defenseKey =
+      offense.focus === "inside" ? "insideDefense" : "outsideDefense";
+    const otherDefenseKey =
+      offense.focus === "inside" ? "outsideDefense" : "insideDefense";
+    const targetDefense = args.opponent.rawRatings?.[defenseKey];
+    const otherDefense = args.opponent.rawRatings?.[otherDefenseKey];
+    if (
+      isFiniteRatingValue(targetDefense) &&
+      isFiniteRatingValue(otherDefense) &&
+      targetDefense <= otherDefense - 1
+    ) {
+      signals.push(
+        `${args.team.name} aimed ${offense.strategy ?? "its offense"} at the softer ${formatTacticalFocusAdjective(
+          offense.focus,
+        )} matchup.`,
+      );
+    }
+  }
+
+  const opponentFocus = args.opponentOffense.focus;
+  if (
+    opponentFocus !== "balanced" &&
+    args.teamDefense.protects.includes(opponentFocus)
+  ) {
+    signals.push(
+      `${args.team.name}'s defensive shape was pointed at ${args.opponent.name}'s ${formatTacticalFocusAdjective(
+        opponentFocus,
+      )} pressure.`,
+    );
+  }
+
+  return uniqueRecapLines(signals).slice(0, 3);
+}
+
+function formatTacticalFocusNoun(focus: GameDayRecapTacticalFocus): string {
+  switch (focus) {
+    case "inside":
+      return "interior";
+    case "outside":
+      return "perimeter";
+    case "balanced":
+      return "balanced";
+  }
+}
+
+function formatTacticalFocusAdjective(
+  focus: GameDayRecapTacticalFocus,
+): string {
+  switch (focus) {
+    case "inside":
+      return "interior";
+    case "outside":
+      return "perimeter";
+    case "balanced":
+      return "balanced";
+  }
+}
+
+function buildPregameRotationSignals(
+  team: Pick<
+    GameDayRecapFactStoreTeam,
+    "foulTroubleLimitationCount" | "keyAbsenceCount" | "name"
+  >,
+): string[] {
+  const signals: string[] = [];
+  if (team.keyAbsenceCount > 0) {
+    signals.push(
+      `${team.name} was short-handed by ${formatCountPhrase(
+        team.keyAbsenceCount,
+        "key absence",
+      )}.`,
+    );
+  }
+  if (team.foulTroubleLimitationCount > 0) {
+    signals.push(
+      `${team.name} had ${formatCountPhrase(
+        team.foulTroubleLimitationCount,
+        "rotation player",
+      )} limited by foul trouble.`,
+    );
+  }
+  return signals;
+}
+
+function describePregameEffortPosture(
+  game: GameDayRecapGameFactStore,
+  side: "away" | "home",
+): string | null {
+  const effortDelta = asOptionalNumber(game.effortDelta);
+  if (effortDelta === null || effortDelta === 0) {
+    return null;
+  }
+
+  const highEffortSide = effortDelta > 0 ? "home" : "away";
+  const lowEffortSide = highEffortSide === "home" ? "away" : "home";
+  const highEffortTeam = game.teams[highEffortSide];
+  const lowEffortTeam = game.teams[lowEffortSide];
+  const highEffortWon = game.winner.winnerSide === highEffortSide;
+  const bigPush = Math.abs(effortDelta) >= 2;
+
+  if (side === highEffortSide) {
+    if (highEffortWon) {
+      return `${highEffortTeam.name} ${bigPush ? "brought the bigger push" : "came in with more urgency"} and cashed it in.`;
+    }
+    return `${highEffortTeam.name} ${bigPush ? "spent a big energy card" : "spent extra energy"} without cashing it in.`;
+  }
+
+  if (side === lowEffortSide && game.winner.winnerSide === lowEffortSide) {
+    return `${lowEffortTeam.name} won while keeping a lighter energy budget.`;
+  }
+
+  return null;
+}
+
+function buildPregameTacticSentence(args: {
+  away: GameDayRecapPregameBattleTeam;
+  home: GameDayRecapPregameBattleTeam;
+}): string | null {
+  const awayOffense = args.away.offense.strategy;
+  const awayDefense = args.away.defense.strategy;
+  const homeOffense = args.home.offense.strategy;
+  const homeDefense = args.home.defense.strategy;
+  if (!awayOffense && !awayDefense && !homeOffense && !homeDefense) {
+    return null;
+  }
+
+  return ensureSentence(
+    `${args.away.name} paired ${awayOffense ?? "a base offense"} with ${awayDefense ?? "a standard defense"}, while ${args.home.name} answered with ${homeOffense ?? "a base offense"} and ${homeDefense ?? "a standard defense"}`,
+  );
+}
+
+function buildPregameGdpSentence(args: {
+  away: GameDayRecapPregameBattleTeam;
+  home: GameDayRecapPregameBattleTeam;
+}): string | null {
+  const outcomeTexts = [
+    ...args.away.gdpOutcomes.map((outcome) => outcome.text),
+    ...args.home.gdpOutcomes.map((outcome) => outcome.text),
+  ];
+  if (!outcomeTexts.length) {
+    return null;
+  }
+
+  return ensureSentence(
+    `On the prep board, ${joinNaturalList(outcomeTexts.slice(0, 4))}`,
+  );
+}
+
+function buildPregameEffortSentence(
   game: GameDayRecapGameFactStore,
 ): string | null {
-  const awayOffense = game.teams.away.offStrategy?.trim();
-  const homeOffense = game.teams.home.offStrategy?.trim();
-  const awayDefense = game.teams.away.defStrategy?.trim();
-  const homeDefense = game.teams.home.defStrategy?.trim();
-  const tacticParts = [
-    awayOffense ? `${game.teams.away.name} played ${awayOffense}` : null,
-    homeOffense ? `${game.teams.home.name} played ${homeOffense}` : null,
-    awayDefense ? `${game.teams.away.name} defended with ${awayDefense}` : null,
-    homeDefense ? `${game.teams.home.name} defended with ${homeDefense}` : null,
-  ].filter((part): part is string => Boolean(part));
+  const winnerSide = game.winner.winnerSide;
+  if (!winnerSide) {
+    return null;
+  }
 
-  return tacticParts.length
-    ? `Tactical setup: ${tacticParts.join("; ")}.`
-    : null;
+  const effortDelta = asOptionalNumber(game.effortDelta);
+  if (effortDelta === null || effortDelta === 0) {
+    return null;
+  }
+
+  return describePregameEffortPosture(game, winnerSide);
+}
+
+function buildPregameRotationSentence(args: {
+  away: GameDayRecapPregameBattleTeam;
+  home: GameDayRecapPregameBattleTeam;
+}): string | null {
+  const rotationSignals = [
+    ...args.away.rotationSignals,
+    ...args.home.rotationSignals,
+  ];
+  if (!rotationSignals.length) {
+    return null;
+  }
+
+  return ensureSentence(joinNaturalList(rotationSignals.slice(0, 2)));
+}
+
+function scorePregameBattle(
+  game: GameDayRecapGameFactStore,
+  teams: {
+    away: GameDayRecapPregameBattleTeam;
+    home: GameDayRecapPregameBattleTeam;
+  },
+): Record<"away" | "home", { reasons: string[]; score: number }> {
+  const score = {
+    away: { reasons: [] as string[], score: 0 },
+    home: { reasons: [] as string[], score: 0 },
+  };
+
+  (["away", "home"] as const).forEach((side) => {
+    const opponentSide = side === "home" ? "away" : "home";
+    teams[side].gdpOutcomes.forEach((outcome) => {
+      if (outcome.kind === "hit") {
+        score[side].score += 1.1;
+        score[side].reasons.push(outcome.text);
+      } else {
+        score[side].score -= 0.7;
+        score[opponentSide].score += 0.35;
+        score[opponentSide].reasons.push(
+          `${teams[opponentSide].name} dodged ${teams[side].name}'s ${outcome.aspect} read.`,
+        );
+      }
+    });
+
+    teams[side].tacticFitSignals.forEach((signal) => {
+      score[side].score += /\bplayed away from\b/i.test(signal) ? -0.55 : 0.45;
+      score[side].reasons.push(signal);
+    });
+  });
+
+  const effortDelta = asOptionalNumber(game.effortDelta);
+  if (effortDelta !== null && effortDelta !== 0 && game.winner.winnerSide) {
+    const highEffortSide = effortDelta > 0 ? "home" : "away";
+    const lowEffortSide = highEffortSide === "home" ? "away" : "home";
+    if (game.winner.winnerSide === highEffortSide) {
+      score[highEffortSide].score += Math.abs(effortDelta) >= 2 ? 1.25 : 1;
+    } else {
+      score[highEffortSide].score -= Math.abs(effortDelta) >= 2 ? 1 : 0.75;
+      score[lowEffortSide].score += 0.75;
+    }
+    const winnerEffortSignal = describePregameEffortPosture(
+      game,
+      game.winner.winnerSide,
+    );
+    if (winnerEffortSignal) {
+      score[game.winner.winnerSide].reasons.push(winnerEffortSignal);
+    }
+  }
+
+  (["away", "home"] as const).forEach((side) => {
+    const team = game.teams[side];
+    if (team.keyAbsenceCount > 0) {
+      score[side].score += game.winner.winnerSide === side ? 0.35 : -0.25;
+    }
+    if (team.foulTroubleLimitationCount > 0) {
+      score[side].score += game.winner.winnerSide === side ? 0.2 : -0.2;
+    }
+  });
+
+  return score;
+}
+
+function buildPregameBattleVerdict(
+  game: GameDayRecapGameFactStore,
+  teams: {
+    away: GameDayRecapPregameBattleTeam;
+    home: GameDayRecapPregameBattleTeam;
+  },
+  score: Record<"away" | "home", { reasons: string[]; score: number }>,
+): GameDayRecapPregameBattleVerdict {
+  const diff = score.home.score - score.away.score;
+  const absDiff = Math.abs(diff);
+  const leaderSide: "away" | "home" | "even" =
+    absDiff < 0.7 ? "even" : diff > 0 ? "home" : "away";
+  const confidence =
+    leaderSide === "even" ? "mixed" : absDiff >= 2 ? "clear" : "slight";
+  const leaderName = leaderSide === "even" ? null : teams[leaderSide].name;
+  const leaderReasons =
+    leaderSide === "even"
+      ? uniqueRecapLines([
+          ...score.away.reasons.slice(0, 1),
+          ...score.home.reasons.slice(0, 1),
+        ])
+      : uniqueRecapLines(score[leaderSide].reasons).slice(0, 2);
+  const fallbackReason =
+    game.winner.winnerName && game.winner.loserName
+      ? `${game.winner.winnerName} still had to prove it after the ball went up`
+      : "the pregame evidence was not one-sided";
+  const reasonText = joinNaturalList(
+    (leaderReasons.length ? leaderReasons : [fallbackReason]).map((reason) =>
+      reason.replace(/[.!?]+$/g, ""),
+    ),
+  );
+  const text =
+    leaderSide === "even"
+      ? `The manager battle was mixed before tipoff, with ${reasonText}.`
+      : `${leaderName} ${confidence === "clear" ? "had the cleaner manager's card" : "found a slight manager's edge"} before tipoff, with ${reasonText}.`;
+
+  return {
+    confidence,
+    reasons: leaderReasons,
+    teamName: leaderName,
+    teamSide: leaderSide,
+    text,
+  };
+}
+
+function buildPregameBattleFactCandidates(
+  game: GameDayRecapGameFactStore,
+  pregameBattle: GameDayRecapPregameBattle,
+): Array<Omit<GameDayRecapFactCandidate, "impactTier">> {
+  const facts: Array<Omit<GameDayRecapFactCandidate, "impactTier">> = [];
+  const addPregameFact = (args: {
+    claimKey: string;
+    impactScore: number;
+    mustMention?: boolean;
+    sourceFields: string[];
+    text: string | null;
+  }) => {
+    if (!args.text) {
+      return;
+    }
+    facts.push({
+      category: "pre_game",
+      chronologicalSort: null,
+      claimKey: args.claimKey,
+      id: buildFactCandidateId(game.matchId, args.claimKey),
+      impactScore: args.impactScore,
+      mustMention: args.mustMention ?? false,
+      preferredPlacement: "body",
+      sourceFields: args.sourceFields,
+      storyPhase: "setup",
+      text: args.text,
+    });
+  };
+
+  addPregameFact({
+    claimKey: "pregame_tactics",
+    impactScore: 58,
+    mustMention: true,
+    sourceFields: [
+      "teams.away.offStrategy",
+      "teams.away.defStrategy",
+      "teams.home.offStrategy",
+      "teams.home.defStrategy",
+    ],
+    text: buildPregameTacticSentence(pregameBattle.teams),
+  });
+  addPregameFact({
+    claimKey: "pregame_manager_verdict",
+    impactScore: 57,
+    mustMention: true,
+    sourceFields: ["factsLibrary.pregameBattle.managerVerdict"],
+    text: pregameBattle.managerVerdict.text,
+  });
+  addPregameFact({
+    claimKey: "pregame_gdp_board",
+    impactScore: 52,
+    sourceFields: ["factsLibrary.pregameBattle.teams.gdpOutcomes"],
+    text: buildPregameGdpSentence(pregameBattle.teams),
+  });
+  addPregameFact({
+    claimKey: "pregame_effort_posture",
+    impactScore: 50,
+    sourceFields: ["effortDelta"],
+    text: buildPregameEffortSentence(game),
+  });
+  addPregameFact({
+    claimKey: "pregame_rotation_context",
+    impactScore: 45,
+    sourceFields: [
+      "teams.away.keyAbsenceCount",
+      "teams.home.keyAbsenceCount",
+      "teams.away.foulTroubleLimitationCount",
+      "teams.home.foulTroubleLimitationCount",
+    ],
+    text: buildPregameRotationSentence(pregameBattle.teams),
+  });
+
+  return facts;
+}
+
+function joinNaturalList(values: string[]): string {
+  const cleanValues = values.map((value) => value.trim()).filter(Boolean);
+  if (cleanValues.length === 0) {
+    return "";
+  }
+  if (cleanValues.length === 1) {
+    return cleanValues[0]!;
+  }
+  if (cleanValues.length === 2) {
+    return `${cleanValues[0]} and ${cleanValues[1]}`;
+  }
+
+  return `${cleanValues.slice(0, -1).join(", ")}, and ${cleanValues.at(-1)}`;
 }
 
 function buildThroughPeriodSentenceFromState(
@@ -7149,6 +8873,15 @@ function buildFactsLibraryGameFlow(args: {
   const highlightLeadChanges = buildFactsLibraryLeadChangeHighlights(
     args.playByPlayFacts,
   );
+  const lastLeadByLoser = args.playByPlayFacts?.lastLeadByLoser
+    ? describeFactsLibraryLastLeadByLoser(args.playByPlayFacts.lastLeadByLoser)
+    : null;
+  const scoringDroughts = (args.playByPlayFacts?.scoringDroughts ?? [])
+    .map(describeFactsLibraryScoringDrought)
+    .filter((fact): fact is string => Boolean(fact));
+  const tookLeadForGood = args.playByPlayFacts?.tookLeadForGood
+    ? describeFactsLibraryTookLeadForGood(args.playByPlayFacts.tookLeadForGood)
+    : null;
   const closingNote =
     args.playByPlayFacts?.summaryLines.find((line) =>
       /\b(?:Closing sequence|buzzerbeater|Late-game swing|Late-game swings)\b/i.test(
@@ -7180,9 +8913,9 @@ function buildFactsLibraryGameFlow(args: {
     doNotEmphasize,
     highlightLeadChanges,
     highlightRuns,
-    lastLeadByLoser: null,
-    scoringDroughts: [],
-    tookLeadForGood: null,
+    lastLeadByLoser,
+    scoringDroughts,
+    tookLeadForGood,
   };
 }
 
@@ -7208,6 +8941,74 @@ function buildFactsLibraryLeadChangeHighlights(
       ),
     ) ?? null;
   return summary ? [summary] : [];
+}
+
+function describeFactsLibraryTookLeadForGood(
+  fact: NonNullable<GameDayRecapPlayByPlayFacts["tookLeadForGood"]>,
+): string {
+  const teamName = fact.scoringTeamName ?? "The winner";
+  const score =
+    fact.scoringTeamSide === "home"
+      ? `${fact.homeScore}-${fact.awayScore}`
+      : `${fact.awayScore}-${fact.homeScore}`;
+  return `${teamName} took the lead for good ${score} ${formatFactsLibraryClockContext(
+    fact.clock,
+    fact.quarter,
+  )}.`;
+}
+
+function describeFactsLibraryLastLeadByLoser(
+  fact: NonNullable<GameDayRecapPlayByPlayFacts["lastLeadByLoser"]>,
+): string {
+  const leadingTeamName = fact.leadingTeamName ?? "The losing side";
+  const trailingTeamName = fact.trailingTeamName ?? "the winner";
+  const score =
+    fact.leadingTeamSide === "home"
+      ? `${fact.homeScore}-${fact.awayScore}`
+      : `${fact.awayScore}-${fact.homeScore}`;
+  return `${leadingTeamName}'s last lead was ${score} over ${trailingTeamName} ${formatFactsLibraryClockContext(
+    fact.clock,
+    fact.quarter,
+  )}.`;
+}
+
+function describeFactsLibraryScoringDrought(
+  fact: NonNullable<GameDayRecapPlayByPlayFacts["scoringDroughts"]>[number],
+): string | null {
+  if (fact.opponentPointsDuringDrought <= 0) {
+    return null;
+  }
+
+  const scoringTeamName = fact.scoringTeamName ?? "The scoring team";
+  const scorelessTeamName = fact.scorelessTeamName ?? "the opponent";
+  const timeRange =
+    fact.startQuarter !== null &&
+    fact.startClock &&
+    fact.endQuarter !== null &&
+    fact.endClock
+      ? ` from ${formatFactsLibraryClockAnchor(
+          fact.startClock,
+          fact.startQuarter,
+        )} to ${formatFactsLibraryClockAnchor(fact.endClock, fact.endQuarter)}`
+      : "";
+  return `${scoringTeamName} held ${scorelessTeamName} scoreless during a ${fact.opponentPointsDuringDrought}-0 burst${timeRange}.`;
+}
+
+function formatFactsLibraryClockContext(
+  clock: string | null,
+  period: number,
+): string {
+  const periodContext =
+    period <= 4 ? `the ${formatPeriodLabel(period)}` : formatPeriodLabel(period);
+  return clock
+    ? `with ${clock} left in ${periodContext}`
+    : `late in ${periodContext}`;
+}
+
+function formatFactsLibraryClockAnchor(clock: string, period: number): string {
+  const periodContext =
+    period <= 4 ? `the ${formatPeriodLabel(period)}` : formatPeriodLabel(period);
+  return `${clock} left in ${periodContext}`;
 }
 
 function buildFactsLibrarySummaryFacts(args: {
@@ -7481,6 +9282,2047 @@ function buildFactsLibraryHeadlineCandidates(args: {
   }
 
   return uniqueRecapLines(candidates).slice(0, 4);
+}
+
+function buildFactsLibraryRankedFacts(args: {
+  finalScoreFromWinnerPerspective: string;
+  game: GameDayRecapGameFactStore;
+  gameFlow: GameDayRecapFactsLibraryGameFlow;
+  loserName: string;
+  matchupEdgeFacts: GameDayRecapFactsLibrary["matchupEdgeFacts"];
+  pregameBattle: GameDayRecapPregameBattle;
+  slateContext: GameDayRecapSlateFactContext;
+  summaryFacts: string[];
+  winnerName: string;
+  winnerSide: "away" | "home";
+}): GameDayRecapFactCandidate[] {
+  const facts: GameDayRecapFactCandidate[] = [];
+  const loserSide = args.winnerSide === "home" ? "away" : "home";
+  const playByPlayFacts = args.game.playByPlayFacts;
+  const endingFacts = playByPlayFacts?.endingFacts ?? null;
+  const decisiveScore = endingFacts?.decisiveScore ?? null;
+  const addFact = (fact: Omit<GameDayRecapFactCandidate, "impactTier">) => {
+    if (!fact.text.trim()) {
+      return;
+    }
+    facts.push({
+      ...fact,
+      impactTier: impactTierForScore(fact.impactScore),
+      text: ensureSentence(fact.text),
+    });
+  };
+
+  if (args.game.seriesContext) {
+    addFact({
+      category: "league_context",
+      chronologicalSort: null,
+      claimKey: "series_state",
+      id: buildFactCandidateId(args.game.matchId, "series_state"),
+      impactScore: args.game.seriesContext.isTerminal ? 98 : 84,
+      mustMention: true,
+      preferredPlacement: "headline",
+      sourceFields: ["seriesContext.summaryLine"],
+      storyPhase: "lead",
+      text: args.game.seriesContext.summaryLine,
+    });
+  }
+
+  if (decisiveScore) {
+    const endingText =
+      args.gameFlow.closingNote ??
+      playByPlayFacts?.summaryLines.find((line) =>
+        /\b(?:buzzerbeater|went ahead|Closing sequence|last chance|walk-off)\b/i.test(
+          line,
+        ),
+      ) ??
+      null;
+    addFact({
+      category: "ending",
+      chronologicalSort: chronologicalSortForClock(
+        decisiveScore.quarter,
+        decisiveScore.clock,
+      ),
+      claimKey: decisiveScore.isBuzzerBeater
+        ? "buzzerbeater"
+        : endingFacts?.opponentLastChance
+          ? "last_chance_ending"
+          : "decisive_score",
+      id: buildFactCandidateId(
+        args.game.matchId,
+        decisiveScore.isBuzzerBeater
+          ? "buzzerbeater"
+          : endingFacts?.opponentLastChance
+            ? "last_chance_ending"
+            : "decisive_score",
+      ),
+      impactScore: decisiveScore.isBuzzerBeater
+        ? 100
+        : endingFacts?.opponentLastChance
+          ? 96
+          : args.game.finalMargin <= 3
+            ? 90
+            : 80,
+      mustMention:
+        decisiveScore.isBuzzerBeater ||
+        Boolean(endingFacts?.opponentLastChance) ||
+        args.game.finalMargin <= 3,
+      preferredPlacement:
+        decisiveScore.isBuzzerBeater || args.game.finalMargin <= 3
+          ? "headline"
+          : "opening",
+      sourceFields: ["playByPlayFacts.endingFacts"],
+      storyPhase: "lead",
+      text:
+        endingText ??
+        `${args.winnerName} beat ${args.loserName} ${args.finalScoreFromWinnerPerspective}.`,
+    });
+  }
+
+  if ((playByPlayFacts?.winnerComebackDeficit ?? 0) >= 8) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: null,
+      claimKey: "winner_comeback",
+      id: buildFactCandidateId(args.game.matchId, "winner_comeback"),
+      impactScore: 88,
+      mustMention: true,
+      preferredPlacement: "opening",
+      sourceFields: ["playByPlayFacts.winnerComebackDeficit"],
+      storyPhase: "lead",
+      text: `${args.winnerName} erased a ${playByPlayFacts!.winnerComebackDeficit}-point deficit to win.`,
+    });
+  }
+
+  if (args.game.overtime) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: chronologicalSortForPeriod(5),
+      claimKey: "overtime",
+      id: buildFactCandidateId(args.game.matchId, "overtime"),
+      impactScore: 74,
+      mustMention: args.game.finalMargin <= 5,
+      preferredPlacement: "opening",
+      sourceFields: ["quarterScores"],
+      storyPhase: "lead",
+      text: "The game went to overtime.",
+    });
+  }
+
+  if (args.gameFlow.tookLeadForGood) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: playByPlayFacts?.tookLeadForGood
+        ? chronologicalSortForClock(
+            playByPlayFacts.tookLeadForGood.quarter,
+            playByPlayFacts.tookLeadForGood.clock,
+          )
+        : null,
+      claimKey: "took_lead_for_good",
+      id: buildFactCandidateId(args.game.matchId, "took_lead_for_good"),
+      impactScore:
+        playByPlayFacts?.tookLeadForGood?.previousLeaderSide === loserSide
+          ? 78
+          : 62,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: ["playByPlayFacts.tookLeadForGood"],
+      storyPhase: "game_flow",
+      text: args.gameFlow.tookLeadForGood,
+    });
+  }
+
+  if (args.gameFlow.lastLeadByLoser) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: playByPlayFacts?.lastLeadByLoser
+        ? chronologicalSortForClock(
+            playByPlayFacts.lastLeadByLoser.quarter,
+            playByPlayFacts.lastLeadByLoser.clock,
+          )
+        : null,
+      claimKey: "last_loser_lead",
+      id: buildFactCandidateId(args.game.matchId, "last_loser_lead"),
+      impactScore: 58,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: ["playByPlayFacts.lastLeadByLoser"],
+      storyPhase: "game_flow",
+      text: args.gameFlow.lastLeadByLoser,
+    });
+  }
+
+  const primaryRun = playByPlayFacts?.primaryRun ?? null;
+  const primaryRunText =
+    primaryRun?.teamSide && args.gameFlow.highlightRuns[0]?.summary
+      ? args.gameFlow.highlightRuns[0].summary
+      : null;
+  if (primaryRun?.teamSide && primaryRunText) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort:
+        primaryRun.startQuarter !== null
+          ? chronologicalSortForClock(primaryRun.startQuarter, primaryRun.startClock)
+          : null,
+      claimKey: "primary_run",
+      id: buildFactCandidateId(args.game.matchId, "primary_run"),
+      impactScore: 76,
+      mustMention: true,
+      preferredPlacement: "body",
+      sourceFields: ["playByPlayFacts.primaryRun"],
+      storyPhase: "game_flow",
+      text: primaryRunText,
+    });
+  }
+
+  if (args.gameFlow.highlightLeadChanges[0]) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: chronologicalSortForLeadChange(playByPlayFacts),
+      claimKey: "lead_change",
+      id: buildFactCandidateId(args.game.matchId, "lead_change"),
+      impactScore: 72,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: ["playByPlayFacts.leadChangeFacts"],
+      storyPhase: "game_flow",
+      text: args.gameFlow.highlightLeadChanges[0],
+    });
+  }
+
+  args.gameFlow.scoringDroughts.slice(0, 1).forEach((text, index) => {
+    const drought = playByPlayFacts?.scoringDroughts?.[index] ?? null;
+    addFact({
+      category: "game_flow",
+      chronologicalSort:
+        drought?.startQuarter !== null && drought?.startQuarter !== undefined
+          ? chronologicalSortForClock(drought.startQuarter, drought.startClock)
+          : null,
+      claimKey: `scoring_drought_${index}`,
+      id: buildFactCandidateId(args.game.matchId, `scoring_drought_${index}`),
+      impactScore: 58,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: [`playByPlayFacts.scoringDroughts[${index}]`],
+      storyPhase: "game_flow",
+      text,
+    });
+  });
+
+  const halftimeState = args.game.periodStates.halftime;
+  if (halftimeState && halftimeState.margin <= 6) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: chronologicalSortForPeriod(2),
+      claimKey: "halftime_tight",
+      id: buildFactCandidateId(args.game.matchId, "halftime_tight"),
+      impactScore: 46,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: ["periodStates.halftime"],
+      storyPhase: "game_flow",
+      text:
+        halftimeState.leaderSide === "tie"
+          ? `The teams were tied ${halftimeState.homeScore}-${halftimeState.awayScore} at halftime.`
+          : `${halftimeState.leaderName} led ${halftimeState.scoreFromLeaderPerspective} at halftime.`,
+    });
+  }
+
+  const decisiveQuarter = args.game.quarterFacts.decisiveQuarter;
+  if (decisiveQuarter) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: chronologicalSortForPeriod(decisiveQuarter.period),
+      claimKey: "decisive_quarter",
+      id: buildFactCandidateId(args.game.matchId, "decisive_quarter"),
+      impactScore: 62,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: ["quarterFacts.decisiveQuarter"],
+      storyPhase: "game_flow",
+      text: `${args.game.teams[decisiveQuarter.winningSide].name} won the ${decisiveQuarter.label} ${winnerFacingQuarterScore(
+        decisiveQuarter,
+        decisiveQuarter.winningSide,
+      )}.`,
+    });
+  }
+
+  if (
+    (playByPlayFacts?.largestLead.points ?? 0) >= 10 &&
+    playByPlayFacts?.largestLead.teamName
+  ) {
+    addFact({
+      category: "game_flow",
+      chronologicalSort: null,
+      claimKey: "largest_lead",
+      id: buildFactCandidateId(args.game.matchId, "largest_lead"),
+      impactScore: 50,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: ["playByPlayFacts.largestLead"],
+      storyPhase: "game_flow",
+      text: `${playByPlayFacts.largestLead.teamName} built the largest lead at ${playByPlayFacts.largestLead.points} points.`,
+    });
+  }
+
+  buildPlayByPlayTextureFactCandidates(args.game).forEach(addFact);
+  buildPregameBattleFactCandidates(args.game, args.pregameBattle).forEach(addFact);
+  buildPlayerFactCandidates(args.game).forEach(addFact);
+  buildBoxScoreEdgeFactCandidates(args.game).forEach(addFact);
+  buildTeamContextFactCandidates(args.game).forEach(addFact);
+
+  args.matchupEdgeFacts.supported.forEach((text, index) => {
+    addFact({
+      category: "matchup",
+      chronologicalSort: null,
+      claimKey: `matchup_edge_${index}`,
+      id: buildFactCandidateId(args.game.matchId, `matchup_edge_${index}`),
+      impactScore: 52 - index * 2,
+      mustMention: false,
+      preferredPlacement: "closing",
+      sourceFields: ["factsLibrary.matchupEdgeFacts.supported"],
+      storyPhase: "analysis",
+      text,
+    });
+  });
+
+  if (args.game.teamTalent.summary) {
+    addFact({
+      category: "matchup",
+      chronologicalSort: null,
+      claimKey: "team_talent",
+      id: buildFactCandidateId(args.game.matchId, "team_talent"),
+      impactScore: 48,
+      mustMention: false,
+      preferredPlacement: "closing",
+      sourceFields: ["teamTalent.summary"],
+      storyPhase: "analysis",
+      text: args.game.teamTalent.summary,
+    });
+  }
+
+  args.game.standingsContext.slice(0, 2).forEach((text, index) => {
+    addFact({
+      category: "league_context",
+      chronologicalSort: null,
+      claimKey: `standings_context_${index}`,
+      id: buildFactCandidateId(args.game.matchId, `standings_context_${index}`),
+      impactScore: 34 - index,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: ["standingsContext"],
+      storyPhase: "setup",
+      text,
+    });
+  });
+
+  buildSlateFactCandidates(args.game, args.slateContext).forEach(addFact);
+
+  return uniqueFactCandidates(facts).sort(compareFactCandidatesByImpact);
+}
+
+function buildPlayByPlayTextureFactCandidates(
+  game: GameDayRecapGameFactStore,
+): Array<Omit<GameDayRecapFactCandidate, "impactTier">> {
+  const facts: Array<Omit<GameDayRecapFactCandidate, "impactTier">> = [];
+  const playByPlayFacts = game.playByPlayFacts;
+  if (!playByPlayFacts) {
+    return facts;
+  }
+
+  const addGameFlowFact = (args: {
+    chronologicalSort: number | null;
+    claimKey: string;
+    impactScore: number;
+    sourceField: string;
+    text: string;
+  }) => {
+    facts.push({
+      category: "game_flow",
+      chronologicalSort: args.chronologicalSort,
+      claimKey: args.claimKey,
+      id: buildFactCandidateId(game.matchId, args.claimKey),
+      impactScore: args.impactScore,
+      mustMention: false,
+      preferredPlacement: "body",
+      sourceFields: [args.sourceField],
+      storyPhase: "game_flow",
+      text: args.text,
+    });
+  };
+
+  playByPlayFacts.playerScoringSpurts?.slice(0, 2).forEach((spurt, index) => {
+    const teamName = spurt.teamName ?? game.teams[spurt.teamSide].name;
+    addGameFlowFact({
+      chronologicalSort: chronologicalSortForClock(
+        spurt.startQuarter,
+        spurt.startClock,
+      ),
+      claimKey: `player_scoring_spurt_${index}`,
+      impactScore: spurt.points >= 10 ? 68 : 61,
+      sourceField: `playByPlayFacts.playerScoringSpurts[${index}]`,
+      text: `${spurt.playerName} scored ${spurt.points} straight for ${teamName} ${formatPlayByPlayFactTimeRange(
+        spurt.startQuarter,
+        spurt.startClock,
+        spurt.endQuarter,
+        spurt.endClock,
+      )}.`,
+    });
+  });
+
+  playByPlayFacts.madeThreeBursts?.slice(0, 2).forEach((burst, index) => {
+    const teamName = burst.teamName ?? game.teams[burst.teamSide].name;
+    addGameFlowFact({
+      chronologicalSort: chronologicalSortForClock(
+        burst.startQuarter,
+        burst.startClock,
+      ),
+      claimKey: `made_three_burst_${index}`,
+      impactScore: burst.madeThrees >= 4 ? 64 : 56,
+      sourceField: `playByPlayFacts.madeThreeBursts[${index}]`,
+      text: `${teamName} hit ${burst.madeThrees} straight threes ${formatPlayByPlayFactTimeRange(
+        burst.startQuarter,
+        burst.startClock,
+        burst.endQuarter,
+        burst.endClock,
+      )}.`,
+    });
+  });
+
+  playByPlayFacts.offensiveReboundSequences
+    ?.slice(0, 2)
+    .forEach((sequence, index) => {
+      const teamName = sequence.teamName ?? game.teams[sequence.teamSide].name;
+      addGameFlowFact({
+        chronologicalSort: chronologicalSortForClock(
+          sequence.startQuarter,
+          sequence.startClock,
+        ),
+        claimKey: `offensive_rebound_sequence_${index}`,
+        impactScore: sequence.offensiveRebounds >= 3 ? 60 : 52,
+        sourceField: `playByPlayFacts.offensiveReboundSequences[${index}]`,
+        text: `${teamName} extended a possession with ${sequence.offensiveRebounds} offensive rebounds before scoring ${formatPlayByPlayFactTimeRange(
+          sequence.startQuarter,
+          sequence.startClock,
+          sequence.endQuarter,
+          sequence.endClock,
+        )}.`,
+      });
+    });
+
+  playByPlayFacts.explicitEventFacts?.slice(0, 3).forEach((event, index) => {
+    const playerContext = findPromptPlayerContextForEvent(game, event);
+    addGameFlowFact({
+      chronologicalSort: chronologicalSortForClock(event.quarter, event.clock),
+      claimKey: `explicit_${event.eventType}_${index}`,
+      impactScore:
+        event.eventType === "injury" || event.eventType === "ejection"
+          ? playerContext?.isStarter
+            ? 74
+            : 68
+          : 50,
+      sourceField: `playByPlayFacts.explicitEventFacts[${index}]`,
+      text: formatExplicitEventFactForRecap(game, event, playerContext),
+    });
+  });
+
+  return facts;
+}
+
+function formatExplicitEventFactForRecap(
+  game: GameDayRecapGameFactStore,
+  event: NonNullable<GameDayRecapPlayByPlayFacts["explicitEventFacts"]>[number],
+  playerContext: GameDayRecapNotablePlayer | null,
+): string {
+  const teamName =
+    event.teamName ?? (event.teamSide ? game.teams[event.teamSide].name : null);
+  const subject = event.playerName ?? teamName ?? "An explicit event";
+  const anchor = formatPlayByPlayFactAnchor(event.quarter, event.clock);
+  const anchorPhrase = anchor ? ` ${anchor}` : "";
+  const rolePhrase =
+    playerContext?.isStarter
+      ? "a starter"
+      : playerContext && playerContext.minutes >= 24
+        ? "a key rotation piece"
+        : playerContext
+          ? "a rotation piece"
+          : null;
+  const plusMinusPhrase =
+    playerContext?.plusMinus !== null && playerContext?.plusMinus !== undefined
+      ? ` while sitting at ${formatSignedNumber(playerContext.plusMinus)}`
+      : "";
+
+  switch (event.eventType) {
+    case "ejection":
+      return rolePhrase
+        ? `${subject}, ${rolePhrase} for ${teamName ?? "that team"}, was ejected${plusMinusPhrase}${anchorPhrase}.`
+        : `${subject} was ejected${anchorPhrase}.`;
+    case "foul_out":
+      return rolePhrase
+        ? `${subject}, ${rolePhrase} for ${teamName ?? "that team"}, fouled out${plusMinusPhrase}${anchorPhrase}.`
+        : `${subject} fouled out${anchorPhrase}.`;
+    case "injury":
+      return rolePhrase
+        ? `${subject}, ${rolePhrase} for ${teamName ?? "that team"}, left injured${plusMinusPhrase}${anchorPhrase}.`
+        : `${subject} left injured${anchorPhrase}.`;
+    case "technical":
+      return `${subject} was involved in an explicit technical foul${anchorPhrase}.`;
+  }
+}
+
+function formatSignedNumber(value: number): string {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function findPromptPlayerContextForEvent(
+  game: GameDayRecapGameFactStore,
+  event: NonNullable<GameDayRecapPlayByPlayFacts["explicitEventFacts"]>[number],
+): GameDayRecapNotablePlayer | null {
+  if (!event.playerName) {
+    return null;
+  }
+  const teams =
+    event.teamSide !== null && event.teamSide !== undefined
+      ? [game.teams[event.teamSide]]
+      : [game.teams.away, game.teams.home];
+  for (const team of teams) {
+    const candidate =
+      team.notablePlayers?.find((player) =>
+        playerNameMatchesRecapEvent(event.playerName!, player.name),
+      ) ?? null;
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function playerNameMatchesRecapEvent(
+  eventPlayerName: string,
+  playerName: string,
+): boolean {
+  const normalizedEventName = normalizeRecapNameForMatching(eventPlayerName);
+  const normalizedPlayerName = normalizeRecapNameForMatching(playerName);
+  if (!normalizedEventName || !normalizedPlayerName) {
+    return false;
+  }
+  if (normalizedEventName === normalizedPlayerName) {
+    return true;
+  }
+
+  const eventParts = normalizedEventName.split(" ");
+  const playerParts = normalizedPlayerName.split(" ");
+  const eventLastName = eventParts[eventParts.length - 1] ?? "";
+  const playerLastName = playerParts[playerParts.length - 1] ?? "";
+  return (
+    eventLastName.length >= 3 &&
+    playerLastName.length >= 3 &&
+    eventLastName === playerLastName
+  );
+}
+
+function normalizeRecapNameForMatching(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function formatPlayByPlayFactTimeRange(
+  startQuarter: number | null,
+  startClock: string | null,
+  endQuarter: number | null,
+  endClock: string | null,
+): string {
+  const start = formatPlayByPlayFactAnchor(startQuarter, startClock);
+  if (
+    endQuarter !== null &&
+    endClock &&
+    (endQuarter !== startQuarter || endClock !== startClock)
+  ) {
+    return `from ${start} to ${endClock} left in ${formatPeriodLabel(endQuarter)}`;
+  }
+  return start ? `starting ${start}` : "during the game";
+}
+
+function formatPlayByPlayFactAnchor(
+  quarter: number | null,
+  clock: string | null,
+): string {
+  if (quarter === null) {
+    return "";
+  }
+  return clock
+    ? `with ${clock} left in ${formatPeriodLabel(quarter)}`
+    : `in ${formatPeriodLabel(quarter)}`;
+}
+
+function buildPlayerFactCandidates(
+  game: GameDayRecapGameFactStore,
+): Array<Omit<GameDayRecapFactCandidate, "impactTier">> {
+  const facts: Array<Omit<GameDayRecapFactCandidate, "impactTier">> = [];
+  const seen = new Set<string>();
+  const allPlayers = (["home", "away"] as const).flatMap((teamSide) =>
+    game.teams[teamSide].topPlayers.map((player) => ({
+      ...player,
+      teamName: game.teams[teamSide].name,
+      teamSide,
+    })),
+  );
+  const addPlayerFact = (
+    claimKey: string,
+    text: string,
+    impactScore: number,
+    sourceField: string,
+  ) => {
+    if (seen.has(claimKey)) {
+      return;
+    }
+    seen.add(claimKey);
+    facts.push({
+      category: "player",
+      chronologicalSort: null,
+      claimKey,
+      id: buildFactCandidateId(game.matchId, claimKey),
+      impactScore,
+      mustMention: false,
+      preferredPlacement: "closing",
+      sourceFields: [sourceField],
+      storyPhase: "analysis",
+      text,
+    });
+  };
+
+  const pointsLeader = game.playerLeaders.points;
+  if (pointsLeader && pointsLeader.value >= 20) {
+    const line = pointsLeader.statLine;
+    addPlayerFact(
+      "points_leader",
+      `${pointsLeader.playerName} led ${pointsLeader.teamName} with ${line.points} points, ${line.rebounds} rebounds, and ${line.assists} assists.`,
+      line.points >= 30 ? 64 : 54,
+      "playerLeaders.points",
+    );
+  }
+
+  const winnerSide = game.winner.winnerSide;
+  if (winnerSide) {
+    const winner = game.teams[winnerSide];
+    const distribution = winner.scoringDistribution;
+    const topScorer = distribution?.topScorer ?? null;
+    const nextScorerPoints =
+      winner.topPlayers
+        .filter((player) => player.name !== topScorer?.name)
+        .sort((left, right) => right.points - left.points)[0]?.points ?? null;
+    if (
+      topScorer &&
+      topScorer.points >= 28 &&
+      (distribution?.topScorerPointShare ?? 0) >= 34 &&
+      (nextScorerPoints === null || topScorer.points - nextScorerPoints >= 12)
+    ) {
+      addPlayerFact(
+        `dominant_scorer_${sanitizeFactIdPart(topScorer.name)}`,
+        `${topScorer.name} carried the scoring load for ${winner.name}, supplying ${topScorer.points} points${
+          nextScorerPoints !== null
+            ? ` with the next ${winner.name} scorer at ${nextScorerPoints}`
+            : " without a comparable second scorer"
+        }.`,
+        topScorer.points >= 40 ? 72 : 64,
+        `teams.${winnerSide}.scoringDistribution.topScorer`,
+      );
+    }
+  }
+
+  const reboundsLeader = game.playerLeaders.rebounds;
+  if (reboundsLeader && reboundsLeader.value >= 12) {
+    const line = reboundsLeader.statLine;
+    addPlayerFact(
+      "rebounds_leader",
+      `${reboundsLeader.playerName} controlled the glass for ${reboundsLeader.teamName} with ${line.rebounds} rebounds.`,
+      line.rebounds >= 16 ? 56 : 48,
+      "playerLeaders.rebounds",
+    );
+  }
+
+  const assistsLeader = game.playerLeaders.assists;
+  if (assistsLeader && assistsLeader.value >= 8) {
+    const line = assistsLeader.statLine;
+    addPlayerFact(
+      "assists_leader",
+      `${assistsLeader.playerName} drove the playmaking for ${assistsLeader.teamName} with ${line.assists} assists.`,
+      line.assists >= 12 ? 56 : 48,
+      "playerLeaders.assists",
+    );
+  }
+
+  for (const player of allPlayers) {
+    const doubleDoubleStats = [
+      player.points >= 10 ? "points" : null,
+      player.rebounds >= 10 ? "rebounds" : null,
+      player.assists >= 10 ? "assists" : null,
+    ].filter((stat): stat is string => Boolean(stat));
+    if (doubleDoubleStats.length >= 2) {
+      addPlayerFact(
+        `double_double_${sanitizeFactIdPart(player.name)}`,
+        `${player.name} gave ${player.teamName} a double-double with ${player.points} points, ${player.rebounds} rebounds, and ${player.assists} assists.`,
+        58,
+        `teams.${player.teamSide}.topPlayers`,
+      );
+    }
+
+    const defensiveStocks = player.steals + player.blocks;
+    if (defensiveStocks >= 4) {
+      addPlayerFact(
+        `defensive_stocks_${sanitizeFactIdPart(player.name)}`,
+        `${player.name} added ${player.steals} steals and ${player.blocks} blocks for ${player.teamName}.`,
+        50,
+        `teams.${player.teamSide}.topPlayers`,
+      );
+    }
+
+    const fieldGoalPct = percentageFactValue(
+      player.fieldGoalsMade ?? null,
+      player.fieldGoalsAttempted ?? null,
+    );
+    if (
+      player.points >= 18 &&
+      fieldGoalPct !== null &&
+      fieldGoalPct >= 55 &&
+      (player.fieldGoalsAttempted ?? 0) >= 8
+    ) {
+      addPlayerFact(
+        `efficient_scorer_${sanitizeFactIdPart(player.name)}`,
+        `${player.name} scored efficiently for ${player.teamName}, putting up ${player.points} points on ${player.fieldGoalsMade}-${player.fieldGoalsAttempted} shooting.`,
+        player.points >= 30 ? 62 : 52,
+        `teams.${player.teamSide}.topPlayers`,
+      );
+    }
+
+    if ((player.personalFouls ?? 0) >= 5 && player.minutes <= 28) {
+      addPlayerFact(
+        `foul_trouble_${sanitizeFactIdPart(player.name)}`,
+        `${player.name} was limited to ${formatMinutesForRecap(player.minutes)} minutes while finishing with ${player.personalFouls} fouls.`,
+        42,
+        `teams.${player.teamSide}.topPlayers`,
+      );
+    }
+  }
+
+  return facts;
+}
+
+function buildBoxScoreEdgeFactCandidates(
+  game: GameDayRecapGameFactStore,
+): Array<Omit<GameDayRecapFactCandidate, "impactTier">> {
+  const facts: Array<Omit<GameDayRecapFactCandidate, "impactTier">> = [];
+  const winnerSide = game.winner.winnerSide;
+  const loserSide = game.winner.loserSide;
+  if (!winnerSide || !loserSide) {
+    return facts;
+  }
+  const winner = game.teams[winnerSide];
+  const loser = game.teams[loserSide];
+  const winnerTurnovers = winner.turnovers;
+  const loserTurnovers = loser.turnovers;
+  const winnerEfficiency = asOptionalNumber(winner.efficiency.efg);
+  const loserEfficiency = asOptionalNumber(loser.efficiency.efg);
+  const winnerStats = winner.boxScoreStats ?? null;
+  const loserStats = loser.boxScoreStats ?? null;
+
+  const addEdge = (
+    claimKey: string,
+    text: string,
+    impactScore: number,
+    sourceFields: string[],
+  ) => {
+    facts.push({
+      category: "boxscore",
+      chronologicalSort: null,
+      claimKey,
+      id: buildFactCandidateId(game.matchId, claimKey),
+      impactScore,
+      mustMention: false,
+      preferredPlacement: "closing",
+      sourceFields,
+      storyPhase: "analysis",
+      text,
+    });
+  };
+
+  if (
+    winnerTurnovers !== null &&
+    loserTurnovers !== null &&
+    loserTurnovers - winnerTurnovers >= 4
+  ) {
+    addEdge(
+      "turnover_edge",
+      `${winner.name} protected the ball better, committing ${winnerTurnovers} turnovers to ${loser.name}'s ${loserTurnovers}.`,
+      56,
+      ["teams.home.turnovers", "teams.away.turnovers"],
+    );
+  }
+  if (winnerTurnovers !== null && winnerTurnovers <= 2) {
+    addEdge(
+      "very_low_turnover_win",
+      `${winner.name} committed just ${winnerTurnovers === 1 ? "one turnover" : `${winnerTurnovers} turnovers`}.`,
+      winnerTurnovers <= 1 ? 64 : 58,
+      ["teams.home.turnovers", "teams.away.turnovers"],
+    );
+  }
+  if (
+    winnerEfficiency !== null &&
+    loserEfficiency !== null &&
+    winnerEfficiency - loserEfficiency >= 6
+  ) {
+    addEdge(
+      "shooting_efficiency_edge",
+      `${winner.name} held the shooting-efficiency edge at ${winnerEfficiency}% eFG to ${loser.name}'s ${loserEfficiency}%.`,
+      54,
+      ["teams.home.efficiency.efg", "teams.away.efficiency.efg"],
+    );
+  }
+  if (
+    winnerStats?.rebounds !== null &&
+    winnerStats?.rebounds !== undefined &&
+    loserStats?.rebounds !== null &&
+    loserStats?.rebounds !== undefined &&
+    winnerStats.rebounds - loserStats.rebounds >= 8
+  ) {
+    addEdge(
+      "rebound_edge",
+      `${winner.name} won the rebounding battle ${winnerStats.rebounds}-${loserStats.rebounds}.`,
+      52,
+      ["teams.home.boxScoreStats.rebounds", "teams.away.boxScoreStats.rebounds"],
+    );
+  }
+  if (
+    winnerStats?.assists !== null &&
+    winnerStats?.assists !== undefined &&
+    loserStats?.assists !== null &&
+    loserStats?.assists !== undefined &&
+    winnerStats.assists - loserStats.assists >= 6
+  ) {
+    addEdge(
+      "assist_edge",
+      `${winner.name} moved the ball better, leading assists ${winnerStats.assists}-${loserStats.assists}.`,
+      50,
+      ["teams.home.boxScoreStats.assists", "teams.away.boxScoreStats.assists"],
+    );
+  }
+  if (
+    winnerStats?.threePointersMade !== null &&
+    winnerStats?.threePointersMade !== undefined &&
+    loserStats?.threePointersMade !== null &&
+    loserStats?.threePointersMade !== undefined &&
+    winnerStats.threePointersMade - loserStats.threePointersMade >= 4
+  ) {
+    addEdge(
+      "three_point_edge",
+      `${winner.name} won from deep, hitting ${winnerStats.threePointersMade} threes to ${loser.name}'s ${loserStats.threePointersMade}.`,
+      51,
+      [
+        "teams.home.boxScoreStats.threePointersMade",
+        "teams.away.boxScoreStats.threePointersMade",
+      ],
+    );
+  }
+  if (
+    winnerStats?.freeThrowsMade !== null &&
+    winnerStats?.freeThrowsMade !== undefined &&
+    loserStats?.freeThrowsMade !== null &&
+    loserStats?.freeThrowsMade !== undefined &&
+    winnerStats.freeThrowsMade - loserStats.freeThrowsMade >= 6
+  ) {
+    addEdge(
+      "free_throw_edge",
+      `${winner.name} did more at the line, making ${winnerStats.freeThrowsMade} free throws to ${loser.name}'s ${loserStats.freeThrowsMade}.`,
+      49,
+      [
+        "teams.home.boxScoreStats.freeThrowsMade",
+        "teams.away.boxScoreStats.freeThrowsMade",
+      ],
+    );
+  }
+  if (
+    winnerStats?.freeThrowsAttempted !== null &&
+    winnerStats?.freeThrowsAttempted !== undefined &&
+    loserStats?.freeThrowsAttempted !== null &&
+    loserStats?.freeThrowsAttempted !== undefined &&
+    Math.abs(winnerStats.freeThrowsAttempted - loserStats.freeThrowsAttempted) >=
+      12
+  ) {
+    const winnerFta = winnerStats.freeThrowsAttempted;
+    const loserFta = loserStats.freeThrowsAttempted;
+    addEdge(
+      winnerFta >= loserFta
+        ? "free_throw_attempt_pressure"
+        : "won_despite_free_throw_attempt_gap",
+      winnerFta >= loserFta
+        ? `${winner.name} created far more free-throw pressure, attempting ${winnerFta} to ${loser.name}'s ${loserFta}.`
+        : `${winner.name} won despite ${loser.name} attempting ${loserFta} free throws to ${winner.name}'s ${winnerFta}.`,
+      57,
+      [
+        "teams.home.boxScoreStats.freeThrowsAttempted",
+        "teams.away.boxScoreStats.freeThrowsAttempted",
+      ],
+    );
+  }
+  if (
+    winnerStats?.offensiveRebounds !== null &&
+    winnerStats?.offensiveRebounds !== undefined &&
+    loserStats?.offensiveRebounds !== null &&
+    loserStats?.offensiveRebounds !== undefined &&
+    winnerStats.offensiveRebounds - loserStats.offensiveRebounds >= 5
+  ) {
+    addEdge(
+      "offensive_rebound_edge",
+      `${winner.name} created extra chances with ${winnerStats.offensiveRebounds} offensive rebounds to ${loser.name}'s ${loserStats.offensiveRebounds}.`,
+      48,
+      [
+        "teams.home.boxScoreStats.offensiveRebounds",
+        "teams.away.boxScoreStats.offensiveRebounds",
+      ],
+    );
+  }
+  if (
+    winnerStats?.personalFouls !== null &&
+    winnerStats?.personalFouls !== undefined &&
+    loserStats?.personalFouls !== null &&
+    loserStats?.personalFouls !== undefined &&
+    loserStats.personalFouls - winnerStats.personalFouls >= 5
+  ) {
+    addEdge(
+      "foul_edge",
+      `${loser.name} dealt with more foul pressure, committing ${loserStats.personalFouls} fouls to ${winner.name}'s ${winnerStats.personalFouls}.`,
+      43,
+      [
+        "teams.home.boxScoreStats.personalFouls",
+        "teams.away.boxScoreStats.personalFouls",
+      ],
+    );
+  }
+
+  const winnerFieldGoalPct = percentageFactValue(
+    winnerStats?.fieldGoalsMade ?? null,
+    winnerStats?.fieldGoalsAttempted ?? null,
+  );
+  const loserFieldGoalPct = percentageFactValue(
+    loserStats?.fieldGoalsMade ?? null,
+    loserStats?.fieldGoalsAttempted ?? null,
+  );
+  if (
+    winnerFieldGoalPct !== null &&
+    loserFieldGoalPct !== null &&
+    (winnerStats?.fieldGoalsAttempted ?? 0) >= 40 &&
+    (loserStats?.fieldGoalsAttempted ?? 0) >= 40 &&
+    winnerFieldGoalPct - loserFieldGoalPct >= 7
+  ) {
+    addEdge(
+      "field_goal_accuracy_edge",
+      `${winner.name} shot ${winnerFieldGoalPct}% from the field while holding ${loser.name} to ${loserFieldGoalPct}%.`,
+      53,
+      [
+        "teams.home.boxScoreStats.fieldGoalsMade",
+        "teams.home.boxScoreStats.fieldGoalsAttempted",
+        "teams.away.boxScoreStats.fieldGoalsMade",
+        "teams.away.boxScoreStats.fieldGoalsAttempted",
+      ],
+    );
+  }
+
+  const winnerThreePointPct = percentageFactValue(
+    winnerStats?.threePointersMade ?? null,
+    winnerStats?.threePointersAttempted ?? null,
+  );
+  const loserThreePointPct = percentageFactValue(
+    loserStats?.threePointersMade ?? null,
+    loserStats?.threePointersAttempted ?? null,
+  );
+  if (
+    winnerThreePointPct !== null &&
+    loserThreePointPct !== null &&
+    (winnerStats?.threePointersAttempted ?? 0) >= 12 &&
+    (loserStats?.threePointersAttempted ?? 0) >= 12 &&
+    winnerThreePointPct - loserThreePointPct >= 10
+  ) {
+    addEdge(
+      "three_point_accuracy_edge",
+      `${winner.name} was sharper from three at ${winnerThreePointPct}% to ${loser.name}'s ${loserThreePointPct}%.`,
+      50,
+      [
+        "teams.home.boxScoreStats.threePointersMade",
+        "teams.home.boxScoreStats.threePointersAttempted",
+        "teams.away.boxScoreStats.threePointersMade",
+        "teams.away.boxScoreStats.threePointersAttempted",
+      ],
+    );
+  }
+
+  const winnerDistribution = winner.scoringDistribution;
+  const loserDistribution = loser.scoringDistribution;
+  const winnerTopScorerShare = winnerDistribution?.topScorerPointShare ?? null;
+  const winnerHasDominantScorer =
+    winnerTopScorerShare !== null && winnerTopScorerShare >= 34;
+  if (
+    winnerDistribution &&
+    winnerDistribution.doubleFigureScorerCount >= 4 &&
+    !winnerHasDominantScorer
+  ) {
+    addEdge(
+      "balanced_scoring",
+      `${winner.name} had ${winnerDistribution.doubleFigureScorerCount} players score in double figures.`,
+      47,
+      [`teams.${winnerSide}.scoringDistribution.doubleFigureScorerCount`],
+    );
+  }
+  if (winnerDistribution?.topScorer && winnerHasDominantScorer) {
+    addEdge(
+      "star_led_scoring_distribution",
+      `${winner.name}'s scoring was star-led: ${winnerDistribution.topScorer.name} accounted for ${winnerTopScorerShare}% of the team's points.`,
+      winnerDistribution.topScorer.points >= 40 ? 60 : 52,
+      [`teams.${winnerSide}.scoringDistribution.topScorerPointShare`],
+    );
+  }
+  if (
+    winnerDistribution &&
+    winnerDistribution.supportingCastPoints >= 32
+  ) {
+    addEdge(
+      "supporting_cast_scoring",
+      `${winner.name}'s supporting cast supplied ${winnerDistribution.supportingCastPoints} points beyond its top two scorers.`,
+      45,
+      [`teams.${winnerSide}.scoringDistribution.supportingCastPoints`],
+    );
+  }
+  if (
+    winnerDistribution &&
+    winnerDistribution.lowMinuteContributorPoints >= 14 &&
+    winnerDistribution.lowMinuteContributors.length > 0
+  ) {
+    addEdge(
+      "low_minute_contributor_scoring",
+      `${winner.name} got ${winnerDistribution.lowMinuteContributorPoints} points from low-minute contributors, led by ${winnerDistribution.lowMinuteContributors[0]!.name}.`,
+      42,
+      [`teams.${winnerSide}.scoringDistribution.lowMinuteContributorPoints`],
+    );
+  }
+  if (
+    loserDistribution?.topTwoPointShare !== null &&
+    loserDistribution?.topTwoPointShare !== undefined &&
+    loserDistribution.topTwoPointShare >= 65
+  ) {
+    addEdge(
+      "top_two_scoring_burden_loser",
+      `${loser.name}'s top two scorers carried ${loserDistribution.topTwoPointShare}% of its points.`,
+      40,
+      [`teams.${loserSide}.scoringDistribution.topTwoPointShare`],
+    );
+  }
+
+  return facts;
+}
+
+function buildTeamContextFactCandidates(
+  game: GameDayRecapGameFactStore,
+): Array<Omit<GameDayRecapFactCandidate, "impactTier">> {
+  const facts: Array<Omit<GameDayRecapFactCandidate, "impactTier">> = [];
+
+  const addContextFact = (args: {
+    category: GameDayRecapFactCategory;
+    claimKey: string;
+    impactScore: number;
+    mustMention?: boolean;
+    preferredPlacement?: GameDayRecapFactPreferredPlacement;
+    sourceFields: string[];
+    storyPhase?: GameDayRecapFactStoryPhase;
+    text: string;
+  }) => {
+    facts.push({
+      category: args.category,
+      chronologicalSort: null,
+      claimKey: args.claimKey,
+      id: buildFactCandidateId(game.matchId, args.claimKey),
+      impactScore: args.impactScore,
+      mustMention: args.mustMention ?? false,
+      preferredPlacement: args.preferredPlacement ?? "closing",
+      sourceFields: args.sourceFields,
+      storyPhase: args.storyPhase ?? "analysis",
+      text: args.text,
+    });
+  };
+
+  if (!game.isPlayoffGame) {
+    (["home", "away"] as const).forEach((teamSide) => {
+      const team = game.teams[teamSide];
+      const streakFact = buildTeamStreakFactForRankedFacts(
+        team.name,
+        team.streak,
+      );
+      if (!streakFact) {
+        return;
+      }
+      addContextFact({
+        category: "league_context",
+        claimKey: `streak_${teamSide}`,
+        impactScore: 38,
+        sourceFields: [`teams.${teamSide}.streak`],
+        text: streakFact,
+      });
+    });
+  }
+
+  game.rotationSummaries.slice(0, 2).forEach((text, index) => {
+    addContextFact({
+      category: "league_context",
+      claimKey: `rotation_summary_${index}`,
+      impactScore: 41 - index,
+      sourceFields: ["rotationSummaries"],
+      text,
+    });
+  });
+
+  const winnerSide = game.winner.winnerSide;
+  const loserSide = game.winner.loserSide;
+  if (winnerSide && loserSide) {
+    const winner = game.teams[winnerSide];
+    const loser = game.teams[loserSide];
+    if (winner.keyAbsenceCount > 0) {
+      addContextFact({
+        category: "league_context",
+        claimKey: "winner_absences",
+        impactScore: 46,
+        sourceFields: [`teams.${winnerSide}.keyAbsenceCount`],
+        text: `${winner.name} won despite ${formatCountPhrase(winner.keyAbsenceCount, "key absence")}.`,
+      });
+    }
+    if (loser.keyAbsenceCount > 0) {
+      addContextFact({
+        category: "league_context",
+        claimKey: "loser_absences",
+        impactScore: 42,
+        sourceFields: [`teams.${loserSide}.keyAbsenceCount`],
+        text: `${loser.name} played without ${formatCountPhrase(loser.keyAbsenceCount, "key player")}.`,
+      });
+    }
+    if (winner.foulTroubleLimitationCount > 0) {
+      addContextFact({
+        category: "league_context",
+        claimKey: "winner_foul_trouble",
+        impactScore: 42,
+        sourceFields: [`teams.${winnerSide}.foulTroubleLimitationCount`],
+        text: `${winner.name} still won with ${formatCountPhrase(winner.foulTroubleLimitationCount, "rotation player")} limited by foul trouble.`,
+      });
+    }
+    if (loser.foulTroubleLimitationCount > 0) {
+      addContextFact({
+        category: "league_context",
+        claimKey: "loser_foul_trouble",
+        impactScore: 42,
+        sourceFields: [`teams.${loserSide}.foulTroubleLimitationCount`],
+        text: `${loser.name} had ${formatCountPhrase(loser.foulTroubleLimitationCount, "rotation player")} limited by foul trouble.`,
+      });
+    }
+  }
+
+  return facts;
+}
+
+function buildTeamStreakFactForRankedFacts(
+  teamName: string,
+  streak: string | null,
+): string | null {
+  const match = streak?.trim().match(/^([WL])(\d+)$/i);
+  if (!match) {
+    return null;
+  }
+  const length = Number.parseInt(match[2] ?? "", 10);
+  if (!Number.isInteger(length) || length <= 1) {
+    return null;
+  }
+  return match[1]?.toUpperCase() === "W"
+    ? `${teamName} has won ${length} straight.`
+    : `${teamName} has lost ${length} straight.`;
+}
+
+function percentageFactValue(
+  made: number | null,
+  attempted: number | null,
+): number | null {
+  if (
+    made === null ||
+    attempted === null ||
+    !Number.isFinite(made) ||
+    !Number.isFinite(attempted) ||
+    attempted <= 0
+  ) {
+    return null;
+  }
+
+  return roundToOneDecimal((made / attempted) * 100);
+}
+
+function formatCountPhrase(count: number, singularNoun: string): string {
+  return `${count} ${singularNoun}${count === 1 ? "" : "s"}`;
+}
+
+function buildSlateFactCandidates(
+  game: GameDayRecapGameFactStore,
+  slateContext: GameDayRecapSlateFactContext,
+): Array<Omit<GameDayRecapFactCandidate, "impactTier">> {
+  if (slateContext.gameCount <= 1) {
+    return [];
+  }
+  const facts: Array<Omit<GameDayRecapFactCandidate, "impactTier">> = [];
+  const combinedScore = game.teams.home.score + game.teams.away.score;
+  const addSlateFact = (
+    claimKey: string,
+    text: string,
+    impactScore: number,
+  ) => {
+    facts.push({
+      category: "slate",
+      chronologicalSort: null,
+      claimKey,
+      id: buildFactCandidateId(game.matchId, claimKey),
+      impactScore,
+      mustMention: false,
+      preferredPlacement: "opening",
+      sourceFields: ["factStore.games"],
+      storyPhase: "lead",
+      text,
+    });
+  };
+
+  if (slateContext.closestMatchIds.has(game.matchId) && game.finalMargin <= 5) {
+    addSlateFact(
+      "slate_closest_game",
+      `This was the slate's closest game at a ${game.finalMargin}-point margin.`,
+      64,
+    );
+  }
+  if (
+    slateContext.biggestMarginMatchIds.has(game.matchId) &&
+    game.finalMargin >= 15
+  ) {
+    addSlateFact(
+      "slate_biggest_margin",
+      `This was the slate's biggest margin at ${game.finalMargin} points.`,
+      46,
+    );
+  }
+  if (
+    slateContext.highestScoringMatchIds.has(game.matchId) &&
+    combinedScore >= 180
+  ) {
+    addSlateFact(
+      "slate_highest_scoring",
+      `This was the slate's highest-scoring game with ${combinedScore} combined points.`,
+      50,
+    );
+  }
+  if (
+    slateContext.highestScoringTeam?.matchId === game.matchId &&
+    slateContext.highestScoringTeam.score >= 95
+  ) {
+    addSlateFact(
+      "slate_highest_scoring_team",
+      `${slateContext.highestScoringTeam.teamName} was the slate's highest-scoring team with ${slateContext.highestScoringTeam.score} points.`,
+      48,
+    );
+  }
+  if (
+    slateContext.lowestScoringTeam?.matchId === game.matchId &&
+    slateContext.lowestScoringTeam.score <= 75
+  ) {
+    addSlateFact(
+      "slate_lowest_scoring_team",
+      `${slateContext.lowestScoringTeam.teamName} had the slate's lowest team total with ${slateContext.lowestScoringTeam.score} points.`,
+      36,
+    );
+  }
+  if (
+    slateContext.topScorer?.matchId === game.matchId &&
+    slateContext.topScorer.value >= 25
+  ) {
+    addSlateFact(
+      "slate_high_scorer",
+      `${slateContext.topScorer.playerName} was the league's high scorer on the slate with ${slateContext.topScorer.value} points for ${slateContext.topScorer.teamName}.`,
+      slateContext.topScorer.value >= 40 ? 72 : 58,
+    );
+  }
+  if (
+    slateContext.topRebounder?.matchId === game.matchId &&
+    slateContext.topRebounder.value >= 12
+  ) {
+    addSlateFact(
+      "slate_high_rebounder",
+      `${slateContext.topRebounder.playerName} led the slate on the glass with ${slateContext.topRebounder.value} rebounds for ${slateContext.topRebounder.teamName}.`,
+      48,
+    );
+  }
+  if (
+    slateContext.topAssister?.matchId === game.matchId &&
+    slateContext.topAssister.value >= 8
+  ) {
+    addSlateFact(
+      "slate_high_assister",
+      `${slateContext.topAssister.playerName} handed out the slate's most assists with ${slateContext.topAssister.value} for ${slateContext.topAssister.teamName}.`,
+      48,
+    );
+  }
+  if (
+    slateContext.topStocksPlayer?.matchId === game.matchId &&
+    slateContext.topStocksPlayer.value >= 4
+  ) {
+    addSlateFact(
+      "slate_high_stocks",
+      `${slateContext.topStocksPlayer.playerName} led the slate in combined steals and blocks with ${slateContext.topStocksPlayer.value} for ${slateContext.topStocksPlayer.teamName}.`,
+      44,
+    );
+  }
+  if (
+    slateContext.topThreesPlayer?.matchId === game.matchId &&
+    slateContext.topThreesPlayer.value >= 4
+  ) {
+    addSlateFact(
+      "slate_most_threes",
+      `${slateContext.topThreesPlayer.playerName} made the slate's most threes with ${slateContext.topThreesPlayer.value} for ${slateContext.topThreesPlayer.teamName}.`,
+      44,
+    );
+  }
+  if (
+    slateContext.bestAllAroundPlayer?.matchId === game.matchId &&
+    slateContext.bestAllAroundPlayer.statLine &&
+    slateContext.bestAllAroundPlayer.value >= 28
+  ) {
+    const line = slateContext.bestAllAroundPlayer.statLine;
+    addSlateFact(
+      "slate_best_all_around",
+      `${slateContext.bestAllAroundPlayer.playerName} had one of the slate's best all-around lines for ${slateContext.bestAllAroundPlayer.teamName}: ${line.points} points, ${line.rebounds} rebounds, and ${line.assists} assists.`,
+      52,
+    );
+  }
+  if (slateContext.biggestRunMatchIds.has(game.matchId)) {
+    const runPoints = Math.max(
+      game.playByPlayFacts?.primaryRun?.teamPoints ?? 0,
+      game.playByPlayFacts?.longestUnansweredRun.teamPoints ?? 0,
+    );
+    if (runPoints >= 12) {
+      addSlateFact(
+        "slate_biggest_run",
+        `This game included the slate's biggest surfaced run at ${runPoints} points.`,
+        47,
+      );
+    }
+  }
+  if (slateContext.biggestComebackMatchIds.has(game.matchId)) {
+    const deficit = game.playByPlayFacts?.winnerComebackDeficit ?? 0;
+    if (deficit >= 8) {
+      addSlateFact(
+        "slate_biggest_comeback",
+        `This game featured the slate's biggest comeback, with the winner erasing a ${deficit}-point deficit.`,
+        56,
+      );
+    }
+  }
+  if (slateContext.mostLeadChangesMatchIds.has(game.matchId)) {
+    const leadChanges = game.playByPlayFacts?.leadChangeCount ?? 0;
+    if (leadChanges >= 6) {
+      addSlateFact(
+        "slate_most_lead_changes",
+        `This game had the slate's most lead changes with ${leadChanges}.`,
+        46,
+      );
+    }
+  }
+  if (slateContext.biggestSurpriseMatchIds.has(game.matchId)) {
+    addSlateFact(
+      "slate_biggest_surprise",
+      "This was the slate's biggest surprise by rating, record, standings, and game-context signals.",
+      49,
+    );
+  }
+  if (slateContext.onlyOvertimeMatchIds.has(game.matchId)) {
+    addSlateFact(
+      "slate_only_overtime_game",
+      "This was the slate's only overtime game.",
+      54,
+    );
+  }
+
+  return facts;
+}
+
+function buildRankedFactsLibraryNarrativePlan(args: {
+  fallbackPlan: GameDayRecapFactsLibraryNarrativePlan;
+  gameStory: GameDayRecapGameStory;
+  rankedFacts: GameDayRecapFactCandidate[];
+}): GameDayRecapFactsLibraryNarrativePlan {
+  const leadFacts = args.rankedFacts
+    .filter((fact) => fact.storyPhase === "lead")
+    .slice(0, 3)
+    .map((fact) => fact.text);
+  const setupFacts = args.rankedFacts
+    .filter((fact) => fact.storyPhase === "setup")
+    .sort(compareFactCandidatesByImpact)
+    .slice(0, 4)
+    .map((fact) => fact.text);
+  const gameFlowFacts = args.gameStory.selectedBeats.map((beat) => beat.text);
+  const closingFacts = args.rankedFacts
+    .filter((fact) => fact.storyPhase === "analysis")
+    .sort(compareFactCandidatesByImpact)
+    .slice(0, 5)
+    .map((fact) => fact.text);
+
+  return {
+    closingFacts: uniqueRecapLines([
+      ...closingFacts,
+      ...args.fallbackPlan.closingFacts,
+    ]).slice(0, 6),
+    gameFlowFacts: uniqueRecapLines([
+      ...leadFacts,
+      ...gameFlowFacts,
+      ...args.fallbackPlan.gameFlowFacts,
+    ]).slice(0, 8),
+    paragraphOrder: [
+      "Paragraph 1: manager-battle setup in 1-2 sentences using pregameBattle, both teams' tactics, GDP/prep reads, effort posture, and rotation context when useful.",
+      "Paragraph 2: game flow in 3-5 connected cause-and-effect sentences using gameStory.selectedBeats, not a quarter-by-quarter checklist.",
+      "Paragraph 3, or paragraphs 3-4 when gameStory.paragraphPlan.targetParagraphs is 4: postgame explanation with player, team edge, slate, series, or unusual stat facts.",
+    ],
+    setupFacts: uniqueRecapLines([
+      ...setupFacts,
+      ...args.fallbackPlan.setupFacts,
+    ]).slice(0, 6),
+  };
+}
+
+function buildFactsLibraryGameNarrativeBeats(
+  rankedFacts: GameDayRecapFactCandidate[],
+): GameDayRecapGameNarrativeBeat[] {
+  const selectedFacts = rankedFacts
+    .filter(
+      (fact) =>
+        fact.storyPhase === "game_flow" ||
+        fact.category === "game_flow" ||
+        fact.category === "ending",
+    )
+    .sort(compareFactCandidatesByImpact)
+    .slice(0, 10)
+    .sort(compareFactCandidatesChronologically)
+    .slice(0, 8);
+
+  return selectedFacts.map((fact) => ({
+    beatType: resolveGameNarrativeBeatType(fact),
+    combineGuidance: combineGuidanceForNarrativeBeat(fact),
+    factId: fact.id,
+    impactScore: fact.impactScore,
+    sourceFields: fact.sourceFields,
+    text: fact.text,
+    timeSort: fact.chronologicalSort,
+  }));
+}
+
+function buildFactsLibraryGameStory(args: {
+  game: GameDayRecapGameFactStore;
+  gameNarrativeBeats: GameDayRecapGameNarrativeBeat[];
+  rankedFacts: GameDayRecapFactCandidate[];
+}): GameDayRecapGameStory {
+  const factById = new Map(args.rankedFacts.map((fact) => [fact.id, fact]));
+  const beats = args.gameNarrativeBeats
+    .map((beat) => {
+      const fact = factById.get(beat.factId);
+      return fact ? toGameStoryBeat(beat, fact, args.game) : null;
+    })
+    .filter((beat): beat is GameDayRecapGameStoryBeat => Boolean(beat));
+  const suppressedFactIds = new Set<string>();
+  const selected: GameDayRecapGameStoryBeat[] = [];
+
+  const addBeat = (beat: GameDayRecapGameStoryBeat | null) => {
+    if (!beat || selected.some((entry) => entry.factId === beat.factId)) {
+      return;
+    }
+    selected.push(beat);
+  };
+  const findBeat = (
+    predicate: (beat: GameDayRecapGameStoryBeat, fact: GameDayRecapFactCandidate) => boolean,
+  ) =>
+    beats.find((beat) => {
+      const fact = factById.get(beat.factId);
+      return fact ? predicate(beat, fact) : false;
+    }) ?? null;
+
+  const mainCharacterFact = findMainCharacterFact(args.game, args.rankedFacts);
+  const mainCharacter =
+    mainCharacterFact && args.game.winner.winnerSide
+      ? buildGameStoryMainCharacter(args.game, mainCharacterFact)
+      : null;
+  const mainCharacterBeat =
+    mainCharacterFact && mainCharacter
+      ? toGameStoryBeat(
+          {
+            beatType: "texture",
+            combineGuidance:
+              "Use this as the player-driven throughline, then attach early spurts or takeover beats around it.",
+            factId: mainCharacterFact.id,
+            impactScore: mainCharacterFact.impactScore,
+            sourceFields: mainCharacterFact.sourceFields,
+            text: mainCharacter.supportingText,
+            timeSort: null,
+          },
+          mainCharacterFact,
+          args.game,
+          "mainCharacter",
+        )
+      : null;
+
+  const firstHalfShape =
+    findBeat((beat, fact) =>
+      Boolean(
+        (fact.claimKey.startsWith("player_scoring_spurt") &&
+          (beat.timeBand === "early" || beat.timeBand === "first_half")) ||
+          fact.claimKey === "halftime_tight",
+      ),
+    ) ??
+    findBeat((beat) => beat.timeBand === "early" || beat.timeBand === "first_half");
+  const injurySwing = findBeat((_beat, fact) =>
+    /^explicit_(?:injury|foul_out|ejection|technical)_/.test(fact.claimKey),
+  );
+  const turningPoint = findBeat((_beat, fact) =>
+    /\b(?:took_lead_for_good|lead_change|winner_comeback)\b/i.test(
+      fact.claimKey,
+    ),
+  );
+  const takeoverStretch = findBeat((_beat, fact) =>
+    /\b(?:primary_run|scoring_drought|made_three_burst)\b/i.test(fact.claimKey),
+  );
+  const closingShape = findBeat((beat, fact) =>
+    beat.beatRole === "closingShape" ||
+    /\b(?:largest_lead|closing|buzzerbeater|last_chance|decisive_score)\b/i.test(
+      fact.claimKey,
+    ),
+  );
+
+  addBeat(firstHalfShape);
+  addBeat(injurySwing);
+  addBeat(turningPoint);
+  addBeat(takeoverStretch);
+  addBeat(closingShape);
+  addBeat(mainCharacterBeat);
+
+  const mustMentionBeats = beats.filter((beat) =>
+    Boolean(factById.get(beat.factId)?.mustMention),
+  );
+  mustMentionBeats.forEach(addBeat);
+
+  selected.sort(compareGameStoryBeats);
+  const trimmedSelected = selected.slice(0, 5);
+  for (const beat of beats) {
+    if (!trimmedSelected.some((selectedBeat) => selectedBeat.factId === beat.factId)) {
+      const fact = factById.get(beat.factId);
+      if (
+        fact &&
+        (fact.claimKey === "decisive_quarter" ||
+          fact.claimKey === "through_three" ||
+          fact.claimKey === "largest_lead" ||
+          fact.claimKey === "last_loser_lead")
+      ) {
+        suppressedFactIds.add(beat.factId);
+      }
+    }
+  }
+
+  const selectedFactIds = new Set(trimmedSelected.map((beat) => beat.factId));
+  for (const fact of args.rankedFacts) {
+    if (
+      !selectedFactIds.has(fact.id) &&
+      fact.storyPhase === "game_flow" &&
+      shouldSuppressLedgerFactInGameStory(fact, trimmedSelected)
+    ) {
+      suppressedFactIds.add(fact.id);
+    }
+  }
+
+  const postgameStrength = args.rankedFacts.filter(
+    (fact) => isPostgameSectionFact(fact) && fact.impactScore >= 56,
+  ).length;
+  const targetParagraphs: 3 | 4 = postgameStrength >= 4 ? 4 : 3;
+
+  return {
+    closingShape:
+      trimmedSelected.find((beat) => beat.beatRole === "closingShape") ??
+      closingShape,
+    firstHalfShape:
+      trimmedSelected.find((beat) => beat.beatRole === "firstHalfShape") ??
+      firstHalfShape,
+    guidance:
+      "Use selectedBeats as the game paragraph's story budget: write cause-and-effect prose around a few stretches, not a ledger of every quarter, lead, and clock.",
+    injurySwing:
+      trimmedSelected.find((beat) => beat.beatRole === "injurySwing") ??
+      injurySwing,
+    mainCharacter,
+    paragraphPlan: {
+      reason:
+        targetParagraphs === 4
+          ? "Postgame has several high-impact player or unusual-stat facts, so a second short closing paragraph is allowed."
+          : null,
+      targetParagraphs,
+    },
+    requiredFactIds: trimmedSelected
+      .filter((beat) => {
+        const fact = factById.get(beat.factId);
+        return Boolean(
+          fact?.mustMention ||
+            /^explicit_(?:injury|foul_out|ejection)_/.test(fact?.claimKey ?? ""),
+        );
+      })
+      .map((beat) => beat.factId),
+    selectedBeats: trimmedSelected,
+    suppressedFactIds: Array.from(suppressedFactIds),
+    takeoverStretch:
+      trimmedSelected.find((beat) => beat.beatRole === "takeoverStretch") ??
+      takeoverStretch,
+    timeAnchorBudget: {
+      defaultExactAnchors: 1,
+      guidance:
+        "Use at most one exact clock or run span in ordinary game prose; a second is allowed for a buzzerbeater, last chance, or decisive run.",
+      maxExactAnchors: hasDecisiveLateEnding(args.game) ? 2 : 1,
+    },
+    turningPoint:
+      trimmedSelected.find((beat) => beat.beatRole === "turningPoint") ??
+      turningPoint,
+  };
+}
+
+function toGameStoryBeat(
+  beat: GameDayRecapGameNarrativeBeat,
+  fact: GameDayRecapFactCandidate,
+  game: GameDayRecapGameFactStore,
+  overrideRole?: GameDayRecapGameStoryBeatRole,
+): GameDayRecapGameStoryBeat {
+  return {
+    beatRole: overrideRole ?? resolveGameStoryBeatRole(beat, fact),
+    combineGuidance: beat.combineGuidance,
+    factId: beat.factId,
+    impactScore: beat.impactScore,
+    includeClock: resolveGameStoryClockPolicy(fact, game),
+    sourceFields: beat.sourceFields,
+    text: beat.text,
+    timeBand: resolveGameStoryTimeBand(beat.timeSort),
+    timeSort: beat.timeSort,
+  };
+}
+
+function resolveGameStoryBeatRole(
+  beat: GameDayRecapGameNarrativeBeat,
+  fact: GameDayRecapFactCandidate,
+): GameDayRecapGameStoryBeatRole {
+  if (/^explicit_(?:injury|foul_out|ejection|technical)_/.test(fact.claimKey)) {
+    return "injurySwing";
+  }
+  if (
+    beat.beatType === "closingSequence" ||
+    /\b(?:largest_lead|closing|buzzerbeater|last_chance|decisive_score)\b/i.test(
+      fact.claimKey,
+    )
+  ) {
+    return "closingShape";
+  }
+  if (
+    /\b(?:primary_run|scoring_drought|made_three_burst)\b/i.test(fact.claimKey)
+  ) {
+    return "takeoverStretch";
+  }
+  if (
+    /\b(?:took_lead_for_good|lead_change|winner_comeback)\b/i.test(fact.claimKey)
+  ) {
+    return "turningPoint";
+  }
+  return beat.timeSort !== null && beat.timeSort < chronologicalSortForPeriod(3)
+    ? "firstHalfShape"
+    : "turningPoint";
+}
+
+function resolveGameStoryClockPolicy(
+  fact: GameDayRecapFactCandidate,
+  game: GameDayRecapGameFactStore,
+): GameDayRecapGameStoryBeat["includeClock"] {
+  if (
+    fact.mustMention &&
+    /\b(?:primary_run|buzzerbeater|last_chance|decisive_score)\b/i.test(
+      fact.claimKey,
+    )
+  ) {
+    return "required";
+  }
+  if (hasDecisiveLateEnding(game) && fact.category === "ending") {
+    return "required";
+  }
+  if (
+    /\b(?:halftime|decisive_quarter|through_three|largest_lead|last_loser_lead)\b/i.test(
+      fact.claimKey,
+    )
+  ) {
+    return "avoid";
+  }
+  return "optional";
+}
+
+function resolveGameStoryTimeBand(
+  timeSort: number | null,
+): GameDayRecapGameStoryBeat["timeBand"] {
+  if (timeSort === null) {
+    return "unknown";
+  }
+  if (timeSort < chronologicalSortForPeriod(2)) {
+    return "early";
+  }
+  if (timeSort < chronologicalSortForPeriod(3)) {
+    return "first_half";
+  }
+  if (timeSort < chronologicalSortForPeriod(4)) {
+    return "second_half";
+  }
+  return "late";
+}
+
+function findMainCharacterFact(
+  game: GameDayRecapGameFactStore,
+  rankedFacts: GameDayRecapFactCandidate[],
+): GameDayRecapFactCandidate | null {
+  const winnerSide = game.winner.winnerSide;
+  if (!winnerSide) {
+    return null;
+  }
+  const distribution = game.teams[winnerSide].scoringDistribution;
+  const topScorer = distribution?.topScorer;
+  if (!topScorer || (distribution?.topScorerPointShare ?? 0) < 34) {
+    return null;
+  }
+
+  return (
+    rankedFacts.find((fact) =>
+      fact.claimKey.startsWith(
+        `dominant_scorer_${sanitizeFactIdPart(topScorer.name)}`,
+      ),
+    ) ?? null
+  );
+}
+
+function buildGameStoryMainCharacter(
+  game: GameDayRecapGameFactStore,
+  fact: GameDayRecapFactCandidate,
+): GameDayRecapGameStoryMainCharacter | null {
+  const winnerSide = game.winner.winnerSide;
+  if (!winnerSide) {
+    return null;
+  }
+  const team = game.teams[winnerSide];
+  const topScorer = team.scoringDistribution?.topScorer;
+  if (!topScorer) {
+    return null;
+  }
+
+  return {
+    factId: fact.id,
+    playerName: topScorer.name,
+    pointShare: team.scoringDistribution?.topScorerPointShare ?? null,
+    supportingText: fact.text,
+    teamName: team.name,
+    teamSide: winnerSide,
+  };
+}
+
+function compareGameStoryBeats(
+  left: GameDayRecapGameStoryBeat,
+  right: GameDayRecapGameStoryBeat,
+): number {
+  const rolePriority = (role: GameDayRecapGameStoryBeatRole) =>
+    ({
+      firstHalfShape: 0,
+      injurySwing: 1,
+      turningPoint: 2,
+      takeoverStretch: 3,
+      closingShape: 4,
+      mainCharacter: 5,
+    })[role];
+  return (
+    compareNullableChronology(left.timeSort, right.timeSort) ||
+    rolePriority(left.beatRole) - rolePriority(right.beatRole) ||
+    right.impactScore - left.impactScore ||
+    left.factId.localeCompare(right.factId)
+  );
+}
+
+function shouldSuppressLedgerFactInGameStory(
+  fact: GameDayRecapFactCandidate,
+  selectedBeats: GameDayRecapGameStoryBeat[],
+): boolean {
+  if (!/\b(?:decisive_quarter|through_three|last_loser_lead|largest_lead)\b/i.test(fact.claimKey)) {
+    return false;
+  }
+  return selectedBeats.some(
+    (beat) =>
+      beat.beatRole === "turningPoint" ||
+      beat.beatRole === "takeoverStretch" ||
+      beat.beatRole === "closingShape",
+  );
+}
+
+function hasDecisiveLateEnding(game: GameDayRecapGameFactStore): boolean {
+  return Boolean(
+    game.playByPlayFacts?.endingFacts.decisiveScore?.isBuzzerBeater ||
+      game.playByPlayFacts?.endingFacts.opponentLastChance,
+  );
+}
+
+function resolveGameNarrativeBeatType(
+  fact: GameDayRecapFactCandidate,
+): GameDayRecapGameNarrativeBeatType {
+  if (
+    fact.category === "ending" ||
+    /\b(?:buzzerbeater|last_chance|decisive_score|closing|overtime)\b/i.test(
+      fact.claimKey,
+    )
+  ) {
+    return "closingSequence";
+  }
+  if (
+    /\b(?:primary_run|winner_comeback|took_lead_for_good|lead_change|player_scoring_spurt)\b/i.test(
+      fact.claimKey,
+    )
+  ) {
+    return "turningPoint";
+  }
+  if (
+    /\b(?:scoring_drought|last_loser_lead|secondary_run|made_three_burst)\b/i.test(
+      fact.claimKey,
+    )
+  ) {
+    return "response";
+  }
+  if (/\bquarter\b/i.test(fact.claimKey)) {
+    return "periodState";
+  }
+  return "texture";
+}
+
+function combineGuidanceForNarrativeBeat(
+  fact: GameDayRecapFactCandidate,
+): string {
+  const beatType = resolveGameNarrativeBeatType(fact);
+  switch (beatType) {
+    case "closingSequence":
+      return "Fold adjacent late-game facts into one closing sequence instead of listing each micro-event.";
+    case "periodState":
+      return "Use only if the period itself explains the game; avoid routine quarter-by-quarter narration.";
+    case "response":
+      return "Connect this as an answer or pressure point around the neighboring turning point.";
+    case "turningPoint":
+      return "Make this the spine of the game paragraph and attach nearby texture to it.";
+    case "texture":
+      return "Use as color only when it deepens the game-flow paragraph.";
+  }
+}
+
+function buildFactsLibraryRecapSections(args: {
+  gameStory: GameDayRecapGameStory;
+  gameNarrativeBeats: GameDayRecapGameNarrativeBeat[];
+  rankedFacts: GameDayRecapFactCandidate[];
+}): GameDayRecapFactsLibrary["recapSections"] {
+  const setupFacts = args.rankedFacts.filter(isPregameSectionFact);
+  const gameFactIds = Array.from(
+    new Set(
+      (args.gameStory.selectedBeats.length
+        ? args.gameStory.selectedBeats.map((beat) => beat.factId)
+        : args.gameNarrativeBeats.map((beat) => beat.factId)),
+    ),
+  );
+  const postgameFacts = args.rankedFacts.filter(isPostgameSectionFact);
+
+  return {
+    game: {
+      factIds: gameFactIds,
+      guidance:
+        "Paragraph 2, no visible label: write 3-5 connected cause-and-effect sentences from gameStory.selectedBeats; avoid quarter-by-quarter checklist prose and use broad time language except for the one best clocked beat.",
+      maxSentences: 5,
+      optionalFactIds: gameFactIds.filter(
+        (factId) =>
+          !args.rankedFacts.find((fact) => fact.id === factId)?.mustMention,
+      ),
+      requiredFactIds: gameFactIds.filter((factId) =>
+        Boolean(args.rankedFacts.find((fact) => fact.id === factId)?.mustMention),
+      ),
+    },
+    postgame: {
+      factIds: postgameFacts.map((fact) => fact.id),
+      guidance:
+        "Paragraph 3, no visible label, or paragraphs 3-4 when gameStory allows four paragraphs: close with player of the game, decisive boxscore/team edges, useful slate or standings consequence, and unusual stat contrasts; do not leak routine analysis into the opener or game-flow paragraph.",
+      maxSentences: args.gameStory.paragraphPlan.targetParagraphs === 4 ? 4 : 3,
+      optionalFactIds: postgameFacts
+        .filter((fact) => !fact.mustMention)
+        .map((fact) => fact.id),
+      requiredFactIds: postgameFacts
+        .filter((fact) => fact.mustMention)
+        .map((fact) => fact.id),
+    },
+    pregame: {
+      factIds: setupFacts.map((fact) => fact.id),
+      guidance:
+        "Paragraph 1, no visible label: write an integrated manager-battle setup in 1-2 sentences using pregameBattle, both teams' tactics, GDP/prep reads, effort posture, and rotation context when useful; do not print raw GDP codes or clunky legacy required-context sentences.",
+      maxSentences: 2,
+      optionalFactIds: setupFacts
+        .filter((fact) => !fact.mustMention)
+        .map((fact) => fact.id),
+      requiredFactIds: setupFacts
+        .filter((fact) => fact.mustMention)
+        .map((fact) => fact.id),
+    },
+    sectionOrder: ["pregame", "game", "postgame"],
+    visibleHeadings: false,
+  };
+}
+
+function isPregameSectionFact(fact: GameDayRecapFactCandidate): boolean {
+  return (
+    fact.storyPhase === "setup" ||
+    fact.category === "pre_game" ||
+    /\b(?:required_context|game_day_prep|effort|rotation|standings|series_state)\b/i.test(
+      fact.claimKey,
+    )
+  );
+}
+
+function isPostgameSectionFact(fact: GameDayRecapFactCandidate): boolean {
+  if (isPregameSectionFact(fact)) {
+    return false;
+  }
+  return (
+    fact.storyPhase === "analysis" ||
+    fact.category === "boxscore" ||
+    fact.category === "player" ||
+    fact.category === "matchup" ||
+    fact.category === "slate"
+  );
+}
+
+function uniqueFactCandidates(
+  facts: GameDayRecapFactCandidate[],
+): GameDayRecapFactCandidate[] {
+  const seen = new Set<string>();
+  return facts.filter((fact) => {
+    const key = fact.claimKey;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function compareFactCandidatesByImpact(
+  left: GameDayRecapFactCandidate,
+  right: GameDayRecapFactCandidate,
+): number {
+  const comparisons = [
+    right.impactScore - left.impactScore,
+    Number(right.mustMention) - Number(left.mustMention),
+    compareNullableChronology(left.chronologicalSort, right.chronologicalSort),
+    left.id.localeCompare(right.id),
+  ];
+  return comparisons.find((comparison) => comparison !== 0) ?? 0;
+}
+
+function compareFactCandidatesChronologically(
+  left: GameDayRecapFactCandidate,
+  right: GameDayRecapFactCandidate,
+): number {
+  const comparisons = [
+    compareNullableChronology(left.chronologicalSort, right.chronologicalSort),
+    right.impactScore - left.impactScore,
+    left.id.localeCompare(right.id),
+  ];
+  return comparisons.find((comparison) => comparison !== 0) ?? 0;
+}
+
+function compareNullableChronology(
+  left: number | null,
+  right: number | null,
+): number {
+  const leftValue = left ?? Number.POSITIVE_INFINITY;
+  const rightValue = right ?? Number.POSITIVE_INFINITY;
+  return leftValue - rightValue;
+}
+
+function impactTierForScore(score: number): GameDayRecapFactImpactTier {
+  if (score >= 95) {
+    return "must_lead";
+  }
+  if (score >= 75) {
+    return "high";
+  }
+  if (score >= 45) {
+    return "medium";
+  }
+  return "low";
+}
+
+function buildFactCandidateId(matchId: string, claimKey: string): string {
+  return `${sanitizeFactIdPart(matchId)}:${sanitizeFactIdPart(claimKey)}`;
+}
+
+function sanitizeFactIdPart(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function chronologicalSortForLeadChange(
+  facts: GameDayRecapPlayByPlayFacts | null,
+): number | null {
+  const comeback = facts?.leadChangeFacts.bigComebackLeadChange;
+  if (comeback) {
+    return chronologicalSortForClock(comeback.quarter, comeback.clock);
+  }
+  const burst = facts?.leadChangeFacts.rapidLeadChangeBurst;
+  if (burst?.startQuarter !== null && burst?.startQuarter !== undefined) {
+    return chronologicalSortForClock(burst.startQuarter, burst.startClock);
+  }
+  return null;
+}
+
+function chronologicalSortForPeriod(period: number): number {
+  return period <= 4
+    ? (period - 1) * 12 * 60
+    : 4 * 12 * 60 + (period - 5) * 5 * 60;
+}
+
+function chronologicalSortForClock(
+  period: number | null,
+  clock: string | null,
+): number | null {
+  if (period === null) {
+    return null;
+  }
+  const remainingSeconds = parseClockRemainingSecondsForFacts(clock);
+  if (remainingSeconds === null) {
+    return chronologicalSortForPeriod(period);
+  }
+
+  const periodLength = period <= 4 ? 12 * 60 : 5 * 60;
+  return chronologicalSortForPeriod(period) + (periodLength - remainingSeconds);
+}
+
+function parseClockRemainingSecondsForFacts(clock: string | null): number | null {
+  const match = clock?.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const minutes = Number(match[1]);
+  const seconds = Number(match[2]);
+  return Number.isInteger(minutes) && Number.isInteger(seconds)
+    ? minutes * 60 + seconds
+    : null;
 }
 
 function buildThroughThreeQuartersSentenceFromState(
@@ -8291,6 +12133,7 @@ function buildPromptTeam(args: {
       };
 
   return {
+    boxScoreStats: buildBoxScoreTeamStatsForRecap(args.team),
     conferenceIndex: args.hasHistoricalContext
       ? args.postgameContext.conferenceIndex + 1
       : null,
@@ -8315,9 +12158,102 @@ function buildPromptTeam(args: {
       ? args.postgameContext.recentSignalFlags
       : [],
     score: args.team.score ?? 0,
+    scoringDistribution: buildTeamScoringDistributionForRecap(args.team),
+    notablePlayers: extractNotablePlayers(args.team.players),
     turnovers: resolveTeamTurnoversForRecap(args.team),
     topPlayers: extractTopPlayers(args.team.players),
   };
+}
+
+function buildTeamScoringDistributionForRecap(
+  team: BBApiBoxScoreTeam,
+): GameDayRecapTeamScoringDistribution {
+  const scorers = team.players
+    .filter((player) => !player.didNotPlay)
+    .map((player) => ({
+      minutes: playerTotalMinutes(player),
+      name: player.fullName,
+      points: asNumberFromUnknown(player.performanceStats?.pts),
+    }))
+    .filter((player) => player.points > 0)
+    .sort(
+      (left, right) =>
+        right.points - left.points || left.name.localeCompare(right.name),
+    );
+  const totalPoints =
+    typeof team.teamTotals.pts === "number" && Number.isFinite(team.teamTotals.pts)
+      ? team.teamTotals.pts
+      : (team.score ?? scorers.reduce((total, player) => total + player.points, 0));
+  const topTwoPoints = scorers
+    .slice(0, 2)
+    .reduce((total, player) => total + player.points, 0);
+  const supportingCastPoints = Math.max(0, totalPoints - topTwoPoints);
+  const lowMinuteContributors = scorers
+    .filter((player) => player.minutes > 0 && player.minutes <= 18 && player.points >= 6)
+    .slice(0, 4);
+
+  return {
+    doubleFigureScorerCount: scorers.filter((player) => player.points >= 10).length,
+    lowMinuteContributorPoints: lowMinuteContributors.reduce(
+      (total, player) => total + player.points,
+      0,
+    ),
+    lowMinuteContributors,
+    supportingCastPoints,
+    topScorer: scorers[0]
+      ? {
+          name: scorers[0].name,
+          points: scorers[0].points,
+        }
+      : null,
+    topScorerPointShare:
+      totalPoints > 0 && scorers[0]
+        ? roundToOneDecimal((scorers[0].points / totalPoints) * 100)
+        : null,
+    topTwoPointShare:
+      totalPoints > 0 ? roundToOneDecimal((topTwoPoints / totalPoints) * 100) : null,
+    totalPoints,
+  };
+}
+
+function buildBoxScoreTeamStatsForRecap(
+  team: BBApiBoxScoreTeam,
+): GameDayRecapBoxScoreTeamStats {
+  return {
+    assists: resolveTeamBoxScoreTotalForRecap(team, "ast"),
+    fieldGoalsAttempted: resolveTeamBoxScoreTotalForRecap(team, "fga"),
+    fieldGoalsMade: resolveTeamBoxScoreTotalForRecap(team, "fgm"),
+    freeThrowsAttempted: resolveTeamBoxScoreTotalForRecap(team, "fta"),
+    freeThrowsMade: resolveTeamBoxScoreTotalForRecap(team, "ftm"),
+    offensiveRebounds: resolveTeamBoxScoreTotalForRecap(team, "oreb"),
+    personalFouls: resolveTeamBoxScoreTotalForRecap(team, "pf"),
+    rebounds: resolveTeamBoxScoreTotalForRecap(team, "reb"),
+    threePointersAttempted: resolveTeamBoxScoreTotalForRecap(team, "tpa"),
+    threePointersMade: resolveTeamBoxScoreTotalForRecap(team, "tpm"),
+  };
+}
+
+function resolveTeamBoxScoreTotalForRecap(
+  team: BBApiBoxScoreTeam,
+  key: BBApiBoxScorePlayerPerformanceStatKey,
+): number | null {
+  const teamTotal = team.teamTotals[key];
+  if (typeof teamTotal === "number" && Number.isFinite(teamTotal)) {
+    return teamTotal;
+  }
+
+  let hasPlayerStat = false;
+  const playerTotal = team.players.reduce((sum, player) => {
+    const value = player.performanceStats?.[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return sum;
+    }
+
+    hasPlayerStat = true;
+    return sum + value;
+  }, 0);
+
+  return hasPlayerStat ? playerTotal : null;
 }
 
 function resolveTeamTurnoversForRecap(team: BBApiBoxScoreTeam): number | null {
@@ -8498,9 +12434,11 @@ async function loadBoxScore(
 }
 
 async function loadPromptGamePlayByPlay(args: {
+  awayPlayers?: string[];
   awayTeamName: string;
   cache: Map<string, Promise<GameDayRecapPlayByPlayLoadResult>>;
   fetchPublicMatchPlayByPlay: PublicPlayByPlayFetcher;
+  homePlayers?: string[];
   homeTeamName: string;
   matchId: string;
 }): Promise<GameDayRecapPlayByPlayLoadResult> {
@@ -8510,8 +12448,10 @@ async function loadPromptGamePlayByPlay(args: {
   }
 
   const pending = loadGameDayRecapPlayByPlayFacts({
+    awayPlayers: args.awayPlayers,
     awayTeamName: args.awayTeamName,
     fetchPublicMatchPlayByPlay: args.fetchPublicMatchPlayByPlay,
+    homePlayers: args.homePlayers,
     homeTeamName: args.homeTeamName,
     matchId: args.matchId,
   });
@@ -8924,14 +12864,57 @@ function extractTopPlayers(
       return {
         assists: asNumberFromUnknown(performanceStats.ast),
         blocks: asNumberFromUnknown(performanceStats.blk),
+        fieldGoalsAttempted: asNumberFromUnknown(performanceStats.fga),
+        fieldGoalsMade: asNumberFromUnknown(performanceStats.fgm),
+        freeThrowsAttempted: asNumberFromUnknown(performanceStats.fta),
+        freeThrowsMade: asNumberFromUnknown(performanceStats.ftm),
+        isStarter: isBoxScoreStarter(player),
         minutes: playerTotalMinutes(player),
         name: player.fullName,
+        personalFouls: asNumberFromUnknown(performanceStats.pf),
+        playerId: player.id,
+        plusMinus: resolveBoxScorePlayerPlusMinus(player),
         points: asNumberFromUnknown(performanceStats.pts),
+        ratingValue: player.ratingValue,
         rebounds: asNumberFromUnknown(performanceStats.reb),
         steals: asNumberFromUnknown(performanceStats.stl),
+        threePointersAttempted: asNumberFromUnknown(performanceStats.tpa),
+        threePointersMade: asNumberFromUnknown(performanceStats.tpm),
         turnovers: asNumberFromUnknown(performanceStats.to),
       };
     });
+}
+
+function extractNotablePlayers(
+  players: BBApiBoxScorePlayer[],
+): NonNullable<GameDayRecapPromptTeam["notablePlayers"]> {
+  return players
+    .filter((player) => !player.didNotPlay && player.fullName.trim())
+    .map((player) => ({
+      isStarter: isBoxScoreStarter(player),
+      minutes: playerTotalMinutes(player),
+      name: player.fullName,
+      playerId: player.id,
+      plusMinus: resolveBoxScorePlayerPlusMinus(player),
+      points: asNumberFromUnknown(player.performanceStats?.pts),
+      ratingValue: player.ratingValue,
+    }))
+    .sort(
+      (left, right) =>
+        Number(right.isStarter) - Number(left.isStarter) ||
+        (right.ratingValue ?? -Infinity) - (left.ratingValue ?? -Infinity) ||
+        right.minutes - left.minutes ||
+        left.name.localeCompare(right.name),
+    )
+    .slice(0, 10);
+}
+
+function listBoxScorePlayerNamesForRecap(
+  players: BBApiBoxScorePlayer[],
+): string[] {
+  return players
+    .filter((player) => !player.didNotPlay && player.fullName.trim())
+    .map((player) => player.fullName);
 }
 
 function isRegularSeasonLeagueContextMatch(match: BBApiScheduleMatch): boolean {
@@ -8958,6 +12941,28 @@ function playerTotalMinutes(player: BBApiBoxScorePlayer): number {
   return Object.values(
     toOptionalRecord(player.minutesByPosition) ?? {},
   ).reduce<number>((sum, value) => sum + asNumberFromUnknown(value), 0);
+}
+
+function isBoxScoreStarter(player: BBApiBoxScorePlayer): boolean {
+  return asOptionalBoolean(toOptionalRecord(player.details)?.isStarter) ?? false;
+}
+
+function resolveBoxScorePlayerPlusMinus(
+  player: BBApiBoxScorePlayer,
+): number | null {
+  const details = toOptionalRecord(player.details);
+  if (!details) {
+    return null;
+  }
+
+  for (const key of ["plusMinus", "plus_minus", "pm", "+/-"]) {
+    const value = asOptionalNumber(details[key]);
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function wasPlayerLimitedByFoulTrouble(player: BBApiBoxScorePlayer): boolean {
@@ -10242,6 +14247,25 @@ function asOptionalNumber(value: unknown): number | null {
   return null;
 }
 
+function asOptionalBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
+}
+
 function asNumberFromUnknown(value: unknown): number {
   return typeof value === "number"
     ? value
@@ -10546,13 +14570,36 @@ function resolvePayloadFactStore(
 ): GameDayRecapFactStore {
   // Runtime paths should carry the canonical fact store through once built.
   // This rebuild path only exists for tests and older payload shapes.
-  return (
+  return attachPromptFactsLibrariesToFactStore(
     payload.factStore ??
-    buildGameDayRecapJudgeFactStore({
-      expectedGames: payload.games,
-      request: payload.request,
-    })
+      buildGameDayRecapJudgeFactStore({
+        expectedGames: payload.games,
+        request: payload.request,
+      }),
+    payload.games,
   );
+}
+
+function attachPromptFactsLibrariesToFactStore(
+  factStore: GameDayRecapFactStore,
+  promptGames: GameDayRecapPromptGame[],
+): GameDayRecapFactStore {
+  const factsLibraryByMatchId = new Map(
+    promptGames
+      .filter((game) => game.factsLibrary)
+      .map((game) => [game.matchId, game.factsLibrary!]),
+  );
+  if (!factsLibraryByMatchId.size) {
+    return factStore;
+  }
+
+  return {
+    ...factStore,
+    games: factStore.games.map((game) => ({
+      ...game,
+      factsLibrary: factsLibraryByMatchId.get(game.matchId) ?? game.factsLibrary,
+    })),
+  };
 }
 
 function requireJudgeRequestPayload(
@@ -10874,6 +14921,7 @@ async function polishGeneratedGameDayRecapResult(args: {
             gameFacts: buildGameDayRecapWriterGameFromFactStore({
               game: expectedGame,
               generationApproach: args.factStore.request.generationApproach,
+              slateContext: buildGameDayRecapSlateFactContext([expectedGame]),
             }),
             recapGame: {
               headline: game.headline,
@@ -11300,6 +15348,152 @@ function buildPostgameInterviewDiagnostic(args: {
   };
 }
 
+function buildGameDayRecapInterviewFacts(args: {
+  candidate: GameDayRecapPromptInterviewCandidate;
+  expectedGame: GameDayRecapGameFactStore;
+  recapGame: Pick<
+    GameDayRecapResultPayload["games"][number],
+    "headline" | "matchId" | "writeup"
+  >;
+}): GameDayRecapInterviewFacts {
+  const perspective =
+    args.candidate.perspective ??
+    (args.expectedGame.winner.winnerSide === args.candidate.teamSide
+      ? "winner"
+      : "loser");
+  const opponentSide = args.candidate.teamSide === "home" ? "away" : "home";
+  const opponentName = args.expectedGame.teams[opponentSide].name;
+  const outcome =
+    perspective === "winner"
+      ? `${args.candidate.teamName} beat ${opponentName} ${args.expectedGame.winner.finalScoreWinnerFacing ?? args.expectedGame.winner.finalScoreHomeAway}.`
+      : `${args.candidate.teamName} lost to ${opponentName} ${args.expectedGame.winner.finalScoreWinnerFacing ?? args.expectedGame.winner.finalScoreHomeAway}.`;
+  const storyBeats = uniqueRecapLines(
+    [
+      ...splitRecapText(args.recapGame.writeup).slice(0, 2),
+      ...args.expectedGame.playByPlaySummaryLines.slice(0, 4),
+      args.expectedGame.effortSummary,
+      ...args.expectedGame.rotationSummaries,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .filter(isInterviewSafeText),
+  ).slice(0, 6);
+  const safeContext = uniqueRecapLines(
+    [
+      ...args.expectedGame.requiredContextSentences,
+      ...args.expectedGame.gameDayPrepSummaries,
+      ...args.expectedGame.standingsContext,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .filter(isInterviewSafeText),
+  ).slice(0, 5);
+
+  return {
+    absurdQuestionGuidance:
+      "Absurd questions are allowed only when the premise is impossible or surreal enough to read as a joke, not as fake reporting.",
+    bannedMechanicsTerms: [...INTERVIEW_BANNED_MECHANICS_TERMS],
+    outcome,
+    perspective,
+    playerAngle: buildInterviewPlayerAngle(args.candidate),
+    playerRoleFacts: buildInterviewPlayerRoleFacts(args.candidate),
+    questionPlan: buildInterviewQuestionPlan(perspective),
+    safeContext,
+    statUsageGuidance:
+      "Use stats as private grounding. Do not quote a bundle of raw numbers in the question or answer; prefer qualitative phrasing.",
+    storyBeats,
+  };
+}
+
+function buildInterviewQuestionPlan(
+  perspective: "loser" | "winner",
+): GameDayRecapInterviewFacts["questionPlan"] {
+  return {
+    absurd:
+      perspective === "winner"
+        ? [
+            "If the scoreboard started levitating during that run, who on your bench would act like that was normal?",
+            "When the invisible marching band changed tempo, did the game start moving with you?",
+            "If tonight's momentum had to file paperwork, what would it list as its occupation?",
+          ]
+        : [
+            "If the scoreboard briefly turned into a courtroom, what evidence would you want thrown out?",
+            "When the invisible marching band changed tempo, did it get harder to hear your own rhythm?",
+            "If the game walked into the room wearing a fake mustache, when did you realize it was trouble?",
+          ],
+    emotional:
+      perspective === "winner"
+        ? [
+            "What did the game feel like once your group had control?",
+            "Where did you feel the night start leaning your way?",
+            "What was the clearest sign that your team had settled in?",
+          ]
+        : [
+            "What did the game feel like as it started slipping away?",
+            "Which stretch felt most important emotionally?",
+            "What was the hardest part to steady after the game tilted?",
+          ],
+    gameFlow:
+      perspective === "winner"
+        ? [
+            "What changed when the game turned toward your group?",
+            "How did you keep the pressure from becoming rushed?",
+            "What let you stay composed when the margin mattered?",
+          ]
+        : [
+            "Where did this one start to turn against you?",
+            "What made the response harder once they found momentum?",
+            "How did you try to pull the game back into reach?",
+          ],
+    loserResponse:
+      perspective === "loser"
+        ? [
+            "What has to look different next time?",
+            "What do you take from this without letting it sit too long?",
+            "How do you make sure the next close stretch answers differently?",
+          ]
+        : [
+            "What do you want the group to carry into the next one?",
+            "How do you keep this from becoming just one good night?",
+            "What still needs cleaning up after a win like this?",
+          ],
+  };
+}
+
+function buildInterviewPlayerAngle(
+  candidate: GameDayRecapPromptInterviewCandidate,
+): string {
+  const roles = buildInterviewPlayerRoleFacts(candidate);
+  return roles.length
+    ? `${candidate.playerName} can talk about ${joinNaturalLanguage(roles)}.`
+    : `${candidate.playerName} can talk about staying connected to the game without reciting the stat line.`;
+}
+
+function buildInterviewPlayerRoleFacts(
+  candidate: GameDayRecapPromptInterviewCandidate,
+): string[] {
+  const line = candidate.statLine;
+  const facts = [
+    line.points >= 25
+      ? "carrying a major scoring load"
+      : line.points >= 16
+        ? "finding offense without forcing the interview into numbers"
+        : null,
+    line.rebounds >= 10 ? "owning important work on the glass" : null,
+    line.assists >= 8 ? "creating good looks for teammates" : null,
+    line.steals + line.blocks >= 3 ? "making defensive disruption felt" : null,
+    line.minutes >= 36 ? "handling heavy minutes" : null,
+    line.turnovers >= 4 ? "cleaning up loose possessions" : null,
+    candidate.perspective === "loser"
+      ? "processing the loss without generic athlete-speak"
+      : "explaining the win with personality",
+  ].filter((fact): fact is string => Boolean(fact));
+
+  return uniqueRecapLines(facts).slice(0, 5);
+}
+
+function isInterviewSafeText(text: string): boolean {
+  return !containsInterviewBannedMechanicsTerm(text);
+}
+
 async function generateGuaranteedPostgameInterview(args: {
   allowSuspectRetention: boolean;
   candidate: GameDayRecapPromptInterviewCandidate;
@@ -11366,18 +15560,25 @@ async function generateGuaranteedPostgameInterview(args: {
   const writerGameFacts = buildGameDayRecapWriterGameFromFactStore({
     game: args.expectedGame,
     generationApproach: args.request.generationApproach,
+    slateContext: buildGameDayRecapSlateFactContext([args.expectedGame]),
   });
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
+      const recapGame = {
+        headline: args.game.headline,
+        matchId: args.game.matchId,
+        writeup: args.game.writeup,
+      };
       const output = await args.provider.generate({
         candidate: args.candidate,
         gameFacts: writerGameFacts,
-        recapGame: {
-          headline: args.game.headline,
-          matchId: args.game.matchId,
-          writeup: args.game.writeup,
-        },
+        interviewFacts: buildGameDayRecapInterviewFacts({
+          candidate: args.candidate,
+          expectedGame: args.expectedGame,
+          recapGame,
+        }),
+        recapGame,
         request: args.request,
         task: "postgame_interview",
       });
@@ -11625,6 +15826,13 @@ function buildFallbackPostgameInterview(args: {
           ),
           question: "What has to change for the next game?",
         },
+        {
+          answer: buildFallbackAbsurdInterviewAnswer(
+            args.candidate,
+            args.interviewIntensity,
+          ),
+          question: buildFallbackAbsurdInterviewQuestion(args.candidate),
+        },
       ],
       teamName: args.candidate.teamName,
       teamSide: args.candidate.teamSide,
@@ -11660,6 +15868,15 @@ function buildFallbackPostgameInterview(args: {
       question: buildFallbackInterviewRunQuestion(winningRun),
     });
   }
+  if (qa.length < MAX_POSTGAME_INTERVIEW_QA_COUNT) {
+    qa.push({
+      answer: buildFallbackAbsurdInterviewAnswer(
+        args.candidate,
+        args.interviewIntensity,
+      ),
+      question: buildFallbackAbsurdInterviewQuestion(args.candidate),
+    });
+  }
 
   return withAppliedInterviewPersonalityMetadata({
     playerName: args.candidate.playerName,
@@ -11675,36 +15892,37 @@ function buildFallbackLosingInterviewAnswer(
   interviewIntensity: RecapInterviewIntensityValue,
 ): string {
   const statSummary = summarizeInterviewStatLine(candidate.statLine);
+  const contribution = `I gave us ${statSummary}`;
   switch (candidate.personalityType ?? "friendly") {
     case "curt":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `We let it slip. I had ${statSummary}.`,
-        full_heat: `We let it slip. I had ${statSummary}. That cannot happen again.`,
-        pg13: `We let it slip. I had ${statSummary}. That is on us.`,
+        clean: `We let it slip. ${contribution}.`,
+        full_heat: `We let it slip. ${contribution}. That cannot happen again.`,
+        pg13: `We let it slip. ${contribution}. That is on us.`,
       });
     case "friendly":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `We had our chances, but the rough stretches added up. I had ${statSummary}, and we have to turn that into winning possessions next time.`,
-        full_heat: `We had enough to win and still let the game drift. I had ${statSummary}, but that is just decoration if we let them leave feeling loud.`,
-        pg13: `We had enough on the table to win it. I had ${statSummary}, but we have to stop letting rough stretches hand people confidence.`,
+        clean: `We had our chances, but the rough stretches added up. ${contribution}, and we have to turn that into winning possessions next time.`,
+        full_heat: `We had enough to win and still let the game drift. ${contribution}, but that is just decoration if we let them leave feeling loud.`,
+        pg13: `We had enough on the table to win it. ${contribution}, but we have to stop letting rough stretches hand people confidence.`,
       });
     case "rambling":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `It was one of those games where it kept feeling like one steady stretch could put us back on top, but the rough patches kept stacking up before we could truly settle. I had ${statSummary}, and we needed to string together more of the right possessions.`,
-        full_heat: `It was the kind of game where the door kept swinging open just wide enough for us to reclaim it, and every time we reached for the handle we left a finger in the frame. I had ${statSummary}, but we spent too many possessions letting them believe they were authors of the ending.`,
-        pg13: `It felt like the game kept offering us one clean runway back into control, and every time we started down it another sloppy patch rose up like a toll booth. I had ${statSummary}, but we needed a longer stretch of grown-up possessions.`,
+        clean: `It was one of those games where it kept feeling like one steady stretch could put us back on top, but the rough patches kept stacking up before we could truly settle. ${contribution}, and we needed to string together more of the right possessions.`,
+        full_heat: `It was the kind of game where the door kept swinging open just wide enough for us to reclaim it, and every time we reached for the handle we left a finger in the frame. ${contribution}, but we spent too many possessions letting them believe they were authors of the ending.`,
+        pg13: `It felt like the game kept offering us one clean runway back into control, and every time we started down it another sloppy patch rose up like a toll booth. ${contribution}, but we needed a longer stretch of grown-up possessions.`,
       });
     case "nonsensical":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `The game got wobbly on us for a while, and once it tipped the wrong direction we never quite got both hands back on it. I had ${statSummary}, but we needed steadier trips when it got strange.`,
-        full_heat: `The game turned into a shopping cart with one busted wheel, and instead of kicking it straight we kept pretending it was gliding. I had ${statSummary}, but the ugly minutes wrote the headline for us.`,
-        pg13: `The game started walking around sideways on us, and instead of grabbing it by the collar we kept letting it knock lamps over. I had ${statSummary}, but we needed saner possessions when the room got weird.`,
+        clean: `The game got wobbly on us for a while, and once it tipped the wrong direction we never quite got both hands back on it. ${contribution}, but we needed steadier trips when it got strange.`,
+        full_heat: `The game turned into a shopping cart with one busted wheel, and instead of kicking it straight we kept pretending it was gliding. ${contribution}, but the ugly minutes wrote the headline for us.`,
+        pg13: `The game started walking around sideways on us, and instead of grabbing it by the collar we kept letting it knock lamps over. ${contribution}, but we needed saner possessions when the room got weird.`,
       });
     case "excited":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `It hurts because it felt right there for us, but the game swung away in a few big moments. I had ${statSummary}, and we have to answer those stretches better next time.`,
-        full_heat: `It stings because I still felt the game sitting in reach, and then we gave them just enough oxygen to start acting like kings. I had ${statSummary}, and we have to punch back harder the next time the rope gets tight.`,
-        pg13: `It burns because it felt right there for us and then the game flipped on a few huge possessions. I had ${statSummary}, and we have to answer those swings like a serious team next time.`,
+        clean: `It hurts because it felt right there for us, but the game swung away in a few big moments. ${contribution}, and we have to answer those stretches better next time.`,
+        full_heat: `It stings because I still felt the game sitting in reach, and then we gave them just enough oxygen to start acting like kings. ${contribution}, and we have to punch back harder the next time the rope gets tight.`,
+        pg13: `It burns because it felt right there for us and then the game flipped on a few huge possessions. ${contribution}, and we have to answer those swings like a serious team next time.`,
       });
     case "braggart":
       return pickInterviewIntensityVariant(interviewIntensity, {
@@ -11726,27 +15944,27 @@ function buildFallbackLosingInterviewAnswer(
       });
     case "stoic":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `They won the key stretches. I had ${statSummary}, but we needed cleaner possessions when the game tightened.`,
-        full_heat: `They won the key stretches because we allowed it. I had ${statSummary}, but the critical possessions were not clean enough.`,
-        pg13: `They won the key stretches. I had ${statSummary}, but we were not sharp enough when the game hardened.`,
+        clean: `They won the key stretches. ${contribution}, but we needed cleaner possessions when the game tightened.`,
+        full_heat: `They won the key stretches because we allowed it. ${contribution}, but the critical possessions were not clean enough.`,
+        pg13: `They won the key stretches. ${contribution}, but we were not sharp enough when the game hardened.`,
       });
     case "cagey":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `There were a few stretches we will want back. I had ${statSummary}, but the bigger thing is cleaning up what we can control.`,
-        full_heat: `There were a few ugly turns in that game that I am sure both teams noticed. I had ${statSummary}, but the louder lesson is in the possessions we handed away.`,
-        pg13: `There were a couple stretches we will want back. I had ${statSummary}, but the bigger thing is cleaning up what we can control before people get too comfortable.`,
+        clean: `There were a few stretches we will want back. ${contribution}, but the bigger thing is cleaning up what we can control.`,
+        full_heat: `There were a few ugly turns in that game that I am sure both teams noticed. ${contribution}, but the louder lesson is in the possessions we handed away.`,
+        pg13: `There were a couple stretches we will want back. ${contribution}, but the bigger thing is cleaning up what we can control before people get too comfortable.`,
       });
     case "deadpan":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `They made the bigger run. I had ${statSummary}. That was not enough.`,
-        full_heat: `They made the bigger run. I had ${statSummary}. Apparently that was the part we chose to waste.`,
-        pg13: `They made the bigger run. I had ${statSummary}. Turns out that was still not enough.`,
+        clean: `They made the bigger run. ${contribution}. That was not enough.`,
+        full_heat: `They made the bigger run. ${contribution}. Apparently that was the part we chose to waste.`,
+        pg13: `They made the bigger run. ${contribution}. Turns out that was still not enough.`,
       });
     case "reflective":
       return pickInterviewIntensityVariant(interviewIntensity, {
-        clean: `The game turned when we stopped getting clean trips in a row. I had ${statSummary}, but we needed a fuller response.`,
-        full_heat: `Marcus Aurelius would probably call it a failure of discipline. We stopped stacking clean possessions, and the whole thing slid. I had ${statSummary}, but our collective response arrived late.`,
-        pg13: `The game turned when we stopped stringing together clean trips. I had ${statSummary}, but the response needed more force and more composure.`,
+        clean: `The game turned when we stopped getting clean trips in a row. ${contribution}, but we needed a fuller response.`,
+        full_heat: `Marcus Aurelius would probably call it a failure of discipline. We stopped stacking clean possessions, and the whole thing slid. ${contribution}, but our collective response arrived late.`,
+        pg13: `The game turned when we stopped stringing together clean trips. ${contribution}, but the response needed more force and more composure.`,
       });
   }
 }
@@ -11835,35 +16053,37 @@ function summarizeInterviewStatLine(
   statLine: GameDayRecapPromptInterviewCandidate["statLine"],
 ): string {
   const parts = [
-    statLine.points > 0 ? `${statLine.points} points` : null,
-    statLine.rebounds > 0 ? `${statLine.rebounds} rebounds` : null,
-    statLine.assists > 0 ? `${statLine.assists} assists` : null,
+    statLine.points >= 25
+      ? "a major scoring night"
+      : statLine.points >= 16
+        ? "steady scoring pressure"
+        : null,
+    statLine.rebounds >= 10
+      ? "real work on the glass"
+      : statLine.rebounds >= 6
+        ? "help on the glass"
+        : null,
+    statLine.assists >= 8
+      ? "a lot of playmaking"
+      : statLine.assists >= 4
+        ? "some useful creation"
+        : null,
+    statLine.steals + statLine.blocks >= 3
+      ? "defensive disruption"
+      : null,
   ].filter((part): part is string => Boolean(part));
 
-  return parts.length ? joinNaturalLanguage(parts) : "my minutes";
+  return parts.length ? joinNaturalLanguage(parts) : "useful work in the margins";
 }
 
 function buildFallbackInterviewStatQuestion(
   candidate: GameDayRecapPromptInterviewCandidate,
 ): string {
-  const statHighlights: string[] = [];
-  if (candidate.statLine.points > 0) {
-    statHighlights.push(`${candidate.statLine.points} points`);
-  }
-  if (candidate.statLine.rebounds > 0) {
-    statHighlights.push(`${candidate.statLine.rebounds} rebounds`);
-  }
-  if (candidate.statLine.assists > 0) {
-    statHighlights.push(`${candidate.statLine.assists} assists`);
+  if (candidate.perspective === "loser") {
+    return "What did the game feel like from inside it?";
   }
 
-  if (statHighlights.length === 0) {
-    return "From your perspective, what was working for you out there tonight?";
-  }
-
-  return ensureQuestion(
-    `You finished with ${joinNaturalLanguage(statHighlights.slice(0, 3))}. What was working for you out there tonight`,
-  );
+  return "What did the game feel like once it started opening up for you?";
 }
 
 function buildFallbackInterviewRunQuestion(
@@ -11882,41 +16102,179 @@ function buildFallbackInterviewRunQuestion(
   );
 }
 
+function buildFallbackAbsurdInterviewQuestion(
+  candidate: GameDayRecapPromptInterviewCandidate,
+): string {
+  return candidate.perspective === "loser"
+    ? "If the scoreboard briefly turned into a courtroom, what evidence would you want thrown out?"
+    : "If tonight's momentum had to file paperwork, what would it list as its occupation?";
+}
+
+function buildFallbackAbsurdInterviewAnswer(
+  candidate: GameDayRecapPromptInterviewCandidate,
+  interviewIntensity: RecapInterviewIntensityValue,
+): string {
+  const intensity = normalizeFallbackInterviewIntensity(interviewIntensity);
+  const losing = candidate.perspective === "loser";
+  switch (candidate.personalityType ?? "friendly") {
+    case "curt":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "The rough stretch. Strike it.",
+            full_heat: "The rough stretch. Throw it out. Burn the transcript.",
+            pg13: "The rough stretch. Throw it out. Next question.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "Pressure. Full-time job.",
+            full_heat: "Pressure. Chief executive. Corner office.",
+            pg13: "Pressure. Full-time job. Benefits included.",
+          });
+    case "nonsensical":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would object to the part where the floor started speaking in elbows. That felt legally questionable.",
+            full_heat: "I would object to the stretch where the floor wore a fake badge and started issuing subpoenas to our rhythm.",
+            pg13: "I would object to the part where the floor started notarizing bad news. That paperwork was crooked.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "Momentum would write down cloud accountant and then ask for a bigger desk.",
+            full_heat: "Momentum would write down thunder landlord and evict every doubt in the building.",
+            pg13: "Momentum would write down cloud accountant with a whistle and a dangerous briefcase.",
+          });
+    case "braggart":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would throw out the part where we let them feel comfortable. That was beneath our standard.",
+            full_heat: "I would throw out the part where we made them look like they belonged in my spotlight.",
+            pg13: "I would throw out the part where we gave them confidence they did not earn.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would list me as the supervisor.",
+            full_heat: "It would list me as owner, operator, and final signature.",
+            pg13: "It would list me as the supervisor and make everybody else initial the form.",
+          });
+    case "deadpan":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "Probably the ending. I did not care for that exhibit.",
+            full_heat: "The ending. Very poor document. I would shred it responsibly.",
+            pg13: "The ending. It was admitted into evidence against my wishes.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "Assistant manager of making things worse for them.",
+            full_heat: "Regional director of their inconvenience.",
+            pg13: "Assistant manager of their bad evening.",
+          });
+    case "reflective":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would ask the court to examine the moment we stopped choosing calm. That is where the case changed.",
+            full_heat: "I would ask the court to study the moment discipline left the room and let chaos hold the pen.",
+            pg13: "I would ask the court to examine the moment our composure stopped testifying clearly.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would list its occupation as consequence. We made enough connected choices for the night to answer back.",
+            full_heat: "It would list its occupation as consequence with a corner office in their discomfort.",
+            pg13: "It would list its occupation as consequence, because the game eventually became what our choices kept asking for.",
+          });
+    case "rambling":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would probably start with the stretch where one small mistake invited another one over, and before you know it the whole table is crowded and nobody remembers who brought the chairs.",
+            full_heat: "I would start with the stretch where one mistake invited cousins, neighbors, and a marching permit, because suddenly the whole room was crowded with bad decisions wearing name tags.",
+            pg13: "I would start with the stretch where one mistake invited two more over, and suddenly the whole table was leaning the wrong way.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would probably list something like rhythm inspector, because once we found the beat it kept checking every possession for loose screws.",
+            full_heat: "It would list itself as rhythm inspector, door kicker, and temporary mayor of every nervous possession they had.",
+            pg13: "It would list itself as rhythm inspector with a clipboard, because once we found the beat it kept checking their work.",
+          });
+    case "stoic":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "The unstable possessions. Remove those and the case changes.",
+            full_heat: "The unstable possessions. They were evidence of a problem we created.",
+            pg13: "The unstable possessions. That is where the verdict turned.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "Pressure. It performed its task.",
+            full_heat: "Pressure. It completed the assignment and left no appeal.",
+            pg13: "Pressure. It completed the assignment.",
+          });
+    case "cagey":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "There is a stretch I would file under sealed documents. We know which one.",
+            full_heat: "There is a stretch I would keep sealed until we fix it and make someone else answer for it.",
+            pg13: "There is a stretch I would file under sealed documents. The room knows which one.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would list something boring on purpose. The useful stuff stays with us.",
+            full_heat: "It would list something boring, because the real job title would ruin their week if I said it.",
+            pg13: "It would list something boring on purpose. The useful part stays in our room.",
+          });
+    case "excited":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would throw out the stretch where the energy got away from us, because you could feel the whole thing shift.",
+            full_heat: "I would throw out the stretch where they got loud and we let the building hand them a megaphone.",
+            pg13: "I would throw out the stretch where the energy got away from us and the whole night started shouting back.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would list fireworks inspector, because once we got rolling everything started popping.",
+            full_heat: "It would list fireworks inspector and then fail every safety form on purpose.",
+            pg13: "It would list fireworks inspector with both hands on the launch button.",
+          });
+    case "swaggering":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would throw out the stretch where the rhythm stopped wearing our colors.",
+            full_heat: "I would throw out the stretch where we let them borrow the spotlight and pose in it.",
+            pg13: "I would throw out the stretch where the rhythm stopped walking with us.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would list tempo consultant, dressed better than the form required.",
+            full_heat: "It would list tempo consultant, spotlight owner, and part-time problem for their whole bench.",
+            pg13: "It would list tempo consultant with a shiny pen and no apologies.",
+          });
+    case "earnest":
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would throw out the possessions where we stopped honoring the simple play. That is on us.",
+            full_heat: "I would throw out the possessions where we failed the standard the group owes itself.",
+            pg13: "I would throw out the possessions where we stopped honoring the simple play with enough force.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would list service, because the momentum came from everybody doing the next right thing.",
+            full_heat: "It would list collective nerve, because everybody gave something real to the pressure.",
+            pg13: "It would list service with a stamp from every player who did the next right thing.",
+          });
+    case "friendly":
+    default:
+      return losing
+        ? pickInterviewIntensityVariant(intensity, {
+            clean: "I would throw out the stretch where we stopped making the game feel simple. We can be better than that.",
+            full_heat: "I would throw out the stretch where we let the night get too comfortable in their hands.",
+            pg13: "I would throw out the stretch where the game started grinning the wrong direction.",
+          })
+        : pickInterviewIntensityVariant(intensity, {
+            clean: "It would list good teammate with a suspiciously large desk.",
+            full_heat: "It would list professional problem-maker and ask where to park the trophy cart.",
+            pg13: "It would list good teammate with a suspiciously large desk and very confident handwriting.",
+          });
+  }
+}
+
 function buildFallbackInterviewStatAnswer(
   candidate: GameDayRecapPromptInterviewCandidate,
   interviewIntensity: RecapInterviewIntensityValue,
 ): string {
-  const statParts: string[] = [];
-  if (candidate.statLine.points > 0) {
-    statParts.push(`${candidate.statLine.points} points`);
-  }
-  if (candidate.statLine.rebounds > 0) {
-    statParts.push(`${candidate.statLine.rebounds} rebounds`);
-  }
-  if (candidate.statLine.assists > 0) {
-    statParts.push(`${candidate.statLine.assists} assists`);
-  }
-  if (candidate.statLine.steals > 0) {
-    statParts.push(`${candidate.statLine.steals} steals`);
-  }
-  if (candidate.statLine.blocks > 0) {
-    statParts.push(`${candidate.statLine.blocks} blocks`);
-  }
-
-  const statSummary =
-    statParts.length > 0
-      ? applyInterviewPersonalityTone({
-          candidate,
-          interviewIntensity,
-          kind: "stat",
-          statSummary: joinNaturalLanguage(statParts.slice(0, 4)),
-        })
-      : applyInterviewPersonalityTone({
-          candidate,
-          interviewIntensity,
-          kind: "stat",
-          statSummary: null,
-        });
+  const statSummary = applyInterviewPersonalityTone({
+    candidate,
+    interviewIntensity,
+    kind: "stat",
+    statSummary: summarizeInterviewStatLine(candidate.statLine),
+  });
 
   return ensureSentence(statSummary);
 }
@@ -13981,9 +18339,12 @@ function parseGameDayRecapPostgameInterview(args: {
   if (!Array.isArray(record.qa)) {
     details.push("qa was missing or not an array.");
   } else {
-    if (record.qa.length < 1 || record.qa.length > 2) {
+    if (
+      record.qa.length < 1 ||
+      record.qa.length > MAX_POSTGAME_INTERVIEW_QA_COUNT
+    ) {
       details.push(
-        `qa must contain 1 or 2 exchanges, received ${record.qa.length}.`,
+        `qa must contain 1 to ${MAX_POSTGAME_INTERVIEW_QA_COUNT} exchanges, received ${record.qa.length}.`,
       );
     }
     for (let index = 0; index < record.qa.length; index += 1) {
@@ -14021,7 +18382,7 @@ function parseGameDayRecapPostgameInterview(args: {
     !teamSide ||
     !title ||
     normalizedQa.length < 1 ||
-    normalizedQa.length > 2
+    normalizedQa.length > MAX_POSTGAME_INTERVIEW_QA_COUNT
   ) {
     return {
       interview: null,
@@ -14782,6 +19143,13 @@ function collectSemanticIssuesForField(
       field,
       sentenceIndex,
     ),
+    ...validatePregameMechanicsSentence(
+      sentence,
+      matchId,
+      expectedGame,
+      field,
+      sentenceIndex,
+    ),
     ...validatePlayoffRecordLanguage(
       sentence,
       matchId,
@@ -14901,7 +19269,7 @@ function validateQuarterSentence(
       salvage: semanticIssueSalvageForField(field),
       sentence,
       sentenceIndex,
-      teamSide: winnerSide,
+      teamSide: winnerSide ?? undefined,
     });
     return issues;
   }
@@ -15568,13 +19936,349 @@ function validateGameLevelStyle(
     ...validateDuplicatePeriodStateRestatement(game, expectedGame),
     ...validateRepetitiveSentenceStarts(game),
     ...validateShortFactSentenceCluster(game),
+    ...validateVisibleRecapSectionHeadings(game, expectedGame),
+    ...validatePregameBattleParagraph(game, expectedGame),
+    ...validateGameStoryStructure(game, expectedGame),
+    ...validateBalancedAttackLanguage(game, expectedGame),
   ];
+}
+
+function validateVisibleRecapSectionHeadings(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  if (!expectedGame.factsLibrary?.recapSections) {
+    return [];
+  }
+
+  const paragraphs = game.writeup.split(/\n{2,}/);
+  const headingParagraph = paragraphs.find((paragraph) =>
+    /^\s*(?:pregame|game|postgame)\s*[:.-]/i.test(paragraph),
+  );
+  if (!headingParagraph) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: headingParagraph.trim().split(/\s+/).slice(0, 4).join(" "),
+      feedback: `For match ${game.matchId}, keep the pregame/game/postgame structure internal and remove visible section headings from the writeup.`,
+      field: "writeup",
+      kind: "visible_section_heading",
+      matchId: game.matchId,
+      reason:
+        "The writeup printed a visible recap section heading even though recapSections.visibleHeadings is false.",
+      salvage: "patch_or_remove",
+      sentence: headingParagraph.trim(),
+      sentenceIndex: 0,
+    },
+  ];
+}
+
+function validatePregameBattleParagraph(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  if (!expectedGame.factsLibrary?.pregameBattle) {
+    return [];
+  }
+
+  const firstParagraph =
+    game.writeup
+      .split(/\n{2,}/)
+      .map((paragraph) => paragraph.trim())
+      .find(Boolean) ?? "";
+  if (!firstParagraph) {
+    return [];
+  }
+
+  const missingTactics = (["away", "home"] as const).flatMap((side) =>
+    [expectedGame.teams[side].offStrategy, expectedGame.teams[side].defStrategy]
+      .map((strategy) => strategy?.trim() ?? "")
+      .filter(Boolean)
+      .filter(
+        (strategy) =>
+          !normalizedTextIncludesStrategy(firstParagraph, strategy),
+      ),
+  );
+  if (!missingTactics.length) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: missingTactics.slice(0, 4).join(", "),
+      feedback: `For match ${game.matchId}, the first paragraph should set up the manager battle and mention the available tactic choices: ${missingTactics
+        .slice(0, 4)
+        .join(", ")}.`,
+      field: "writeup",
+      kind: "missing_pregame_tactical_setup",
+      matchId: game.matchId,
+      reason:
+        "The fact-library pregame paragraph omitted one or more supplied tactic names.",
+      salvage: "patch_or_remove",
+      sentence: firstParagraph,
+      sentenceIndex: 0,
+    },
+  ];
+}
+
+function validateGameStoryStructure(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const gameStory = expectedGame.factsLibrary?.gameStory;
+  if (!gameStory) {
+    return [];
+  }
+
+  const paragraphs = game.writeup
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const gameParagraph =
+    paragraphs.length >= 3 ? paragraphs[1] ?? "" : game.writeup;
+  const issues: GameDayRecapSemanticValidationIssue[] = [];
+  const exactTimeAnchors = countExactGameTimeAnchors(gameParagraph);
+  if (exactTimeAnchors > gameStory.timeAnchorBudget.maxExactAnchors) {
+    issues.push({
+      actualValue: `${exactTimeAnchors} exact time anchors`,
+      feedback: `For match ${game.matchId}, reduce exact clocks and run spans in the game paragraph. Use factsLibrary.gameStory.timeAnchorBudget and broad timing language for secondary beats.`,
+      field: "writeup",
+      kind: "game_flow_time_clutter",
+      matchId: game.matchId,
+      reason:
+        "The game paragraph used more exact time anchors than the story budget allows.",
+      salvage: "patch_or_remove",
+      sentence: gameParagraph,
+      sentenceIndex: 0,
+    });
+  }
+
+  const writeupText = game.writeup.toLowerCase();
+  const requiredBeat = gameStory.selectedBeats.find(
+    (beat) =>
+      gameStory.requiredFactIds.includes(beat.factId) &&
+      beat.beatRole === "injurySwing" &&
+      !writeupMentionsGameStoryBeat(writeupText, beat),
+  );
+  if (requiredBeat) {
+    issues.push({
+      actualValue: requiredBeat.text,
+      feedback: `For match ${game.matchId}, mention the promoted gameStory injury/foul-out/ejection beat in the game paragraph without inventing extra details.`,
+      field: "writeup",
+      kind: "missing_game_story_beat",
+      matchId: game.matchId,
+      reason:
+        "A promoted explicit play-by-play event was omitted from the writeup.",
+      salvage: "patch_or_remove",
+      sentence: gameParagraph || game.writeup,
+      sentenceIndex: 0,
+    });
+  }
+
+  const finalParagraph = paragraphs[paragraphs.length - 1] ?? "";
+  if (
+    paragraphs.length >= 3 &&
+    countGameFlowLedgerMarkers(finalParagraph) >= 2 &&
+    containsPostgameStatExplanation(finalParagraph)
+  ) {
+    issues.push({
+      actualValue: finalParagraph,
+      feedback: `For match ${game.matchId}, separate the game-flow story from postgame player and team-stat explanation. The final paragraph should not carry the main chronology ledger.`,
+      field: "writeup",
+      kind: "game_flow_time_clutter",
+      matchId: game.matchId,
+      reason:
+        "The final paragraph blurred game-flow chronology together with postgame stat explanation.",
+      salvage: "patch_or_remove",
+      sentence: finalParagraph,
+      sentenceIndex: splitRecapText(game.writeup).length - 1,
+    });
+  }
+
+  return issues;
+}
+
+function validateBalancedAttackLanguage(
+  game: GameDayRecapResultGame,
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapSemanticValidationIssue[] {
+  const winnerSide = resolveGameWinnerSide(expectedGame);
+  const winnerDistribution = winnerSide
+    ? expectedGame.teams[winnerSide].scoringDistribution
+    : null;
+  const topScorerShare = winnerDistribution?.topScorerPointShare ?? null;
+  if (topScorerShare === null || topScorerShare < 34) {
+    return [];
+  }
+
+  const sentence = splitRecapText(game.writeup).find((entry) =>
+    /\b(?:balanced attack|balanced scoring|balanced offense)\b/i.test(entry),
+  );
+  if (!sentence) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: `${topScorerShare}% top-scorer share`,
+      feedback: `For match ${game.matchId}, do not call the winner balanced when the top scorer carried ${topScorerShare}% of its points. Use the star-led scoring fact instead.`,
+      field: "writeup",
+      kind: "unsupported_balanced_attack",
+      matchId: game.matchId,
+      reason:
+        "The writeup described a star-led scoring distribution as balanced.",
+      salvage: "patch_or_remove",
+      sentence,
+      sentenceIndex: splitRecapText(game.writeup).indexOf(sentence),
+      teamSide: winnerSide ?? undefined,
+    },
+  ];
+}
+
+function countExactGameTimeAnchors(text: string): number {
+  const spanCount = (
+    text.match(
+      /\bfrom\s+\d{1,2}:\d{2}\s+left\b[^.!?]{0,120}\bto\s+\d{1,2}:\d{2}\s+left\b/gi,
+    ) ?? []
+  ).length;
+  const clockCount = (text.match(/\b\d{1,2}:\d{2}\s+left\b/gi) ?? []).length;
+  return (
+    spanCount +
+    Math.max(0, clockCount - spanCount * 2)
+  );
+}
+
+function writeupMentionsGameStoryBeat(
+  normalizedWriteup: string,
+  beat: GameDayRecapGameStoryBeat,
+): boolean {
+  if (beat.beatRole !== "injurySwing") {
+    return normalizedWriteup.includes(beat.text.toLowerCase().slice(0, 24));
+  }
+  const name = extractLikelyPlayerNameFromGameStoryBeat(beat);
+  return Boolean(
+    name &&
+      normalizedWriteup.includes(name.toLowerCase()) &&
+      /\b(?:injur|fouled out|eject|technical)\b/i.test(normalizedWriteup),
+  );
+}
+
+function extractLikelyPlayerNameFromGameStoryBeat(
+  beat: GameDayRecapGameStoryBeat,
+): string | null {
+  const match = /^([^,.]+?)(?:,|\s+(?:left|fouled|was))\b/i.exec(beat.text);
+  return match?.[1]?.trim() ?? null;
+}
+
+function countGameFlowLedgerMarkers(text: string): number {
+  return [
+    /\bhalftime\b/i,
+    /\bthrough three quarters\b/i,
+    /\bwon the (?:1st|2nd|3rd|4th|first|second|third|fourth) quarter\b/i,
+    /\blast lead\b/i,
+    /\btook the lead for good\b/i,
+    /\b\d{1,2}-\d{1,2}\s+run\b/i,
+  ].filter((pattern) => pattern.test(text)).length;
+}
+
+function containsPostgameStatExplanation(text: string): boolean {
+  return /\b(?:points?|rebounds?|assists?|turnovers?|three-pointers?|threes|free throws?|double-double|shooting|from deep)\b/i.test(
+    text,
+  );
+}
+
+function validatePregameMechanicsSentence(
+  sentence: string,
+  matchId: string,
+  expectedGame: GameDayRecapPromptGame,
+  field: GameDayRecapSemanticValidationIssueField,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  if (!expectedGame.factsLibrary?.pregameBattle || field !== "writeup") {
+    return [];
+  }
+
+  const rawMechanicsMatch = sentence.match(
+    /\b(?:GDP|effortDelta|(?:inside|outside|balanced|fast|slow|normal)\.(?:hit|miss))\b/i,
+  );
+  if (rawMechanicsMatch) {
+    return [
+      {
+        actualValue: rawMechanicsMatch[0],
+        feedback: `For match ${matchId}, replace raw pregame mechanics language "${rawMechanicsMatch[0]}" with natural manager-battle prose.`,
+        field,
+        kind: "raw_pregame_mechanics_language",
+        matchId,
+        reason:
+          "The fact-library recap exposed raw GDP/effort mechanics in public prose.",
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+      },
+    ];
+  }
+
+  const clunkyPhraseMatch = sentence.match(
+    /\b(?:held the (?:clear )?effort edge|prepared well for|missed on the [A-Za-z]+ (?:focus|pace) read)\b/i,
+  );
+  if (clunkyPhraseMatch) {
+    return [
+      {
+        actualValue: clunkyPhraseMatch[0],
+        feedback: `For match ${matchId}, replace the clunky pregame phrase "${clunkyPhraseMatch[0]}" with smoother manager-battle prose from factsLibrary.pregameBattle.`,
+        field,
+        kind: "clunky_pregame_mechanics_phrase",
+        matchId,
+        reason:
+          "The fact-library recap reused legacy effort/GDP wording instead of natural manager-battle prose.",
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+      },
+    ];
+  }
+
+  const unsupportedColorMatch = sentence.match(
+    /\b(?:locker room|film room|pregame (?:talk|speech)|coach(?:es)?\s+(?:said|told|preached|challenged|begged|warned)|manager(?:s)?\s+(?:said|told|preached|challenged|begged|warned))\b/i,
+  );
+  if (unsupportedColorMatch) {
+    return [
+      {
+        actualValue: unsupportedColorMatch[0],
+        feedback: `For match ${matchId}, use metaphor-only manager color and remove unsupported behind-the-scenes detail such as "${unsupportedColorMatch[0]}".`,
+        field,
+        kind: "unsupported_pregame_color",
+        matchId,
+        reason:
+          "The recap invented a coach/manager speech or behind-the-scenes pregame detail.",
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function normalizedTextIncludesStrategy(text: string, strategy: string): boolean {
+  const normalizedText = normalizeStrategyName(text);
+  const normalizedStrategy = normalizeStrategyName(strategy);
+  return Boolean(
+    normalizedStrategy && normalizedText.includes(normalizedStrategy),
+  );
 }
 
 function validateRequiredContextSentences(
   game: GameDayRecapResultGame,
   expectedGame: GameDayRecapPromptGame,
 ): GameDayRecapSemanticValidationIssue[] {
+  if (expectedGame.factsLibrary?.pregameBattle) {
+    return [];
+  }
+
   const requiredContextSentences = expectedGame.requiredContextSentences ?? [];
   if (!requiredContextSentences.length) {
     return [];
@@ -15673,6 +20377,18 @@ function validatePostgameInterview(
             candidate.teamSide,
             0,
           ),
+          ...validateInterviewMechanicsText(
+            interview.title,
+            game.matchId,
+            candidate.teamSide,
+            0,
+          ),
+          ...validateInterviewStatDumpText(
+            interview.title,
+            game.matchId,
+            candidate,
+            0,
+          ),
         ],
         sentenceIndexOffset,
       ),
@@ -15695,6 +20411,24 @@ function validatePostgameInterview(
               candidate.teamSide,
               0,
             ),
+            ...validateInterviewMechanicsText(
+              exchange.question,
+              game.matchId,
+              candidate.teamSide,
+              0,
+            ),
+            ...validateInterviewStatDumpText(
+              exchange.question,
+              game.matchId,
+              candidate,
+              0,
+            ),
+            ...validatePlausibleFakeInterviewEventText(
+              exchange.question,
+              game.matchId,
+              candidate.teamSide,
+              0,
+            ),
           ],
           sentenceIndexOffset,
         ),
@@ -15710,6 +20444,24 @@ function validatePostgameInterview(
               expectedGame,
             ),
             ...validateUnsupportedInterviewText(
+              exchange.answer,
+              game.matchId,
+              candidate.teamSide,
+              0,
+            ),
+            ...validateInterviewMechanicsText(
+              exchange.answer,
+              game.matchId,
+              candidate.teamSide,
+              0,
+            ),
+            ...validateInterviewStatDumpText(
+              exchange.answer,
+              game.matchId,
+              candidate,
+              0,
+            ),
+            ...validatePlausibleFakeInterviewEventText(
               exchange.answer,
               game.matchId,
               candidate.teamSide,
@@ -15791,6 +20543,135 @@ function validateUnsupportedInterviewText(
       teamSide,
     },
   ];
+}
+
+function validateInterviewMechanicsText(
+  text: string,
+  matchId: string,
+  teamSide: "away" | "home",
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  const bannedTerm = findInterviewBannedMechanicsTerm(text);
+  if (!bannedTerm) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: bannedTerm,
+      feedback: `For match ${matchId}, keep postgameInterview language player-facing and do not mention internal game mechanics such as "${bannedTerm}".`,
+      field: "postgameInterview",
+      kind: "unsupported_interview_claim",
+      matchId,
+      reason:
+        "The postgameInterview used internal game-mechanics language instead of natural player language.",
+      salvage: semanticIssueSalvageForField("postgameInterview"),
+      sentence: text,
+      sentenceIndex,
+      teamSide,
+    },
+  ];
+}
+
+function validateInterviewStatDumpText(
+  text: string,
+  matchId: string,
+  candidate: GameDayRecapPromptInterviewCandidate,
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  const referencedStats = countRawInterviewStatReferences(
+    text,
+    candidate.statLine,
+  );
+  const statLedQuestion =
+    /\b(?:you\s+(?:finished|ended|had)|you\s+put\s+up)\s+with\s+\d+\s+(?:points?|rebounds?|assists?|steals?|blocks?)\b/i.test(
+      text,
+    ) ||
+    /\b(?:you\s+(?:finished|ended|had)|you\s+put\s+up)\s+\d+\s+(?:points?|rebounds?|assists?|steals?|blocks?)\b/i.test(
+      text,
+    );
+  if (referencedStats < 2 && !statLedQuestion) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: "raw stat dump",
+      feedback: `For match ${matchId}, avoid stat-led interview phrasing. Use qualitative language instead of having the player or reporter recite the candidate's stat line.`,
+      field: "postgameInterview",
+      kind: "unsupported_interview_claim",
+      matchId,
+      reason:
+        "The postgameInterview quoted too much of the raw player stat line.",
+      salvage: semanticIssueSalvageForField("postgameInterview"),
+      sentence: text,
+      sentenceIndex,
+      teamSide: candidate.teamSide,
+    },
+  ];
+}
+
+function validatePlausibleFakeInterviewEventText(
+  text: string,
+  matchId: string,
+  teamSide: "away" | "home",
+  sentenceIndex: number,
+): GameDayRecapSemanticValidationIssue[] {
+  if (
+    !/\b(?:streaker|fan(?:s)?\s+(?:ran|stormed|jumped|interrupted|came\s+onto)|fight|brawl|scuffle|altercation|technical(?:\s+foul)?|ejection|injur(?:y|ed)|coach(?:es)?\s+(?:argued|confronted|was\s+ejected)|power\s+outage|arena\s+delay|game\s+delay|security\s+(?:stopped|removed|intervened))\b/i.test(
+      text,
+    )
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      actualValue: "plausible invented interview event",
+      feedback: `For match ${matchId}, absurd interview questions may be surreal, but do not invent plausible real-world incidents that could be mistaken for reporting.`,
+      field: "postgameInterview",
+      kind: "unsupported_interview_claim",
+      matchId,
+      reason:
+        "The postgameInterview referenced a plausible event that was not grounded in the supplied facts.",
+      salvage: semanticIssueSalvageForField("postgameInterview"),
+      sentence: text,
+      sentenceIndex,
+      teamSide,
+    },
+  ];
+}
+
+function containsInterviewBannedMechanicsTerm(text: string): boolean {
+  return Boolean(findInterviewBannedMechanicsTerm(text));
+}
+
+function findInterviewBannedMechanicsTerm(text: string): string | null {
+  return (
+    INTERVIEW_BANNED_MECHANICS_TERMS.find((term) => {
+      const pattern = new RegExp(`\\b${escapeRegExp(term)}\\b`, "i");
+      return pattern.test(text);
+    }) ?? null
+  );
+}
+
+function countRawInterviewStatReferences(
+  text: string,
+  statLine: GameDayRecapPromptInterviewCandidate["statLine"],
+): number {
+  const statReferences = [
+    { label: "points?", value: statLine.points },
+    { label: "rebounds?", value: statLine.rebounds },
+    { label: "assists?", value: statLine.assists },
+    { label: "steals?", value: statLine.steals },
+    { label: "blocks?", value: statLine.blocks },
+  ];
+
+  return statReferences.filter(
+    (stat) =>
+      stat.value > 0 &&
+      new RegExp(`\\b${stat.value}\\s+${stat.label}\\b`, "i").test(text),
+  ).length;
 }
 
 function validateRequiredPrimaryRunMention(
@@ -16924,14 +21805,18 @@ function choosePreferredRepairIssue(
 ): GameDayRecapSemanticValidationIssue {
   const priorities: Record<GameDayRecapSemanticValidationIssueKind, number> = {
     banned_style_phrase: 10,
+    clunky_pregame_mechanics_phrase: 10,
     choppy_fact_stack: 11,
     compact_streak_mismatch: 1,
     conflicting_series_summary_line: 13,
     duplicate_period_state_restatement: 12,
     duplicate_outcome_restatement: 12,
     explicit_streak_mismatch: 2,
+    game_flow_time_clutter: 11,
     missing_required_context_sentence: 7,
+    missing_game_story_beat: 8,
     missing_primary_run_mention: 8,
+    missing_pregame_tactical_setup: 8,
     missing_run_timing: 9,
     missing_decisive_ending_emphasis: 9,
     missing_series_summary_line: 8,
@@ -16941,17 +21826,21 @@ function choosePreferredRepairIssue(
     playoff_streak_language: 10,
     quarter_score_mismatch: 5,
     quarter_winner_score_mismatch: 6,
+    raw_pregame_mechanics_language: 10,
     repetitive_sentence_start: 11,
     record_mismatch: 0,
     short_fact_sentence_cluster: 11,
     through_three_quarters_mismatch: 4,
     tied_quarter_claim: 7,
     unsupported_interview_claim: 9,
+    unsupported_balanced_attack: 9,
+    unsupported_pregame_color: 10,
     unsupported_lead_change_claim: 8,
     unsupported_run_framing: 8,
     unsupported_scoring_context: 8,
     unsupported_run_claim: 8,
     unsupported_tactic_contrast: 8,
+    visible_section_heading: 10,
     wrong_quarter_winner: 8,
   };
 
@@ -16990,6 +21879,8 @@ function buildSafeReplacementSentence(
     }
     case "missing_series_summary_line":
       return null;
+    case "missing_game_story_beat":
+      return null;
     case "conflicting_series_summary_line":
       return null;
     case "missing_required_context_sentence":
@@ -17010,15 +21901,21 @@ function buildSafeReplacementSentence(
     case "unsupported_tactic_contrast":
       return buildSafeTacticalComparisonSentence(expectedGame);
     case "banned_style_phrase":
+    case "clunky_pregame_mechanics_phrase":
     case "choppy_fact_stack":
     case "duplicate_period_state_restatement":
     case "duplicate_outcome_restatement":
+    case "game_flow_time_clutter":
     case "one_game_streak_language":
     case "playoff_record_language":
     case "playoff_streak_language":
+    case "raw_pregame_mechanics_language":
     case "repetitive_sentence_start":
     case "short_fact_sentence_cluster":
     case "unsupported_interview_claim":
+    case "unsupported_balanced_attack":
+    case "unsupported_pregame_color":
+    case "visible_section_heading":
       return null;
     case "quarter_score_mismatch":
     case "quarter_winner_score_mismatch":
@@ -17042,6 +21939,10 @@ function buildSafeReplacementSentence(
     }
     case "through_three_quarters_mismatch":
       return buildSafeThroughThreeQuartersSentence(expectedGame);
+    case "missing_pregame_tactical_setup":
+      return expectedGame.factsLibrary?.pregameBattle
+        ? buildPregameTacticSentence(expectedGame.factsLibrary.pregameBattle.teams)
+        : null;
     default:
       return null;
   }
@@ -17502,8 +22403,10 @@ export const __testing = {
   buildGameDayRecapJudgeInterestingnessResultSchema,
   buildGameDayRecapJudgeSentenceFactualityResultSchema,
   buildGameDayRecapJudgeFactStore,
+  buildPregameBattleForFactsLibrary,
   buildGameDayRecapCostPayload,
   buildGameDayRecapPostgameInterviewBedrockRequest,
+  buildGameDayRecapWriterPayloadFromFactStore,
   buildJudgeSentenceChunks,
   computeSurpriseFactorForGame,
   buildQuarterFacts,
@@ -17543,6 +22446,8 @@ export const __testing = {
   resolveGameDayRecapModelPricing,
   resolveLeagueDaySlate,
   resolveLeagueGameDaySlate,
+  resolveDefenseTaxonomy,
+  resolveOffenseTaxonomy,
   resolveRecapQualityTier,
   resolveSeasonCandidatesForDate,
   resolveSeasonForDate,
