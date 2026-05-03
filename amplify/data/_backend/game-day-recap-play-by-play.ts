@@ -115,7 +115,10 @@ export type GameDayRecapPlayByPlayRun = {
 
 export type GameDayRecapPlayByPlayLeadChange = {
   awayScore: number;
+  beforeAwayScore: number;
+  beforeHomeScore: number;
   clock: string | null;
+  deficitBeforeLeadChange: number;
   deficitErased: number;
   eventText: string | null;
   homeScore: number;
@@ -666,7 +669,13 @@ function resolveLeadChanges(
     if (lastNonTieLeader && leader !== lastNonTieLeader) {
       leadChanges.push({
         awayScore: scoringEvent.afterAwayScore,
+        beforeAwayScore: scoringEvent.beforeAwayScore,
+        beforeHomeScore: scoringEvent.beforeHomeScore,
         clock: scoringEvent.clock,
+        deficitBeforeLeadChange: resolveDeficitBeforeLeadChange(
+          leader,
+          scoringEvent,
+        ),
         deficitErased: largestDeficitBySide[leader],
         eventText: scoringEvent.eventText,
         gameSecondsElapsed: scoringEvent.gameSecondsElapsed,
@@ -682,6 +691,18 @@ function resolveLeadChanges(
   }
 
   return leadChanges;
+}
+
+function resolveDeficitBeforeLeadChange(
+  leader: TeamSide,
+  scoringEvent: EventContext,
+): number {
+  return Math.max(
+    0,
+    leader === "home"
+      ? scoringEvent.beforeAwayScore - scoringEvent.beforeHomeScore
+      : scoringEvent.beforeHomeScore - scoringEvent.beforeAwayScore,
+  );
 }
 
 function resolveLeadForGoodFacts(
@@ -1795,7 +1816,11 @@ function resolveLeadChangeFacts(
     bigComebackLeadChange: internalBigComebackLeadChange
       ? {
           awayScore: internalBigComebackLeadChange.awayScore,
+          beforeAwayScore: internalBigComebackLeadChange.beforeAwayScore,
+          beforeHomeScore: internalBigComebackLeadChange.beforeHomeScore,
           clock: internalBigComebackLeadChange.clock,
+          deficitBeforeLeadChange:
+            internalBigComebackLeadChange.deficitBeforeLeadChange,
           deficitErased: internalBigComebackLeadChange.deficitErased,
           eventText: internalBigComebackLeadChange.eventText,
           homeScore: internalBigComebackLeadChange.homeScore,
@@ -2986,6 +3011,14 @@ function describeBigComebackLeadChange(
     leadChange.homeScore,
     leadChange.awayScore,
   );
+  const timeContext = formatClockContext(
+    leadChange.clock,
+    formatPeriodLabel(leadChange.quarter),
+  );
+  if (leadChange.deficitErased > leadChange.deficitBeforeLeadChange + 3) {
+    return `${teamName} went ahead ${score} ${timeContext} after earlier trailing by as many as ${leadChange.deficitErased}.`;
+  }
+
   return `${teamName} erased a ${leadChange.deficitErased}-point deficit and took the lead ${score} ${formatClockContext(
     leadChange.clock,
     formatPeriodLabel(leadChange.quarter),

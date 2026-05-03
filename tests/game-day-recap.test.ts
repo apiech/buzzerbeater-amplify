@@ -3246,10 +3246,11 @@ test("buildGameDayRecapPromptPayload surfaces matchup-relevant rating edges", as
       ),
     ),
   );
-  assert.ok(
+  assert.equal(
     factsLibrary.matchupEdgeFacts.supported.some((fact) =>
-      /For Splash Gang, .*offensive flow paired with 15 turnovers/i.test(fact),
+      /offensive flow/i.test(fact),
     ),
+    false,
   );
   assert.equal(
     factsLibrary.matchupEdgeFacts.supported.some((fact) =>
@@ -3809,6 +3810,173 @@ test("facts library curates a star-led game story with injury and unusual stat c
       (issue) => issue.kind === "missing_game_story_beat",
     ),
     false,
+  );
+});
+
+test("facts library suppresses separated last-lead and lead-for-good ledger facts in writer story", () => {
+  const game = createExpectedPromptGame("m-separated-leads");
+  game.finalMargin = 16;
+  game.teams.away.name = "Splash Gang";
+  game.teams.away.score = 97;
+  game.teams.home.name = "LA Lions";
+  game.teams.home.score = 81;
+  game.quarterScores = {
+    away: [18, 22, 24, 33],
+    home: [20, 21, 18, 22],
+  };
+  game.quarterFacts.periods = [
+    {
+      awayScore: 18,
+      homeScore: 20,
+      label: "1st quarter",
+      margin: 2,
+      period: 1,
+      winningSide: "home",
+    },
+    {
+      awayScore: 22,
+      homeScore: 21,
+      label: "2nd quarter",
+      margin: 1,
+      period: 2,
+      winningSide: "away",
+    },
+    {
+      awayScore: 24,
+      homeScore: 18,
+      label: "3rd quarter",
+      margin: 6,
+      period: 3,
+      winningSide: "away",
+    },
+    {
+      awayScore: 33,
+      homeScore: 22,
+      label: "4th quarter",
+      margin: 11,
+      period: 4,
+      winningSide: "away",
+    },
+  ];
+  game.quarterFacts.fourthQuarterOutcome = game.quarterFacts.periods[3]!;
+  game.playByPlayFacts = {
+    bestCompetitiveSwingRun: createEmptyRunFact("swing"),
+    endingFacts: {
+      decisiveScore: null,
+      opponentLastChance: null,
+    },
+    explicitEventFacts: [],
+    lateGameMoments: [],
+    largestLead: {
+      points: 16,
+      teamName: "Splash Gang",
+      teamSide: "away",
+    },
+    leadChangeCount: 4,
+    leadChangeFacts: {
+      bigComebackLeadChange: {
+        awayScore: 46,
+        beforeAwayScore: 44,
+        beforeHomeScore: 45,
+        clock: "10:38",
+        deficitBeforeLeadChange: 1,
+        deficitErased: 9,
+        eventText: "Splash Gang noses ahead.",
+        homeScore: 45,
+        previousLeaderSide: "home",
+        quarter: 3,
+        scoringTeamName: "Splash Gang",
+        scoringTeamSide: "away",
+      },
+      highVolumeLeadChangeGame: {
+        leadChangeCount: 4,
+        qualifies: false,
+      },
+      rapidLeadChangeBurst: null,
+    },
+    longestUnansweredRun: createEmptyRunFact("unanswered"),
+    primaryRun: createRunFact({
+      endAwayScore: 91,
+      endClock: "02:10",
+      endHomeScore: 73,
+      endQuarter: 4,
+      opponentPoints: 10,
+      runType: "swing",
+      startAwayScore: 63,
+      startClock: "09:20",
+      startHomeScore: 63,
+      startQuarter: 4,
+      teamName: "Splash Gang",
+      teamPoints: 28,
+      teamSide: "away",
+    }),
+    secondaryRun: null,
+    summaryLines: [
+      "Splash Gang went ahead 46-45 with 10:38 left in the 3rd quarter after earlier trailing by as many as 9.",
+      "Splash Gang used a 28-10 run from 9:20 left in the 4th quarter to 2:10 left in the 4th quarter to seize control.",
+    ],
+    tookLeadForGood: {
+      awayScore: 61,
+      clock: "00:04",
+      deficitErased: 9,
+      eventText: "Splash Gang took the lead for good.",
+      homeScore: 59,
+      previousLeaderSide: "tie",
+      quarter: 3,
+      scoringTeamName: "Splash Gang",
+      scoringTeamSide: "away",
+    },
+    lastLeadByLoser: {
+      awayScore: 44,
+      clock: "10:59",
+      homeScore: 45,
+      leadingTeamName: "LA Lions",
+      leadingTeamSide: "home",
+      quarter: 3,
+      trailingTeamName: "Splash Gang",
+      trailingTeamSide: "away",
+    },
+    winnerComebackDeficit: 9,
+  };
+  game.playByPlaySummaryLines = game.playByPlayFacts.summaryLines;
+
+  const request = createSingleGameRecapPayload("m-separated-leads").request;
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [game],
+      request,
+    }),
+  });
+  const factsLibrary = expectPresent(
+    writerPayload.games[0]?.factsLibrary,
+    "expected facts library",
+  );
+  const selectedClaimText = factsLibrary.gameStory.selectedBeats
+    .map((beat) => beat.factId)
+    .join(" ");
+
+  assert.doesNotMatch(
+    selectedClaimText,
+    /lead_change|last_loser_lead|took_lead_for_good/,
+  );
+  assert.match(selectedClaimText, /primary_run/);
+  assert.equal(factsLibrary.gameFlow.lastLeadByLoser, null);
+  assert.equal(factsLibrary.gameFlow.tookLeadForGood, null);
+  assert.deepEqual(factsLibrary.gameFlow.highlightLeadChanges, []);
+  assert.doesNotMatch(
+    factsLibrary.chronologicalFacts.map((fact) => fact.text).join(" "),
+    /\blast lead|lead for good/i,
+  );
+  assert.ok(
+    factsLibrary.avoidFacts.some((fact) =>
+      /Do not pair the losing team's last lead/i.test(fact),
+    ),
   );
 });
 

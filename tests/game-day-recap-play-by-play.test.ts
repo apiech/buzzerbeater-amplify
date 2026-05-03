@@ -406,7 +406,7 @@ test("buildGameDayRecapPlayByPlayFacts captures a winning comeback and the bigge
   assert.ok(facts.summaryLines.includes("Alpha erased a 10-point deficit to win."));
   assert.ok(
     facts.summaryLines.includes(
-      "Alpha erased a 10-point deficit and took the lead 14-10 with 09:00 left in the 2nd quarter.",
+      "Alpha went ahead 14-10 with 09:00 left in the 2nd quarter after earlier trailing by as many as 10.",
     ),
   );
   assert.ok(
@@ -1553,7 +1553,10 @@ test("buildGameDayRecapPlayByPlayFacts captures a comeback lead change after era
 
   assert.deepStrictEqual(facts.leadChangeFacts.bigComebackLeadChange, {
     awayScore: 12,
+    beforeAwayScore: 12,
+    beforeHomeScore: 12,
     clock: "01:30",
+    deficitBeforeLeadChange: 0,
     deficitErased: 12,
     eventText: "Alpha takes the lead.",
     homeScore: 14,
@@ -1564,8 +1567,200 @@ test("buildGameDayRecapPlayByPlayFacts captures a comeback lead change after era
   });
   assert.equal(
     facts.summaryLines[1],
-    "Alpha erased a 12-point deficit and took the lead 14-12 with 01:30 left in the 4th quarter.",
+    "Alpha went ahead 14-12 with 01:30 left in the 4th quarter after earlier trailing by as many as 12.",
   );
+});
+
+test("lead-change summaries separate earlier comeback depth from the immediate lead change", () => {
+  const facts = buildFacts(
+    [
+      createEvent({
+        awayScore: 0,
+        clock: "11:20",
+        eventText: "LA Lions jump ahead.",
+        homeScore: 9,
+        id: 1,
+        quarter: 1,
+        wallClock: 1,
+      }),
+      createEvent({
+        awayScore: 8,
+        clock: "08:40",
+        eventText: "Splash Gang answers.",
+        homeScore: 9,
+        id: 2,
+        quarter: 1,
+        wallClock: 2,
+      }),
+      createEvent({
+        awayScore: 8,
+        clock: "05:10",
+        eventText: "LA Lions rebuild the margin.",
+        homeScore: 17,
+        id: 3,
+        quarter: 1,
+        wallClock: 3,
+      }),
+      createEvent({
+        awayScore: 16,
+        clock: "02:40",
+        eventText: "Splash Gang trims it again.",
+        homeScore: 17,
+        id: 4,
+        quarter: 1,
+        wallClock: 4,
+      }),
+      createEvent({
+        awayScore: 16,
+        clock: "10:05",
+        eventText: "LA Lions keep the edge.",
+        homeScore: 25,
+        id: 5,
+        quarter: 2,
+        wallClock: 5,
+      }),
+      createEvent({
+        awayScore: 24,
+        clock: "07:12",
+        eventText: "Splash Gang gets back within one.",
+        homeScore: 25,
+        id: 6,
+        quarter: 2,
+        wallClock: 6,
+      }),
+      createEvent({
+        awayScore: 24,
+        clock: "04:33",
+        eventText: "LA Lions stretch it.",
+        homeScore: 33,
+        id: 7,
+        quarter: 2,
+        wallClock: 7,
+      }),
+      createEvent({
+        awayScore: 32,
+        clock: "02:01",
+        eventText: "Splash Gang cuts it down.",
+        homeScore: 33,
+        id: 8,
+        quarter: 2,
+        wallClock: 8,
+      }),
+      createEvent({
+        awayScore: 32,
+        clock: "00:44",
+        eventText: "LA Lions push back.",
+        homeScore: 41,
+        id: 9,
+        quarter: 2,
+        wallClock: 9,
+      }),
+      createEvent({
+        awayScore: 40,
+        clock: "00:00",
+        eventText: "Splash Gang trims it before halftime.",
+        homeScore: 41,
+        id: 10,
+        quarter: 2,
+        wallClock: 10,
+      }),
+      createEvent({
+        awayScore: 40,
+        clock: "10:59",
+        eventText: "LA Lions take their last lead.",
+        homeScore: 45,
+        id: 11,
+        quarter: 3,
+        wallClock: 11,
+      }),
+      createEvent({
+        awayScore: 44,
+        clock: "10:59",
+        eventText: "Splash Gang gets within one.",
+        homeScore: 45,
+        id: 12,
+        quarter: 3,
+        wallClock: 12,
+      }),
+      createEvent({
+        awayScore: 46,
+        clock: "10:38",
+        eventText: "Splash Gang noses ahead.",
+        homeScore: 45,
+        id: 13,
+        quarter: 3,
+        wallClock: 13,
+      }),
+      createEvent({
+        awayScore: 59,
+        clock: "01:10",
+        eventText: "Splash Gang stays ahead.",
+        homeScore: 45,
+        id: 14,
+        quarter: 3,
+        wallClock: 14,
+      }),
+      createEvent({
+        awayScore: 59,
+        clock: "00:12",
+        eventText: "LA Lions tie it.",
+        homeScore: 59,
+        id: 15,
+        quarter: 3,
+        wallClock: 15,
+      }),
+      createEvent({
+        awayScore: 61,
+        clock: "00:04",
+        eventText: "Splash Gang takes the lead for good.",
+        homeScore: 59,
+        id: 16,
+        quarter: 3,
+        wallClock: 16,
+      }),
+    ],
+    {
+      awayTeamName: "Splash Gang",
+      homeTeamName: "LA Lions",
+    },
+  );
+
+  assert.deepStrictEqual(facts.leadChangeFacts.bigComebackLeadChange, {
+    awayScore: 46,
+    beforeAwayScore: 44,
+    beforeHomeScore: 45,
+    clock: "10:38",
+    deficitBeforeLeadChange: 1,
+    deficitErased: 9,
+    eventText: "Splash Gang noses ahead.",
+    homeScore: 45,
+    previousLeaderSide: "home",
+    quarter: 3,
+    scoringTeamName: "Splash Gang",
+    scoringTeamSide: "away",
+  });
+  assert.ok(
+    facts.summaryLines.includes(
+      "Splash Gang went ahead 46-45 with 10:38 left in the 3rd quarter after earlier trailing by as many as 9.",
+    ),
+  );
+  assert.doesNotMatch(
+    facts.summaryLines.join(" "),
+    /Splash Gang erased a 9-point deficit and took the lead 46-45/i,
+  );
+  assert.deepStrictEqual(facts.lastLeadByLoser, {
+    awayScore: 44,
+    clock: "10:59",
+    homeScore: 45,
+    leadingTeamName: "LA Lions",
+    leadingTeamSide: "home",
+    quarter: 3,
+    trailingTeamName: "Splash Gang",
+    trailingTeamSide: "away",
+  });
+  assert.ok(facts.tookLeadForGood);
+  assert.equal(facts.tookLeadForGood.previousLeaderSide, "home");
+  assert.equal(facts.tookLeadForGood.clock, "00:04");
 });
 
 test("summarizeRun keeps tied-start losing runs neutral instead of comeback phrasing", () => {
@@ -1644,7 +1839,10 @@ test("summarizeCombinedComebackEndingFacts condenses a same-sequence lead change
     leadChangeFacts: {
       bigComebackLeadChange: {
         awayScore: 83,
+        beforeAwayScore: 83,
+        beforeHomeScore: 82,
         clock: "00:44",
+        deficitBeforeLeadChange: 1,
         deficitErased: 11,
         eventText: "Mos Eisley Imperials took the lead for good.",
         homeScore: 84,

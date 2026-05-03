@@ -436,6 +436,16 @@ export const envContract = {
         "Optional access-key fallback for `npm run debug:game-day-recap`.",
     },
     {
+      name: "BBAPI_LOGIN",
+      purpose:
+        "Legacy optional username fallback for local BuzzerBeater debug scripts.",
+    },
+    {
+      name: "BBAPI_CODE",
+      purpose:
+        "Legacy optional access-key fallback for local BuzzerBeater debug scripts.",
+    },
+    {
       name: "ANALYZE",
       purpose: "Enables the optional Next.js bundle analysis build.",
     },

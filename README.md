@@ -308,6 +308,10 @@ This app depends on Amplify Gen 2 resources defined under [`amplify/`](/Users/ka
   - Optional username fallback for `npm run debug:game-day-recap`.
 - `BB_ACCESS_KEY`
   - Optional access-key fallback for `npm run debug:game-day-recap`.
+- `BBAPI_LOGIN`
+  - Legacy optional username fallback for local BuzzerBeater debug scripts.
+- `BBAPI_CODE`
+  - Legacy optional access-key fallback for local BuzzerBeater debug scripts.
 - `ANALYZE`
   - Enables the optional Next.js bundle analysis build.
 
