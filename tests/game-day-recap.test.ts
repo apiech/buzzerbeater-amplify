@@ -727,9 +727,24 @@ function createRunFact(args: {
   teamPoints: number;
   teamSide: "away" | "home";
 }) {
+  const startGameSeconds = gameSecondsForTestClock(
+    args.startQuarter,
+    args.startClock,
+  );
+  const endGameSeconds = gameSecondsForTestClock(args.endQuarter, args.endClock);
+  const elapsedSeconds = Math.max(0, endGameSeconds - startGameSeconds);
+  const startTeamScore =
+    args.teamSide === "home" ? args.startHomeScore : args.startAwayScore;
+  const startOpponentScore =
+    args.teamSide === "home" ? args.startAwayScore : args.startHomeScore;
+  const endTeamScore =
+    args.teamSide === "home" ? args.endHomeScore : args.endAwayScore;
+  const endOpponentScore =
+    args.teamSide === "home" ? args.endAwayScore : args.endHomeScore;
   return {
     endAwayScore: args.endAwayScore,
     endClock: args.endClock,
+    endGameSeconds,
     endMarginFromTeamPerspective:
       args.teamSide === "home"
         ? args.endHomeScore - args.endAwayScore
@@ -737,6 +752,14 @@ function createRunFact(args: {
     endedBy: "game_end" as const,
     endHomeScore: args.endHomeScore,
     endQuarter: args.endQuarter,
+    endScore: {
+      away: args.endAwayScore,
+      home: args.endHomeScore,
+      opponent: endOpponentScore,
+      team: endTeamScore,
+    },
+    elapsedMinutesFloor: Math.floor(elapsedSeconds / 60),
+    elapsedSeconds,
     marginSwing:
       (args.teamSide === "home"
         ? args.endHomeScore - args.endAwayScore
@@ -746,38 +769,86 @@ function createRunFact(args: {
         : args.startAwayScore - args.startHomeScore),
     netMargin: args.teamPoints - args.opponentPoints,
     opponentPoints: args.opponentPoints,
+    periodSpan: {
+      endQuarter: args.endQuarter,
+      quarterCount: Math.abs(args.endQuarter - args.startQuarter) + 1,
+      spansMultiplePeriods: args.endQuarter !== args.startQuarter,
+      startQuarter: args.startQuarter,
+    },
     runType: args.runType,
     startAwayScore: args.startAwayScore,
     startClock: args.startClock,
+    startGameSeconds,
     startMarginFromTeamPerspective:
       args.teamSide === "home"
         ? args.startHomeScore - args.startAwayScore
         : args.startAwayScore - args.startHomeScore,
     startHomeScore: args.startHomeScore,
     startQuarter: args.startQuarter,
+    startScore: {
+      away: args.startAwayScore,
+      home: args.startHomeScore,
+      opponent: startOpponentScore,
+      team: startTeamScore,
+    },
     teamName: args.teamName,
     teamPoints: args.teamPoints,
     teamSide: args.teamSide,
   };
 }
 
+function gameSecondsForTestClock(quarter: number, clock: string): number {
+  const [minutesText, secondsText] = clock.split(":");
+  const periodSeconds = quarter <= 4 ? 12 * 60 : 5 * 60;
+  const periodOffset =
+    quarter <= 4
+      ? (quarter - 1) * 12 * 60
+      : 4 * 12 * 60 + (quarter - 5) * 5 * 60;
+  const remainingSeconds =
+    Number.parseInt(minutesText ?? "0", 10) * 60 +
+    Number.parseInt(secondsText ?? "0", 10);
+  return periodOffset + Math.max(0, periodSeconds - remainingSeconds);
+}
+
 function createEmptyRunFact(runType: "swing" | "unanswered") {
   return {
     endAwayScore: 0,
     endClock: null,
+    endGameSeconds: null,
     endMarginFromTeamPerspective: 0,
     endedBy: null,
     endHomeScore: 0,
     endQuarter: null,
+    endScore: {
+      away: 0,
+      home: 0,
+      opponent: null,
+      team: null,
+    },
+    elapsedMinutesFloor: null,
+    elapsedSeconds: null,
     marginSwing: 0,
     netMargin: 0,
     opponentPoints: 0,
+    periodSpan: {
+      endQuarter: null,
+      quarterCount: null,
+      spansMultiplePeriods: false,
+      startQuarter: null,
+    },
     runType,
     startAwayScore: 0,
     startClock: null,
+    startGameSeconds: null,
     startMarginFromTeamPerspective: 0,
     startHomeScore: 0,
     startQuarter: null,
+    startScore: {
+      away: 0,
+      home: 0,
+      opponent: null,
+      team: null,
+    },
     teamName: null,
     teamPoints: 0,
     teamSide: null,
@@ -2963,9 +3034,14 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
     factStoreGame.winner.finalScoreWinnerFacing,
   );
   assert.equal(factsLibrary.pregameBattle.teams.home.offense.strategy, "Push The Ball");
+  assert.equal(
+    factsLibrary.pregameBattle.teams.home.offense.displayName,
+    "Push the Ball",
+  );
   assert.equal(factsLibrary.pregameBattle.teams.home.offense.focus, "balanced");
   assert.equal(factsLibrary.pregameBattle.teams.home.offense.pace, "fast");
   assert.equal(factsLibrary.pregameBattle.teams.away.offense.strategy, "Motion");
+  assert.equal(factsLibrary.pregameBattle.teams.away.defense.displayName, "2-3 Zone");
   assert.equal(factsLibrary.pregameBattle.teams.away.offense.focus, "outside");
   assert.equal(
     factsLibrary.pregameBattle.teams.away.defense.profileKey,
@@ -2973,7 +3049,7 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
   );
   assert.ok(
     factsLibrary.pregameBattle.summaryFacts.some((fact) =>
-      /Beta paired Motion with 23 Zone, while Alpha answered with Push The Ball and Man To Man/i.test(
+      /Beta paired Motion with 2-3 Zone, while Alpha answered with Push the Ball and Man-to-man/i.test(
         fact,
       ),
     ),
@@ -2984,7 +3060,7 @@ test("buildGameDayRecapPromptPayload projects writer facts from one canonical fa
         fact.claimKey === "pregame_tactics" &&
         fact.mustMention &&
         /Motion/.test(fact.text) &&
-        /Push The Ball/.test(fact.text),
+        /Push the Ball/.test(fact.text),
     ),
   );
   assert.ok(
@@ -3543,11 +3619,18 @@ test("facts library curates a star-led game story with injury and unusual stat c
     },
     explicitEventFacts: [
       {
+        awayScore: 58,
         clock: "07:42",
+        eventTeamScore: 58,
         eventText: "Finn Fisher left the game injured.",
         eventType: "injury",
+        homeScore: 61,
+        leaderSide: "home",
+        margin: 3,
+        opponentScore: 61,
         playerName: "Finn Fisher",
         quarter: 3,
+        scoreRelation: "trailing",
         teamName: "TarTeam",
         teamSide: "away",
       },
@@ -3647,7 +3730,48 @@ test("facts library curates a star-led game story with injury and unusual stat c
   assert.equal(mainCharacter.playerName, "Hichem Zamit");
   assert.match(mainCharacter.supportingText, /carried/i);
   assert.match(factsLibrary.gameStory.injurySwing?.text ?? "", /Finn Fisher.*starter.*left injured.*\+8/i);
+  assert.deepEqual(factsLibrary.gameStory.injurySwing?.explicitEventContext, {
+    awayScore: 58,
+    clock: "07:42",
+    eventTeamScore: 58,
+    eventType: "injury",
+    homeScore: 61,
+    leaderSide: "home",
+    margin: 3,
+    opponentScore: 61,
+    playerName: "Finn Fisher",
+    quarter: 3,
+    scoreRelation: "trailing",
+    teamName: "TarTeam",
+    teamSide: "away",
+  });
+  const takeoverRunContext = expectPresent(
+    factsLibrary.gameStory.takeoverStretch?.runContext,
+    "expected takeover run context",
+  );
+  assert.equal(takeoverRunContext.elapsedMinutesFloor, 9);
+  assert.deepEqual(takeoverRunContext.periodSpan, {
+    endQuarter: 4,
+    quarterCount: 2,
+    spansMultiplePeriods: true,
+    startQuarter: 3,
+  });
   assert.ok(factsLibrary.gameStory.selectedBeats.length <= 5);
+  assert.ok(
+    factsLibrary.gameStory.selectedBeats.some((beat) =>
+      /primary_run/.test(beat.factId),
+    ),
+  );
+  assert.equal(
+    factsLibrary.gameStory.selectedBeats.some((beat) =>
+      /took_lead_for_good/.test(beat.factId),
+    ),
+    false,
+  );
+  const selectedChronology = factsLibrary.gameStory.selectedBeats
+    .map((beat) => beat.timeSort)
+    .filter((timeSort): timeSort is number => timeSort !== null);
+  assert.deepEqual(selectedChronology, [...selectedChronology].sort((left, right) => left - right));
   assert.ok(factsLibrary.gameStory.suppressedFactIds.some((factId) => /decisive_quarter/.test(factId)));
   assert.equal(claimKeys.has("balanced_scoring"), false);
   assert.ok(claimKeys.has("star_led_scoring_distribution"));
@@ -3663,7 +3787,7 @@ test("facts library curates a star-led game story with injury and unusual stat c
       headline: "Visionaries beat TarTeam 101-81",
       matchId: "m-story",
       writeup:
-        "TarTeam paired Motion with 23 Zone, while Visionaries answered with Push The Ball and Man To Man.\n\nHichem Zamit scored 9 straight with 11:18 left in the 1st quarter, TarTeam led 52-49 at halftime, TarTeam's last lead came with 9:31 left in the 3rd quarter, Visionaries took the lead for good with 4:45 left in the 3rd quarter, and Visionaries used a 24-10 run from 4:45 left in the 3rd quarter to 7:04 left in the 4th quarter.\n\nVisionaries's balanced attack featured four players in double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
+        "TarTeam paired Motion with 2-3 Zone, while Visionaries answered with Push the Ball and Man-to-man.\n\nHichem Zamit scored 9 straight with 11:18 left in the 1st quarter, TarTeam led 52-49 at halftime, TarTeam's last lead came with 9:31 left in the 3rd quarter, Visionaries took the lead for good with 4:45 left in the 3rd quarter, and Visionaries used a 24-10 run from 4:45 left in the 3rd quarter to 7:04 left in the 4th quarter.\n\nVisionaries's balanced attack featured four players in double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
     }),
     [expectedGame],
   );
@@ -3671,6 +3795,367 @@ test("facts library curates a star-led game story with injury and unusual stat c
   assert.ok(issueKinds.has("game_flow_time_clutter"));
   assert.ok(issueKinds.has("missing_game_story_beat"));
   assert.ok(issueKinds.has("unsupported_balanced_attack"));
+  const supportedInjuryAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Visionaries beat TarTeam 101-81",
+      matchId: "m-story",
+      writeup:
+        "TarTeam paired Motion with 2-3 Zone, while Visionaries answered with Push the Ball and Man-to-man.\n\nHichem Zamit scored 9 straight early, Finn Fisher, a starter for TarTeam, left injured in the third quarter, and Visionaries used a 24-10 run from 4:45 left in the 3rd quarter to 7:04 left in the 4th quarter to take control.\n\nHichem Zamit carried Visionaries with 43 points while three teammates reached double figures, and Visionaries committed just one turnover while winning despite TarTeam's 33 free-throw attempts.",
+    }),
+    [expectedGame],
+  );
+  assert.equal(
+    supportedInjuryAssessment.issues.some(
+      (issue) => issue.kind === "missing_game_story_beat",
+    ),
+    false,
+  );
+});
+
+test("dominant scorer facts use true scoring leaders instead of performance-ranked topPlayers", () => {
+  const game = createExpectedPromptGame("m-true-second-scorer");
+  game.finalMargin = 16;
+  game.teams.home.name = "Philadelphia Cheesesteaks";
+  game.teams.home.score = 97;
+  game.teams.away.name = "ElectricTriangles";
+  game.teams.away.score = 81;
+  game.teams.home.scoringDistribution = {
+    doubleFigureScorerCount: 4,
+    lowMinuteContributorPoints: 0,
+    lowMinuteContributors: [],
+    scoringLeaders: [
+      { name: "Ng Kung On", points: 33 },
+      { name: "Second Scorer", points: 20 },
+      { name: "Third Scorer", points: 15 },
+      { name: "Fourth Scorer", points: 14 },
+      { name: "Fifth Scorer", points: 6 },
+    ],
+    secondScorer: {
+      name: "Second Scorer",
+      points: 20,
+    },
+    supportingCastPoints: 44,
+    topScorer: {
+      name: "Ng Kung On",
+      points: 33,
+    },
+    topScorerPointShare: 34,
+    topTwoPointShare: 54.6,
+    totalPoints: 97,
+  };
+  game.teams.home.topPlayers = [
+    {
+      assists: 1,
+      blocks: 0,
+      fieldGoalsAttempted: 22,
+      fieldGoalsMade: 12,
+      freeThrowsAttempted: 8,
+      freeThrowsMade: 7,
+      minutes: 36,
+      name: "Ng Kung On",
+      personalFouls: 2,
+      points: 33,
+      rebounds: 6,
+      steals: 1,
+      threePointersAttempted: 6,
+      threePointersMade: 2,
+      turnovers: 2,
+    },
+    {
+      assists: 10,
+      blocks: 1,
+      fieldGoalsAttempted: 4,
+      fieldGoalsMade: 2,
+      freeThrowsAttempted: 2,
+      freeThrowsMade: 2,
+      minutes: 34,
+      name: "Top Rated Low Scorer",
+      personalFouls: 1,
+      points: 6,
+      rebounds: 12,
+      steals: 3,
+      threePointersAttempted: 1,
+      threePointersMade: 0,
+      turnovers: 0,
+    },
+  ];
+
+  const request = createSingleGameRecapPayload("m-true-second-scorer").request;
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [game],
+      request,
+    }),
+  });
+  const factsLibrary = expectPresent(
+    writerPayload.games[0]?.factsLibrary,
+    "expected facts library",
+  );
+  const dominantFact = expectPresent(
+    factsLibrary.rankedFacts.find((fact) =>
+      fact.claimKey.startsWith("dominant_scorer_ng_kung_on"),
+    ),
+    "expected dominant scorer fact",
+  );
+
+  assert.doesNotMatch(dominantFact.text, /next .* at 6\b/i);
+  assert.match(dominantFact.text, /3 teammates also reached double figures|20/);
+});
+
+test("deterministic recap review distinguishes live lead scores from quarter results", () => {
+  const game = createExpectedPromptGame("m-live-lead");
+  game.teams.home.name = "Philadelphia Cheesesteaks";
+  game.teams.away.name = "ElectricTriangles";
+  game.teams.home.score = 97;
+  game.teams.away.score = 81;
+  game.finalMargin = 16;
+
+  const liveLeadAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Philadelphia Cheesesteaks beat ElectricTriangles 97-81",
+      matchId: "m-live-lead",
+      writeup:
+        "Philadelphia Cheesesteaks erased an 8-point deficit and took the lead 35-33 with 0:56 left in the 2nd quarter.",
+    }),
+    [game],
+  );
+  assert.equal(
+    liveLeadAssessment.issues.some(
+      (issue) => issue.kind === "quarter_score_mismatch",
+    ),
+    false,
+  );
+
+  const quarterResultAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Philadelphia Cheesesteaks beat ElectricTriangles 97-81",
+      matchId: "m-live-lead",
+      writeup: "Philadelphia Cheesesteaks won the 2nd quarter 35-33.",
+    }),
+    [game],
+  );
+  assert.ok(
+    quarterResultAssessment.issues.some(
+      (issue) => issue.kind === "quarter_score_mismatch",
+    ),
+  );
+});
+
+test("deterministic recap review accepts equivalent selected-run timing anchors", () => {
+  const game = createExpectedPromptGame("m-run-timing");
+  game.teams.home.name = "Philadelphia Cheesesteaks";
+  game.teams.away.name = "ElectricTriangles";
+  const primaryRun = createRunFact({
+    endAwayScore: 70,
+    endClock: "10:46",
+    endHomeScore: 76,
+    endQuarter: 4,
+    opponentPoints: 12,
+    runType: "swing",
+    startAwayScore: 58,
+    startClock: "08:19",
+    startHomeScore: 49,
+    startQuarter: 3,
+    teamName: "Philadelphia Cheesesteaks",
+    teamPoints: 27,
+    teamSide: "home",
+  });
+  game.playByPlayFacts = {
+    ...createBackAndForthPlayByPlayFacts(),
+    primaryRun,
+    summaryLines: [
+      "Philadelphia Cheesesteaks mounted a 27-12 run from 8:19 left in the 3rd quarter to 10:46 left in the 4th quarter.",
+    ],
+  };
+
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Philadelphia Cheesesteaks beat ElectricTriangles 97-81",
+      matchId: "m-run-timing",
+      writeup:
+        "The game remained competitive until Philadelphia Cheesesteaks mounted a 27-12 run from 8:19 in the third quarter to 10:46 in the fourth to seize control.",
+    }),
+    [game],
+  );
+
+  assert.equal(
+    assessment.issues.some((issue) => issue.kind === "missing_run_timing"),
+    false,
+  );
+
+  const broadAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Philadelphia Cheesesteaks beat ElectricTriangles 97-81",
+      matchId: "m-run-timing",
+      writeup:
+        "Philadelphia Cheesesteaks used a 27-12 run across 9 minutes in the third and fourth quarters to seize control.",
+    }),
+    [game],
+  );
+
+  assert.equal(
+    broadAssessment.issues.some((issue) => issue.kind === "missing_run_timing"),
+    false,
+  );
+});
+
+test("primary run omissions are draft quality only when gameStory did not select the run", () => {
+  const game = createExpectedPromptGame("m-run-not-selected");
+  game.playByPlayFacts = {
+    ...createBackAndForthPlayByPlayFacts(),
+    primaryRun: createRunFact({
+      endAwayScore: 70,
+      endClock: "10:46",
+      endHomeScore: 76,
+      endQuarter: 4,
+      opponentPoints: 12,
+      runType: "swing",
+      startAwayScore: 58,
+      startClock: "08:19",
+      startHomeScore: 49,
+      startQuarter: 3,
+      teamName: "Home",
+      teamPoints: 27,
+      teamSide: "home",
+    }),
+  };
+  const request = createSingleGameRecapPayload("m-run-not-selected").request;
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore: __testing.buildGameDayRecapJudgeFactStore({
+      expectedGames: [game],
+      request,
+    }),
+  });
+  const expectedGame = expectPresent(
+    writerPayload.games[0],
+    "expected writer game",
+  );
+  const factsLibrary = expectPresent(
+    expectedGame.factsLibrary,
+    "expected facts library",
+  );
+  factsLibrary.gameStory = {
+    ...factsLibrary.gameStory,
+    requiredFactIds: factsLibrary.gameStory.requiredFactIds.filter(
+      (factId) => !/primary_run/.test(factId),
+    ),
+    selectedBeats: factsLibrary.gameStory.selectedBeats.filter(
+      (beat) => !/primary_run/.test(beat.factId),
+    ),
+  };
+
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beat Away 85-81",
+      matchId: "m-run-not-selected",
+      writeup:
+        "Away paired Motion with 2-3 Zone, while Home answered with Push the Ball and Man-to-man.\n\nHome took control after halftime and kept the game clean from there.\n\nHome protected the ball and finished the job.",
+    }),
+    [expectedGame],
+  );
+
+  assert.equal(
+    assessment.issues.some(
+      (issue) => issue.kind === "missing_primary_run_mention",
+    ),
+    false,
+  );
+});
+
+test("saved validation payload reports draft-quality issues as valid but keeps hard fact issues", () => {
+  const game = createExpectedPromptGame("m-validation-status");
+  game.teams.home.name = "Home";
+  game.teams.away.name = "Away";
+
+  const assessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beat Away 85-81",
+      matchId: "m-validation-status",
+      writeup:
+        "Home beat Away 85-81. Home beat Away 85-81. Home protected the ball. Home shot better.",
+    }),
+    [game],
+  );
+  const draftIssues = assessment.issues.filter((issue) =>
+    ["duplicate_outcome_restatement", "repetitive_sentence_start"].includes(
+      issue.kind,
+    ),
+  );
+  assert.ok(draftIssues.length > 0);
+  const draftValidation = __testing.buildGameValidationPayload({
+    deterministicIssues: draftIssues,
+    judgeIssues: [],
+  });
+  assert.equal(draftValidation.status, "VALID");
+  assert.equal(draftValidation.issueCount, 0);
+
+  const hardIssue = expectPresent(
+    __testing
+      .assessGameDayRecapDeterministicPayload(
+        createRecapCandidateResult({
+          headline: "Home beat Away 85-81",
+          matchId: "m-validation-status",
+          writeup: "Away won the 2nd quarter 35-33.",
+        }),
+        [game],
+      )
+      .issues.find((issue) => issue.kind === "quarter_score_mismatch"),
+    "expected hard quarter-score issue",
+  );
+  const hardValidation = __testing.buildGameValidationPayload({
+    deterministicIssues: [hardIssue],
+    judgeIssues: [],
+  });
+  assert.equal(hardValidation.status, "SUSPECT");
+  assert.equal(hardValidation.issueCount, 1);
+});
+
+test("salvageGameDayRecapResult removes duplicate final-score restatements", async () => {
+  const expectedGame = createExpectedPromptGame("m-duplicate-cleanup");
+  expectedGame.teams.home.name = "Visionaries";
+  expectedGame.teams.away.name = "TarTeam";
+  expectedGame.teams.home.score = 101;
+  expectedGame.teams.away.score = 81;
+  expectedGame.finalMargin = 20;
+
+  const invalidResult = createRecapCandidateResult({
+    headline: "Visionaries beat TarTeam 101-81",
+    matchId: "m-duplicate-cleanup",
+    writeup:
+      "Visionaries beat TarTeam 101-81. Visionaries beat TarTeam 101-81. Visionaries controlled the fourth quarter.",
+  });
+  const deterministic = __testing.assessGameDayRecapDeterministicPayload(
+    invalidResult,
+    [expectedGame],
+  );
+
+  const repaired = await __testing.salvageGameDayRecapResult({
+    deterministicIssues: deterministic.issues,
+    expectedGames: [expectedGame],
+    judgeIssues: [],
+    judgeProvider: createPassingJudgeProvider(),
+    request: createSingleGameRecapPayload("m-duplicate-cleanup").request,
+    result: invalidResult,
+  });
+  const writeup = repaired.result.games[0]?.writeup ?? "";
+
+  assert.equal(
+    (writeup.match(/Visionaries beat TarTeam 101-81/g) ?? []).length,
+    1,
+  );
+  assert.match(writeup, /controlled the fourth quarter/i);
 });
 
 test("buildGameDayRecapPromptPayload ignores non-regular-season competitions in league context", async () => {
@@ -10019,32 +10504,42 @@ test("pregame tactic taxonomy maps manual offense and defense families", () => {
   assert.deepStrictEqual(
     __testing.resolveOffenseTaxonomy("Princeton"),
     {
+      displayName: "Princeton",
       focus: "outside",
       gdpFocus: "outside",
       pace: "slow",
       scorerTarget: null,
       strategy: "Princeton",
+      strategyKey: "princeton",
     },
   );
   assert.deepStrictEqual(
     __testing.resolveOffenseTaxonomy("Inside Isolation"),
     {
+      displayName: "Inside Isolation",
       focus: "balanced",
       gdpFocus: "balanced",
       pace: "normal",
       scorerTarget: "best_inside_scorer",
       strategy: "Inside Isolation",
+      strategyKey: "inside isolation",
     },
   );
   assert.deepStrictEqual(
-    __testing.resolveOffenseTaxonomy("Outside Isolation"),
+    __testing.resolveOffenseTaxonomy("OutsideIsolation"),
     {
+      displayName: "Outside Isolation",
       focus: "balanced",
       gdpFocus: "balanced",
       pace: "normal",
       scorerTarget: "best_outside_scorer",
-      strategy: "Outside Isolation",
+      strategy: "OutsideIsolation",
+      strategyKey: "outside isolation",
     },
+  );
+  assert.equal(
+    __testing.resolveDefenseTaxonomy("32Zone").displayName,
+    "3-2 Zone",
   );
   assert.equal(
     __testing.resolveDefenseTaxonomy("2-3 Zone").profileKey,
@@ -11073,7 +11568,7 @@ test("validateGameDayRecapResult lets fact-library pregameBattle replace legacy 
     createRecapCandidateResult({
       headline: "Home beats Away 85-81",
       writeup:
-        "Away paired Motion with 23 Zone, while Home answered with Push and Man To Man, leaving the manager card mostly even before tipoff.\n\nHome moved ahead after halftime and kept the game flow pointed toward the final margin.\n\nHome finished the 85-81 win with cleaner closing possessions.",
+        "Away paired Motion with 2-3 Zone, while Home answered with Push the Ball and Man-to-man, leaving the manager card mostly even.\n\nHome moved ahead after halftime and kept the game flow pointed toward the final margin.\n\nHome finished the 85-81 win with cleaner closing possessions.",
     }),
     [expectedGame],
   );
@@ -11092,7 +11587,7 @@ test("assessGameDayRecapDeterministicPayload rejects raw or clunky pregame mecha
     "expected writer game with pregameBattle",
   );
   const baseWriteup =
-    "Away paired Motion with 23 Zone, while Home answered with Push and Man To Man";
+    "Away paired Motion with 2-3 Zone, while Home answered with Push the Ball and Man-to-man";
 
   const rawAssessment = __testing.assessGameDayRecapDeterministicPayload(
     createRecapCandidateResult({
@@ -11103,6 +11598,20 @@ test("assessGameDayRecapDeterministicPayload rejects raw or clunky pregame mecha
   );
   assert.ok(
     rawAssessment.issues.some(
+      (issue) => issue.kind === "raw_pregame_mechanics_language",
+    ),
+  );
+
+  const rawTacticAssessment = __testing.assessGameDayRecapDeterministicPayload(
+    createRecapCandidateResult({
+      headline: "Home beats Away 85-81",
+      writeup:
+        "Away paired Motion with 23Zone, while Home answered with PushTheBall and ManToMan.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.",
+    }),
+    [expectedGame],
+  );
+  assert.ok(
+    rawTacticAssessment.issues.some(
       (issue) => issue.kind === "raw_pregame_mechanics_language",
     ),
   );
@@ -11136,7 +11645,7 @@ test("assessGameDayRecapDeterministicPayload rejects unsupported pregame color a
     createRecapCandidateResult({
       headline: "Home beats Away 85-81",
       writeup:
-        "Away paired Motion with 23 Zone, while Home answered with Push and Man To Man after the coach told them this was personal.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.",
+        "Away paired Motion with 2-3 Zone, while Home answered with Push the Ball and Man-to-man after the coach told them this was personal.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.",
     }),
     [expectedGame],
   );
@@ -11151,7 +11660,7 @@ test("assessGameDayRecapDeterministicPayload rejects unsupported pregame color a
       createRecapCandidateResult({
         headline: "Home beats Away 85-81",
         writeup:
-          "Home had the cleaner manager card before tipoff.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.",
+          "Home had the cleaner manager card.\n\nHome moved ahead after halftime.\n\nHome finished the 85-81 win.",
       }),
       [expectedGame],
     );
@@ -11302,7 +11811,7 @@ test("validateGameDayRecapResult rejects run mentions without timing anchors", (
         },
         [expectedGame],
       ),
-    /timing anchors|08:00/i,
+    /broad elapsed|timing anchors|08:00/i,
   );
 });
 
@@ -11358,7 +11867,7 @@ test("validateGameDayRecapResult rejects run mentions with stale first-basket st
         },
         [expectedGame],
       ),
-    /1:52 left in the 4th quarter/i,
+    /broad elapsed|90 seconds|1:52 left in the 4th quarter/i,
   );
 });
 

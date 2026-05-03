@@ -239,18 +239,22 @@ type GameDayRecapDefenseProfileKey =
   | "press";
 
 type GameDayRecapOffenseTaxonomy = {
+  displayName: string | null;
   focus: GameDayRecapTacticalFocus;
   gdpFocus: GameDayRecapTacticalFocus;
   pace: GameDayRecapTacticalPace;
   scorerTarget: "best_inside_scorer" | "best_outside_scorer" | null;
   strategy: string | null;
+  strategyKey: string | null;
 };
 
 type GameDayRecapDefenseTaxonomy = {
+  displayName: string | null;
   pace: GameDayRecapTacticalPace;
   profileKey: GameDayRecapDefenseProfileKey;
   protects: GameDayRecapTacticalFocus[];
   strategy: string | null;
+  strategyKey: string | null;
   targetScorer: "best_inside_scorer" | "best_outside_scorer" | null;
   tradeoffs: string[];
 };
@@ -300,14 +304,53 @@ type GameDayRecapGameNarrativeBeatType =
   | "texture"
   | "turningPoint";
 
+type GameDayRecapFactTimeWindow = {
+  end: number;
+  start: number;
+};
+
+type GameDayRecapGameStoryRunContext = {
+  elapsedMinutesFloor: number | null;
+  elapsedSeconds: number | null;
+  endGameSeconds: number | null;
+  endScore: GameDayRecapPlayByPlayRun["endScore"];
+  opponentPoints: number;
+  periodSpan: GameDayRecapPlayByPlayRun["periodSpan"];
+  startGameSeconds: number | null;
+  startScore: GameDayRecapPlayByPlayRun["startScore"];
+  teamName: string | null;
+  teamPoints: number;
+  teamSide: "away" | "home" | null;
+};
+
+type GameDayRecapGameStoryExplicitEventContext = Pick<
+  NonNullable<GameDayRecapPlayByPlayFacts["explicitEventFacts"]>[number],
+  | "awayScore"
+  | "clock"
+  | "eventTeamScore"
+  | "eventType"
+  | "homeScore"
+  | "leaderSide"
+  | "margin"
+  | "opponentScore"
+  | "playerName"
+  | "quarter"
+  | "scoreRelation"
+  | "teamName"
+  | "teamSide"
+>;
+
 type GameDayRecapGameNarrativeBeat = {
   beatType: GameDayRecapGameNarrativeBeatType;
   combineGuidance: string;
+  explicitEventContext: GameDayRecapGameStoryExplicitEventContext | null;
   factId: string;
   impactScore: number;
+  runContext: GameDayRecapGameStoryRunContext | null;
   sourceFields: string[];
   text: string;
   timeSort: number | null;
+  timeWindow: GameDayRecapFactTimeWindow | null;
 };
 
 type GameDayRecapGameStoryBeatRole =
@@ -321,13 +364,16 @@ type GameDayRecapGameStoryBeatRole =
 type GameDayRecapGameStoryBeat = {
   beatRole: GameDayRecapGameStoryBeatRole;
   combineGuidance: string;
+  explicitEventContext: GameDayRecapGameStoryExplicitEventContext | null;
   factId: string;
   impactScore: number;
   includeClock: "avoid" | "optional" | "required";
+  runContext: GameDayRecapGameStoryRunContext | null;
   sourceFields: string[];
   text: string;
   timeBand: "early" | "first_half" | "late" | "second_half" | "unknown";
   timeSort: number | null;
+  timeWindow: GameDayRecapFactTimeWindow | null;
 };
 
 type GameDayRecapGameStoryMainCharacter = {
@@ -629,6 +675,14 @@ type GameDayRecapTeamScoringDistribution = {
     name: string;
     points: number;
   }>;
+  scoringLeaders?: Array<{
+    name: string;
+    points: number;
+  }>;
+  secondScorer?: {
+    name: string;
+    points: number;
+  } | null;
   supportingCastPoints: number;
   topScorer?: {
     name: string;
@@ -4285,7 +4339,7 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "If a game includes playByPlaySummaryLines, prefer those code-generated lines when mentioning supplied play-by-play context.",
     "If a game includes playByPlayFacts.endingFacts, use those structured ending facts as the source of truth for buzzerbeaters, go-ahead shots, and last missed chances.",
     "If a game includes playByPlayFacts.bestCompetitiveSwingRun or playByPlayFacts.leadChangeFacts, use those structured facts as the source of truth for runs, comebacks to the lead, and lead-change bursts.",
-    "If a game includes playByPlayFacts.primaryRun, mention that exact primaryRun somewhere in the writeup using the supplied run score and timing anchors.",
+    "If a game includes a selected factsLibrary.gameStory takeover run, mention its run score in the game paragraph and prefer broad elapsed timing from runContext over exact start/end clocks.",
     "If a game includes playByPlayFacts.secondaryRun, you may mention it when it meaningfully sharpens the story, but do not force it in.",
     "If a game includes playByPlayFacts and its ending facts mark a buzzerbeater, use the word buzzerbeater in the headline or opening sentence.",
     "If a game includes seriesContext.summaryLine, put the series state in the game headline and do not repeat the series-score sentence in the writeup.",
@@ -4328,7 +4382,8 @@ function buildGameDayRecapWriterBedrockRequest(args: {
           "Use factsLibrary.recapSections as the internal template: paragraph 1 is pregame, paragraph 2 is game, paragraph 3 is postgame; when factsLibrary.gameStory.paragraphPlan.targetParagraphs is 4, split rich postgame material into a fourth short paragraph. Do not print Pregame, Game, or Postgame labels.",
           "Separate the recap sections with blank lines. Pregame should be 1-2 sentences, game should be 3-5 connected sentences, and postgame should be 2-4 sentences across one or two paragraphs depending on gameStory.paragraphPlan.",
           "Use factsLibrary.gameStory as the game paragraph spine; connect firstHalfShape, injurySwing, turningPoint, takeoverStretch, closingShape, and mainCharacter into flowing cause-and-effect prose instead of writing bullet-style score notes.",
-          "Honor factsLibrary.gameStory.timeAnchorBudget: use broad timing such as early, before halftime, after the break, late in the third, or down the stretch for secondary beats.",
+          "Honor factsLibrary.gameStory.timeAnchorBudget: use broad timing such as early, before halftime, after the break, late in the third, or down the stretch for secondary beats; when a selected run has runContext, prefer elapsed timing from elapsedSeconds/elapsedMinutesFloor plus periodSpan over exact start/end clocks.",
+          "When a selected injury, foul-out, ejection, or technical beat has explicitEventContext, mention the score state from eventTeamScore/opponentScore and scoreRelation without inventing a cause or locker-room detail.",
           "Do not stack halftime score, through-three score, decisive-quarter score, last-loser-lead, took-lead-for-good, and run facts as separate sentences; choose the story shape from gameStory.selectedBeats.",
           "Use factsLibrary.narrativePlan and recapSections together: manager-battle setup first, chronological game flow second, and player/team/slate explanation last.",
           "Only mention runs, lead-change bursts, last-lead, or took-the-lead-for-good angles when they are explicitly present in factsLibrary.gameFlow or playByPlayFacts.",
@@ -4348,7 +4403,7 @@ function buildGameDayRecapWriterBedrockRequest(args: {
     "When playByPlayFacts.endingFacts are present for a close game, treat those structured ending facts as the preferred source for the lede.",
     "When playByPlaySummaryLines are present for a game, treat them as the preferred source for any supplied play-by-play mention.",
     "When playByPlayFacts.endingFacts mark a buzzerbeater, use the word buzzerbeater in the headline or opening sentence.",
-    "When playByPlayFacts.primaryRun is present, mention that exact run in the writeup using the supplied score and timing anchors.",
+    "When a selected primary run is present, mention the run score in the writeup using broad elapsed timing when runContext is available.",
     "When playByPlayFacts.secondaryRun is present, use it only when it helps the story stay specific.",
     "When seriesContext.summaryLine is present for a game, express the series state in the game headline and do not repeat the series-score sentence in the writeup.",
     "If a game is decided by three points or fewer but the supplied play-by-play does not identify a final-possession detail, keep the finish grounded and do not invent a last shot, last miss, or last turnover.",
@@ -4383,7 +4438,8 @@ function buildGameDayRecapWriterBedrockRequest(args: {
       ? [
           "When factsLibrary is present, treat it as the preferred deterministic source for headline candidates, opening candidates, matchup edges, and story-shape cues.",
           "Use factsLibrary.rankedFacts, leadFacts, gameStory, and analysisFacts to choose both priority and order; do not flatten every fact into the writeup.",
-          "Use factsLibrary.pregameBattle for the hidden first paragraph manager-battle setup: both teams' offense/defense choices, GDP/prep reads, effort posture, rotation context when useful, and an integrated manager verdict.",
+          "Use factsLibrary.pregameBattle for the hidden first paragraph manager-battle setup: both teams' offense/defense choices using displayName fields, GDP/prep reads, effort posture, rotation context when useful, and an integrated manager verdict.",
+          "Do not print raw tactic keys such as OutsideIsolation, RunAndGun, 32Zone, or 23Zone; use the canonical display names supplied in pregameBattle.",
           "Use metaphor-only manager color; never invent a coach speech, locker-room moment, film-room note, injury, rest motive, or private message.",
           "Use factsLibrary.summaryFacts and factsLibrary.storySignals to guide the writeup, but keep the final prose connected and natural.",
           "Honor any factsLibrary.matchupEdgeFacts.suppressed guidance and do not present those angles as reasons the winner won.",
@@ -4486,7 +4542,8 @@ function buildGameDayRecapStylePolishBedrockRequest(args: {
                     "The first paragraph should mention both teams' tactical choices when available and integrate the manager verdict without a scorecard.",
                     "Preserve the ranked-fact priority: the opening should still reflect the strongest leadFact, and the game paragraph should follow gameStory.selectedBeats chronologically.",
                     "Make the game paragraph connected cause-and-effect prose; remove checklist rhythm such as routine quarter-by-quarter score narration unless the quarter itself is the selected gameStory beat.",
-                    "Preserve gameStory.timeAnchorBudget by replacing secondary clock details with broad timing language.",
+                    "Preserve gameStory.timeAnchorBudget by replacing secondary clock details with broad timing language; selected run beats with runContext should use elapsed duration and periodSpan rather than exact start/end spans unless the ending itself requires a clock.",
+                    "Preserve explicitEventContext score state for injuries, foul-outs, ejections, and technicals when it is supplied.",
                     "Vary sentence openings and sentence length.",
                     "Use cleaner transitions and more connected prose.",
                   ],
@@ -7400,7 +7457,7 @@ function buildGameFactsLibraryFromFactStore(
     ...matchupEdgeFacts.suppressed,
     ...gameFlow.doNotEmphasize,
   ]);
-  const gameNarrativeBeats = buildFactsLibraryGameNarrativeBeats(rankedFacts);
+  const gameNarrativeBeats = buildFactsLibraryGameNarrativeBeats(rankedFacts, game);
   const gameStory = buildFactsLibraryGameStory({
     game,
     gameNarrativeBeats,
@@ -8225,11 +8282,13 @@ function resolveOffenseTaxonomy(
 ): GameDayRecapOffenseTaxonomy {
   const normalized = normalizeStrategyName(strategy);
   const base: GameDayRecapOffenseTaxonomy = {
+    displayName: formatStrategyDisplayNameForRecap(strategy, "offense"),
     focus: "balanced",
     gdpFocus: "balanced",
     pace: "normal",
     scorerTarget: null,
     strategy: strategy?.trim() || null,
+    strategyKey: normalized || null,
   };
 
   if (!normalized || /\bbase offense\b/.test(normalized)) {
@@ -8271,10 +8330,12 @@ function resolveDefenseTaxonomy(
 ): GameDayRecapDefenseTaxonomy {
   const normalized = normalizeStrategyName(strategy);
   const base: GameDayRecapDefenseTaxonomy = {
+    displayName: formatStrategyDisplayNameForRecap(strategy, "defense"),
     pace: "normal",
     profileKey: "normal",
     protects: ["balanced"],
     strategy: strategy?.trim() || null,
+    strategyKey: normalized || null,
     targetScorer: null,
     tradeoffs: [],
   };
@@ -8340,11 +8401,85 @@ function resolveDefenseTaxonomy(
 function normalizeStrategyName(value: string | null | undefined): string {
   return (
     value
+      ?.replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/([A-Za-z])(\d)/g, "$1 $2")
+      .replace(/(\d)([A-Za-z])/g, "$1 $2")
       ?.toLowerCase()
       .replace(/&/g, " and ")
       .replace(/[^a-z0-9]+/g, " ")
       .trim() ?? ""
   );
+}
+
+function formatStrategyDisplayNameForRecap(
+  value: string | null | undefined,
+  kind: "defense" | "offense",
+): string | null {
+  const normalized = normalizeStrategyName(value);
+  if (!normalized) {
+    return null;
+  }
+
+  if (kind === "offense") {
+    if (/\bbase offense\b|\bbase\b/.test(normalized)) {
+      return "Base Offense";
+    }
+    if (/\bpush(?: the ball)?\b/.test(normalized)) {
+      return "Push the Ball";
+    }
+    if (/\bpatient\b/.test(normalized)) {
+      return "Patient";
+    }
+    if (/\blook inside\b/.test(normalized)) {
+      return "Look Inside";
+    }
+    if (/\blow post\b/.test(normalized)) {
+      return "Low Post";
+    }
+    if (/\bmotion\b/.test(normalized)) {
+      return "Motion";
+    }
+    if (/\brun and gun\b/.test(normalized)) {
+      return "Run and Gun";
+    }
+    if (/\bprinceton\b/.test(normalized)) {
+      return "Princeton";
+    }
+    if (/\binside isolation\b/.test(normalized)) {
+      return "Inside Isolation";
+    }
+    if (/\boutside isolation\b/.test(normalized)) {
+      return "Outside Isolation";
+    }
+  }
+
+  if (/\b(?:normal|man to man|man)\b/.test(normalized)) {
+    return "Man-to-man";
+  }
+  if (/\b(?:2 3|23) zone\b/.test(normalized)) {
+    return "2-3 Zone";
+  }
+  if (/\b(?:3 2|32) zone\b/.test(normalized)) {
+    return "3-2 Zone";
+  }
+  if (/\b(?:1 3 1|131) zone\b/.test(normalized)) {
+    return "1-3-1 Zone";
+  }
+  if (/\bfull court press\b/.test(normalized)) {
+    return "Full Court Press";
+  }
+  if (/\binside box and one\b/.test(normalized)) {
+    return "Inside Box-and-One";
+  }
+  if (/\boutside box and one\b/.test(normalized)) {
+    return "Outside Box-and-One";
+  }
+
+  return normalized
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function buildPregameBattleGdpOutcomes(args: {
@@ -8468,7 +8603,7 @@ function buildPregameTacticFitSignals(args: {
       targetDefense <= otherDefense - 1
     ) {
       signals.push(
-        `${args.team.name} aimed ${offense.strategy ?? "its offense"} at the softer ${formatTacticalFocusAdjective(
+        `${args.team.name} aimed ${offense.displayName ?? offense.strategy ?? "its offense"} at the softer ${formatTacticalFocusAdjective(
           offense.focus,
         )} matchup.`,
       );
@@ -8574,10 +8709,10 @@ function buildPregameTacticSentence(args: {
   away: GameDayRecapPregameBattleTeam;
   home: GameDayRecapPregameBattleTeam;
 }): string | null {
-  const awayOffense = args.away.offense.strategy;
-  const awayDefense = args.away.defense.strategy;
-  const homeOffense = args.home.offense.strategy;
-  const homeDefense = args.home.defense.strategy;
+  const awayOffense = args.away.offense.displayName ?? args.away.offense.strategy;
+  const awayDefense = args.away.defense.displayName ?? args.away.defense.strategy;
+  const homeOffense = args.home.offense.displayName ?? args.home.offense.strategy;
+  const homeDefense = args.home.defense.displayName ?? args.home.defense.strategy;
   if (!awayOffense && !awayDefense && !homeOffense && !homeDefense) {
     return null;
   }
@@ -8733,8 +8868,8 @@ function buildPregameBattleVerdict(
   );
   const text =
     leaderSide === "even"
-      ? `The manager battle was mixed before tipoff, with ${reasonText}.`
-      : `${leaderName} ${confidence === "clear" ? "had the cleaner manager's card" : "found a slight manager's edge"} before tipoff, with ${reasonText}.`;
+      ? `The manager battle was mixed, with ${reasonText}.`
+      : `${leaderName} ${confidence === "clear" ? "had the cleaner manager's card" : "found a slight manager's edge"}, with ${reasonText}.`;
 
   return {
     confidence,
@@ -9909,10 +10044,13 @@ function buildPlayerFactCandidates(
     const winner = game.teams[winnerSide];
     const distribution = winner.scoringDistribution;
     const topScorer = distribution?.topScorer ?? null;
-    const nextScorerPoints =
-      winner.topPlayers
-        .filter((player) => player.name !== topScorer?.name)
-        .sort((left, right) => right.points - left.points)[0]?.points ?? null;
+    const secondScorer =
+      distribution?.secondScorer ??
+      distribution?.scoringLeaders?.find(
+        (player) => player.name !== topScorer?.name,
+      ) ??
+      null;
+    const nextScorerPoints = secondScorer?.points ?? null;
     if (
       topScorer &&
       topScorer.points >= 28 &&
@@ -9921,13 +10059,14 @@ function buildPlayerFactCandidates(
     ) {
       addPlayerFact(
         `dominant_scorer_${sanitizeFactIdPart(topScorer.name)}`,
-        `${topScorer.name} carried the scoring load for ${winner.name}, supplying ${topScorer.points} points${
-          nextScorerPoints !== null
-            ? ` with the next ${winner.name} scorer at ${nextScorerPoints}`
-            : " without a comparable second scorer"
-        }.`,
+        buildDominantScorerFactText({
+          distribution,
+          secondScorer,
+          teamName: winner.name,
+          topScorer,
+        }),
         topScorer.points >= 40 ? 72 : 64,
-        `teams.${winnerSide}.scoringDistribution.topScorer`,
+        `teams.${winnerSide}.scoringDistribution`,
       );
     }
   }
@@ -10008,6 +10147,25 @@ function buildPlayerFactCandidates(
   }
 
   return facts;
+}
+
+function buildDominantScorerFactText(args: {
+  distribution: GameDayRecapTeamScoringDistribution | null | undefined;
+  secondScorer: { name: string; points: number } | null;
+  teamName: string;
+  topScorer: { name: string; points: number };
+}): string {
+  const teammateDoubleFigureCount = Math.max(
+    0,
+    (args.distribution?.doubleFigureScorerCount ?? 0) - 1,
+  );
+  if (teammateDoubleFigureCount >= 2) {
+    return `${args.topScorer.name} carried the scoring load for ${args.teamName}, supplying ${args.topScorer.points} points while ${teammateDoubleFigureCount} teammates also reached double figures.`;
+  }
+  if (args.secondScorer) {
+    return `${args.topScorer.name} carried the scoring load for ${args.teamName}, supplying ${args.topScorer.points} points with ${args.secondScorer.name} next at ${args.secondScorer.points}.`;
+  }
+  return `${args.topScorer.name} carried the scoring load for ${args.teamName}, supplying ${args.topScorer.points} points without a comparable second scorer.`;
 }
 
 function buildBoxScoreEdgeFactCandidates(
@@ -10697,6 +10855,7 @@ function buildRankedFactsLibraryNarrativePlan(args: {
 
 function buildFactsLibraryGameNarrativeBeats(
   rankedFacts: GameDayRecapFactCandidate[],
+  game: GameDayRecapGameFactStore,
 ): GameDayRecapGameNarrativeBeat[] {
   const selectedFacts = rankedFacts
     .filter(
@@ -10713,11 +10872,14 @@ function buildFactsLibraryGameNarrativeBeats(
   return selectedFacts.map((fact) => ({
     beatType: resolveGameNarrativeBeatType(fact),
     combineGuidance: combineGuidanceForNarrativeBeat(fact),
+    explicitEventContext: resolveExplicitEventContextForFact(fact, game),
     factId: fact.id,
     impactScore: fact.impactScore,
+    runContext: resolveRunContextForFact(fact, game),
     sourceFields: fact.sourceFields,
     text: fact.text,
     timeSort: fact.chronologicalSort,
+    timeWindow: resolveGameNarrativeBeatTimeWindow(fact, game),
   }));
 }
 
@@ -10738,6 +10900,19 @@ function buildFactsLibraryGameStory(args: {
 
   const addBeat = (beat: GameDayRecapGameStoryBeat | null) => {
     if (!beat || selected.some((entry) => entry.factId === beat.factId)) {
+      return;
+    }
+    const overlappingIndex = selected.findIndex((existing) =>
+      shouldTreatGameStoryBeatsAsOverlapping(beat, existing),
+    );
+    if (overlappingIndex >= 0) {
+      const existing = selected[overlappingIndex];
+      if (existing && compareOverlappingGameStoryBeatPreference(beat, existing) < 0) {
+        suppressedFactIds.add(existing.factId);
+        selected.splice(overlappingIndex, 1, beat);
+        return;
+      }
+      suppressedFactIds.add(beat.factId);
       return;
     }
     selected.push(beat);
@@ -10762,11 +10937,14 @@ function buildFactsLibraryGameStory(args: {
             beatType: "texture",
             combineGuidance:
               "Use this as the player-driven throughline, then attach early spurts or takeover beats around it.",
+            explicitEventContext: null,
             factId: mainCharacterFact.id,
             impactScore: mainCharacterFact.impactScore,
+            runContext: null,
             sourceFields: mainCharacterFact.sourceFields,
             text: mainCharacter.supportingText,
             timeSort: null,
+            timeWindow: null,
           },
           mainCharacterFact,
           args.game,
@@ -10901,13 +11079,16 @@ function toGameStoryBeat(
   return {
     beatRole: overrideRole ?? resolveGameStoryBeatRole(beat, fact),
     combineGuidance: beat.combineGuidance,
+    explicitEventContext: beat.explicitEventContext,
     factId: beat.factId,
     impactScore: beat.impactScore,
     includeClock: resolveGameStoryClockPolicy(fact, game),
+    runContext: beat.runContext,
     sourceFields: beat.sourceFields,
     text: beat.text,
     timeBand: resolveGameStoryTimeBand(beat.timeSort),
     timeSort: beat.timeSort,
+    timeWindow: beat.timeWindow,
   };
 }
 
@@ -10984,6 +11165,278 @@ function resolveGameStoryTimeBand(
   return "late";
 }
 
+function resolveRunContextForFact(
+  fact: GameDayRecapFactCandidate,
+  game: GameDayRecapGameFactStore,
+): GameDayRecapGameStoryRunContext | null {
+  const run = resolveRunForFactSource(fact, game);
+  if (!run) {
+    return null;
+  }
+
+  return {
+    elapsedMinutesFloor: run.elapsedMinutesFloor,
+    elapsedSeconds: run.elapsedSeconds,
+    endGameSeconds: run.endGameSeconds,
+    endScore: run.endScore,
+    opponentPoints: run.opponentPoints,
+    periodSpan: run.periodSpan,
+    startGameSeconds: run.startGameSeconds,
+    startScore: run.startScore,
+    teamName: run.teamName,
+    teamPoints: run.teamPoints,
+    teamSide: run.teamSide,
+  };
+}
+
+function resolveExplicitEventContextForFact(
+  fact: GameDayRecapFactCandidate,
+  game: GameDayRecapGameFactStore,
+): GameDayRecapGameStoryExplicitEventContext | null {
+  const event = resolveExplicitEventForFactSource(fact, game);
+  if (!event) {
+    return null;
+  }
+
+  return {
+    awayScore: event.awayScore,
+    clock: event.clock,
+    eventTeamScore: event.eventTeamScore,
+    eventType: event.eventType,
+    homeScore: event.homeScore,
+    leaderSide: event.leaderSide,
+    margin: event.margin,
+    opponentScore: event.opponentScore,
+    playerName: event.playerName,
+    quarter: event.quarter,
+    scoreRelation: event.scoreRelation,
+    teamName: event.teamName,
+    teamSide: event.teamSide,
+  };
+}
+
+function resolveRunForFactSource(
+  fact: Pick<GameDayRecapFactCandidate, "sourceFields">,
+  game: GameDayRecapGameFactStore,
+): GameDayRecapPlayByPlayRun | null {
+  const playByPlayFacts = game.playByPlayFacts;
+  if (!playByPlayFacts) {
+    return null;
+  }
+  const sourceFields = fact.sourceFields.join(" ");
+  if (sourceFields.includes("playByPlayFacts.primaryRun")) {
+    return playByPlayFacts.primaryRun;
+  }
+  if (sourceFields.includes("playByPlayFacts.secondaryRun")) {
+    return playByPlayFacts.secondaryRun;
+  }
+  if (sourceFields.includes("playByPlayFacts.longestUnansweredRun")) {
+    return playByPlayFacts.longestUnansweredRun;
+  }
+  if (sourceFields.includes("playByPlayFacts.bestCompetitiveSwingRun")) {
+    return playByPlayFacts.bestCompetitiveSwingRun;
+  }
+  return null;
+}
+
+function resolveExplicitEventForFactSource(
+  fact: Pick<GameDayRecapFactCandidate, "sourceFields">,
+  game: GameDayRecapGameFactStore,
+): NonNullable<GameDayRecapPlayByPlayFacts["explicitEventFacts"]>[number] | null {
+  const playByPlayFacts = game.playByPlayFacts;
+  if (!playByPlayFacts) {
+    return null;
+  }
+  const explicitEventIndex = extractIndexedSourceField(
+    fact.sourceFields,
+    "playByPlayFacts.explicitEventFacts",
+  );
+  return explicitEventIndex !== null
+    ? (playByPlayFacts.explicitEventFacts?.[explicitEventIndex] ?? null)
+    : null;
+}
+
+function resolveGameNarrativeBeatTimeWindow(
+  fact: GameDayRecapFactCandidate,
+  game: GameDayRecapGameFactStore,
+): GameDayRecapFactTimeWindow | null {
+  const playByPlayFacts = game.playByPlayFacts;
+  const sourceFields = fact.sourceFields.join(" ");
+  if (playByPlayFacts) {
+    if (sourceFields.includes("playByPlayFacts.primaryRun")) {
+      return timeWindowForClockRangeFact(playByPlayFacts.primaryRun);
+    }
+    if (sourceFields.includes("playByPlayFacts.secondaryRun")) {
+      return timeWindowForClockRangeFact(playByPlayFacts.secondaryRun);
+    }
+    if (sourceFields.includes("playByPlayFacts.longestUnansweredRun")) {
+      return timeWindowForClockRangeFact(playByPlayFacts.longestUnansweredRun);
+    }
+    if (sourceFields.includes("playByPlayFacts.bestCompetitiveSwingRun")) {
+      return timeWindowForClockRangeFact(playByPlayFacts.bestCompetitiveSwingRun);
+    }
+    const scoringDroughtIndex = extractIndexedSourceField(
+      fact.sourceFields,
+      "playByPlayFacts.scoringDroughts",
+    );
+    if (scoringDroughtIndex !== null) {
+      return timeWindowForClockRangeFact(
+        playByPlayFacts.scoringDroughts?.[scoringDroughtIndex] ?? null,
+      );
+    }
+    const playerSpurtIndex = extractIndexedSourceField(
+      fact.sourceFields,
+      "playByPlayFacts.playerScoringSpurts",
+    );
+    if (playerSpurtIndex !== null) {
+      return timeWindowForClockRangeFact(
+        playByPlayFacts.playerScoringSpurts?.[playerSpurtIndex] ?? null,
+      );
+    }
+    const madeThreeBurstIndex = extractIndexedSourceField(
+      fact.sourceFields,
+      "playByPlayFacts.madeThreeBursts",
+    );
+    if (madeThreeBurstIndex !== null) {
+      return timeWindowForClockRangeFact(
+        playByPlayFacts.madeThreeBursts?.[madeThreeBurstIndex] ?? null,
+      );
+    }
+    const offensiveReboundIndex = extractIndexedSourceField(
+      fact.sourceFields,
+      "playByPlayFacts.offensiveReboundSequences",
+    );
+    if (offensiveReboundIndex !== null) {
+      return timeWindowForClockRangeFact(
+        playByPlayFacts.offensiveReboundSequences?.[offensiveReboundIndex] ??
+          null,
+      );
+    }
+    const explicitEventIndex = extractIndexedSourceField(
+      fact.sourceFields,
+      "playByPlayFacts.explicitEventFacts",
+    );
+    if (explicitEventIndex !== null) {
+      const event = playByPlayFacts.explicitEventFacts?.[explicitEventIndex] ?? null;
+      return event ? timeWindowForPointClock(event.quarter, event.clock) : null;
+    }
+    if (sourceFields.includes("playByPlayFacts.lastLeadByLoser")) {
+      const lastLead = playByPlayFacts.lastLeadByLoser;
+      return lastLead
+        ? timeWindowForPointClock(lastLead.quarter, lastLead.clock)
+        : null;
+    }
+    if (sourceFields.includes("playByPlayFacts.tookLeadForGood")) {
+      const leadForGood = playByPlayFacts.tookLeadForGood;
+      return leadForGood
+        ? timeWindowForPointClock(leadForGood.quarter, leadForGood.clock)
+        : null;
+    }
+    if (sourceFields.includes("playByPlayFacts.leadChangeFacts")) {
+      const comeback = playByPlayFacts.leadChangeFacts.bigComebackLeadChange;
+      if (comeback) {
+        return timeWindowForPointClock(comeback.quarter, comeback.clock);
+      }
+      const burst = playByPlayFacts.leadChangeFacts.rapidLeadChangeBurst;
+      return burst ? timeWindowForClockRangeFact(burst) : null;
+    }
+    if (sourceFields.includes("playByPlayFacts.endingFacts.decisiveScore")) {
+      const decisiveScore = playByPlayFacts.endingFacts.decisiveScore;
+      return decisiveScore
+        ? timeWindowForPointClock(decisiveScore.quarter, decisiveScore.clock)
+        : null;
+    }
+  }
+
+  if (sourceFields.includes("quarterFacts.decisiveQuarter")) {
+    const period = game.quarterFacts.decisiveQuarter?.period ?? null;
+    return period ? timeWindowForPeriod(period) : null;
+  }
+  if (sourceFields.includes("periodStates.halftime")) {
+    return timeWindowForPeriod(2);
+  }
+  if (fact.claimKey === "through_three") {
+    return timeWindowForPeriod(3);
+  }
+
+  return null;
+}
+
+function extractIndexedSourceField(
+  sourceFields: string[],
+  prefix: string,
+): number | null {
+  const escapedPrefix = escapeRegExp(prefix);
+  for (const sourceField of sourceFields) {
+    const match = new RegExp(`^${escapedPrefix}\\[(\\d+)]$`).exec(sourceField);
+    if (match?.[1]) {
+      return Number.parseInt(match[1], 10);
+    }
+  }
+  return null;
+}
+
+function timeWindowForClockRangeFact(
+  fact:
+    | {
+        endClock?: string | null;
+        endQuarter?: number | null;
+        startClock?: string | null;
+        startQuarter?: number | null;
+      }
+    | null
+    | undefined,
+): GameDayRecapFactTimeWindow | null {
+  if (!fact) {
+    return null;
+  }
+  const start = chronologicalSortForClock(
+    fact.startQuarter ?? null,
+    fact.startClock ?? null,
+  );
+  const end = chronologicalSortForClock(
+    fact.endQuarter ?? fact.startQuarter ?? null,
+    fact.endClock ?? fact.startClock ?? null,
+  );
+  return normalizeTimeWindow(start, end);
+}
+
+function timeWindowForPointClock(
+  quarter: number | null,
+  clock: string | null,
+): GameDayRecapFactTimeWindow | null {
+  const point = chronologicalSortForClock(quarter, clock);
+  if (point === null) {
+    return null;
+  }
+  return {
+    end: point + 30,
+    start: Math.max(0, point - 30),
+  };
+}
+
+function timeWindowForPeriod(period: number): GameDayRecapFactTimeWindow {
+  return {
+    end: chronologicalSortForPeriod(period + 1) - 1,
+    start: chronologicalSortForPeriod(period),
+  };
+}
+
+function normalizeTimeWindow(
+  start: number | null,
+  end: number | null,
+): GameDayRecapFactTimeWindow | null {
+  if (start === null && end === null) {
+    return null;
+  }
+  const resolvedStart = start ?? end ?? 0;
+  const resolvedEnd = end ?? start ?? resolvedStart;
+  return {
+    end: Math.max(resolvedStart, resolvedEnd),
+    start: Math.min(resolvedStart, resolvedEnd),
+  };
+}
+
 function findMainCharacterFact(
   game: GameDayRecapGameFactStore,
   rankedFacts: GameDayRecapFactCandidate[],
@@ -11052,11 +11505,61 @@ function compareGameStoryBeats(
   );
 }
 
+function shouldTreatGameStoryBeatsAsOverlapping(
+  left: GameDayRecapGameStoryBeat,
+  right: GameDayRecapGameStoryBeat,
+): boolean {
+  if (
+    left.beatRole === "injurySwing" ||
+    right.beatRole === "injurySwing" ||
+    left.beatRole === "mainCharacter" ||
+    right.beatRole === "mainCharacter"
+  ) {
+    return false;
+  }
+  if (!left.timeWindow || !right.timeWindow) {
+    return false;
+  }
+  const overlap = Math.min(left.timeWindow.end, right.timeWindow.end) -
+    Math.max(left.timeWindow.start, right.timeWindow.start);
+  if (overlap < 0) {
+    return false;
+  }
+  const leftSpan = Math.max(1, left.timeWindow.end - left.timeWindow.start);
+  const rightSpan = Math.max(1, right.timeWindow.end - right.timeWindow.start);
+  const shorterSpan = Math.min(leftSpan, rightSpan);
+  return overlap >= Math.min(90, shorterSpan * 0.5);
+}
+
+function compareOverlappingGameStoryBeatPreference(
+  left: GameDayRecapGameStoryBeat,
+  right: GameDayRecapGameStoryBeat,
+): number {
+  const rolePriority = (role: GameDayRecapGameStoryBeatRole) =>
+    ({
+      takeoverStretch: 0,
+      turningPoint: 1,
+      closingShape: 2,
+      firstHalfShape: 3,
+      injurySwing: 4,
+      mainCharacter: 5,
+    })[role];
+  return (
+    rolePriority(left.beatRole) - rolePriority(right.beatRole) ||
+    right.impactScore - left.impactScore ||
+    left.factId.localeCompare(right.factId)
+  );
+}
+
 function shouldSuppressLedgerFactInGameStory(
   fact: GameDayRecapFactCandidate,
   selectedBeats: GameDayRecapGameStoryBeat[],
 ): boolean {
-  if (!/\b(?:decisive_quarter|through_three|last_loser_lead|largest_lead)\b/i.test(fact.claimKey)) {
+  if (
+    !/\b(?:decisive_quarter|through_three|last_loser_lead|largest_lead)\b/i.test(
+      fact.claimKey,
+    )
+  ) {
     return false;
   }
   return selectedBeats.some(
@@ -11142,7 +11645,7 @@ function buildFactsLibraryRecapSections(args: {
     game: {
       factIds: gameFactIds,
       guidance:
-        "Paragraph 2, no visible label: write 3-5 connected cause-and-effect sentences from gameStory.selectedBeats; avoid quarter-by-quarter checklist prose and use broad time language except for the one best clocked beat.",
+        "Paragraph 2, no visible label: write 3-5 connected cause-and-effect sentences from gameStory.selectedBeats; avoid quarter-by-quarter checklist prose, use runContext for broad elapsed run timing, and include explicitEventContext score state for selected injuries or foul-outs.",
       maxSentences: 5,
       optionalFactIds: gameFactIds.filter(
         (factId) =>
@@ -11167,7 +11670,7 @@ function buildFactsLibraryRecapSections(args: {
     pregame: {
       factIds: setupFacts.map((fact) => fact.id),
       guidance:
-        "Paragraph 1, no visible label: write an integrated manager-battle setup in 1-2 sentences using pregameBattle, both teams' tactics, GDP/prep reads, effort posture, and rotation context when useful; do not print raw GDP codes or clunky legacy required-context sentences.",
+        "Paragraph 1, no visible label: write an integrated manager-battle setup in 1-2 sentences using pregameBattle, both teams' tactics via displayName fields, GDP/prep reads, effort posture, and rotation context when useful; do not print raw GDP codes, raw tactic keys, or clunky legacy required-context sentences.",
       maxSentences: 2,
       optionalFactIds: setupFacts
         .filter((fact) => !fact.mustMention)
@@ -12199,6 +12702,16 @@ function buildTeamScoringDistributionForRecap(
       0,
     ),
     lowMinuteContributors,
+    scoringLeaders: scorers.slice(0, 5).map((player) => ({
+      name: player.name,
+      points: player.points,
+    })),
+    secondScorer: scorers[1]
+      ? {
+          name: scorers[1].name,
+          points: scorers[1].points,
+        }
+      : null,
     supportingCastPoints,
     topScorer: scorers[0]
       ? {
@@ -14022,14 +14535,20 @@ function buildGameValidationPayload(args: {
   deterministicIssues: GameDayRecapSemanticValidationIssue[];
   judgeIssues: GameDayRecapJudgeValidationIssue[];
 }): GameDayRecapGameValidationPayload {
+  const hardDeterministicIssues = args.deterministicIssues.filter(
+    isHardFactValidationIssue,
+  );
   const issues = [
-    ...args.deterministicIssues.map(summarizeSemanticIssueForPayload),
+    ...hardDeterministicIssues.map(summarizeSemanticIssueForPayload),
     ...args.judgeIssues.map(summarizeJudgeIssueForPayload),
   ].slice(0, 8);
   return {
-    issueCount: args.deterministicIssues.length + args.judgeIssues.length,
+    issueCount: hardDeterministicIssues.length + args.judgeIssues.length,
     issues,
-    status: resolveGameValidationStatus(args),
+    status: resolveGameValidationStatus({
+      deterministicIssues: hardDeterministicIssues,
+      judgeIssues: args.judgeIssues,
+    }),
   };
 }
 
@@ -14045,6 +14564,56 @@ function resolveGameValidationStatus(args: {
       (issue) => issue.field === "headline" || issue.salvage === "drop_only",
     ) || args.judgeIssues.some((issue) => issue.field === "headline");
   return hasUnsafeIssue ? "UNSAFE" : "SUSPECT";
+}
+
+function isHardFactValidationIssue(
+  issue: Pick<GameDayRecapSemanticValidationIssue, "field" | "kind" | "salvage">,
+): boolean {
+  if (issue.field === "headline" || issue.salvage === "drop_only") {
+    return true;
+  }
+  switch (issue.kind) {
+    case "compact_streak_mismatch":
+    case "banned_style_phrase":
+    case "conflicting_series_summary_line":
+    case "explicit_streak_mismatch":
+    case "one_game_streak_language":
+    case "playoff_record_language":
+    case "playoff_streak_language":
+    case "quarter_score_mismatch":
+    case "quarter_winner_score_mismatch":
+    case "raw_pregame_mechanics_language":
+    case "record_mismatch":
+    case "through_three_quarters_mismatch":
+    case "tied_quarter_claim":
+    case "unsupported_balanced_attack":
+    case "unsupported_interview_claim":
+    case "unsupported_lead_change_claim":
+    case "unsupported_pregame_color":
+    case "unsupported_run_claim":
+    case "unsupported_run_framing":
+    case "unsupported_scoring_context":
+    case "unsupported_tactic_contrast":
+    case "wrong_quarter_winner":
+      return true;
+    case "choppy_fact_stack":
+    case "clunky_pregame_mechanics_phrase":
+    case "duplicate_outcome_restatement":
+    case "duplicate_period_state_restatement":
+    case "game_flow_time_clutter":
+    case "missing_decisive_ending_emphasis":
+    case "missing_game_story_beat":
+    case "missing_pregame_tactical_setup":
+    case "missing_primary_run_mention":
+    case "missing_required_context_sentence":
+    case "missing_run_timing":
+    case "missing_series_summary_line":
+    case "overlapping_run_claims":
+    case "repetitive_sentence_start":
+    case "short_fact_sentence_cluster":
+    case "visible_section_heading":
+      return false;
+  }
 }
 
 function summarizeSemanticIssueForPayload(
@@ -19200,10 +19769,7 @@ function validateQuarterSentence(
     return [];
   }
 
-  const quarterWinnerVerbMatch = sentence.match(
-    /\b(?:outscor(?:e|ed|es|ing)|won|take(?:s|n)?|took|claim(?:ed|s|ing)|domin(?:ate|ated|ates|ating)|control(?:led|ling|s)?)\b/i,
-  );
-  if (!quarterWinnerVerbMatch) {
+  if (!containsQuarterResultClaim(sentence, referencedPeriod)) {
     return [];
   }
 
@@ -19236,7 +19802,10 @@ function validateQuarterSentence(
       return issues;
     }
 
-    if (scorePair.first === scorePair.second) {
+    if (
+      scorePair.first === scorePair.second &&
+      containsQuarterWinnerOrOutscoreClaim(sentence, referencedPeriod)
+    ) {
       issues.push({
         actualValue: `${scorePair.first}-${scorePair.second}`,
         feedback: `For match ${matchId}, the ${periodFact.label} was tied ${scorePair.first}-${scorePair.second}. Do not say either team outscored, won, or took that quarter.`,
@@ -19317,6 +19886,78 @@ function validateQuarterSentence(
   }
 
   return issues;
+}
+
+function containsQuarterResultClaim(sentence: string, period: number): boolean {
+  if (/\btook\s+the\s+lead\b/i.test(sentence)) {
+    return false;
+  }
+  if (/\brun\b/i.test(sentence)) {
+    return false;
+  }
+
+  const periodPattern = quarterMentionPattern(period);
+  const teamResultVerb =
+    String.raw`(?:outscor(?:e|ed|es|ing)|won|claim(?:ed|s|ing)|domin(?:ate|ated|ates|ating)|control(?:led|ling|s)?)`;
+  const patterns = [
+    new RegExp(
+      String.raw`\b${teamResultVerb}\s+(?:the\s+)?${periodPattern}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b(?:took|takes|taken)\s+(?:the\s+)?${periodPattern}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b${periodPattern}\s+(?:was|ended|finished)\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b${periodPattern}\s+(?:saw|had|featured)\b[^.!?]{0,80}\b${teamResultVerb}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b(?:in|during)\s+(?:the\s+)?${periodPattern}\b[^.!?]{0,80}\b${teamResultVerb}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b${teamResultVerb}\b[^.!?]{0,80}\b(?:in|during)\s+(?:the\s+)?${periodPattern}\b`,
+      "i",
+    ),
+  ];
+  return patterns.some((pattern) => pattern.test(sentence));
+}
+
+function containsQuarterWinnerOrOutscoreClaim(
+  sentence: string,
+  period: number,
+): boolean {
+  const periodPattern = quarterMentionPattern(period);
+  const teamWinVerb =
+    String.raw`(?:outscor(?:e|ed|es|ing)|won|claim(?:ed|s|ing)|domin(?:ate|ated|ates|ating)|control(?:led|ling|s)?)`;
+  const patterns = [
+    new RegExp(
+      String.raw`\b${teamWinVerb}\s+(?:the\s+)?${periodPattern}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b(?:took|takes|taken)\s+(?:the\s+)?${periodPattern}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b${periodPattern}\s+(?:saw|had|featured)\b[^.!?]{0,80}\b${teamWinVerb}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b(?:in|during)\s+(?:the\s+)?${periodPattern}\b[^.!?]{0,80}\b${teamWinVerb}\b`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b${teamWinVerb}\b[^.!?]{0,80}\b(?:in|during)\s+(?:the\s+)?${periodPattern}\b`,
+      "i",
+    ),
+  ];
+  return patterns.some((pattern) => pattern.test(sentence));
 }
 
 function validateRunSentence(
@@ -19720,15 +20361,15 @@ function hasRequiredRunTimingAnchors(
   sentence: string,
   run: GameDayRecapPlayByPlayRun,
 ): boolean {
+  if (sentenceMentionsBroadRunTiming(sentence, run)) {
+    return true;
+  }
+
   if (run.startQuarter === null || !run.startClock) {
     return true;
   }
 
-  if (
-    !buildRunAnchorRegex(run.startQuarter, run.startClock, "start").test(
-      sentence,
-    )
-  ) {
+  if (!sentenceMentionsRunTimingAnchor(sentence, run.startQuarter, run.startClock, "start")) {
     return false;
   }
 
@@ -19740,12 +20381,14 @@ function hasRequiredRunTimingAnchors(
     return true;
   }
 
-  return buildRunAnchorRegex(run.endQuarter, run.endClock, "end").test(
-    sentence,
-  );
+  return sentenceMentionsRunTimingAnchor(sentence, run.endQuarter, run.endClock, "end");
 }
 
 function formatRunTimingInstruction(run: GameDayRecapPlayByPlayRun): string {
+  const broadTiming = formatFallbackRunTimingPhrase(run, "instruction");
+  if (broadTiming) {
+    return `Use broad elapsed timing such as "${broadTiming}".`;
+  }
   if (
     run.startQuarter !== null &&
     run.startClock &&
@@ -19760,6 +20403,144 @@ function formatRunTimingInstruction(run: GameDayRecapPlayByPlayRun): string {
   return "Use the supplied run timing anchors.";
 }
 
+function sentenceMentionsBroadRunTiming(
+  sentence: string,
+  run: GameDayRecapPlayByPlayRun,
+): boolean {
+  const elapsedMentioned = sentenceMentionsRunElapsedDuration(sentence, run);
+  if (!elapsedMentioned) {
+    return false;
+  }
+
+  return sentenceMentionsRunPeriodSpan(sentence, run) || elapsedMentioned;
+}
+
+function sentenceMentionsRunElapsedDuration(
+  sentence: string,
+  run: GameDayRecapPlayByPlayRun,
+): boolean {
+  const elapsedMinutes = run.elapsedMinutesFloor;
+  if (elapsedMinutes !== null && elapsedMinutes >= 2) {
+    const minutePattern = new RegExp(
+      String.raw`\b${elapsedMinutes}(?:\s+|-)?minutes?\b|\b${elapsedMinutes}(?:\s+|-)?minute\s+(?:push|run|stretch|surge)\b`,
+      "i",
+    );
+    if (minutePattern.test(sentence)) {
+      return true;
+    }
+  }
+
+  const elapsedSeconds = run.elapsedSeconds;
+  if (elapsedSeconds !== null && elapsedSeconds < 120) {
+    const secondsRounded = Math.max(10, Math.round(elapsedSeconds / 10) * 10);
+    const secondsPattern = new RegExp(
+      String.raw`\b${secondsRounded}\s+seconds?\b|\b(?:about|around)\s+${secondsRounded}\s+seconds?\b`,
+      "i",
+    );
+    if (secondsPattern.test(sentence)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function sentenceMentionsRunPeriodSpan(
+  sentence: string,
+  run: GameDayRecapPlayByPlayRun,
+): boolean {
+  const { endQuarter, startQuarter, spansMultiplePeriods } = run.periodSpan;
+  if (startQuarter === null) {
+    return false;
+  }
+
+  if (!spansMultiplePeriods || endQuarter === null) {
+    return new RegExp(
+      String.raw`\b(?:in|during|through|across)\s+(?:the\s+)?${runPeriodMentionPattern(
+        startQuarter,
+      )}\b`,
+      "i",
+    ).test(sentence);
+  }
+
+  const startPattern = runPeriodMentionPattern(startQuarter);
+  const endPattern = runPeriodMentionPattern(endQuarter);
+  return new RegExp(
+    String.raw`\b${startPattern}\b[^.!?]{0,60}\b${endPattern}\b|\b${startPattern.replace(
+      /\(\?:\\s\+quarter\)\?/g,
+      "",
+    )}\s+(?:and|to|into|through)\s+${endPattern}\b`,
+    "i",
+  ).test(sentence);
+}
+
+function formatFallbackRunTimingPhrase(
+  run: GameDayRecapPlayByPlayRun,
+  seed: string,
+): string | null {
+  const durationPhrase = formatFallbackRunDurationPhrase(run, seed);
+  const periodPhrase = formatFallbackRunPeriodPhrase(run);
+  if (durationPhrase && periodPhrase) {
+    return `${durationPhrase} ${periodPhrase}`;
+  }
+  return durationPhrase ?? periodPhrase;
+}
+
+function formatFallbackRunDurationPhrase(
+  run: GameDayRecapPlayByPlayRun,
+  seed: string,
+): string | null {
+  const elapsedMinutes = run.elapsedMinutesFloor;
+  if (elapsedMinutes !== null && elapsedMinutes >= 2) {
+    return chooseDeterministicPhrase(seed, [
+      `across ${elapsedMinutes} minutes`,
+      `over a ${elapsedMinutes}-minute push`,
+      `during a ${elapsedMinutes}-minute surge`,
+    ]);
+  }
+
+  const elapsedSeconds = run.elapsedSeconds;
+  if (elapsedSeconds !== null && elapsedSeconds >= 30) {
+    const roundedSeconds = Math.max(10, Math.round(elapsedSeconds / 10) * 10);
+    return chooseDeterministicPhrase(seed, [
+      `across ${roundedSeconds} seconds`,
+      `over about ${roundedSeconds} seconds`,
+      `during a ${roundedSeconds}-second burst`,
+    ]);
+  }
+
+  return null;
+}
+
+function formatFallbackRunPeriodPhrase(
+  run: GameDayRecapPlayByPlayRun,
+): string | null {
+  const { endQuarter, startQuarter, spansMultiplePeriods } = run.periodSpan;
+  if (startQuarter === null) {
+    return null;
+  }
+  if (!spansMultiplePeriods || endQuarter === null) {
+    return `in the ${formatPeriodLabel(startQuarter)}`;
+  }
+  if (startQuarter <= 4 && endQuarter <= 4) {
+    return `in the ${ordinal(startQuarter)} and ${ordinal(endQuarter)} quarters`;
+  }
+  return `from ${formatPeriodContextLabel(startQuarter)} into ${formatPeriodContextLabel(
+    endQuarter,
+  )}`;
+}
+
+function chooseDeterministicPhrase(seed: string, options: string[]): string {
+  if (!options.length) {
+    return "";
+  }
+  const hash = Array.from(seed).reduce(
+    (total, char) => total + char.charCodeAt(0),
+    0,
+  );
+  return options[hash % options.length] ?? options[0]!;
+}
+
 function formatRunAnchor(quarter: number, clock: string): string {
   return `${clock} left in the ${formatPeriodLabel(quarter)}`;
 }
@@ -19769,10 +20550,70 @@ function buildRunAnchorRegex(
   clock: string,
   position: "end" | "start",
 ): RegExp {
-  const periodLabel = escapeRegExp(formatPeriodLabel(quarter));
-  const anchor = `${escapeRegExp(clock)}\\s+left\\s+in\\s+(?:the\\s+)?${periodLabel}`;
+  const periodLabel = runPeriodMentionPattern(quarter);
+  const anchor = `${clockMentionPattern(clock)}\\s+(?:left\\s+)?(?:in\\s+)?(?:the\\s+)?${periodLabel}`;
   const prefix = position === "start" ? "(?:from|starting at)" : "to";
   return new RegExp(`\\b${prefix}\\s+${anchor}\\b`, "i");
+}
+
+function sentenceMentionsRunTimingAnchor(
+  sentence: string,
+  quarter: number,
+  clock: string,
+  position: "end" | "start",
+): boolean {
+  if (buildRunAnchorRegex(quarter, clock, position).test(sentence)) {
+    return true;
+  }
+  const anchor = new RegExp(
+    String.raw`\b${clockMentionPattern(clock)}\s+(?:left\s+)?(?:in\s+)?(?:the\s+)?${runPeriodMentionPattern(
+      quarter,
+    )}\b`,
+    "i",
+  );
+  return anchor.test(sentence);
+}
+
+function clockMentionPattern(clock: string): string {
+  const match = /^0?(\d{1,2}):(\d{2})$/.exec(clock);
+  if (!match) {
+    return escapeRegExp(clock);
+  }
+  return `0?${escapeRegExp(match[1] ?? "")}:${escapeRegExp(match[2] ?? "")}`;
+}
+
+function quarterMentionPattern(period: number): string {
+  switch (period) {
+    case 1:
+      return String.raw`(?:1st|first)\s+quarter`;
+    case 2:
+      return String.raw`(?:2nd|second)\s+quarter`;
+    case 3:
+      return String.raw`(?:3rd|third)\s+quarter`;
+    case 4:
+      return String.raw`(?:4th|fourth)\s+quarter`;
+    case 5:
+      return String.raw`(?:overtime|OT)`;
+    default:
+      return `${escapeRegExp(ordinal(period - 4))}\\s+overtime`;
+  }
+}
+
+function runPeriodMentionPattern(period: number): string {
+  switch (period) {
+    case 1:
+      return String.raw`(?:1st|first)(?:\s+quarter)?`;
+    case 2:
+      return String.raw`(?:2nd|second)(?:\s+quarter)?`;
+    case 3:
+      return String.raw`(?:3rd|third)(?:\s+quarter)?`;
+    case 4:
+      return String.raw`(?:4th|fourth)(?:\s+quarter)?`;
+    case 5:
+      return String.raw`(?:overtime|OT)`;
+    default:
+      return `${escapeRegExp(ordinal(period - 4))}\\s+overtime`;
+  }
 }
 
 function containsPlayoffRecordLanguage(
@@ -19993,13 +20834,27 @@ function validatePregameBattleParagraph(
   }
 
   const missingTactics = (["away", "home"] as const).flatMap((side) =>
-    [expectedGame.teams[side].offStrategy, expectedGame.teams[side].defStrategy]
-      .map((strategy) => strategy?.trim() ?? "")
+    [
+      {
+        kind: "offense" as const,
+        strategy: expectedGame.teams[side].offStrategy,
+      },
+      {
+        kind: "defense" as const,
+        strategy: expectedGame.teams[side].defStrategy,
+      },
+    ]
+      .map((entry) => ({
+        displayName:
+          formatStrategyDisplayNameForRecap(entry.strategy, entry.kind) ??
+          entry.strategy?.trim() ??
+          "",
+        strategy: entry.strategy?.trim() ?? "",
+      }))
+      .filter((entry) => entry.strategy)
+      .filter((entry) => !normalizedTextIncludesStrategy(firstParagraph, entry.strategy))
+      .map((entry) => entry.displayName)
       .filter(Boolean)
-      .filter(
-        (strategy) =>
-          !normalizedTextIncludesStrategy(firstParagraph, strategy),
-      ),
   );
   if (!missingTactics.length) {
     return [];
@@ -20161,14 +21016,19 @@ function writeupMentionsGameStoryBeat(
   return Boolean(
     name &&
       normalizedWriteup.includes(name.toLowerCase()) &&
-      /\b(?:injur|fouled out|eject|technical)\b/i.test(normalizedWriteup),
+      /\b(?:injur\w*|hurt|left\s+(?:the\s+)?game|fouled out|foul out|eject\w*|technical)\b/i.test(
+        normalizedWriteup,
+      ),
   );
 }
 
 function extractLikelyPlayerNameFromGameStoryBeat(
   beat: GameDayRecapGameStoryBeat,
 ): string | null {
-  const match = /^([^,.]+?)(?:,|\s+(?:left|fouled|was))\b/i.exec(beat.text);
+  const match =
+    /^([^,.]+?)(?:,|\s+(?:left|fouled|was|got|picked up|received)\b)/i.exec(
+      beat.text,
+    );
   return match?.[1]?.trim() ?? null;
 }
 
@@ -20213,6 +21073,26 @@ function validatePregameMechanicsSentence(
         matchId,
         reason:
           "The fact-library recap exposed raw GDP/effort mechanics in public prose.",
+        salvage: semanticIssueSalvageForField(field),
+        sentence,
+        sentenceIndex,
+      },
+    ];
+  }
+
+  const rawTacticCodeMatch = sentence.match(
+    /\b(?:OutsideIsolation|InsideIsolation|RunAndGun|LookInside|LowPost|PushTheBall|FullCourtPress|ManToMan|(?:23|32|131)Zone|InsideBoxAndOne|OutsideBoxAndOne)\b/i,
+  );
+  if (rawTacticCodeMatch) {
+    return [
+      {
+        actualValue: rawTacticCodeMatch[0],
+        feedback: `For match ${matchId}, replace raw tactic code "${rawTacticCodeMatch[0]}" with the display name from factsLibrary.pregameBattle, such as Outside Isolation or 3-2 Zone.`,
+        field,
+        kind: "raw_pregame_mechanics_language",
+        matchId,
+        reason:
+          "The fact-library recap exposed a raw tactic code instead of a readable tactic name.",
         salvage: semanticIssueSalvageForField(field),
         sentence,
         sentenceIndex,
@@ -20266,8 +21146,18 @@ function validatePregameMechanicsSentence(
 function normalizedTextIncludesStrategy(text: string, strategy: string): boolean {
   const normalizedText = normalizeStrategyName(text);
   const normalizedStrategy = normalizeStrategyName(strategy);
+  const normalizedOffenseDisplay = normalizeStrategyName(
+    formatStrategyDisplayNameForRecap(strategy, "offense"),
+  );
+  const normalizedDefenseDisplay = normalizeStrategyName(
+    formatStrategyDisplayNameForRecap(strategy, "defense"),
+  );
   return Boolean(
-    normalizedStrategy && normalizedText.includes(normalizedStrategy),
+    (normalizedStrategy && normalizedText.includes(normalizedStrategy)) ||
+      (normalizedOffenseDisplay &&
+        normalizedText.includes(normalizedOffenseDisplay)) ||
+      (normalizedDefenseDisplay &&
+        normalizedText.includes(normalizedDefenseDisplay)),
   );
 }
 
@@ -20682,6 +21572,9 @@ function validateRequiredPrimaryRunMention(
   if (!primaryRun?.teamSide) {
     return [];
   }
+  if (!shouldRequirePrimaryRunMention(expectedGame)) {
+    return [];
+  }
 
   const writeupSentences = splitRecapText(game.writeup);
   const hasPrimaryRunMention = writeupSentences.some((sentence) => {
@@ -20711,6 +21604,32 @@ function validateRequiredPrimaryRunMention(
       teamSide: primaryRun.teamSide,
     },
   ];
+}
+
+function shouldRequirePrimaryRunMention(
+  expectedGame: GameDayRecapPromptGame,
+): boolean {
+  const gameStory = expectedGame.factsLibrary?.gameStory;
+  if (!gameStory) {
+    return true;
+  }
+  const selectedPrimaryRunBeat = gameStory.selectedBeats.find((beat) =>
+    gameStoryBeatReferencesPrimaryRun(beat),
+  );
+  return Boolean(
+    selectedPrimaryRunBeat &&
+      gameStory.requiredFactIds.includes(selectedPrimaryRunBeat.factId),
+  );
+}
+
+function gameStoryBeatReferencesPrimaryRun(
+  beat: Pick<GameDayRecapGameStoryBeat, "factId" | "sourceFields" | "text">,
+): boolean {
+  return (
+    /primary_run/i.test(beat.factId) ||
+    beat.sourceFields.some((sourceField) => /playByPlayFacts\.primaryRun/i.test(sourceField)) ||
+    /\bprimary run\b/i.test(beat.text)
+  );
 }
 
 function validateChoppyFactStack(
@@ -21780,10 +22699,18 @@ function applyGameWriteupRepairs(
   for (const [sentenceIndex, sentenceIssues] of Array.from(
     issuesBySentence.entries(),
   )) {
-    const replacement = buildSafeReplacementSentence(
-      choosePreferredRepairIssue(sentenceIssues),
-      expectedGame,
-    );
+    if (
+      sentenceIssues.some(
+        (issue) => issue.kind === "duplicate_outcome_restatement",
+      ) &&
+      sentences[sentenceIndex]
+    ) {
+      sentences[sentenceIndex] = "";
+      replacedSentenceIndexes.push(sentenceIndex);
+      continue;
+    }
+    const preferredIssue = choosePreferredRepairIssue(sentenceIssues);
+    const replacement = buildSafeReplacementSentence(preferredIssue, expectedGame);
     if (!replacement || !sentences[sentenceIndex]) {
       continue;
     }
@@ -21794,7 +22721,7 @@ function applyGameWriteupRepairs(
   return {
     game: {
       ...game,
-      writeup: sentences.join(" "),
+      writeup: sentences.filter(Boolean).join(" "),
     },
     replacedSentenceIndexes,
   };
@@ -21880,7 +22807,7 @@ function buildSafeReplacementSentence(
     case "missing_series_summary_line":
       return null;
     case "missing_game_story_beat":
-      return null;
+      return buildSafeMissingGameStoryBeatSentence(expectedGame);
     case "conflicting_series_summary_line":
       return null;
     case "missing_required_context_sentence":
@@ -21890,6 +22817,7 @@ function buildSafeReplacementSentence(
     case "missing_primary_run_mention":
       return buildSafePrimaryRunSentence(expectedGame);
     case "missing_run_timing":
+      return buildSafeRunReplacementForIssue(issue, expectedGame);
     case "overlapping_run_claims":
     case "unsupported_scoring_context":
       return buildSafeFinalScoreSentence(expectedGame);
@@ -21906,6 +22834,7 @@ function buildSafeReplacementSentence(
     case "duplicate_period_state_restatement":
     case "duplicate_outcome_restatement":
     case "game_flow_time_clutter":
+    case "missing_pregame_tactical_setup":
     case "one_game_streak_language":
     case "playoff_record_language":
     case "playoff_streak_language":
@@ -21969,6 +22898,138 @@ function formatStreakSentenceForRecap(
     : `${teamName} has lost ${length} straight.`;
 }
 
+function buildSafeMissingGameStoryBeatSentence(
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  const gameStory = expectedGame.factsLibrary?.gameStory;
+  if (!gameStory) {
+    return null;
+  }
+  const requiredBeat = gameStory.selectedBeats.find((beat) =>
+    gameStory.requiredFactIds.includes(beat.factId),
+  );
+  if (!requiredBeat) {
+    return null;
+  }
+  if (requiredBeat.explicitEventContext) {
+    return buildSafeExplicitEventSentence(expectedGame, requiredBeat);
+  }
+  if (requiredBeat.runContext) {
+    const run = resolveSelectedGameStoryRun(expectedGame);
+    return run ? buildSafeRunSentence(expectedGame, run) : null;
+  }
+  return null;
+}
+
+function buildSafeExplicitEventSentence(
+  expectedGame: GameDayRecapPromptGame,
+  beat: GameDayRecapGameStoryBeat,
+): string | null {
+  const event = beat.explicitEventContext;
+  if (!event) {
+    return null;
+  }
+  const subject = event.playerName ?? event.teamName;
+  if (!subject) {
+    return null;
+  }
+  const eventPhrase = safeExplicitEventVerbPhrase(event.eventType);
+  const rolePhrase = /\bstarter\b/i.test(beat.text)
+    ? `, a starter for ${event.teamName ?? "his team"},`
+    : /\bkey rotation piece\b/i.test(beat.text)
+      ? `, a key rotation piece for ${event.teamName ?? "his team"},`
+      : "";
+  const timePhrase =
+    event.quarter !== null
+      ? ` ${formatBroadEventTimePhrase(event.quarter, event.clock)}`
+      : "";
+  const scorePhrase = formatFallbackEventScorePhrase(
+    event,
+    `${expectedGame.matchId}:${subject}`,
+  );
+  return `${subject}${rolePhrase} ${eventPhrase}${timePhrase}${scorePhrase}.`;
+}
+
+function safeExplicitEventVerbPhrase(
+  eventType: GameDayRecapGameStoryExplicitEventContext["eventType"],
+): string {
+  switch (eventType) {
+    case "ejection":
+      return "was ejected";
+    case "foul_out":
+      return "fouled out";
+    case "injury":
+      return "left injured";
+    case "technical":
+      return "was involved in a technical foul";
+  }
+}
+
+function formatBroadEventTimePhrase(quarter: number, clock: string | null): string {
+  if (!clock) {
+    return `in ${formatPeriodContextLabel(quarter)}`;
+  }
+  const secondsRemaining = parseRunClockForRecapValidation(clock);
+  const periodSeconds = quarter <= 4 ? 12 * 60 : 5 * 60;
+  const elapsed = periodSeconds - secondsRemaining;
+  const band =
+    elapsed < periodSeconds / 3
+      ? "early"
+      : elapsed > (periodSeconds * 2) / 3
+        ? "late"
+        : "midway through";
+  return `${band} in ${formatPeriodContextLabel(quarter)}`;
+}
+
+function formatFallbackEventScorePhrase(
+  event: GameDayRecapGameStoryExplicitEventContext,
+  seed: string,
+): string {
+  if (
+    event.teamName &&
+    event.eventTeamScore !== null &&
+    event.opponentScore !== null
+  ) {
+    if (event.scoreRelation === "tied") {
+      return chooseDeterministicPhrase(seed, [
+        ` with the score tied ${event.eventTeamScore}-${event.opponentScore}`,
+        ` in a ${event.eventTeamScore}-${event.opponentScore} tie`,
+      ]);
+    }
+    const score = `${event.eventTeamScore}-${event.opponentScore}`;
+    if (event.scoreRelation === "leading") {
+      return chooseDeterministicPhrase(seed, [
+        ` with ${event.teamName} leading ${score}`,
+        ` while ${event.teamName} was up ${score}`,
+      ]);
+    }
+    if (event.scoreRelation === "trailing") {
+      return chooseDeterministicPhrase(seed, [
+        ` with ${event.teamName} trailing ${score}`,
+        ` while ${event.teamName} was down ${score}`,
+      ]);
+    }
+  }
+
+  if (event.leaderSide === "tie") {
+    return ` with the score tied ${event.homeScore}-${event.awayScore}`;
+  }
+  return "";
+}
+
+function buildSafeRunReplacementForIssue(
+  issue: GameDayRecapSemanticValidationIssue,
+  expectedGame: GameDayRecapPromptGame,
+): string | null {
+  const runClaim = extractRunClaim(issue.sentence, expectedGame);
+  const matchingRun = runClaim
+    ? findMatchingSupportedRun(runClaim, collectSupportedRuns(expectedGame))
+    : null;
+  return matchingRun
+    ? buildSafeRunSentence(expectedGame, matchingRun)
+    : buildSafePrimaryRunSentence(expectedGame);
+}
+
 function buildSafeMomentumSentence(
   expectedGame: GameDayRecapPromptGame,
 ): string | null {
@@ -21984,8 +23045,12 @@ function buildSafeMomentumSentence(
 function buildSafeTacticalComparisonSentence(
   expectedGame: GameDayRecapPromptGame,
 ): string | null {
-  const awayOffense = expectedGame.teams.away.offStrategy?.trim();
-  const homeOffense = expectedGame.teams.home.offStrategy?.trim();
+  const awayOffense =
+    formatStrategyDisplayNameForRecap(expectedGame.teams.away.offStrategy, "offense") ??
+    expectedGame.teams.away.offStrategy?.trim();
+  const homeOffense =
+    formatStrategyDisplayNameForRecap(expectedGame.teams.home.offStrategy, "offense") ??
+    expectedGame.teams.home.offStrategy?.trim();
   if (!awayOffense || !homeOffense) {
     return null;
   }
@@ -22011,11 +23076,60 @@ function buildSafeFinalScoreSentence(
 function buildSafePrimaryRunSentence(
   expectedGame: GameDayRecapPromptGame,
 ): string | null {
+  const run =
+    expectedGame.playByPlayFacts?.primaryRun ??
+    resolveSelectedGameStoryRun(expectedGame);
+  if (run?.teamSide) {
+    return buildSafeRunSentence(expectedGame, run);
+  }
+
   return (
-    expectedGame.playByPlayFacts?.summaryLines.find((line) =>
-      /\brun\b/i.test(line),
+    expectedGame.playByPlayFacts?.summaryLines.find((line) => /\brun\b/i.test(line)) ??
+    null
+  );
+}
+
+function resolveSelectedGameStoryRun(
+  expectedGame: GameDayRecapPromptGame,
+): GameDayRecapPlayByPlayRun | null {
+  const selectedRunBeat = expectedGame.factsLibrary?.gameStory.selectedBeats.find(
+    (beat) => beat.runContext,
+  );
+  if (!selectedRunBeat) {
+    return null;
+  }
+  const supportedRuns = collectSupportedRuns(expectedGame);
+  return (
+    supportedRuns.find(
+      (run) =>
+        run.teamPoints === selectedRunBeat.runContext?.teamPoints &&
+        run.opponentPoints === selectedRunBeat.runContext.opponentPoints &&
+        run.teamSide === selectedRunBeat.runContext.teamSide,
     ) ?? null
   );
+}
+
+function buildSafeRunSentence(
+  expectedGame: GameDayRecapPromptGame,
+  run: GameDayRecapPlayByPlayRun,
+): string | null {
+  if (!run.teamSide) {
+    return null;
+  }
+  const teamName = run.teamName ?? expectedGame.teams[run.teamSide].name;
+  const runScore = `${run.teamPoints}-${run.opponentPoints}`;
+  const timingPhrase = formatFallbackRunTimingPhrase(
+    run,
+    `${expectedGame.matchId}:${runScore}`,
+  );
+  const timingClause = timingPhrase ? ` ${timingPhrase}` : "";
+  const verbPhrase =
+    run.teamSide === resolveGameWinnerSide(expectedGame)
+      ? run.endMarginFromTeamPerspective >= 6
+        ? "to seize control"
+        : "to swing the game"
+      : "to push back";
+  return `${teamName} used a ${runScore} run${timingClause} ${verbPhrase}.`;
 }
 
 function buildSafeDecisiveEndingSentence(
@@ -22192,9 +23306,21 @@ function isSoftStyleOnlyWriteupIssue(
   return (
     issue.field === "writeup" &&
     (issue.kind === "choppy_fact_stack" ||
+      issue.kind === "clunky_pregame_mechanics_phrase" ||
+      issue.kind === "duplicate_outcome_restatement" ||
       issue.kind === "duplicate_period_state_restatement" ||
+      issue.kind === "game_flow_time_clutter" ||
+      issue.kind === "missing_decisive_ending_emphasis" ||
+      issue.kind === "missing_game_story_beat" ||
+      issue.kind === "missing_pregame_tactical_setup" ||
+      issue.kind === "missing_primary_run_mention" ||
+      issue.kind === "missing_required_context_sentence" ||
+      issue.kind === "missing_run_timing" ||
+      issue.kind === "missing_series_summary_line" ||
+      issue.kind === "overlapping_run_claims" ||
       issue.kind === "repetitive_sentence_start" ||
-      issue.kind === "short_fact_sentence_cluster")
+      issue.kind === "short_fact_sentence_cluster" ||
+      issue.kind === "visible_section_heading")
   );
 }
 
@@ -22402,6 +23528,7 @@ export const __testing = {
   buildGameDayRecapJudgeBedrockRequest,
   buildGameDayRecapJudgeInterestingnessResultSchema,
   buildGameDayRecapJudgeSentenceFactualityResultSchema,
+  buildGameValidationPayload,
   buildGameDayRecapJudgeFactStore,
   buildPregameBattleForFactsLibrary,
   buildGameDayRecapCostPayload,

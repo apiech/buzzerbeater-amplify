@@ -73,28 +73,95 @@ function createRunFact(args: {
   startQuarter: number;
   teamPoints: number;
 }) {
+  const startGameSeconds = (args.startQuarter - 1) * 12 * 60 + (12 * 60 - Number.parseInt(args.startClock.split(":")[0] ?? "0", 10) * 60 - Number.parseInt(args.startClock.split(":")[1] ?? "0", 10));
+  const endGameSeconds = (args.endQuarter - 1) * 12 * 60 + (12 * 60 - Number.parseInt(args.endClock.split(":")[0] ?? "0", 10) * 60 - Number.parseInt(args.endClock.split(":")[1] ?? "0", 10));
+  const elapsedSeconds = Math.max(0, endGameSeconds - startGameSeconds);
   return {
     endAwayScore: args.endAwayScore,
     endClock: args.endClock,
+    endGameSeconds,
     endMarginFromTeamPerspective: args.endHomeScore - args.endAwayScore,
     endedBy: "game_end" as const,
     endHomeScore: args.endHomeScore,
     endQuarter: args.endQuarter,
+    endScore: {
+      away: args.endAwayScore,
+      home: args.endHomeScore,
+      opponent: args.endAwayScore,
+      team: args.endHomeScore,
+    },
+    elapsedMinutesFloor: Math.floor(elapsedSeconds / 60),
+    elapsedSeconds,
     marginSwing:
       args.endHomeScore -
       args.endAwayScore -
       (args.startHomeScore - args.startAwayScore),
     netMargin: args.teamPoints - args.opponentPoints,
     opponentPoints: args.opponentPoints,
+    periodSpan: {
+      endQuarter: args.endQuarter,
+      quarterCount: Math.abs(args.endQuarter - args.startQuarter) + 1,
+      spansMultiplePeriods: args.endQuarter !== args.startQuarter,
+      startQuarter: args.startQuarter,
+    },
     runType: "swing" as const,
     startAwayScore: args.startAwayScore,
     startClock: args.startClock,
+    startGameSeconds,
     startMarginFromTeamPerspective: args.startHomeScore - args.startAwayScore,
     startHomeScore: args.startHomeScore,
     startQuarter: args.startQuarter,
+    startScore: {
+      away: args.startAwayScore,
+      home: args.startHomeScore,
+      opponent: args.startAwayScore,
+      team: args.startHomeScore,
+    },
     teamName: "Alpha",
     teamPoints: args.teamPoints,
     teamSide: "home" as const,
+  };
+}
+
+function pickRunCore(run: {
+  endAwayScore: number;
+  endClock: string | null;
+  endMarginFromTeamPerspective: number;
+  endedBy: string | null;
+  endHomeScore: number;
+  endQuarter: number | null;
+  marginSwing: number;
+  netMargin: number;
+  opponentPoints: number;
+  runType: string;
+  startAwayScore: number;
+  startClock: string | null;
+  startMarginFromTeamPerspective: number;
+  startHomeScore: number;
+  startQuarter: number | null;
+  teamName: string | null;
+  teamPoints: number;
+  teamSide: string | null;
+}) {
+  return {
+    endAwayScore: run.endAwayScore,
+    endClock: run.endClock,
+    endMarginFromTeamPerspective: run.endMarginFromTeamPerspective,
+    endedBy: run.endedBy,
+    endHomeScore: run.endHomeScore,
+    endQuarter: run.endQuarter,
+    marginSwing: run.marginSwing,
+    netMargin: run.netMargin,
+    opponentPoints: run.opponentPoints,
+    runType: run.runType,
+    startAwayScore: run.startAwayScore,
+    startClock: run.startClock,
+    startMarginFromTeamPerspective: run.startMarginFromTeamPerspective,
+    startHomeScore: run.startHomeScore,
+    startQuarter: run.startQuarter,
+    teamName: run.teamName,
+    teamPoints: run.teamPoints,
+    teamSide: run.teamSide,
   };
 }
 
@@ -296,7 +363,7 @@ test("buildGameDayRecapPlayByPlayFacts captures a winning comeback and the bigge
 
   assert.equal(facts.leadChangeCount, 1);
   assert.equal(facts.winnerComebackDeficit, 10);
-  assert.deepStrictEqual(facts.longestUnansweredRun, {
+  assert.deepStrictEqual(pickRunCore(facts.longestUnansweredRun), {
     endAwayScore: 10,
     endClock: "09:00",
     endMarginFromTeamPerspective: 4,
@@ -316,7 +383,7 @@ test("buildGameDayRecapPlayByPlayFacts captures a winning comeback and the bigge
     teamPoints: 14,
     teamSide: "home",
   });
-  assert.deepStrictEqual(facts.bestCompetitiveSwingRun, {
+  assert.deepStrictEqual(pickRunCore(facts.bestCompetitiveSwingRun), {
     endAwayScore: 0,
     endClock: null,
     endMarginFromTeamPerspective: 0,
@@ -462,7 +529,7 @@ test("buildGameDayRecapPlayByPlayFacts captures a competitive answered swing run
     }),
   ]);
 
-  assert.deepStrictEqual(facts.bestCompetitiveSwingRun, {
+  assert.deepStrictEqual(pickRunCore(facts.bestCompetitiveSwingRun), {
     endAwayScore: 7,
     endClock: "04:35",
     endMarginFromTeamPerspective: 9,
@@ -763,8 +830,59 @@ test("buildGameDayRecapPlayByPlayFacts captures offensive-rebound possessions an
   assert.equal(offensiveReboundSequence.offensiveRebounds, 2);
   assert.equal(foulOutFact.eventType, "foul_out");
   assert.equal(foulOutFact.playerName, "Bert Blue");
+  assert.equal(foulOutFact.scoreRelation, "tied");
+  assert.equal(foulOutFact.eventTeamScore, 2);
+  assert.equal(foulOutFact.opponentScore, 2);
   assert.equal(injuryFact.eventType, "injury");
   assert.equal(injuryFact.playerName, "Hana Hot");
+  assert.equal(injuryFact.homeScore, 2);
+  assert.equal(injuryFact.awayScore, 2);
+  assert.equal(injuryFact.scoreRelation, "tied");
+});
+
+test("buildGameDayRecapPlayByPlayFacts records score state for explicit injuries", () => {
+  const facts = buildFacts(
+    [
+      createEvent({
+        awayScore: 6,
+        clock: "09:44",
+        eventText: "Alpha opens with a basket.",
+        homeScore: 8,
+        id: 1,
+        quarter: 1,
+        wallClock: 136,
+      }),
+      createEvent({
+        awayScore: 6,
+        clock: "09:40",
+        eventText: "Hana Hot left the game injured.",
+        homeScore: 8,
+        id: 2,
+        isHomePossession: true,
+        isScoringPlay: false,
+        quarter: 1,
+        type: "INJURY",
+        wallClock: 140,
+      }),
+    ],
+    {
+      homePlayers: ["Hana Hot"],
+      homeTeamName: "Alpha",
+      awayTeamName: "Beta",
+    },
+  );
+
+  const injuryFact = facts.explicitEventFacts?.[0];
+  assert.ok(injuryFact);
+  assert.equal(injuryFact.eventType, "injury");
+  assert.equal(injuryFact.playerName, "Hana Hot");
+  assert.equal(injuryFact.homeScore, 8);
+  assert.equal(injuryFact.awayScore, 6);
+  assert.equal(injuryFact.leaderSide, "home");
+  assert.equal(injuryFact.eventTeamScore, 8);
+  assert.equal(injuryFact.opponentScore, 6);
+  assert.equal(injuryFact.margin, 2);
+  assert.equal(injuryFact.scoreRelation, "leading");
 });
 
 test("buildGameDayRecapPlayByPlayFacts anchors answered runs to the starting score event", () => {
@@ -1792,7 +1910,7 @@ test("buildGameDayRecapPlayByPlayFacts keeps run timing intact when a run spans 
     }),
   ]);
 
-  assert.deepStrictEqual(facts.longestUnansweredRun, {
+  assert.deepStrictEqual(pickRunCore(facts.longestUnansweredRun), {
     endAwayScore: 20,
     endClock: "11:10",
     endMarginFromTeamPerspective: 2,
@@ -2049,6 +2167,17 @@ test("buildGameDayRecapPlayByPlayFacts aligns run scoring with the displayed anc
 
   assert.equal(facts.primaryRun.teamPoints, 21);
   assert.equal(facts.primaryRun.opponentPoints, 6);
+  assert.equal(facts.primaryRun.elapsedMinutesFloor, 12);
+  assert.deepEqual(facts.primaryRun.periodSpan, {
+    endQuarter: 4,
+    quarterCount: 2,
+    spansMultiplePeriods: true,
+    startQuarter: 3,
+  });
+  assert.equal(facts.primaryRun.startScore.team, 48);
+  assert.equal(facts.primaryRun.startScore.opponent, 45);
+  assert.equal(facts.primaryRun.endScore.team, 69);
+  assert.equal(facts.primaryRun.endScore.opponent, 51);
   assert.equal(facts.secondaryRun.teamPoints, 10);
   assert.equal(facts.secondaryRun.opponentPoints, 4);
 

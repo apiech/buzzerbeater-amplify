@@ -50,6 +50,7 @@ const EJECTION_PATTERN = /\b(?:eject(?:ed|ion)|tossed)\b/i;
 type TeamSide = "away" | "home";
 type RunType = "swing" | "unanswered";
 type RunEndedBy = "game_end" | "opponent_answer" | "unknown";
+type ScoreRelation = "leading" | "tied" | "trailing" | "unknown";
 
 export type GameDayRecapPlayByPlayLoadErrorDetails = {
   bodyPreview?: string;
@@ -70,22 +71,43 @@ export type GameDayRecapPlayByPlayLargestLead = {
   teamSide: TeamSide | null;
 };
 
+export type GameDayRecapPlayByPlayScorePair = {
+  away: number;
+  home: number;
+  opponent: number | null;
+  team: number | null;
+};
+
+export type GameDayRecapPlayByPlayPeriodSpan = {
+  endQuarter: number | null;
+  quarterCount: number | null;
+  spansMultiplePeriods: boolean;
+  startQuarter: number | null;
+};
+
 export type GameDayRecapPlayByPlayRun = {
   endAwayScore: number;
   endClock: string | null;
+  endGameSeconds: number | null;
   endMarginFromTeamPerspective: number;
   endedBy: RunEndedBy | null;
   endHomeScore: number;
   endQuarter: number | null;
+  endScore: GameDayRecapPlayByPlayScorePair;
+  elapsedMinutesFloor: number | null;
+  elapsedSeconds: number | null;
   marginSwing: number;
   netMargin: number;
   opponentPoints: number;
+  periodSpan: GameDayRecapPlayByPlayPeriodSpan;
   runType: RunType;
   startAwayScore: number;
   startClock: string | null;
+  startGameSeconds: number | null;
   startMarginFromTeamPerspective: number;
   startHomeScore: number;
   startQuarter: number | null;
+  startScore: GameDayRecapPlayByPlayScorePair;
   teamName: string | null;
   teamPoints: number;
   teamSide: TeamSide | null;
@@ -244,11 +266,18 @@ export type GameDayRecapPlayByPlayOffensiveReboundSequence = {
 };
 
 export type GameDayRecapPlayByPlayExplicitEventFact = {
+  awayScore: number;
   clock: string | null;
+  eventTeamScore: number | null;
   eventText: string;
   eventType: "ejection" | "foul_out" | "injury" | "technical";
+  homeScore: number;
+  leaderSide: TeamSide | "tie";
+  margin: number;
+  opponentScore: number | null;
   playerName: string | null;
   quarter: number | null;
+  scoreRelation: ScoreRelation;
   teamName: string | null;
   teamSide: TeamSide | null;
 };
@@ -925,19 +954,41 @@ function createEmptyRunFact(runType: RunType): GameDayRecapPlayByPlayRun {
   return {
     endAwayScore: 0,
     endClock: null,
+    endGameSeconds: null,
     endMarginFromTeamPerspective: 0,
     endedBy: null,
     endHomeScore: 0,
     endQuarter: null,
+    endScore: {
+      away: 0,
+      home: 0,
+      opponent: null,
+      team: null,
+    },
+    elapsedMinutesFloor: null,
+    elapsedSeconds: null,
     marginSwing: 0,
     netMargin: 0,
     opponentPoints: 0,
+    periodSpan: {
+      endQuarter: null,
+      quarterCount: null,
+      spansMultiplePeriods: false,
+      startQuarter: null,
+    },
     runType,
     startAwayScore: 0,
     startClock: null,
+    startGameSeconds: null,
     startMarginFromTeamPerspective: 0,
     startHomeScore: 0,
     startQuarter: null,
+    startScore: {
+      away: 0,
+      home: 0,
+      opponent: null,
+      team: null,
+    },
     teamName: null,
     teamPoints: 0,
     teamSide: null,
@@ -1377,26 +1428,73 @@ function buildRunFact(args: {
     args.teamSide === "home"
       ? args.endEvent.afterHomeScore - args.endEvent.afterAwayScore
       : args.endEvent.afterAwayScore - args.endEvent.afterHomeScore;
+  const startGameSeconds =
+    args.startAnchor.gameSecondsElapsed ??
+    (args.startAnchor.quarter !== null
+      ? resolveAnchorOrdering(args.startAnchor.quarter, args.startAnchor.clock)
+      : null);
+  const endGameSeconds =
+    args.endEvent.gameSecondsElapsed ??
+    resolveAnchorOrdering(args.endEvent.quarter, args.endEvent.clock);
+  const elapsedSeconds =
+    startGameSeconds !== null && endGameSeconds !== null
+      ? Math.max(0, endGameSeconds - startGameSeconds)
+      : null;
 
   return {
     endAwayScore: args.endEvent.afterAwayScore,
     endClock: args.endEvent.clock,
+    endGameSeconds,
     endMarginFromTeamPerspective,
     endedBy: args.endedBy,
     endHomeScore: args.endEvent.afterHomeScore,
     endQuarter: args.endEvent.quarter,
+    endScore: {
+      away: args.endEvent.afterAwayScore,
+      home: args.endEvent.afterHomeScore,
+      opponent: opponentEndScore,
+      team: teamEndScore,
+    },
+    elapsedMinutesFloor:
+      elapsedSeconds !== null ? Math.floor(elapsedSeconds / 60) : null,
+    elapsedSeconds,
     marginSwing: endMarginFromTeamPerspective - startMarginFromTeamPerspective,
     netMargin: displayedTeamPoints - displayedOpponentPoints,
     opponentPoints: displayedOpponentPoints,
+    periodSpan: buildPeriodSpan(args.startAnchor.quarter, args.endEvent.quarter),
     runType: args.runType,
     startAwayScore: args.startAnchor.awayScore,
     startClock: args.startAnchor.clock,
+    startGameSeconds,
     startMarginFromTeamPerspective,
     startHomeScore: args.startAnchor.homeScore,
     startQuarter: args.startAnchor.quarter,
+    startScore: {
+      away: args.startAnchor.awayScore,
+      home: args.startAnchor.homeScore,
+      opponent: opponentStartScore,
+      team: teamStartScore,
+    },
     teamName: resolveTeamName(args.teamSide, args.teamNames),
     teamPoints: displayedTeamPoints,
     teamSide: args.teamSide,
+  };
+}
+
+function buildPeriodSpan(
+  startQuarter: number | null,
+  endQuarter: number | null,
+): GameDayRecapPlayByPlayPeriodSpan {
+  const quarterCount =
+    startQuarter !== null && endQuarter !== null
+      ? Math.abs(endQuarter - startQuarter) + 1
+      : null;
+  return {
+    endQuarter,
+    quarterCount,
+    spansMultiplePeriods:
+      startQuarter !== null && endQuarter !== null && startQuarter !== endQuarter,
+    startQuarter,
   };
 }
 
@@ -2432,20 +2530,71 @@ function resolveExplicitEventFacts(
     }
 
     const teamSide = event.actingTeamSide ?? event.scoringTeamSide ?? null;
+    const scoreContext = buildExplicitEventScoreContext(event, teamSide);
     facts.push({
+      awayScore: event.afterAwayScore,
       clock: event.clock,
+      eventTeamScore: scoreContext.eventTeamScore,
       eventText,
       eventType,
+      homeScore: event.afterHomeScore,
+      leaderSide: scoreContext.leaderSide,
+      margin: scoreContext.margin,
+      opponentScore: scoreContext.opponentScore,
       playerName: resolveNamedBoxScorePlayer(event, teamNames, {
         teamSide: teamSide ?? undefined,
       }),
       quarter: event.quarter,
+      scoreRelation: scoreContext.scoreRelation,
       teamName: teamSide ? resolveTeamName(teamSide, teamNames) : null,
       teamSide,
     });
   }
 
   return facts.slice(0, 5);
+}
+
+function buildExplicitEventScoreContext(
+  event: EventContext,
+  teamSide: TeamSide | null,
+): Pick<
+  GameDayRecapPlayByPlayExplicitEventFact,
+  | "eventTeamScore"
+  | "leaderSide"
+  | "margin"
+  | "opponentScore"
+  | "scoreRelation"
+> {
+  const leaderSide = resolveLeader(event.afterHomeScore, event.afterAwayScore);
+  if (!teamSide) {
+    return {
+      eventTeamScore: null,
+      leaderSide,
+      margin: Math.abs(event.afterHomeScore - event.afterAwayScore),
+      opponentScore: null,
+      scoreRelation: "unknown",
+    };
+  }
+
+  const eventTeamScore =
+    teamSide === "home" ? event.afterHomeScore : event.afterAwayScore;
+  const opponentScore =
+    teamSide === "home" ? event.afterAwayScore : event.afterHomeScore;
+  const margin = Math.abs(eventTeamScore - opponentScore);
+  const scoreRelation: ScoreRelation =
+    eventTeamScore === opponentScore
+      ? "tied"
+      : eventTeamScore > opponentScore
+        ? "leading"
+        : "trailing";
+
+  return {
+    eventTeamScore,
+    leaderSide,
+    margin,
+    opponentScore,
+    scoreRelation,
+  };
 }
 
 function isMadeThreeScoringEvent(
