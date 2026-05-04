@@ -71,6 +71,7 @@ test("panel contexts no longer depend on DashboardWorkspace", () => {
 test("app data access stays behind the shared query layer", () => {
   const allowedFiles = new Set([
     join(appRoot, "amplify-client.ts"),
+    join(appRoot, "bbapi-browser-test", "bbapi-browser-test-client.tsx"),
     join(appRoot, "dashboard", "workspace-query-client.ts"),
   ]);
 

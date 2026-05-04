@@ -68,12 +68,13 @@ export class BBXmlApiClient {
   private readonly securityCode: string;
   private readonly fetchImpl: typeof fetch;
   private cookieHeader: string | null = null;
+  private browserSessionEstablished = false;
 
   constructor(options: BBXmlApiClientOptions) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
     this.username = options.username;
     this.securityCode = options.securityCode;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
   }
 
   async login(extraParams?: { secondteam?: boolean; quickinfo?: boolean }): Promise<string> {
@@ -93,6 +94,7 @@ export class BBXmlApiClient {
       );
     }
 
+    this.browserSessionEstablished = true;
     return xml;
   }
 
@@ -101,6 +103,7 @@ export class BBXmlApiClient {
       await this.request("logout.aspx", undefined, false);
     } finally {
       this.cookieHeader = null;
+      this.browserSessionEstablished = false;
     }
   }
 
@@ -229,7 +232,7 @@ export class BBXmlApiClient {
     params?: Record<string, string | number>,
     autoLogin = true,
   ): Promise<string> {
-    if (!this.cookieHeader && autoLogin) {
+    if (!this.cookieHeader && !this.browserSessionEstablished && autoLogin) {
       await this.login();
     }
 
