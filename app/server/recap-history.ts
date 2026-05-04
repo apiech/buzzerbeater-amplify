@@ -1112,7 +1112,8 @@ function readOptionalRecapGenerationApproach(
   value: unknown,
 ): RecapGenerationApproach | null {
   return value === RecapGenerationApproach.FACT_LIBRARY_FIRST ||
-    value === RecapGenerationApproach.LEGACY
+    value === RecapGenerationApproach.LEGACY ||
+    value === RecapGenerationApproach.SIMPLE_FACT_LIBRARY
     ? value
     : null;
 }

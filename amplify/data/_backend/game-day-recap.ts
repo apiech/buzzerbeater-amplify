@@ -8439,11 +8439,7 @@ function resolveRatingAttackContext(
 function resolveRatingAttackContexts(
   offStrategy: string | null,
 ): GameDayRecapRatingAttackContext[] {
-  const normalized =
-    offStrategy
-      ?.toLowerCase()
-      .replace(/[^a-z]+/g, " ")
-      .trim() ?? "";
+  const normalized = normalizeStrategyName(offStrategy);
   const outsideContext: GameDayRecapRatingAttackContext = {
     attackLabel: "outside scoring",
     defenseKey: "outsideDefense",
@@ -25814,6 +25810,7 @@ export const __testing = {
   resolveLeagueGameDaySlate,
   resolveDefenseTaxonomy,
   resolveOffenseTaxonomy,
+  resolveRatingAttackContexts,
   resolveGameDayRecapPromptVersion,
   resolveRecapQualityTier,
   resolveSeasonCandidatesForDate,

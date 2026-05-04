@@ -449,13 +449,6 @@ export function RecapPanel({
       }
 
       await copyTextToClipboard(forumPost);
-      const omittedUnsafeWriteups =
-        selectedRecap.kind !== "LEAGUE_GAME_DAY_PERFORMANCES" &&
-        selectedWriteupResult
-          ? selectedWriteupResult.games.some(
-              (game) => !isForumCopyableRecapGame(game),
-            )
-          : false;
       captureAnalyticsEvent("recap_forum_post_copied", {
         mode: selectedRecap.kind.toLowerCase(),
         status: selectedRecap.status,
@@ -464,10 +457,8 @@ export function RecapPanel({
         message:
           selectedRecap.kind === "LEAGUE_GAME_DAY_PERFORMANCES"
             ? "Forum-ready performances copied."
-            : omittedUnsafeWriteups
-              ? "Forum-ready recap copied without unsafe games."
             : "Forum-ready recap copied.",
-        tone: omittedUnsafeWriteups ? "note" : "success",
+        tone: "success",
       });
     } catch {
       setCopyFeedback({
@@ -1717,6 +1708,11 @@ function recapApproachForRecord(
     return RecapGenerationApproachEnum.LEGACY;
   }
 
+  const targetKeyApproach = recapApproachForTargetKey(record.targetKey);
+  if (targetKeyApproach) {
+    return targetKeyApproach;
+  }
+
   const approach = (
     record.requestJson as { approach?: RecapGenerationApproach | null }
   ).approach;
@@ -1731,6 +1727,19 @@ function recapApproachForRecord(
     default:
       return RecapGenerationApproachEnum.LEGACY;
   }
+}
+
+function recapApproachForTargetKey(
+  targetKey: string,
+): RecapGenerationApproach | null {
+  if (targetKey.includes("#simple-fact-library")) {
+    return RecapGenerationApproachEnum.SIMPLE_FACT_LIBRARY;
+  }
+  if (targetKey.includes("#fact-library-first")) {
+    return RecapGenerationApproachEnum.FACT_LIBRARY_FIRST;
+  }
+
+  return null;
 }
 
 function formatRecapGenerationApproachLabel(
@@ -2428,12 +2437,7 @@ function formatRecapForumPost(
   record: RecapHistoryRecord,
   result: GameDayRecapResultPayload,
 ): string {
-  const forumGames = result.games.filter(isForumCopyableRecapGame);
-  const omittedUnsafeCount = result.games.length - forumGames.length;
-  const gameOfTheDay = findGameOfTheDay({
-    ...result,
-    games: forumGames,
-  });
+  const gameOfTheDay = findGameOfTheDay(result);
   const lines = [
     `[b]${escapeForumText(result.summary.headline)}[/b]`,
     `[i]${escapeForumText(describeRecapForumRecord(record))}[/i]`,
@@ -2449,7 +2453,7 @@ function formatRecapForumPost(
     );
   }
 
-  for (const game of forumGames) {
+  for (const game of result.games) {
     lines.push("");
     lines.push(`[b]${escapeForumText(game.headline)}[/b]`);
     if (game.surpriseFactor != null || game.matchId === gameOfTheDay?.matchId) {
@@ -2491,13 +2495,6 @@ function formatRecapForumPost(
     }
   }
 
-  if (omittedUnsafeCount > 0) {
-    lines.push("");
-    lines.push(
-      `[i]${omittedUnsafeCount} game recap${omittedUnsafeCount === 1 ? " was" : "s were"} omitted because ${omittedUnsafeCount === 1 ? "it has" : "they have"} an unsafe validation warning in the app.[/i]`,
-    );
-  }
-
   return lines.join("\n").trim();
 }
 
@@ -2517,12 +2514,6 @@ function getRecapGameValidation(
       status: "VALID",
     }
   );
-}
-
-function isForumCopyableRecapGame(
-  game: GameDayRecapResultPayload["games"][number],
-): boolean {
-  return getRecapGameValidation(game).status !== "UNSAFE";
 }
 
 function formatRecapValidationStatus(status: string): string {

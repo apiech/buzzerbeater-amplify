@@ -147,3 +147,36 @@ test("normalizeSingleGameSummaryRecord preserves interview overrides and stored 
     ],
   );
 });
+
+test("normalizeSingleGameSummaryRecord preserves simple fact-library approach", () => {
+  const normalized = normalizeSingleGameSummaryRecord({
+    completedAt: null,
+    costJson: null,
+    coverageJson: null,
+    createdAt: "2026-05-03T20:42:00.000Z",
+    error: null,
+    failureJson: null,
+    gameDate: "2026-05-02",
+    leagueId: "100",
+    leagueName: "NBBA",
+    matchId: "138836864",
+    requestJson: JSON.stringify({
+      approach: "SIMPLE_FACT_LIBRARY",
+      interviewIntensity: "none",
+      matchId: "138836864",
+      mode: "SINGLE_GAME",
+      qualityTier: "standard",
+    }),
+    requestedAt: "2026-05-03T20:42:00.000Z",
+    resultJson: null,
+    season: null,
+    status: "PROCESSING",
+    targetKey:
+      "138836864#simple-fact-library#quality-standard#intensity-none",
+    updatedAt: "2026-05-03T20:42:00.000Z",
+    userId: "u1",
+  } as any);
+
+  assert.equal(normalized.requestJson.approach, "SIMPLE_FACT_LIBRARY");
+  assert.equal(normalized.requestJson.interviewIntensity, "none");
+});

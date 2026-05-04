@@ -1281,6 +1281,9 @@ const gameDayRecapResultSchema = z
 
 const gameDayRecapStoredRequestSchema = z
   .object({
+    approach: z
+      .enum(["FACT_LIBRARY_FIRST", "LEGACY", "SIMPLE_FACT_LIBRARY"])
+      .optional(),
     gameDate: z.string(),
     interviewIntensity: z.enum(["clean", "pg13", "full_heat", "none"]).optional(),
     leagueId: z.string(),
@@ -1291,6 +1294,9 @@ const gameDayRecapStoredRequestSchema = z
 
 const leagueGameDayRecapStoredRequestSchema = z
   .object({
+    approach: z
+      .enum(["FACT_LIBRARY_FIRST", "LEGACY", "SIMPLE_FACT_LIBRARY"])
+      .optional(),
     gameDayNumber: z.number(),
     interviewIntensity: z.enum(["clean", "pg13", "full_heat", "none"]).optional(),
     leagueId: z.string(),
@@ -1311,6 +1317,9 @@ const leagueGameDayPerformancesStoredRequestSchema = z
 
 const singleGameSummaryStoredRequestSchema = z
   .object({
+    approach: z
+      .enum(["FACT_LIBRARY_FIRST", "LEGACY", "SIMPLE_FACT_LIBRARY"])
+      .optional(),
     interviewIntensity: z.enum(["clean", "pg13", "full_heat", "none"]).optional(),
     loserInterviewPersonalityType: z
       .enum(INTERVIEW_PERSONALITY_TYPES)

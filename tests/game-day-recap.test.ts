@@ -4590,6 +4590,82 @@ test("rating validation rejects irrelevant outside scoring claims for inside tac
   );
 });
 
+test("facts library suppresses outside-rating edges for raw inside tactic keys", () => {
+  assert.deepStrictEqual(
+    __testing
+      .resolveRatingAttackContexts("LookInside")
+      .map((context) => context.scoringKey),
+    ["insideScoring"],
+  );
+  assert.deepStrictEqual(
+    __testing
+      .resolveRatingAttackContexts("RunAndGun")
+      .map((context) => context.scoringKey),
+    ["outsideScoring"],
+  );
+
+  const game = createExpectedPromptGame("m-rating-fact-library-tactic-relevance");
+  game.teams.away.name = "Splash Gang";
+  game.teams.away.score = 95;
+  game.teams.away.offStrategy = "RunAndGun";
+  game.teams.away.defStrategy = "32Zone";
+  game.teams.away.ratingValues = {
+    ...createCompleteTeamRatings(10),
+    insideDefense: 13.2,
+    outsideDefense: 15.2,
+  };
+  game.teams.home.name = "The LA Lions";
+  game.teams.home.score = 75;
+  game.teams.home.offStrategy = "LookInside";
+  game.teams.home.defStrategy = "131Zone";
+  game.teams.home.ratingValues = {
+    ...createCompleteTeamRatings(10),
+    insideScoring: 12,
+    outsideScoring: 10,
+  };
+  game.finalMargin = 20;
+
+  const factStore = __testing.buildGameDayRecapJudgeFactStore({
+    expectedGames: [game],
+    request: {
+      gameDate: "2026-05-02",
+      gameDayNumber: null,
+      generationApproach: "FACT_LIBRARY_FIRST",
+      interviewIntensity: "none",
+      kind: "SINGLE_GAME",
+      label: "Match m-rating-fact-library-tactic-relevance",
+      leagueId: "100",
+      leagueName: "NBBA",
+      matchId: "m-rating-fact-library-tactic-relevance",
+      season: 64,
+      timeZone: "America/New_York",
+    },
+  });
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: {
+      availableGames: 1,
+      missingGames: [],
+      partial: false,
+      requestedGames: 1,
+    },
+    factStore,
+  });
+  const factsLibrary = expectPresent(
+    writerPayload.games[0]?.factsLibrary,
+    "expected facts library",
+  );
+  const supportedFacts = factsLibrary.matchupEdgeFacts.supported.join(" ");
+
+  assert.doesNotMatch(
+    supportedFacts,
+    /perimeter defense.*outside scoring from The LA Lions/i,
+  );
+  assert.match(
+    supportedFacts,
+    /inside defense.*inside scoring from The LA Lions/i,
+  );
+});
+
 test("fact-library headline cleanup fixes plural team verb agreement", () => {
   const game = createExpectedPromptGame("m-plural-headline");
   game.teams.home.name = "Visionaries";

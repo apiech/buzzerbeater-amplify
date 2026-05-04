@@ -867,6 +867,30 @@ test("recap history labels render the simple fact-library approach clearly", () 
   assert.match(recapTesting.describeRecapRecord(record), /PG-13 voice/);
 });
 
+test("recap history labels infer simple fact-library from target key for active rows", () => {
+  const record = createRecapHistoryRecord({
+    requestJson: {
+      approach: "LEGACY",
+      interviewIntensity: "none",
+    },
+    selectionKey:
+      "SINGLE_GAME:138836864#simple-fact-library#quality-standard#intensity-none",
+    status: "PROCESSING",
+    targetKey:
+      "138836864#simple-fact-library#quality-standard#intensity-none",
+    updatedAt: "2026-05-03T20:42:00Z",
+  });
+
+  assert.match(
+    recapTesting.describeRecapRecord(record),
+    /Simple fact library/,
+  );
+  assert.doesNotMatch(
+    recapTesting.describeRecapRecord(record),
+    /Fact library first/,
+  );
+});
+
 test("recap history labels render disabled player interviews clearly", () => {
   const record = createRecapHistoryRecord({
     requestJson: {
@@ -986,7 +1010,7 @@ test("splitRecapWriteupParagraphs falls back to readable story sections", () => 
   assert.match(paragraphs[2] ?? "", /Ari Away.*perimeter defense/i);
 });
 
-test("forum formatter includes suspect recaps but omits unsafe recaps from public copy", () => {
+test("forum formatter includes all games regardless of validation status", () => {
   const record = {
     completedAt: "2026-03-15T23:15:00Z",
     coverageJson: null,
@@ -1094,10 +1118,11 @@ test("forum formatter includes suspect recaps but omits unsafe recaps from publi
   assert.match(forumPost, /Gamma led at halftime\. Gamma won the third\./);
   assert.match(forumPost, /\[i]Gina Gamma • Gamma\[\/i]/);
   assert.match(forumPost, /How did you steady the game late\?/);
-  assert.doesNotMatch(forumPost, /Delta wins with unsupported score/);
-  assert.doesNotMatch(forumPost, /101-99/);
-  assert.doesNotMatch(forumPost, /\[match=137828774]/);
-  assert.match(forumPost, /1 game recap was omitted because it has an unsafe validation warning/);
+  assert.match(forumPost, /\[b]Delta wins with unsupported score\[\/b]/);
+  assert.match(forumPost, /Delta beat Echo 101-99\./);
+  assert.match(forumPost, /Surprise factor: 8\.1\/10/);
+  assert.match(forumPost, /\[match=137828774]/);
+  assert.doesNotMatch(forumPost, /omitted because/i);
   assert.doesNotMatch(forumPost, /Fact library first/i);
 });
 
