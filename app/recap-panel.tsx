@@ -151,6 +151,12 @@ const recapApproachOptions: RecapApproachOption[] = [
   },
   {
     description:
+      "Sends the compact fact library to a basic news-reporter writer with no validation, retry, polish, or interview passes.",
+    label: "Simple fact library",
+    value: RecapGenerationApproachEnum.SIMPLE_FACT_LIBRARY,
+  },
+  {
+    description:
       "Keeps the previous recap engine available for comparison and fallback.",
     label: "Classic recap engine",
     value: RecapGenerationApproachEnum.LEGACY,
@@ -200,6 +206,12 @@ const recapInterviewIntensityOptions: RecapInterviewIntensityOption[] = [
       "The most theatrical setting: sharper banter, bigger ego, and much harsher competitive energy.",
     label: "Full heat",
     value: RecapInterviewIntensityEnum.FULL_HEAT,
+  },
+  {
+    description:
+      "Skips player interviews entirely to reduce recap generation cost.",
+    label: "No interviews",
+    value: RecapInterviewIntensityEnum.NONE,
   },
 ];
 
@@ -1705,18 +1717,34 @@ function recapApproachForRecord(
     return RecapGenerationApproachEnum.LEGACY;
   }
 
-  return (record.requestJson as { approach?: RecapGenerationApproach | null })
-    .approach === RecapGenerationApproachEnum.FACT_LIBRARY_FIRST
-    ? RecapGenerationApproachEnum.FACT_LIBRARY_FIRST
-    : RecapGenerationApproachEnum.LEGACY;
+  const approach = (
+    record.requestJson as { approach?: RecapGenerationApproach | null }
+  ).approach;
+  switch (approach) {
+    case RecapGenerationApproachEnum.FACT_LIBRARY_FIRST:
+      return RecapGenerationApproachEnum.FACT_LIBRARY_FIRST;
+    case RecapGenerationApproachEnum.SIMPLE_FACT_LIBRARY:
+      return RecapGenerationApproachEnum.SIMPLE_FACT_LIBRARY;
+    case RecapGenerationApproachEnum.LEGACY:
+    case null:
+    case undefined:
+    default:
+      return RecapGenerationApproachEnum.LEGACY;
+  }
 }
 
 function formatRecapGenerationApproachLabel(
   approach: RecapGenerationApproach,
 ): string {
-  return approach === RecapGenerationApproachEnum.FACT_LIBRARY_FIRST
-    ? "Fact library first"
-    : "Classic recap engine";
+  switch (approach) {
+    case RecapGenerationApproachEnum.FACT_LIBRARY_FIRST:
+      return "Fact library first";
+    case RecapGenerationApproachEnum.SIMPLE_FACT_LIBRARY:
+      return "Simple fact library";
+    case RecapGenerationApproachEnum.LEGACY:
+    default:
+      return "Classic recap engine";
+  }
 }
 
 function recapInterviewIntensityForRecord(
@@ -1736,6 +1764,8 @@ function recapInterviewIntensityForRecord(
       return RecapInterviewIntensityEnum.CLEAN;
     case RecapInterviewIntensityEnum.FULL_HEAT:
       return RecapInterviewIntensityEnum.FULL_HEAT;
+    case RecapInterviewIntensityEnum.NONE:
+      return RecapInterviewIntensityEnum.NONE;
     case RecapInterviewIntensityEnum.PG13:
       return RecapInterviewIntensityEnum.PG13;
     case null:
@@ -1752,6 +1782,8 @@ function formatRecapInterviewIntensityLabel(
       return "Clean voice";
     case RecapInterviewIntensityEnum.FULL_HEAT:
       return "Full heat voice";
+    case RecapInterviewIntensityEnum.NONE:
+      return "No player interviews";
     case RecapInterviewIntensityEnum.PG13:
     default:
       return "PG-13 voice";
@@ -2967,8 +2999,10 @@ export const __testing = {
   hasActiveRecapHistory,
   isLocallyTimedOutRecap,
   partitionRecapValidationIssues,
+  recapApproachOptions,
   RECAP_STALE_TIMEOUT_MS,
   resolveSubmissionBlockReason,
+  recapInterviewIntensityOptions,
   recapTitle,
   resolveRecapInterviewPersonalityDebugState,
   splitRecapWriteupParagraphs,

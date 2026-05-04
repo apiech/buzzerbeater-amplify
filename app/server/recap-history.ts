@@ -1137,6 +1137,8 @@ function normalizeRecapInterviewIntensity(
       return RecapInterviewIntensity.CLEAN;
     case RecapInterviewIntensity.FULL_HEAT:
       return RecapInterviewIntensity.FULL_HEAT;
+    case RecapInterviewIntensity.NONE:
+      return RecapInterviewIntensity.NONE;
     case RecapInterviewIntensity.PG13:
     default:
       return RecapInterviewIntensity.PG13;

@@ -426,6 +426,100 @@ test("model fact review defaults off and submitRecapRequest forwards the toggle 
   });
 });
 
+test("recap interview options include a cost-saving no-interviews mode", () => {
+  const option = recapTesting.recapInterviewIntensityOptions.find(
+    (entry) => entry.value === "none",
+  );
+
+  assert.ok(option);
+  assert.equal(option.label, "No interviews");
+  assert.match(option.description, /reduce recap generation cost/i);
+});
+
+test("recap approach debug options keep fact-library first default and include simple style", () => {
+  const defaultOption = recapTesting.recapApproachOptions[0];
+  assert.equal(
+    defaultOption.value,
+    "FACT_LIBRARY_FIRST",
+  );
+  assert.match(
+    defaultOption.label,
+    /^Fact library first/,
+  );
+
+  const simpleOption = recapTesting.recapApproachOptions.find(
+    (entry) => entry.value === "SIMPLE_FACT_LIBRARY",
+  );
+  assert.ok(simpleOption);
+  assert.equal(simpleOption.label, "Simple fact library");
+  assert.match(
+    simpleOption.description,
+    /no validation, retry, polish, or interview passes/i,
+  );
+});
+
+test("submitRecapRequest forwards the simple fact-library approach", async () => {
+  let submittedInput: Record<string, unknown> | null = null;
+
+  const result = await recapTesting.submitRecapRequest(
+    {
+      approach: "SIMPLE_FACT_LIBRARY",
+      branch: "WRITEUPS",
+      canUseLeagueWriteups: true,
+      context: createContext(),
+      gameDate: "2026-03-15",
+      gameDayNumber: "3",
+      interviewIntensity: "pg13",
+      leagueId: "100",
+      leagueTimeZone: "America/New_York",
+      loserInterviewPersonalityType: "",
+      matchId: "",
+      modelJudgeEnabled: true,
+      mode: "LEAGUE_GAME_DAY",
+      qualityTier: "standard",
+      season: "71",
+      winnerInterviewPersonalityType: "",
+    },
+    {
+      setBbLeagueTimeZone: async () => {
+        throw new Error("time zone mutation should not be called");
+      },
+      submitGameDayRecap: async () => {
+        throw new Error("league-date mutation should not be called");
+      },
+      submitLeagueGameDayPerformances: async () => {
+        throw new Error("performances mutation should not be called");
+      },
+      submitLeagueGameDayRecap: async (input) => {
+        submittedInput = input as Record<string, unknown>;
+        return {
+          executionArn:
+            "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:simple",
+          targetKey:
+            "100#71#gameday-3#simple-fact-library#quality-standard",
+        };
+      },
+      submitSingleGameSummary: async () => {
+        throw new Error("single-game mutation should not be called");
+      },
+    },
+  );
+
+  assert.deepStrictEqual(result, {
+    kind: "LEAGUE_GAME_DAY",
+    targetKey: "100#71#gameday-3#simple-fact-library#quality-standard",
+  });
+  assert.deepStrictEqual(submittedInput, {
+    approach: "SIMPLE_FACT_LIBRARY",
+    gameDayNumber: 3,
+    interviewIntensity: "pg13",
+    leagueId: "100",
+    modelJudgeEnabled: true,
+    qualityTier: "standard",
+    season: 71,
+  });
+});
+
 test("submitRecapRequest forwards non-empty single-game interview voice overrides", async () => {
   let submittedInput: Record<string, unknown> | null = null;
 
@@ -752,6 +846,42 @@ test("recap labels prefer headlines and league/date copy over raw ids", () => {
   assert.match(recapTesting.describeRecapRecord(record), /2026-03-15/);
   assert.match(recapTesting.describeRecapRecord(record), /Full heat voice/);
   assert.doesNotMatch(recapTesting.describeRecapRecord(record), /137828772/);
+});
+
+test("recap history labels render the simple fact-library approach clearly", () => {
+  const record = createRecapHistoryRecord({
+    requestJson: {
+      approach: "SIMPLE_FACT_LIBRARY",
+      interviewIntensity: "pg13",
+    },
+    selectionKey: "LEAGUE_DATE:100#2026-03-15#simple-fact-library",
+    status: "SUCCEEDED",
+    targetKey: "100#2026-03-15#simple-fact-library",
+    updatedAt: "2026-03-15T23:10:00Z",
+  });
+
+  assert.match(
+    recapTesting.describeRecapRecord(record),
+    /Simple fact library/,
+  );
+  assert.match(recapTesting.describeRecapRecord(record), /PG-13 voice/);
+});
+
+test("recap history labels render disabled player interviews clearly", () => {
+  const record = createRecapHistoryRecord({
+    requestJson: {
+      approach: "FACT_LIBRARY_FIRST",
+      interviewIntensity: "none",
+    },
+    status: "SUCCEEDED",
+    targetKey: "100#2026-03-15#fact-library-first#intensity-none",
+    updatedAt: "2026-03-15T23:10:00Z",
+  });
+
+  assert.match(
+    recapTesting.describeRecapRecord(record),
+    /No player interviews/,
+  );
 });
 
 test("forum formatter builds BBCode with recap metadata and match links", () => {

@@ -6,7 +6,10 @@ import {
   type GameDayRecapResultPayload,
   type SlateGame,
 } from "../amplify/data/_backend/game-day-recap";
-import type { RecapQualityTier } from "../amplify/data/_backend/game-day-recap-request";
+import type {
+  RecapGenerationApproachValue,
+  RecapQualityTier,
+} from "../amplify/data/_backend/game-day-recap-request";
 import {
   RecapGenerationApproach,
   RecapInterviewIntensity,
@@ -28,6 +31,7 @@ type PromptGame = PromptPayload["games"][number];
 type CliOptions = {
   accessKey: string;
   gameDate: string | null;
+  generationApproach: RecapGenerationApproachValue;
   interviewIntensity: RecapInterviewIntensity;
   leagueId: string | null;
   matchId: string;
@@ -62,7 +66,9 @@ async function main(): Promise<void> {
       options.season ?? (await resolveSeason(bb, leagueId, gameDate));
     const standings = await bb.getStandings(leagueId, season);
     const requestedGame = buildSlateGame(options.matchId, boxScore);
-    const targetKey = `${leagueId}#${options.matchId}#local`;
+    const targetKey = `${leagueId}#${options.matchId}#local#${formatGenerationModeForTargetKey(
+      options.generationApproach,
+    )}`;
 
     const builtPromptPayload = await __testing.buildGameDayRecapPromptPayload({
       bb,
@@ -77,7 +83,7 @@ async function main(): Promise<void> {
       request: {
         gameDate,
         gameDayNumber: null,
-        generationApproach: RecapGenerationApproach.FACT_LIBRARY_FIRST,
+        generationApproach: options.generationApproach,
         interviewIntensity: options.interviewIntensity,
         kind: "SINGLE_GAME",
         label: `${standings.league?.name ?? leagueId} ${options.matchId}`,
@@ -114,6 +120,8 @@ async function main(): Promise<void> {
       stage: "writer",
     });
     const retryProvider =
+      options.generationApproach !==
+        RecapGenerationApproach.SIMPLE_FACT_LIBRARY &&
       options.qualityTier === "premium" && modelIds.retryModelId
         ? __testing.createBedrockGameDayRecapProvider({
             modelId: modelIds.retryModelId,
@@ -122,6 +130,8 @@ async function main(): Promise<void> {
           })
         : null;
     const judgeProvider =
+      options.generationApproach !==
+        RecapGenerationApproach.SIMPLE_FACT_LIBRARY &&
       options.modelJudgeEnabled && modelIds.judgeModelId
         ? __testing.createBedrockGameDayRecapProvider({
             modelId: modelIds.judgeModelId,
@@ -149,8 +159,12 @@ async function main(): Promise<void> {
       cost,
       gameDate,
       generated: generatedRecap.result,
+      generationApproach: options.generationApproach,
       leagueName: standings.league?.name ?? leagueId,
-      modelJudgeEnabled: options.modelJudgeEnabled,
+      modelJudgeEnabled:
+        options.generationApproach !==
+          RecapGenerationApproach.SIMPLE_FACT_LIBRARY &&
+        options.modelJudgeEnabled,
       modelIds,
       promptGame: promptPayload.games[0]!,
       qualityTier: options.qualityTier,
@@ -214,6 +228,11 @@ function parseArgs(argv: string[]): CliOptions {
   const seasonRaw = values.get("--season")?.trim();
   const season =
     seasonRaw === undefined ? null : Number.parseInt(seasonRaw, 10);
+  const generationApproach = parseGenerationApproach(
+    values.get("--generation-mode")?.trim() ??
+      values.get("--approach")?.trim() ??
+      values.get("--mode")?.trim(),
+  );
   const qualityTier = parseQualityTier(values.get("--quality-tier")?.trim());
   const interviewIntensity = parseInterviewIntensity(
     values.get("--interview-intensity")?.trim(),
@@ -235,6 +254,7 @@ function parseArgs(argv: string[]): CliOptions {
   return {
     accessKey,
     gameDate: values.get("--game-date")?.trim() ?? null,
+    generationApproach,
     interviewIntensity,
     leagueId: values.get("--league-id")?.trim() ?? null,
     matchId,
@@ -246,6 +266,30 @@ function parseArgs(argv: string[]): CliOptions {
     showFacts,
     username,
   };
+}
+
+function parseGenerationApproach(
+  value: string | undefined,
+): RecapGenerationApproachValue {
+  switch (value?.toLowerCase()) {
+    case undefined:
+    case "":
+    case "fact-library":
+    case "fact_library":
+    case "fact-library-first":
+    case "fact_library_first":
+      return RecapGenerationApproach.FACT_LIBRARY_FIRST;
+    case "legacy":
+      return RecapGenerationApproach.LEGACY;
+    case "simple":
+    case "simple-fact-library":
+    case "simple_fact_library":
+      return RecapGenerationApproach.SIMPLE_FACT_LIBRARY;
+    default:
+      throw new Error(
+        "--generation-mode must be legacy, fact-library, or simple-fact-library.",
+      );
+  }
 }
 
 function parseQualityTier(value: string | undefined): RecapQualityTier {
@@ -270,8 +314,10 @@ function parseInterviewIntensity(
       return RecapInterviewIntensity.CLEAN;
     case RecapInterviewIntensity.FULL_HEAT:
       return RecapInterviewIntensity.FULL_HEAT;
+    case RecapInterviewIntensity.NONE:
+      return RecapInterviewIntensity.NONE;
     default:
-      throw new Error("--interview-intensity must be clean, pg13, or full_heat.");
+      throw new Error("--interview-intensity must be clean, pg13, full_heat, or none.");
   }
 }
 
@@ -283,9 +329,10 @@ function printUsage(): void {
       "",
       "Optional:",
       "  --league-id <id> --season <season> --game-date <YYYY-MM-DD>",
+      "  --generation-mode legacy|fact-library|simple-fact-library",
       "  --model-id <bedrock model id> --region <aws region>",
       "  --quality-tier standard|premium --model-judge",
-      "  --interview-intensity clean|pg13|full_heat",
+      "  --interview-intensity clean|pg13|full_heat|none",
       "  --username <bb login> --access-key <bb access key>",
       "",
       "Credentials can also come from BB_LOGIN and BB_ACCESS_KEY.",
@@ -293,6 +340,20 @@ function printUsage(): void {
       "Model config can come from GAME_DAY_RECAP_MODEL_ID and AWS_REGION.",
     ].join("\n"),
   );
+}
+
+function formatGenerationModeForTargetKey(
+  approach: RecapGenerationApproachValue,
+): string {
+  switch (approach) {
+    case RecapGenerationApproach.LEGACY:
+      return "legacy";
+    case RecapGenerationApproach.SIMPLE_FACT_LIBRARY:
+      return "simple-fact-library";
+    case RecapGenerationApproach.FACT_LIBRARY_FIRST:
+    default:
+      return "fact-library";
+  }
 }
 
 function resolveRuntimeModelIds(
@@ -409,6 +470,7 @@ function printGeneratedRecap(args: {
   cost: GameDayRecapCostPayload | null;
   gameDate: string;
   generated: GameDayRecapResultPayload;
+  generationApproach: RecapGenerationApproachValue;
   leagueName: string;
   modelJudgeEnabled: boolean;
   modelIds: RuntimeModelIds;
@@ -417,7 +479,9 @@ function printGeneratedRecap(args: {
   showFacts: boolean;
 }): void {
   console.log(
-    `Generated recap (${args.leagueName}, ${args.gameDate}, ${args.qualityTier})`,
+    `Generated recap (${args.leagueName}, ${args.gameDate}, ${args.qualityTier}, ${formatGenerationModeForTargetKey(
+      args.generationApproach,
+    )})`,
   );
   console.log(`Writer model: ${args.modelIds.writerModelId}`);
   if (args.modelJudgeEnabled && args.modelIds.judgeModelId) {

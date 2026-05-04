@@ -555,12 +555,18 @@ function createPlayoffSeriesMatch(args: {
   };
 }
 
-function createSingleGameRecapPayload(matchId = "m-1") {
+function createSingleGameRecapPayload(
+  matchId = "m-1",
+  generationApproach:
+    | "FACT_LIBRARY_FIRST"
+    | "LEGACY"
+    | "SIMPLE_FACT_LIBRARY" = "FACT_LIBRARY_FIRST",
+) {
   const games = [createExpectedPromptGame(matchId)];
   const request = {
     gameDate: "2026-03-15",
     gameDayNumber: null,
-    generationApproach: "FACT_LIBRARY_FIRST" as const,
+    generationApproach,
     interviewIntensity: "pg13" as const,
     kind: "SINGLE_GAME" as const,
     label: `Match ${matchId}`,
@@ -5374,6 +5380,18 @@ test("prose recap request normalization defaults to fact-library-first and pg13 
     "100#71#gameday-3#fact-library-first#intensity-clean",
   );
   assert.equal(
+    __testing.buildLeagueGameDayRecapTargetKey(
+      "100",
+      3,
+      71,
+      "FACT_LIBRARY_FIRST",
+      null,
+      false,
+      "none",
+    ),
+    "100#71#gameday-3#fact-library-first#intensity-none",
+  );
+  assert.equal(
     __testing.normalizeGameDayRecapRequest({
       gameDate: "2026-03-15",
       interviewIntensity: "full_heat",
@@ -5381,6 +5399,14 @@ test("prose recap request normalization defaults to fact-library-first and pg13 
       modelJudgeEnabled: true,
     }).interviewIntensity,
     "full_heat",
+  );
+  assert.equal(
+    __testing.normalizeGameDayRecapRequest({
+      gameDate: "2026-03-15",
+      interviewIntensity: "none",
+      leagueId: "100",
+    }).interviewIntensity,
+    "none",
   );
   assert.equal(
     __testing.normalizeGameDayRecapRequest({
@@ -5417,6 +5443,54 @@ test("prose recap request normalization defaults to fact-library-first and pg13 
       "premium",
     ),
     "100#71#gameday-3#fact-library-first#quality-premium",
+  );
+  assert.equal(
+    __testing.normalizeGameDayRecapRequest({
+      approach: "SIMPLE_FACT_LIBRARY",
+      gameDate: "2026-03-15",
+      leagueId: "100",
+      modelJudgeEnabled: true,
+    }).approach,
+    "SIMPLE_FACT_LIBRARY",
+  );
+  assert.equal(
+    __testing.resolveGameDayRecapPromptVersion("SIMPLE_FACT_LIBRARY"),
+    "gameday-recap-v13-simple-fact-library",
+  );
+  assert.equal(
+    __testing.buildGameDayRecapTargetKey(
+      "100",
+      "2026-03-15",
+      "SIMPLE_FACT_LIBRARY",
+      "standard",
+      true,
+      "pg13",
+    ),
+    "100#2026-03-15#simple-fact-library#quality-standard",
+  );
+  assert.equal(
+    __testing.buildLeagueGameDayRecapTargetKey(
+      "100",
+      3,
+      71,
+      "SIMPLE_FACT_LIBRARY",
+      null,
+      true,
+      "pg13",
+    ),
+    "100#71#gameday-3#simple-fact-library",
+  );
+  assert.equal(
+    __testing.buildSingleGameSummaryTargetKey(
+      "137828772",
+      "SIMPLE_FACT_LIBRARY",
+      "premium",
+      true,
+      "pg13",
+      "deadpan",
+      "curt",
+    ),
+    "137828772#simple-fact-library#quality-premium#winner-voice-deadpan#loser-voice-curt",
   );
   assert.equal(
     __testing.parseGameDayRecapQueueMessage(
@@ -5470,6 +5544,60 @@ test("prose recap request normalization defaults to fact-library-first and pg13 
       },
     });
   assert.equal("factsLibrary" in legacyWriterPayload.games[0]!, false);
+});
+
+test("simple fact-library writer prompt sends compact facts with a basic writer instruction", () => {
+  const simplePayload = createSingleGameRecapPayload(
+    "simple-prompt",
+    "SIMPLE_FACT_LIBRARY",
+  );
+  const writerPayload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: simplePayload.coverage,
+    factStore: simplePayload.factStore,
+  });
+  assert.ok(writerPayload.games[0]?.factsLibrary);
+
+  const request = __testing.buildGameDayRecapBedrockRequest({
+    modelId: DEFAULT_RECAP_MODEL_ID,
+    payload: writerPayload,
+  }) as {
+    messages: Array<{
+      content: Array<{
+        text: string;
+      }>;
+    }>;
+    system: Array<{
+      text: string;
+    }>;
+  };
+  const messageText = request.messages[0]?.content[0]?.text ?? "";
+  const promptBody = JSON.parse(messageText) as {
+    instructions: string;
+    recapContext: {
+      games: Array<{
+        factsLibrary?: unknown;
+        matchId: string;
+        playByPlayFacts: unknown;
+        playByPlaySummaryLines: string[];
+      }>;
+    };
+  };
+
+  assert.match(
+    promptBody.instructions,
+    /Write a news-reporter style game recap based on the following facts/i,
+  );
+  assert.match(promptBody.instructions, /You do not have to use all the facts/i);
+  assert.doesNotMatch(messageText, /validationContext|style_polish|retry/i);
+  assert.doesNotMatch(request.system[0]?.text ?? "", /polished professional/i);
+  const promptGame = promptBody.recapContext.games[0]!;
+  assert.ok(promptGame.factsLibrary);
+  assert.equal(promptGame.matchId, "simple-prompt");
+  assert.equal(promptGame.playByPlayFacts, null);
+  assert.deepStrictEqual(
+    promptGame.playByPlaySummaryLines,
+    [],
+  );
 });
 
 test("submitGameDayRecap is idempotent while a recap is already active", async () => {
@@ -5829,6 +5957,115 @@ test("submitGameDayRecap persists modelJudgeEnabled and target-key suffix when e
       ?.modelJudgeEnabled,
     true,
   );
+});
+
+test("submit recap requests persist simple fact-library approach with model judge disabled", async () => {
+  const startedMessages: unknown[] = [];
+  const savedRequests: unknown[] = [];
+  const commonDeps = {
+    now: () => new Date("2026-03-15T22:30:00Z"),
+    requireFeatureAccess: async () => "premium" as const,
+    startWorkflowExecution: async (
+      _stateMachineArn: string,
+      _executionName: string,
+      message: unknown,
+    ) => {
+      startedMessages.push(message);
+      return "arn:aws:states:us-east-1:123456789012:execution:gameday-recap:simple";
+    },
+  };
+
+  const leagueDateResult = await submitGameDayRecap(
+    {
+      approach: "SIMPLE_FACT_LIBRARY",
+      env: createRecapEnv(),
+      gameDate: "2026-03-15",
+      identity: { sub: "user-1" },
+      leagueId: "100",
+      modelJudgeEnabled: true,
+      qualityTier: "standard",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+    },
+    {
+      ...commonDeps,
+      getGameDayRecap: async () => null,
+      updateGameDayRecap: async () => {},
+      upsertGameDayRecap: async (_env, record: any) => {
+        savedRequests.push(record.requestJson);
+      },
+    },
+  );
+  const leagueGameDayResult = await submitLeagueGameDayRecap(
+    {
+      approach: "SIMPLE_FACT_LIBRARY",
+      env: createRecapEnv(),
+      gameDayNumber: 3,
+      identity: { sub: "user-1" },
+      leagueId: "100",
+      modelJudgeEnabled: true,
+      qualityTier: "standard",
+      season: 71,
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+    },
+    {
+      ...commonDeps,
+      getLeagueGameDayRecap: async () => null,
+      updateLeagueGameDayRecap: async () => {},
+      upsertLeagueGameDayRecap: async (_env, record: any) => {
+        savedRequests.push(record.requestJson);
+      },
+    },
+  );
+  const singleGameResult = await submitSingleGameSummary(
+    {
+      approach: "SIMPLE_FACT_LIBRARY",
+      env: createRecapEnv(),
+      identity: { sub: "user-1" },
+      matchId: "137828772",
+      modelJudgeEnabled: true,
+      qualityTier: "standard",
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:gameday-recap",
+    },
+    {
+      ...commonDeps,
+      getSingleGameSummary: async () => null,
+      updateSingleGameSummary: async () => {},
+      upsertSingleGameSummary: async (_env, record: any) => {
+        savedRequests.push(record.requestJson);
+      },
+    },
+  );
+
+  assert.equal(
+    leagueDateResult.targetKey,
+    "100#2026-03-15#simple-fact-library#quality-standard",
+  );
+  assert.equal(
+    leagueGameDayResult.targetKey,
+    "100#71#gameday-3#simple-fact-library#quality-standard",
+  );
+  assert.equal(
+    singleGameResult.targetKey,
+    "137828772#simple-fact-library#quality-standard",
+  );
+  for (const requestJson of savedRequests as Array<{
+    approach?: string;
+    modelJudgeEnabled?: boolean;
+  }>) {
+    assert.equal(requestJson.approach, "SIMPLE_FACT_LIBRARY");
+    assert.equal(requestJson.modelJudgeEnabled, false);
+  }
+  for (const message of startedMessages as Array<{
+    modelJudgeEnabled?: boolean;
+    targetKey?: string;
+  }>) {
+    assert.equal(message.modelJudgeEnabled, false);
+    assert.match(message.targetKey ?? "", /#simple-fact-library/);
+    assert.doesNotMatch(message.targetKey ?? "", /#model-judge/);
+  }
 });
 
 test("submitGameDayRecap persists interviewIntensity on the stored request and queue payload", async () => {
@@ -12998,6 +13235,61 @@ test("validateGameDayRecapResult allows explicit entering-game trivia", () => {
   assert.equal(result.games[0]?.matchId, "m-1");
 });
 
+test("generateResolvedGameDayRecap uses one writer call for simple fact-library recaps", async () => {
+  const seedPayload = createSingleGameRecapPayload(
+    "simple-generate",
+    "SIMPLE_FACT_LIBRARY",
+  );
+  const payload = __testing.buildGameDayRecapWriterPayloadFromFactStore({
+    coverage: seedPayload.coverage,
+    factStore: seedPayload.factStore,
+  });
+  let writerCalls = 0;
+  let judgeCalls = 0;
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: {
+      generate: async () => {
+        judgeCalls += 1;
+        throw new Error("simple recaps should not call the judge");
+      },
+      modelId: DEFAULT_RECAP_JUDGE_MODEL_ID,
+      providerName: "bedrock" as const,
+      stage: "judge" as const,
+    },
+    payload,
+    qualityTier: "premium",
+    retryProvider: null,
+    writerProvider: {
+      generate: async (providerPayload) => {
+        writerCalls += 1;
+        if (!isMainRecapWriterPayloadForTest(providerPayload)) {
+          throw new Error("simple recaps should only call the main writer");
+        }
+        assert.ok(providerPayload.games[0]?.factsLibrary);
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          matchId: "simple-generate",
+          writeup:
+            "Home beat Away 85-81 after using its best supported facts to control the recap story without needing an extra review pass.",
+        });
+      },
+      modelId: PREMIUM_RECAP_MODEL_ID,
+      providerName: "bedrock" as const,
+      stage: "writer" as const,
+    },
+  });
+
+  assert.equal(writerCalls, 1);
+  assert.equal(judgeCalls, 0);
+  const game = expectPresent(result.result.games[0], "missing simple recap game");
+  assert.equal(game.matchId, "simple-generate");
+  assert.equal(game.validation, undefined);
+  assert.equal(game.postgameInterview, undefined);
+  assert.equal(game.postgameInterviews, undefined);
+  assert.equal(game.postgameInterviewDiagnostics, undefined);
+});
+
 test("generateResolvedGameDayRecap drops an invalid postgameInterview and logs the reason", async () => {
   const payload = createSingleGameRecapPayload();
   const capturedWarns: Array<[unknown, unknown]> = [];
@@ -13183,6 +13475,75 @@ test("generateResolvedGameDayRecap adds a guaranteed postgameInterview when a ca
     [...interviewFacts.safeContext, ...interviewFacts.storyBeats].join(" "),
     /\b(?:GDP|team talent|rating|inside looks|outside looks|normal pace|fast pace|slow pace)\b/i,
   );
+});
+
+test("generateResolvedGameDayRecap skips postgame interviews when interviewIntensity is none", async () => {
+  const payload = createSingleGameRecapPayload();
+  (
+    payload.request as typeof payload.request & {
+      interviewIntensity: "none" | "pg13";
+    }
+  ).interviewIntensity = "none";
+  refreshPayloadFactStore(payload);
+  expectPresent(
+    payload.factStore.games[0],
+    "expected canonical fact-store game",
+  ).postgameInterviewCandidate = {
+    playerName: "Home Hero",
+    selectionReason: "top scorer for the winning team",
+    statLine: {
+      assists: 4,
+      blocks: 1,
+      minutes: 39,
+      points: 24,
+      rebounds: 8,
+      steals: 2,
+      turnovers: 3,
+    },
+    supportedFacts: ["Home Hero led the winners with 24 points."],
+    teamName: "Home",
+    teamSide: "home",
+  };
+  let postgameInterviewRequests = 0;
+
+  const result = await __testing.generateResolvedGameDayRecap({
+    judgeProvider: createPassingJudgeProvider(),
+    payload,
+    qualityTier: "standard",
+    retryProvider: null,
+    writerProvider: {
+      generate: async (payload) => {
+        if (isPostgameInterviewPayloadForTest(payload)) {
+          postgameInterviewRequests += 1;
+          throw new Error("postgame interview should not be requested");
+        }
+        const auxiliary = maybeHandleAuxiliaryWriterPayloadForTest(payload);
+        if (auxiliary) {
+          return auxiliary.response;
+        }
+        if (!isMainRecapWriterPayloadForTest(payload)) {
+          throw new Error("expected main recap writer payload");
+        }
+        return createRecapCandidateResult({
+          headline: "Home beats Away 85-81",
+          writeup:
+            "Home stayed organized over the closing possessions and kept Away from erasing the final margin.",
+        });
+      },
+      modelId: DEFAULT_RECAP_MODEL_ID,
+      providerName: "bedrock",
+      stage: "writer",
+    },
+  });
+
+  const game = expectPresent(
+    result.result.games[0],
+    "expected generated recap game",
+  );
+  assert.equal(postgameInterviewRequests, 0);
+  assert.equal(game.postgameInterview, undefined);
+  assert.equal(game.postgameInterviews, undefined);
+  assert.equal(game.postgameInterviewDiagnostics, undefined);
 });
 
 test("generateResolvedGameDayRecap retries from deterministic validation even when model judging is disabled", async () => {

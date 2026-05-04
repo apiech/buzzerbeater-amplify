@@ -1555,6 +1555,8 @@ type ProcessDependencyOverrides = Partial<ProcessDependencies>;
 const LEGACY_GAME_DAY_RECAP_PROMPT_VERSION = "gameday-recap-v10";
 const FACT_LIBRARY_FIRST_GAME_DAY_RECAP_PROMPT_VERSION =
   "gameday-recap-v12-fact-library-first";
+const SIMPLE_FACT_LIBRARY_GAME_DAY_RECAP_PROMPT_VERSION =
+  "gameday-recap-v13-simple-fact-library";
 const GAME_DAY_RECAP_PROMPT_VERSION = LEGACY_GAME_DAY_RECAP_PROMPT_VERSION;
 const GAME_DAY_RECAP_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID";
 const GAME_DAY_RECAP_PREMIUM_MODEL_ENV_NAME = "GAME_DAY_RECAP_MODEL_ID_PREMIUM";
@@ -1887,9 +1889,15 @@ const GAME_DAY_RECAP_INFO_EVENTS = new Set([
 function resolveGameDayRecapPromptVersion(
   approach: RecapGenerationApproachValue,
 ): string {
-  return approach === RecapGenerationApproach.FACT_LIBRARY_FIRST
-    ? FACT_LIBRARY_FIRST_GAME_DAY_RECAP_PROMPT_VERSION
-    : LEGACY_GAME_DAY_RECAP_PROMPT_VERSION;
+  switch (approach) {
+    case RecapGenerationApproach.FACT_LIBRARY_FIRST:
+      return FACT_LIBRARY_FIRST_GAME_DAY_RECAP_PROMPT_VERSION;
+    case RecapGenerationApproach.SIMPLE_FACT_LIBRARY:
+      return SIMPLE_FACT_LIBRARY_GAME_DAY_RECAP_PROMPT_VERSION;
+    case RecapGenerationApproach.LEGACY:
+    default:
+      return LEGACY_GAME_DAY_RECAP_PROMPT_VERSION;
+  }
 }
 
 function resolveRecapGenerationApproach(
@@ -1900,9 +1908,30 @@ function resolveRecapGenerationApproach(
     | null
     | undefined,
 ): RecapGenerationApproachValue {
-  return requestJson?.approach === RecapGenerationApproach.FACT_LIBRARY_FIRST
-    ? RecapGenerationApproach.FACT_LIBRARY_FIRST
-    : RecapGenerationApproach.LEGACY;
+  switch (requestJson?.approach) {
+    case RecapGenerationApproach.FACT_LIBRARY_FIRST:
+      return RecapGenerationApproach.FACT_LIBRARY_FIRST;
+    case RecapGenerationApproach.SIMPLE_FACT_LIBRARY:
+      return RecapGenerationApproach.SIMPLE_FACT_LIBRARY;
+    case RecapGenerationApproach.LEGACY:
+    default:
+      return RecapGenerationApproach.LEGACY;
+  }
+}
+
+function isFactLibraryBackedRecapApproach(
+  approach: RecapGenerationApproachValue,
+): boolean {
+  return (
+    approach === RecapGenerationApproach.FACT_LIBRARY_FIRST ||
+    approach === RecapGenerationApproach.SIMPLE_FACT_LIBRARY
+  );
+}
+
+function isSimpleFactLibraryRecapApproach(
+  approach: RecapGenerationApproachValue,
+): boolean {
+  return approach === RecapGenerationApproach.SIMPLE_FACT_LIBRARY;
 }
 
 function toBedrockStructuredOutputSchema(
@@ -2032,14 +2061,16 @@ export async function submitGameDayRecap(
     modelJudgeEnabled: args.modelJudgeEnabled ?? undefined,
     qualityTier: args.qualityTier ?? undefined,
   });
-  const modelJudgeEnabled = request.modelJudgeEnabled === true;
+  const generationApproach =
+    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
+  const modelJudgeEnabled =
+    !isSimpleFactLibraryRecapApproach(generationApproach) &&
+    request.modelJudgeEnabled === true;
   const interviewIntensity = normalizeRecapInterviewIntensity(
     request.interviewIntensity,
   );
   const qualityTier =
     request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
-  const generationApproach =
-    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
   const targetKey = buildGameDayRecapTargetKey(
     request.leagueId,
     request.gameDate,
@@ -2214,14 +2245,16 @@ export async function submitLeagueGameDayRecap(
     qualityTier: args.qualityTier ?? undefined,
     season: args.season ?? null,
   });
-  const modelJudgeEnabled = request.modelJudgeEnabled === true;
+  const generationApproach =
+    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
+  const modelJudgeEnabled =
+    !isSimpleFactLibraryRecapApproach(generationApproach) &&
+    request.modelJudgeEnabled === true;
   const interviewIntensity = normalizeRecapInterviewIntensity(
     request.interviewIntensity,
   );
   const qualityTier =
     request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
-  const generationApproach =
-    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
   const targetKey = buildLeagueGameDayRecapTargetKey(
     request.leagueId,
     request.gameDayNumber,
@@ -2358,14 +2391,16 @@ export async function submitSingleGameSummary(
     winnerInterviewPersonalityType:
       args.winnerInterviewPersonalityType ?? undefined,
   });
-  const modelJudgeEnabled = request.modelJudgeEnabled === true;
+  const generationApproach =
+    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
+  const modelJudgeEnabled =
+    !isSimpleFactLibraryRecapApproach(generationApproach) &&
+    request.modelJudgeEnabled === true;
   const interviewIntensity = normalizeRecapInterviewIntensity(
     request.interviewIntensity,
   );
   const qualityTier =
     request.qualityTier ?? resolveRequestedRecapQualityTier(args.env, planId);
-  const generationApproach =
-    request.approach ?? RecapGenerationApproach.FACT_LIBRARY_FIRST;
   const targetKey = buildSingleGameSummaryTargetKey(
     request.matchId,
     generationApproach,
@@ -2797,20 +2832,25 @@ export async function processGameDayRecap(
       stage: "writer",
     });
     retryProvider =
-      message.qualityTier === "premium" && runtimeModels.retryModelId
+      !isSimpleFactLibraryRecapApproach(generationApproach) &&
+      message.qualityTier === "premium" &&
+      runtimeModels.retryModelId
         ? deps.createProvider({
             modelId: runtimeModels.retryModelId,
             region: args.region,
             stage: "retry_writer",
           })
         : null;
-    judgeProvider = message.modelJudgeEnabled && runtimeModels.judgeModelId
-      ? deps.createProvider({
-          modelId: runtimeModels.judgeModelId,
-          region: args.region,
-          stage: "judge",
-        })
-      : null;
+    judgeProvider =
+      !isSimpleFactLibraryRecapApproach(generationApproach) &&
+      message.modelJudgeEnabled &&
+      runtimeModels.judgeModelId
+        ? deps.createProvider({
+            modelId: runtimeModels.judgeModelId,
+            region: args.region,
+            stage: "judge",
+          })
+        : null;
     logGameDayRecapInfo("process.provider.ready", {
       modelId: writerProvider.modelId,
       providerName: writerProvider.providerName,
@@ -3276,20 +3316,25 @@ export async function processLeagueGameDayRecap(
       stage: "writer",
     });
     retryProvider =
-      message.qualityTier === "premium" && runtimeModels.retryModelId
+      !isSimpleFactLibraryRecapApproach(generationApproach) &&
+      message.qualityTier === "premium" &&
+      runtimeModels.retryModelId
         ? deps.createProvider({
             modelId: runtimeModels.retryModelId,
             region: args.region,
             stage: "retry_writer",
           })
         : null;
-    judgeProvider = message.modelJudgeEnabled && runtimeModels.judgeModelId
-      ? deps.createProvider({
-          modelId: runtimeModels.judgeModelId,
-          region: args.region,
-          stage: "judge",
-        })
-      : null;
+    judgeProvider =
+      !isSimpleFactLibraryRecapApproach(generationApproach) &&
+      message.modelJudgeEnabled &&
+      runtimeModels.judgeModelId
+        ? deps.createProvider({
+            modelId: runtimeModels.judgeModelId,
+            region: args.region,
+            stage: "judge",
+          })
+        : null;
     const generatedRecap = await generateResolvedGameDayRecap({
       remainingTimeInMillis: args.remainingTimeInMillis,
       runtimeConfig,
@@ -3690,20 +3735,25 @@ export async function processSingleGameSummary(
       stage: "writer",
     });
     retryProvider =
-      message.qualityTier === "premium" && runtimeModels.retryModelId
+      !isSimpleFactLibraryRecapApproach(generationApproach) &&
+      message.qualityTier === "premium" &&
+      runtimeModels.retryModelId
         ? deps.createProvider({
             modelId: runtimeModels.retryModelId,
             region: args.region,
             stage: "retry_writer",
           })
         : null;
-    judgeProvider = message.modelJudgeEnabled && runtimeModels.judgeModelId
-      ? deps.createProvider({
-          modelId: runtimeModels.judgeModelId,
-          region: args.region,
-          stage: "judge",
-        })
-      : null;
+    judgeProvider =
+      !isSimpleFactLibraryRecapApproach(generationApproach) &&
+      message.modelJudgeEnabled &&
+      runtimeModels.judgeModelId
+        ? deps.createProvider({
+            modelId: runtimeModels.judgeModelId,
+            region: args.region,
+            stage: "judge",
+          })
+        : null;
     const generatedRecap = await generateResolvedGameDayRecap({
       remainingTimeInMillis: args.remainingTimeInMillis,
       runtimeConfig,
@@ -4323,6 +4373,12 @@ function buildGameDayRecapWriterBedrockRequest(args: {
   const validationFeedback = args.validationFeedback?.filter(Boolean) ?? [];
   const validationContext = args.validationContext ?? null;
   const promptPayload = sanitizePromptPayloadForWriter(args.payload);
+  if (isSimpleFactLibraryRecapApproach(args.payload.request.generationApproach)) {
+    return buildSimpleFactLibraryWriterBedrockRequest({
+      modelId: args.modelId,
+      payload: promptPayload,
+    });
+  }
   const useFactsLibraryFirst =
     args.payload.request.generationApproach ===
     RecapGenerationApproach.FACT_LIBRARY_FIRST;
@@ -4514,6 +4570,61 @@ function buildGameDayRecapWriterBedrockRequest(args: {
   };
 }
 
+function buildSimpleFactLibraryWriterBedrockRequest(args: {
+  modelId: string;
+  payload: GameDayRecapWriterPayload;
+}) {
+  return {
+    inferenceConfig: {
+      maxTokens: 5000,
+      temperature: 0.55,
+    },
+    messages: [
+      {
+        content: [
+          {
+            text: JSON.stringify(
+              {
+                instructions:
+                  "Write a news-reporter style game recap based on the following facts about the game. You do not have to use all the facts. Use only the supplied facts and do not invent unsupported details.",
+                recapContext: args.payload,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        role: "user" as const,
+      },
+    ],
+    modelId: args.modelId,
+    outputConfig: {
+      textFormat: {
+        structure: {
+          jsonSchema: {
+            description:
+              "Reporter-style basketball recap output for one requested scope.",
+            name: "game_day_recap",
+            schema: JSON.stringify(
+              toBedrockStructuredOutputSchema(GAME_DAY_RECAP_RESULT_SCHEMA),
+            ),
+          },
+        },
+        type: "json_schema" as const,
+      },
+    },
+    system: [
+      {
+        text: [
+          "You are a basketball news reporter.",
+          "Use only the facts supplied by the user.",
+          "Return structured output only.",
+        ].join(" "),
+      },
+    ],
+  };
+}
+
 function buildGameDayRecapStylePolishBedrockRequest(args: {
   modelId: string;
   payload: GameDayRecapPolishRequestPayload;
@@ -4609,7 +4720,9 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
   modelId: string;
   payload: GameDayRecapPostgameInterviewRequestPayload;
 }) {
-  const interviewIntensity = args.payload.request.interviewIntensity;
+  const interviewIntensity = normalizeFallbackInterviewIntensity(
+    args.payload.request.interviewIntensity,
+  );
   return {
     inferenceConfig: {
       maxTokens: 1400,
@@ -4720,17 +4833,23 @@ function buildGameDayRecapPostgameInterviewBedrockRequest(args: {
 function sanitizePromptPayloadForWriter(
   payload: GameDayRecapPromptPayload,
 ): GameDayRecapWriterPayload {
-  const useFactsLibraryFirst =
-    payload.request.generationApproach ===
-    RecapGenerationApproach.FACT_LIBRARY_FIRST;
+  const useFactsLibrary = isFactLibraryBackedRecapApproach(
+    payload.request.generationApproach,
+  );
+  const useSimpleFactLibrary = isSimpleFactLibraryRecapApproach(
+    payload.request.generationApproach,
+  );
   return {
     coverage: payload.coverage,
     request: payload.request,
     games: payload.games.map((game) => {
       const sanitizedGame = sanitizePlayoffPromptGameForWriter(game);
-      return useFactsLibraryFirst && sanitizedGame.factsLibrary
-        ? compactFactLibraryFirstPromptGameForWriter(sanitizedGame)
-        : sanitizedGame;
+      if (!useFactsLibrary || !sanitizedGame.factsLibrary) {
+        return sanitizedGame;
+      }
+      return useSimpleFactLibrary
+        ? compactSimpleFactLibraryPromptGameForWriter(sanitizedGame)
+        : compactFactLibraryFirstPromptGameForWriter(sanitizedGame);
     }),
   };
 }
@@ -4807,6 +4926,84 @@ function compactFactLibraryFirstPromptGameForWriter(
       home: compactFactLibraryFirstPromptTeamForWriter(game.teams.home),
     },
     type: game.type,
+  };
+}
+
+function compactSimpleFactLibraryPromptGameForWriter(
+  game: GameDayRecapPromptGame,
+): GameDayRecapPromptGame {
+  const factsLibrary = game.factsLibrary;
+  if (!factsLibrary) {
+    return game;
+  }
+
+  return {
+    effortDelta: null,
+    effortSummary: null,
+    evidenceSignals: [],
+    factsLibrary: compactFactsLibraryForWriter(factsLibrary),
+    finalMargin: game.finalMargin,
+    gameDayPrepSummaries: [],
+    gameScoringContext: game.gameScoringContext,
+    matchId: game.matchId,
+    neutral: game.neutral,
+    playByPlayFacts: null,
+    playByPlaySummaryLines: [],
+    quarterFacts: {
+      decisiveQuarter: null,
+      fourthQuarterOutcome: null,
+      periods: [],
+    },
+    quarterScores: game.quarterScores,
+    requiredContextSentences: [],
+    rotationSummaries: [],
+    ...(game.seriesContext ? { seriesContext: game.seriesContext } : {}),
+    standingsContext: [],
+    teamTalent: game.teamTalent,
+    teams: {
+      away: compactSimpleFactLibraryPromptTeamForWriter(game.teams.away),
+      home: compactSimpleFactLibraryPromptTeamForWriter(game.teams.home),
+    },
+    type: game.type,
+  };
+}
+
+function compactSimpleFactLibraryPromptTeamForWriter(
+  team: GameDayRecapPromptTeam,
+): GameDayRecapPromptTeam {
+  return {
+    boxScoreStats: team.boxScoreStats ?? null,
+    conferenceIndex: team.conferenceIndex,
+    conferencePosition: team.conferencePosition,
+    defStrategy: null,
+    efficiency: {},
+    foulTroubleLimitationCount: team.foulTroubleLimitationCount,
+    gdp: {},
+    keyAbsenceCount: team.keyAbsenceCount,
+    lastFive: team.lastFive,
+    lastFiveEnteringGame: team.lastFiveEnteringGame,
+    name: team.name,
+    offStrategy: null,
+    ratingLabels: {},
+    ratingTotal: null,
+    recentAverageMargin: team.recentAverageMargin,
+    recentSignalFlags: [],
+    record: team.record,
+    recordEnteringGame: team.recordEnteringGame,
+    score: team.score,
+    streak: team.streak,
+    streakEnteringGame: team.streakEnteringGame,
+    turnovers: team.turnovers,
+    topPlayers: team.topPlayers.slice(0, 3).map((player) => ({
+      assists: player.assists,
+      blocks: player.blocks,
+      minutes: player.minutes,
+      name: player.name,
+      points: player.points,
+      rebounds: player.rebounds,
+      steals: player.steals,
+      turnovers: player.turnovers,
+    })),
   };
 }
 
@@ -6957,7 +7154,7 @@ function buildGameDayRecapWriterGameFromFactStore(args: {
   return {
     effortDelta: args.game.effortDelta,
     effortSummary: args.game.effortSummary,
-    ...(args.generationApproach === RecapGenerationApproach.FACT_LIBRARY_FIRST
+    ...(isFactLibraryBackedRecapApproach(args.generationApproach)
       ? {
           factsLibrary: buildGameFactsLibraryFromFactStore(
             args.game,
@@ -15547,6 +15744,17 @@ async function generateResolvedGameDayRecap(args: {
   writerProvider: StructuredGameDayRecapProvider;
 }): Promise<GeneratedGameDayRecap> {
   const factStore = resolvePayloadFactStore(args.payload);
+  if (isSimpleFactLibraryRecapApproach(factStore.request.generationApproach)) {
+    return generateSimpleFactLibraryGameDayRecap({
+      logContext: {
+        targetKey: args.targetKey,
+        userId: args.userId,
+      },
+      payload: args.payload,
+      provider: args.writerProvider,
+    });
+  }
+
   const runtimeConfig =
     args.runtimeConfig ?? DEFAULT_GAME_DAY_RECAP_RUNTIME_CONFIG;
   const concurrency = createGameDayRecapGenerationConcurrency(runtimeConfig);
@@ -15597,6 +15805,35 @@ async function generateResolvedGameDayRecap(args: {
     remainingTimeInMillis: args.remainingTimeInMillis,
     runtimeConfig,
   });
+}
+
+async function generateSimpleFactLibraryGameDayRecap(args: {
+  logContext?: GameDayRecapGenerationLogContext;
+  payload: GameDayRecapPromptPayload;
+  provider: StructuredGameDayRecapProvider;
+}): Promise<GeneratedGameDayRecap> {
+  const output = await withGameDayRecapStageTiming(
+    "writer_simple_fact_library",
+    {
+      gameCount: args.payload.games.length,
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    },
+    () => args.provider.generate(args.payload),
+  );
+  const result = stripPostgameInterviewsFromResult(
+    normalizeGameDayRecapResultForStage({
+      input: output,
+      stage: "writer_simple_fact_library",
+      targetKey: args.logContext?.targetKey,
+      userId: args.logContext?.userId,
+    }),
+  );
+
+  return {
+    coverageIssues: [],
+    result,
+  };
 }
 
 async function finalizeGeneratedGameDayRecap(args: {
@@ -16040,12 +16277,18 @@ function dedupeRepeatedPlayerPointMentions(writeup: string): string {
     }
   });
   const repeatedIndexes = new Set<number>();
-  for (const indexes of playerPointOccurrences.values()) {
+  playerPointOccurrences.forEach((indexes) => {
     if (indexes.length <= 1) {
-      continue;
+      return;
     }
-    indexes.slice(0, -1).forEach((index) => repeatedIndexes.add(index));
-  }
+    for (
+      let indexPosition = 0;
+      indexPosition < indexes.length - 1;
+      indexPosition += 1
+    ) {
+      repeatedIndexes.add(indexes[indexPosition]!);
+    }
+  });
   if (!repeatedIndexes.size) {
     return writeup;
   }
@@ -16070,16 +16313,17 @@ function extractPlayerPointMentionKeys(sentence: string): string[] {
   const keys: string[] = [];
   const mentionPattern =
     /\b([A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,3})\b[^.!?]{0,70}\b(\d{1,3})\s+points\b/g;
-  for (const match of sentence.matchAll(mentionPattern)) {
+  let match: RegExpExecArray | null = mentionPattern.exec(sentence);
+  while (match) {
     const name = match[1]?.trim();
     const points = match[2];
-    if (!name || !points || /\bTeam\b/.test(name)) {
-      continue;
+    if (name && points && !/\bTeam\b/.test(name)) {
+      const lastName = name.split(/\s+/).at(-1)?.toLowerCase();
+      if (lastName) {
+        keys.push(`${lastName}:${points}`);
+      }
     }
-    const lastName = name.split(/\s+/).at(-1)?.toLowerCase();
-    if (lastName) {
-      keys.push(`${lastName}:${points}`);
-    }
+    match = mentionPattern.exec(sentence);
   }
   return keys;
 }
@@ -16588,6 +16832,13 @@ async function attachGuaranteedPostgameInterviews(args: {
   result: GameDayRecapResultPayload;
   runtimeConfig: GameDayRecapRuntimeConfig;
 }): Promise<GameDayRecapResultPayload> {
+  if (args.factStore.request.interviewIntensity === RecapInterviewIntensity.NONE) {
+    return {
+      ...args.result,
+      games: args.result.games.map((game) => removePostgameInterview(game)),
+    };
+  }
+
   const expectedGamesByMatchId = new Map(
     args.factStore.games.map((game) => [game.matchId, game]),
   );
@@ -25563,6 +25814,7 @@ export const __testing = {
   resolveLeagueGameDaySlate,
   resolveDefenseTaxonomy,
   resolveOffenseTaxonomy,
+  resolveGameDayRecapPromptVersion,
   resolveRecapQualityTier,
   resolveSeasonCandidatesForDate,
   resolveSeasonForDate,

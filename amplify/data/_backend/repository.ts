@@ -3037,7 +3037,8 @@ function readOptionalRecapGenerationApproach(
   value: unknown,
 ): RecapGenerationApproach | null {
   return value === RecapGenerationApproach.FACT_LIBRARY_FIRST ||
-    value === RecapGenerationApproach.LEGACY
+    value === RecapGenerationApproach.LEGACY ||
+    value === RecapGenerationApproach.SIMPLE_FACT_LIBRARY
     ? value
     : null;
 }
@@ -3047,6 +3048,7 @@ function readOptionalRecapInterviewIntensity(
 ): RecapInterviewIntensity | null {
   return value === RecapInterviewIntensity.CLEAN ||
     value === RecapInterviewIntensity.FULL_HEAT ||
+    value === RecapInterviewIntensity.NONE ||
     value === RecapInterviewIntensity.PG13
     ? value
     : null;

@@ -211,7 +211,7 @@ export function buildGameDayRecapTargetKey(
       ),
       interviewIntensity,
     ),
-    modelJudgeEnabled,
+    supportsModelJudgeSuffix(approach) && modelJudgeEnabled,
   );
 }
 
@@ -235,7 +235,7 @@ export function buildLeagueGameDayRecapTargetKey(
       ),
       interviewIntensity,
     ),
-    modelJudgeEnabled,
+    supportsModelJudgeSuffix(approach) && modelJudgeEnabled,
   );
 }
 
@@ -260,7 +260,7 @@ export function buildSingleGameSummaryTargetKey(
       winnerInterviewPersonalityType,
       loserInterviewPersonalityType,
     ),
-    modelJudgeEnabled,
+    supportsModelJudgeSuffix(approach) && modelJudgeEnabled,
   );
 }
 
@@ -350,6 +350,9 @@ export function normalizeRecapInterviewIntensity(
   if (intensity === RecapInterviewIntensity.FULL_HEAT) {
     return RecapInterviewIntensity.FULL_HEAT;
   }
+  if (intensity === RecapInterviewIntensity.NONE) {
+    return RecapInterviewIntensity.NONE;
+  }
 
   return RecapInterviewIntensity.PG13;
 }
@@ -365,6 +368,9 @@ function normalizeRecapGenerationApproach(
   if (approach === RecapGenerationApproach.FACT_LIBRARY_FIRST) {
     return RecapGenerationApproach.FACT_LIBRARY_FIRST;
   }
+  if (approach === RecapGenerationApproach.SIMPLE_FACT_LIBRARY) {
+    return RecapGenerationApproach.SIMPLE_FACT_LIBRARY;
+  }
 
   return fallback;
 }
@@ -373,9 +379,21 @@ function appendApproachSuffix(
   baseTargetKey: string,
   approach: RecapGenerationApproachValue,
 ): string {
-  return approach === RecapGenerationApproach.FACT_LIBRARY_FIRST
-    ? `${baseTargetKey}#fact-library-first`
-    : baseTargetKey;
+  switch (approach) {
+    case RecapGenerationApproach.FACT_LIBRARY_FIRST:
+      return `${baseTargetKey}#fact-library-first`;
+    case RecapGenerationApproach.SIMPLE_FACT_LIBRARY:
+      return `${baseTargetKey}#simple-fact-library`;
+    case RecapGenerationApproach.LEGACY:
+    default:
+      return baseTargetKey;
+  }
+}
+
+function supportsModelJudgeSuffix(
+  approach: RecapGenerationApproachValue,
+): boolean {
+  return approach !== RecapGenerationApproach.SIMPLE_FACT_LIBRARY;
 }
 
 function appendQualityTierSuffix(
@@ -394,6 +412,8 @@ function appendInterviewIntensitySuffix(
       return `${baseTargetKey}#intensity-clean`;
     case RecapInterviewIntensity.FULL_HEAT:
       return `${baseTargetKey}#intensity-full-heat`;
+    case RecapInterviewIntensity.NONE:
+      return `${baseTargetKey}#intensity-none`;
     case RecapInterviewIntensity.PG13:
     default:
       return baseTargetKey;

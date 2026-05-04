@@ -10,7 +10,7 @@ import type { RecapQueueMessage } from "../data/_backend/game-day-recap-request"
 
 type RuntimeEnv = Record<string, string | undefined>;
 type RecapJobMessage = {
-  interviewIntensity?: "clean" | "pg13" | "full_heat";
+  interviewIntensity?: "clean" | "full_heat" | "none" | "pg13";
   kind:
     | "LEAGUE_DATE"
     | "LEAGUE_GAME_DAY"

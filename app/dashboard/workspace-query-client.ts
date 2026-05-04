@@ -1282,7 +1282,7 @@ const gameDayRecapResultSchema = z
 const gameDayRecapStoredRequestSchema = z
   .object({
     gameDate: z.string(),
-    interviewIntensity: z.enum(["clean", "pg13", "full_heat"]).optional(),
+    interviewIntensity: z.enum(["clean", "pg13", "full_heat", "none"]).optional(),
     leagueId: z.string(),
     modelJudgeEnabled: z.boolean().optional(),
     mode: z.literal("FULL_SLATE"),
@@ -1292,7 +1292,7 @@ const gameDayRecapStoredRequestSchema = z
 const leagueGameDayRecapStoredRequestSchema = z
   .object({
     gameDayNumber: z.number(),
-    interviewIntensity: z.enum(["clean", "pg13", "full_heat"]).optional(),
+    interviewIntensity: z.enum(["clean", "pg13", "full_heat", "none"]).optional(),
     leagueId: z.string(),
     modelJudgeEnabled: z.boolean().optional(),
     mode: z.literal("LEAGUE_GAME_DAY"),
@@ -1311,7 +1311,7 @@ const leagueGameDayPerformancesStoredRequestSchema = z
 
 const singleGameSummaryStoredRequestSchema = z
   .object({
-    interviewIntensity: z.enum(["clean", "pg13", "full_heat"]).optional(),
+    interviewIntensity: z.enum(["clean", "pg13", "full_heat", "none"]).optional(),
     loserInterviewPersonalityType: z
       .enum(INTERVIEW_PERSONALITY_TYPES)
       .nullable()
