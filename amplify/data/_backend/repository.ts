@@ -435,6 +435,7 @@ export type LeagueSeasonSimulationJobRecord = {
   requestJson: LeagueSeasonSimulationStoredRequest;
   progressJson?: LeagueSeasonSimulationStoredProgress | null;
   resultJson?: LeagueSeasonSimulationStoredResult | null;
+  scenarioKey?: string | null;
   error?: string | null;
   createdAt?: string;
   updatedAt?: string;

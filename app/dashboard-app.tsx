@@ -632,7 +632,7 @@ function ConnectionOnboarding({
                 bbLoginName: event.target.value,
               }))
             }
-            placeholder="apiech"
+            placeholder="your-bb-login-name"
             required
             value={formState.bbLoginName}
           />

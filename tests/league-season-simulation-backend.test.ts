@@ -521,6 +521,7 @@ test("deterministic season simulation aggregates finish probabilities", () => {
     leagueName: "NBBA",
     random: () => 0.5,
     residualSigma: 0,
+    scenarioKey: "baseline",
     scoredGames: [
       {
         awayDefense: "23Zone",
@@ -670,10 +671,99 @@ test("submitLeagueSeasonSimulationJob queues work for premium users", async () =
   assert.equal(createdRecord!.leagueId, "league-1");
   assert.equal(createdRecord!.leagueName, "NBBA");
   assert.equal(createdRecord!.season, 71);
+  assert.equal(createdRecord!.scenarioKey, "baseline");
+  assert.deepStrictEqual(createdRecord!.requestJson, {
+    leagueId: "league-1",
+    scenarioKey: "baseline",
+    season: 71,
+    snapshotModifiers: [],
+    teamId: "our-1",
+    teamName: "Visionaries",
+  });
   assert.deepStrictEqual(queuedMessage, {
     jobId: result.jobId,
     userId: "user-1",
   });
+});
+
+test("submitLeagueSeasonSimulationJob stores canonical scenario modifiers", async () => {
+  let createdRecord: Record<string, any> | null = null;
+
+  await submitLeagueSeasonSimulationJob(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+      snapshotModifiers: [
+        {
+          ratings: {
+            outsideDefense: -0.6,
+            outsideScoring: 1.3,
+          },
+          teamId: "our-1",
+        },
+        {
+          ratings: {
+            outsideScoring: 0,
+          },
+          teamId: "zero",
+        },
+      ],
+      stateMachineArn:
+        "arn:aws:states:us-east-1:123456789012:stateMachine:league-season-simulation",
+    },
+    {
+      createBbClient: () =>
+        ({
+          getSchedule: async () => ({
+            matches: [],
+            season: 71,
+          }),
+          getSeasons: async () => ({
+            seasons: [{ id: 72 }, { id: 71 }],
+            version: "1",
+          }),
+        }) as any,
+      createLeagueSeasonSimulationJob: async (_env, input) => {
+        createdRecord = input as Record<string, any>;
+        return {
+          ...(input as Record<string, unknown>),
+          createdAt: "2026-05-01T00:00:00.000Z",
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        } as any;
+      },
+      getBbConnection: async () =>
+        ({
+          bbLoginName: "apiech",
+          leagueId: "league-1",
+          leagueName: "NBBA",
+          teamId: "our-1",
+          teamName: "Visionaries",
+        }) as any,
+      requireFeatureAccess: async () => "premium",
+      resolveBbAccessKey: async () => "secret",
+      startWorkflowExecution: async () => "arn:simulation-1",
+      updateLeagueSeasonSimulationJob: async () => {},
+    },
+  );
+
+  assert.match(String(createdRecord?.scenarioKey), /^scenario-[a-f0-9]{16}$/);
+  assert.deepStrictEqual(createdRecord?.requestJson.snapshotModifiers, [
+    {
+      ratings: {
+        insideDefense: 0,
+        insideScoring: 0,
+        offensiveFlow: 0,
+        outsideDefense: -0.6,
+        outsideScoring: 1.3,
+        rebounding: 0,
+      },
+      teamId: "our-1",
+    },
+  ]);
+  assert.equal(
+    createdRecord.requestJson.scenarioKey,
+    createdRecord.scenarioKey,
+  );
 });
 
 test("submitLeagueSeasonSimulationJob can target an explicit league id", async () => {
@@ -788,6 +878,102 @@ test("getLatestLeagueSeasonSimulation filters jobs using the effective live seas
   assert.ok(result);
   assert.equal(result.jobId, "job-72");
   assert.equal(result.season, 72);
+});
+
+test("getLatestLeagueSeasonSimulation excludes scenarios from baseline latest and supports exact job polling", async () => {
+  const jobs = [
+    {
+      id: "baseline-job",
+      leagueId: "league-1",
+      progressJson: null,
+      requestedAt: "2026-05-01T00:00:00.000Z",
+      requestJson: {
+        leagueId: "league-1",
+        scenarioKey: "baseline",
+        season: 72,
+        snapshotModifiers: [],
+        teamId: "our-1",
+        teamName: "Visionaries",
+      },
+      scenarioKey: "baseline",
+      season: 72,
+      status: "SUCCEEDED",
+      teamId: "our-1",
+      teamName: "Visionaries",
+      userId: "user-1",
+    },
+    {
+      id: "scenario-job",
+      leagueId: "league-1",
+      progressJson: null,
+      requestedAt: "2026-05-01T00:01:00.000Z",
+      requestJson: {
+        leagueId: "league-1",
+        scenarioKey: "scenario-test",
+        season: 72,
+        snapshotModifiers: [
+          {
+            ratings: {
+              outsideScoring: 1,
+            },
+            teamId: "our-1",
+          },
+        ],
+        teamId: "our-1",
+        teamName: "Visionaries",
+      },
+      scenarioKey: "scenario-test",
+      season: 72,
+      status: "SUCCEEDED",
+      teamId: "our-1",
+      teamName: "Visionaries",
+      userId: "user-1",
+    },
+  ];
+  const dependencies = {
+    createBbClient: () =>
+      ({
+        getSchedule: async () => ({
+          matches: [],
+          season: 72,
+        }),
+        getSeasons: async () => ({
+          seasons: [{ id: 72 }],
+          version: "1",
+        }),
+      }) as any,
+    getBbConnection: async () =>
+      ({
+        bbLoginName: "apiech",
+        leagueId: "league-1",
+        teamId: "our-1",
+      }) as any,
+    getLeagueSeasonSimulationJob: async (_env: unknown, id: string) =>
+      jobs.find((job) => job.id === id) as any,
+    listLeagueSeasonSimulationJobsByUser: async () => ({
+      records: [...jobs].reverse(),
+    }) as any,
+    resolveBbAccessKey: async () => "secret",
+  };
+
+  const baseline = await getLatestLeagueSeasonSimulation(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+    },
+    dependencies,
+  );
+  const scenario = await getLatestLeagueSeasonSimulation(
+    {
+      env: {},
+      identity: { sub: "user-1" },
+      jobId: "scenario-job",
+    },
+    dependencies,
+  );
+
+  assert.equal(baseline?.jobId, "baseline-job");
+  assert.equal(scenario?.jobId, "scenario-job");
 });
 
 test("getLatestLeagueSeasonSimulation can target an explicit league id", async () => {
@@ -981,6 +1167,17 @@ test("league simulation artifacts use typed payload fields instead of opaque JSO
   assert.match(artifactModelBlock, /scoredGamePayload/);
 });
 
+test("league simulation finalized snapshot artifact schema persists modifier ratings", () => {
+  const snapshotArtifactBlock =
+    /LeagueSeasonSimulationTeamSnapshotArtifact: a\.customType\(\{([\s\S]*?)\}\),/.exec(
+      dataResourceSource,
+    )?.[1] ?? "";
+
+  assert.match(snapshotArtifactBlock, /normalizedRatings/);
+  assert.match(snapshotArtifactBlock, /ratingModifiers/);
+  assert.match(snapshotArtifactBlock, /effectiveRatings/);
+});
+
 test("getLatestLeagueSeasonSimulation reconciles terminal workflow failures", async () => {
   let update: Record<string, unknown> | null = null;
   const result = await getLatestLeagueSeasonSimulation(
@@ -1092,6 +1289,220 @@ test("league simulation failure finalizer marks active jobs failed", async () =>
   assert.ok(update);
   assert.equal(update.status, "FAILED");
   assert.match(String(update.error), /Sandbox\.Timedout/);
+});
+
+test("league simulation finalization applies modifiers after fallback and rejects unknown teams", async () => {
+  const artifacts = new Map<string, any>();
+  const artifactKey = (artifact: {
+    artifactKey: string;
+    artifactType: string;
+    jobId: string;
+  }) =>
+    `${artifact.jobId}|${artifact.artifactType}|${artifact.artifactKey}`;
+  const job = {
+    expiresAt: "2026-06-01T00:00:00.000Z",
+    expiryKey: "EXPIRABLE",
+    id: "job-1",
+    leagueId: "league-1",
+    progressJson: null,
+    requestedAt: "2026-05-01T19:30:10.000Z",
+    requestJson: {
+      leagueId: "league-1",
+      scenarioKey: "scenario-test",
+      season: 72,
+      snapshotModifiers: [
+        {
+          ratings: {
+            outsideDefense: -1,
+            outsideScoring: 1.3,
+          },
+          teamId: "home",
+        },
+      ],
+      teamId: "home",
+      teamName: "Home",
+    },
+    scenarioKey: "scenario-test",
+    season: 72,
+    status: "COLLECTING_SNAPSHOTS",
+    teamId: "home",
+    userId: "user-1",
+  };
+  const teams = [
+    {
+      conferenceIndex: 0,
+      currentLosses: 0,
+      currentPointMargin: 10,
+      currentWins: 1,
+      stableRank: 0,
+      teamId: "home",
+      teamName: "Home",
+    },
+    {
+      conferenceIndex: 0,
+      currentLosses: 1,
+      currentPointMargin: -10,
+      currentWins: 0,
+      stableRank: 1,
+      teamId: "away",
+      teamName: "Away",
+    },
+  ];
+  const context = {
+    artifactKey: "context",
+    artifactOrder: 0,
+    artifactType: "CONTEXT",
+    contextPayload: {
+      candidateGameCount: 0,
+      currentSeason: 72,
+      leagueId: "league-1",
+      leagueName: "NBBA",
+      remainingGames: [],
+      teamCount: 2,
+      teams,
+    },
+    jobId: job.id,
+    userId: job.userId,
+  };
+  const snapshots = [
+    {
+      artifactKey: "home",
+      artifactOrder: 1_000,
+      artifactType: "SNAPSHOT",
+      jobId: job.id,
+      snapshotPayload: {
+        ...teams[0],
+        candidateGameCount: 3,
+        normalizedRatings: {
+          insideDefense: 4,
+          insideScoring: 5,
+          offensiveFlow: 6,
+          outsideDefense: 0.4,
+          outsideScoring: 1,
+          rebounding: 7,
+        },
+        sampleWarning: null,
+        selectionStrategy: "CURRENT_SEASON_15TH_PERCENTILE",
+        sourceDefense: "ManToMan",
+        sourceMatchId: "source-home",
+        sourceOffense: "Base",
+        sourceSeason: 72,
+        sourceStartTime: "2026-04-01T00:00:00.000Z",
+      },
+      userId: job.userId,
+    },
+    {
+      artifactKey: "away",
+      artifactOrder: 1_001,
+      artifactType: "SNAPSHOT",
+      jobId: job.id,
+      snapshotPayload: {
+        ...teams[1],
+        candidateGameCount: 0,
+        normalizedRatings: null,
+        sampleWarning: null,
+        selectionStrategy: "LEAGUE_AVERAGE_FALLBACK",
+        sourceDefense: "ManToMan",
+        sourceMatchId: null,
+        sourceOffense: "Base",
+        sourceSeason: null,
+        sourceStartTime: null,
+      },
+      userId: job.userId,
+    },
+  ];
+  for (const artifact of [context, ...snapshots]) {
+    artifacts.set(artifactKey(artifact), artifact);
+  }
+
+  await processLeagueSeasonSimulationWorkerAction(
+    {
+      endpointName: "endpoint",
+      env: {},
+      event: {
+        action: "FINALIZE_SNAPSHOTS",
+        jobId: job.id,
+        userId: job.userId,
+      },
+    },
+    {
+      assertMaintenanceInactive: async () => undefined,
+      artifactStore: {
+        get: async (_env, input) => artifacts.get(artifactKey(input)) ?? null,
+        listByJobId: async () => ({
+          nextToken: null,
+          records: [...artifacts.values()],
+        }),
+        upsert: async (_env, artifact) => {
+          artifacts.set(artifactKey(artifact), artifact);
+        },
+      },
+      getLeagueSeasonSimulationJob: async () => job as any,
+      updateLeagueSeasonSimulationJob: async () => undefined,
+    } as any,
+  );
+
+  const modified = artifacts.get(`${job.id}|FINALIZED_SNAPSHOT|home`)
+    ?.snapshotPayload;
+  const fallback = artifacts.get(`${job.id}|FINALIZED_SNAPSHOT|away`)
+    ?.snapshotPayload;
+  assert.equal(modified.effectiveRatings.outsideScoring, 2.3);
+  assert.equal(modified.effectiveRatings.outsideDefense, 0);
+  assert.equal(modified.effectiveRatings.insideScoring, 5);
+  assert.equal(modified.effectiveRatings.offensiveFlow, 6);
+  assert.equal(modified.ratingModifiers.outsideScoring, 1.3);
+  assert.equal(modified.normalizedRatings.outsideDefense, 0.4);
+  assert.deepStrictEqual(fallback.effectiveRatings, fallback.normalizedRatings);
+
+  const unknownJob = {
+    ...job,
+    id: "job-unknown",
+    requestJson: {
+      ...job.requestJson,
+      snapshotModifiers: [
+        {
+          ratings: {
+            outsideScoring: 1,
+          },
+          teamId: "missing",
+        },
+      ],
+    },
+  };
+  const unknownArtifacts = new Map(
+    [context, ...snapshots].map((artifact) => [
+      `${unknownJob.id}|${artifact.artifactType}|${artifact.artifactKey}`,
+      { ...artifact, jobId: unknownJob.id },
+    ]),
+  );
+  await assert.rejects(
+    processLeagueSeasonSimulationWorkerAction(
+      {
+        endpointName: "endpoint",
+        env: {},
+        event: {
+          action: "FINALIZE_SNAPSHOTS",
+          jobId: unknownJob.id,
+          userId: unknownJob.userId,
+        },
+      },
+      {
+        assertMaintenanceInactive: async () => undefined,
+        artifactStore: {
+          get: async (_env, input) =>
+            unknownArtifacts.get(artifactKey(input)) ?? null,
+          listByJobId: async () => ({
+            nextToken: null,
+            records: [...unknownArtifacts.values()],
+          }),
+          upsert: async () => undefined,
+        },
+        getLeagueSeasonSimulationJob: async () => unknownJob as any,
+        updateLeagueSeasonSimulationJob: async () => undefined,
+      } as any,
+    ),
+    /unknown league team id/,
+  );
 });
 
 test("league simulation scoring chunks skip persisted games on retry", async () => {

@@ -20,6 +20,7 @@ export const handler: Handler = async (event) => {
     env,
     identity: event.identity,
     leagueId: event.arguments.leagueId,
+    snapshotModifiers: event.arguments.snapshotModifiers,
     stateMachineArn,
   });
 };

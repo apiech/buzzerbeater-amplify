@@ -370,6 +370,20 @@ export type NextGameRecommendationProgress = NonNullable<
 export type LeagueSeasonSimulationProgress = NonNullable<
   LeagueSeasonSimulationSnapshot["progress"]
 >;
+export type LeagueSeasonSimulationRatingKey =
+  | "outsideScoring"
+  | "insideScoring"
+  | "outsideDefense"
+  | "insideDefense"
+  | "rebounding"
+  | "offensiveFlow";
+export type LeagueSeasonSimulationRatingModifier = Partial<
+  Record<LeagueSeasonSimulationRatingKey, number | null>
+>;
+export type LeagueSeasonSimulationTeamModifier = {
+  ratings: LeagueSeasonSimulationRatingModifier;
+  teamId: string;
+};
 export type NextGameRecommendationCompletedPhase =
   NextGameRecommendationProgress["completedPhases"][number];
 export type RecommendationMode =

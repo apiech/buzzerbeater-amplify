@@ -12,6 +12,7 @@ import {
 } from "../../../lib/bbapi";
 import {
   TEAM_RATING_KEYS,
+  type TeamRatingKey,
   type TeamRatings,
 } from "../../../lib/buzzerbeater/team-ratings";
 import {
@@ -90,6 +91,15 @@ type SimulationStoredResult = NonNullable<
   Schema["LeagueSeasonSimulationJob"]["type"]["resultJson"]
 >;
 
+type SeasonSimulationRatingModifier = Partial<
+  Record<TeamRatingKey, number | null>
+>;
+
+type SeasonSimulationTeamModifier = {
+  ratings: SeasonSimulationRatingModifier;
+  teamId: string;
+};
+
 type BbClient = Pick<
   BBXmlApiClient,
   "getBoxScore" | "getSchedule" | "getSeasons" | "getStandings"
@@ -157,7 +167,10 @@ type SelectedTeamSnapshot = TeamStanding & {
   sourceStartTime: string | null;
 };
 
-type PersistedTeamSnapshot = Omit<SelectedTeamSnapshot, "candidates">;
+type PersistedTeamSnapshot = Omit<SelectedTeamSnapshot, "candidates"> & {
+  effectiveRatings?: TeamRatings | null;
+  ratingModifiers?: TeamRatings | null;
+};
 
 type ScoredRemainingGame = RemainingLeagueGame & {
   awayTeamIndex: number;
@@ -275,6 +288,7 @@ type GetLatestDependencies = {
     executionArn: string,
   ) => Promise<StateMachineExecutionDescription>;
   getBbConnection: typeof getBbConnection;
+  getLeagueSeasonSimulationJob: typeof getLeagueSeasonSimulationJob;
   listLeagueSeasonSimulationJobsByUser: typeof listLeagueSeasonSimulationJobsByUser;
   resolveBbAccessKey: typeof resolveBbAccessKey;
   updateLeagueSeasonSimulationJob: typeof updateLeagueSeasonSimulationJob;
@@ -426,6 +440,7 @@ const defaultGetLatestDependencies: GetLatestDependencies = {
   describeWorkflowExecution: async (executionArn) =>
     describeStateMachineExecution({ executionArn }),
   getBbConnection,
+  getLeagueSeasonSimulationJob,
   listLeagueSeasonSimulationJobsByUser,
   resolveBbAccessKey,
   updateLeagueSeasonSimulationJob,
@@ -458,6 +473,7 @@ export async function submitLeagueSeasonSimulationJob(
     env: GraphqlEnv;
     identity: unknown;
     leagueId?: string | null;
+    snapshotModifiers?: unknown;
     stateMachineArn: string;
   },
   dependencies: Partial<SubmitDependencies> = {},
@@ -504,9 +520,13 @@ export async function submitLeagueSeasonSimulationJob(
   });
   const jobId = randomUUID();
   const requestedAt = new Date().toISOString();
+  const snapshotModifiers = normalizeTeamModifiers(args.snapshotModifiers);
+  const scenarioKey = buildScenarioKey(snapshotModifiers);
   const requestJson: SimulationStoredRequest = {
     leagueId,
+    scenarioKey,
     season: currentSeason,
+    snapshotModifiers,
     teamId,
     teamName: connection?.teamName ?? null,
   };
@@ -525,6 +545,7 @@ export async function submitLeagueSeasonSimulationJob(
     requestJson,
     requestedAt,
     resultJson: null,
+    scenarioKey,
     season: currentSeason,
     startedAt: null,
     status: "QUEUED",
@@ -568,6 +589,7 @@ export async function getLatestLeagueSeasonSimulation(
   args: {
     env: GraphqlEnv;
     identity: unknown;
+    jobId?: string | null;
     leagueId?: string | null;
   },
   dependencies: Partial<GetLatestDependencies> = {},
@@ -581,6 +603,20 @@ export async function getLatestLeagueSeasonSimulation(
   const userId = resolveUserId(args.identity);
   if (!userId) {
     throw new Error("Authenticated user identity is missing.");
+  }
+
+  const requestedJobId = normalizeOptionalString(args.jobId);
+  if (requestedJobId) {
+    const job = await deps.getLeagueSeasonSimulationJob(args.env, requestedJobId);
+    if (!job || job.userId !== userId) {
+      return null;
+    }
+    const reconciled = await reconcileActiveSimulationExecution({
+      deps,
+      env: args.env,
+      job,
+    });
+    return adaptSimulationJob(reconciled);
   }
 
   const connection = await deps.getBbConnection(args.env, userId);
@@ -605,7 +641,10 @@ export async function getLatestLeagueSeasonSimulation(
     limit: 20,
   });
   const match = jobs.records.find(
-    (job) => job.leagueId === leagueId && job.season === currentSeason,
+    (job) =>
+      job.leagueId === leagueId &&
+      job.season === currentSeason &&
+      getJobScenarioKey(job) === "baseline",
   );
   if (!match) {
     return null;
@@ -959,8 +998,12 @@ async function finalizeLeagueSeasonSimulationSnapshots(args: {
     throw new Error("Cannot finalize league simulation snapshots before every team snapshot is collected.");
   }
 
-  const leagueAverage = computeLeagueAverageRatings(snapshots);
-  const finalizedSnapshots = finalizeFallbackSnapshots(snapshots, leagueAverage);
+  const baselineLeagueAverage = computeLeagueAverageRatings(snapshots);
+  const finalizedSnapshots = applySnapshotModifiers({
+    modifiers: readJobSnapshotModifiers(args.job),
+    snapshots: finalizeFallbackSnapshots(snapshots, baselineLeagueAverage),
+    teams: context.teams,
+  });
   for (let index = 0; index < finalizedSnapshots.length; index += 1) {
     const snapshot = finalizedSnapshots[index]!;
     await writeSimulationArtifact({
@@ -1165,6 +1208,7 @@ async function runLeagueSeasonSimulationMonteCarlo(args: {
     leagueName: context.leagueName,
     random: createSeededRng(args.job.id),
     residualSigma: DEFAULT_RESIDUAL_SIGMA,
+    scenarioKey: getJobScenarioKey(args.job),
     scoredGames,
     season: context.currentSeason,
     simulationCount: DEFAULT_SIMULATION_COUNT,
@@ -1333,11 +1377,16 @@ export async function processLeagueSeasonSimulationJob(
       },
     );
 
-    const leagueAverage = computeLeagueAverageRatings(selectedSnapshots);
-    const finalizedSnapshots = finalizeFallbackSnapshots(
-      selectedSnapshots,
-      leagueAverage,
-    );
+    const baselineLeagueAverage = computeLeagueAverageRatings(selectedSnapshots);
+    const finalizedSnapshots = applySnapshotModifiers({
+      modifiers: readJobSnapshotModifiers(job),
+      snapshots: finalizeFallbackSnapshots(
+        selectedSnapshots,
+        baselineLeagueAverage,
+      ),
+      teams,
+    });
+    const leagueAverage = computeLeagueAverageRatings(finalizedSnapshots);
     const scoringStartedAt = new Date().toISOString();
     const scoringProgress = advanceProgress({
       context: {
@@ -1452,6 +1501,7 @@ export async function processLeagueSeasonSimulationJob(
       leagueName: standings.league?.name ?? job.leagueName ?? null,
       random: deps.rng,
       residualSigma: DEFAULT_RESIDUAL_SIGMA,
+      scenarioKey: getJobScenarioKey(job),
       scoredGames,
       season: effectiveSeason,
       simulationCount: DEFAULT_SIMULATION_COUNT,
@@ -1702,7 +1752,7 @@ function computeLeagueAverageRatings(
   snapshots: readonly PersistedTeamSnapshot[],
 ): TeamRatings {
   const usable = snapshots
-    .map((snapshot) => snapshot.normalizedRatings)
+    .map((snapshot) => getSnapshotEffectiveRatings(snapshot))
     .filter((ratings): ratings is TeamRatings => Boolean(ratings));
   if (!usable.length) {
     return { ...DEFAULT_NEUTRAL_RATINGS };
@@ -1720,6 +1770,59 @@ function computeLeagueAverageRatings(
     result[key] = totals[key] / usable.length;
   }
   return result;
+}
+
+function applySnapshotModifiers(args: {
+  modifiers: readonly SeasonSimulationTeamModifier[];
+  snapshots: readonly PersistedTeamSnapshot[];
+  teams: readonly TeamStanding[];
+}): PersistedTeamSnapshot[] {
+  const teamIds = new Set(args.teams.map((team) => team.teamId));
+  const modifierByTeamId = new Map(
+    args.modifiers.map((modifier) => [modifier.teamId, modifier] as const),
+  );
+  const unknownTeamIds = Array.from(modifierByTeamId.keys()).filter(
+    (teamId) => !teamIds.has(teamId),
+  );
+  if (unknownTeamIds.length) {
+    throw new Error(
+      `Snapshot modifiers referenced unknown league team id${unknownTeamIds.length === 1 ? "" : "s"}: ${unknownTeamIds.join(", ")}.`,
+    );
+  }
+
+  return args.snapshots.map((snapshot) => {
+    const baselineRatings = snapshot.normalizedRatings
+      ? { ...snapshot.normalizedRatings }
+      : null;
+    const ratingModifiers = normalizeRatingModifiers(
+      modifierByTeamId.get(snapshot.teamId)?.ratings,
+    );
+    return {
+      ...snapshot,
+      effectiveRatings: baselineRatings
+        ? addRatingModifiers(baselineRatings, ratingModifiers)
+        : null,
+      normalizedRatings: baselineRatings,
+      ratingModifiers,
+    };
+  });
+}
+
+function addRatingModifiers(
+  ratings: TeamRatings,
+  modifiers: TeamRatings,
+): TeamRatings {
+  const adjusted = createZeroRatings();
+  for (const key of TEAM_RATING_KEYS) {
+    adjusted[key] = Math.max(0, ratings[key] + modifiers[key]);
+  }
+  return adjusted;
+}
+
+function getSnapshotEffectiveRatings(
+  snapshot: PersistedTeamSnapshot,
+): TeamRatings | null {
+  return snapshot.effectiveRatings ?? snapshot.normalizedRatings ?? null;
 }
 
 function finalizeFallbackSnapshots(
@@ -1809,12 +1912,12 @@ async function scoreRemainingGames(args: {
       totalGames: teamRemainingOrder.countByTeamId.get(game.awayTeamId) ?? 1,
     });
     const homeNormalized = regressRatingsTowardAverage(
-      homeRecord.snapshot.normalizedRatings ?? args.leagueAverage,
+      getSnapshotEffectiveRatings(homeRecord.snapshot) ?? args.leagueAverage,
       args.leagueAverage,
       homeRegressionRatio,
     );
     const awayNormalized = regressRatingsTowardAverage(
-      awayRecord.snapshot.normalizedRatings ?? args.leagueAverage,
+      getSnapshotEffectiveRatings(awayRecord.snapshot) ?? args.leagueAverage,
       args.leagueAverage,
       awayRegressionRatio,
     );
@@ -2144,6 +2247,7 @@ export function runSeasonMonteCarlo(args: {
   leagueName: string | null;
   random: () => number;
   residualSigma: number;
+  scenarioKey: string;
   scoredGames: readonly ScoredRemainingGame[];
   season: number;
   simulationCount: number;
@@ -2241,7 +2345,10 @@ export function runSeasonMonteCarlo(args: {
       snapshot: {
         candidateGameCount: snapshot.candidateGameCount,
         defense: snapshot.sourceDefense,
+        effectiveRatings: getSnapshotEffectiveRatings(snapshot),
         offense: snapshot.sourceOffense,
+        ratingModifiers: normalizeRatingModifiers(snapshot.ratingModifiers),
+        ratings: snapshot.normalizedRatings,
         sampleWarning: snapshot.sampleWarning,
         selectionStrategy: snapshot.selectionStrategy,
         sourceMatchId: snapshot.sourceMatchId,
@@ -2300,6 +2407,7 @@ export function runSeasonMonteCarlo(args: {
       startTime: game.startTime,
     })),
     residualSigma: args.residualSigma,
+    scenarioKey: args.scenarioKey,
     season: args.season,
     simulationCount: args.simulationCount,
   };
@@ -2946,7 +3054,9 @@ function normalizePersistedTeamSnapshot(value: unknown): PersistedTeamSnapshot {
   return {
     ...normalizeTeamStanding(record),
     candidateGameCount: asFiniteInteger(record.candidateGameCount) ?? 0,
+    effectiveRatings: normalizeTeamRatings(record.effectiveRatings),
     normalizedRatings: normalizeTeamRatings(record.normalizedRatings),
+    ratingModifiers: normalizeRatingModifiers(record.ratingModifiers),
     sampleWarning: normalizeOptionalString(record.sampleWarning),
     selectionStrategy: normalizeSnapshotSelectionStrategy(
       record.selectionStrategy,
@@ -3017,6 +3127,97 @@ function normalizeTeamRatings(value: unknown): TeamRatings | null {
     ratings[key] = rating;
   }
   return ratings;
+}
+
+function normalizeTeamModifiers(value: unknown): SeasonSimulationTeamModifier[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("snapshotModifiers must be an array.");
+  }
+
+  const byTeamId = new Map<string, SeasonSimulationTeamModifier>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("Each snapshot modifier must be an object.");
+    }
+    const record = entry as Record<string, unknown>;
+    const teamId = normalizeOptionalString(record.teamId);
+    if (!teamId) {
+      throw new Error("Each snapshot modifier must include a teamId.");
+    }
+    const ratings = normalizeRatingModifiers(record.ratings);
+    if (hasNonZeroModifier(ratings)) {
+      byTeamId.set(teamId, { ratings, teamId });
+    } else {
+      byTeamId.delete(teamId);
+    }
+  }
+
+  return Array.from(byTeamId.values()).sort((left, right) =>
+    left.teamId.localeCompare(right.teamId),
+  );
+}
+
+function normalizeRatingModifiers(value: unknown): TeamRatings {
+  if (value === undefined || value === null) {
+    return createZeroRatings();
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Snapshot modifier ratings must be an object.");
+  }
+
+  const record = value as Record<string, unknown>;
+  const modifiers = createZeroRatings();
+  for (const key of TEAM_RATING_KEYS) {
+    const raw = record[key];
+    if (raw === undefined || raw === null || raw === "") {
+      modifiers[key] = 0;
+      continue;
+    }
+    const parsed = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`Snapshot modifier '${key}' must be a finite number.`);
+    }
+    modifiers[key] = parsed;
+  }
+  return modifiers;
+}
+
+function hasNonZeroModifier(modifiers: TeamRatings): boolean {
+  return TEAM_RATING_KEYS.some((key) => modifiers[key] !== 0);
+}
+
+function buildScenarioKey(
+  modifiers: readonly SeasonSimulationTeamModifier[],
+): string {
+  if (!modifiers.length) {
+    return "baseline";
+  }
+  const canonical = JSON.stringify(
+    modifiers.map((modifier) => ({
+      ratings: Object.fromEntries(
+        TEAM_RATING_KEYS.map((key) => [key, modifier.ratings[key] ?? 0]),
+      ),
+      teamId: modifier.teamId,
+    })),
+  );
+  return `scenario-${createHash("sha256").update(canonical).digest("hex").slice(0, 16)}`;
+}
+
+function readJobSnapshotModifiers(
+  job: LeagueSeasonSimulationJobRecord,
+): SeasonSimulationTeamModifier[] {
+  return normalizeTeamModifiers(job.requestJson?.snapshotModifiers ?? []);
+}
+
+function getJobScenarioKey(job: LeagueSeasonSimulationJobRecord): string {
+  return (
+    normalizeOptionalString(job.scenarioKey) ??
+    normalizeOptionalString(job.requestJson?.scenarioKey) ??
+    "baseline"
+  );
 }
 
 function normalizeSnapshotSelectionStrategy(

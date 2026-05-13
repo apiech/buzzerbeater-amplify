@@ -22,6 +22,7 @@ import type {
   LeagueHistoryPayload,
   LeagueIntelPayload,
   LeagueSeasonSimulationSnapshot,
+  LeagueSeasonSimulationTeamModifier,
   LineupHelperEvaluationRecord,
   LineupHelperWorkspaceRecord,
   MatchBoxscorePayload,
@@ -1043,11 +1044,25 @@ const leagueSeasonSimulationFinishProbabilitySchema = z
   })
   .passthrough();
 
+const leagueSeasonSimulationRatingsSchema = z
+  .object({
+    insideDefense: z.number(),
+    insideScoring: z.number(),
+    offensiveFlow: z.number(),
+    outsideDefense: z.number(),
+    outsideScoring: z.number(),
+    rebounding: z.number(),
+  })
+  .passthrough();
+
 const leagueSeasonSimulationSourceSnapshotSchema = z
   .object({
     candidateGameCount: z.number(),
     defense: z.string(),
+    effectiveRatings: leagueSeasonSimulationRatingsSchema.nullable().optional(),
     offense: z.string(),
+    ratingModifiers: leagueSeasonSimulationRatingsSchema.nullable().optional(),
+    ratings: leagueSeasonSimulationRatingsSchema.nullable().optional(),
     sampleWarning: nullableStringSchema,
     selectionStrategy: z.enum([
       "BEST_AVAILABLE",
@@ -1120,6 +1135,7 @@ const leagueSeasonSimulationResultSchema = z
     modelVersion: nullableStringSchema,
     remainingGames: z.array(leagueSeasonSimulationGameResultSchema),
     residualSigma: z.number(),
+    scenarioKey: nullableStringSchema,
     season: z.number(),
     simulationCount: z.number(),
   })
@@ -2284,11 +2300,15 @@ export const workspaceQueryKeys = {
   leagueIntelAutoRefresh: ["workspace", "leagueIntel", "autoRefresh"] as const,
   leagueIntel: (input?: { leagueId?: string | null }) =>
     ["workspace", "leagueIntel", input?.leagueId ?? "connected"] as const,
-  leagueSeasonSimulation: (input?: { leagueId?: string | null }) =>
+  leagueSeasonSimulation: (input?: {
+    jobId?: string | null;
+    leagueId?: string | null;
+  }) =>
     [
       "workspace",
       "leagueSeasonSimulation",
       input?.leagueId ?? "connected",
+      input?.jobId ?? "latest",
     ] as const,
   lineupHelper: ["workspace", "lineupHelper"] as const,
   lineupHelperEvaluation: (input: {
@@ -2740,11 +2760,18 @@ export async function fetchLatestOpponentForecastQuery(args: {
 }
 
 export async function fetchLatestLeagueSeasonSimulationQuery(args?: {
+  jobId?: string | null;
   leagueId?: string | null;
 }): Promise<LeagueSeasonSimulationSnapshot | null> {
+  const jobId = args?.jobId?.trim() ?? "";
   const leagueId = args?.leagueId?.trim() ?? "";
   const response = await client.queries.getLatestLeagueSeasonSimulation(
-    leagueId ? { leagueId } : undefined,
+    jobId || leagueId
+      ? {
+          ...(jobId ? { jobId } : {}),
+          ...(leagueId ? { leagueId } : {}),
+        }
+      : undefined,
   );
 
   return readAmplifyNullableDataOrThrow(
@@ -3096,10 +3123,19 @@ export async function submitOpponentForecastJobMutation(input: {
 
 export async function submitLeagueSeasonSimulationJobMutation(args?: {
   leagueId?: string | null;
+  snapshotModifiers?: LeagueSeasonSimulationTeamModifier[] | null;
 }): Promise<SubmitLeagueSeasonSimulationJobResult> {
   const leagueId = args?.leagueId?.trim() ?? "";
+  const snapshotModifiers = args?.snapshotModifiers?.length
+    ? args.snapshotModifiers
+    : null;
   const response = await client.mutations.submitLeagueSeasonSimulationJob(
-    leagueId ? { leagueId } : undefined,
+    leagueId || snapshotModifiers
+      ? {
+          ...(leagueId ? { leagueId } : {}),
+          ...(snapshotModifiers ? { snapshotModifiers } : {}),
+        }
+      : undefined,
   );
   return readAmplifyDataOrThrow(
     response,
@@ -3508,6 +3544,7 @@ export function opponentForecastQueryOptions(args: { teamId: string }) {
 }
 
 export function leagueSeasonSimulationQueryOptions(args?: {
+  jobId?: string | null;
   leagueId?: string | null;
 }) {
   return queryOptions({

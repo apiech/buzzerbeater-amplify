@@ -334,7 +334,7 @@ test("league intel parsing accepts enriched comparison payloads and still tolera
   assert.equal(league.comparisons.arena[0]?.totalCapacity, 20793);
 });
 
-test("league season simulation parsing forwards league ids and accepts current-season selection strategies", async (t) => {
+test("league season simulation parsing forwards league and job ids and accepts current-season selection strategies", async (t) => {
   let input: Record<string, unknown> | undefined;
   installQueryMock(t, "getLatestLeagueSeasonSimulation", async (value) => {
     input = value as Record<string, unknown> | undefined;
@@ -372,7 +372,31 @@ test("league season simulation parsing forwards league ids and accepts current-s
                 snapshot: {
                   candidateGameCount: 4,
                   defense: "23Zone",
+                  effectiveRatings: {
+                    insideDefense: 6,
+                    insideScoring: 5,
+                    offensiveFlow: 7,
+                    outsideDefense: 2.4,
+                    outsideScoring: 9.3,
+                    rebounding: 8,
+                  },
                   offense: "Motion",
+                  ratingModifiers: {
+                    insideDefense: 0,
+                    insideScoring: 0,
+                    offensiveFlow: 0,
+                    outsideDefense: -0.6,
+                    outsideScoring: 1.3,
+                    rebounding: 0,
+                  },
+                  ratings: {
+                    insideDefense: 6,
+                    insideScoring: 5,
+                    offensiveFlow: 7,
+                    outsideDefense: 3,
+                    outsideScoring: 8,
+                    rebounding: 8,
+                  },
                   selectionStrategy: "CURRENT_SEASON_15TH_PERCENTILE",
                   teamId: "our-1",
                 },
@@ -393,6 +417,7 @@ test("league season simulation parsing forwards league ids and accepts current-s
         modelVersion: "sim-v1",
         remainingGames: [],
         residualSigma: 10,
+        scenarioKey: "scenario-test",
         season: 68,
         simulationCount: 10000,
       },
@@ -406,10 +431,14 @@ test("league season simulation parsing forwards league ids and accepts current-s
   });
 
   const snapshot = await fetchLatestLeagueSeasonSimulationQuery({
+    jobId: "scenario-job",
     leagueId: "league-2",
   });
 
-  assert.deepStrictEqual(input, { leagueId: "league-2" });
+  assert.deepStrictEqual(input, {
+    jobId: "scenario-job",
+    leagueId: "league-2",
+  });
   assert.equal(
     snapshot!.result!.conferences[0]!.teams[0]!.snapshot.selectionStrategy,
     "CURRENT_SEASON_15TH_PERCENTILE",
@@ -417,9 +446,15 @@ test("league season simulation parsing forwards league ids and accepts current-s
   assert.equal(snapshot!.result!.simulationCount, 10000);
   assert.equal(snapshot!.result!.residualSigma, 10);
   assert.equal(snapshot!.result!.conferences[0]!.teams[0]!.winsP50, 10.7);
+  assert.equal(snapshot!.result!.scenarioKey, "scenario-test");
+  assert.equal(
+    snapshot!.result!.conferences[0]!.teams[0]!.snapshot.ratingModifiers
+      ?.outsideScoring,
+    1.3,
+  );
 });
 
-test("league season simulation mutation forwards league ids and returns the queued job envelope", async (t) => {
+test("league season simulation mutation forwards league ids and modifiers and returns the queued job envelope", async (t) => {
   let input: Record<string, unknown> | undefined;
   installMutationMock(t, "submitLeagueSeasonSimulationJob", async (value) => {
     input = value as Record<string, unknown> | undefined;
@@ -434,9 +469,29 @@ test("league season simulation mutation forwards league ids and returns the queu
 
   const result = await submitLeagueSeasonSimulationJobMutation({
     leagueId: "league-2",
+    snapshotModifiers: [
+      {
+        ratings: {
+          outsideDefense: -0.6,
+          outsideScoring: 1.3,
+        },
+        teamId: "our-1",
+      },
+    ],
   });
 
-  assert.deepStrictEqual(input, { leagueId: "league-2" });
+  assert.deepStrictEqual(input, {
+    leagueId: "league-2",
+    snapshotModifiers: [
+      {
+        ratings: {
+          outsideDefense: -0.6,
+          outsideScoring: 1.3,
+        },
+        teamId: "our-1",
+      },
+    ],
+  });
   assert.equal(result.jobId, "simulation-1");
   assert.equal(result.executionArn, "arn:simulation-1");
 });

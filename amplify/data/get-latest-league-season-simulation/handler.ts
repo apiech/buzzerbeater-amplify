@@ -9,6 +9,7 @@ export const handler: Handler = async (event) => {
   return getLatestLeagueSeasonSimulation({
     env,
     identity: event.identity,
+    jobId: event.arguments.jobId,
     leagueId: event.arguments.leagueId,
   });
 };

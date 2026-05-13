@@ -1974,9 +1974,27 @@ const schema = a
 
     LeagueSeasonSimulationStoredRequest: a.customType({
       leagueId: a.string().required(),
+      scenarioKey: a.string(),
       season: a.integer().required(),
+      snapshotModifiers: a
+        .ref("LeagueSeasonSimulationTeamModifier")
+        .array(),
       teamId: a.string().required(),
       teamName: a.string(),
+    }),
+
+    LeagueSeasonSimulationRatingModifier: a.customType({
+      outsideScoring: a.float(),
+      insideScoring: a.float(),
+      outsideDefense: a.float(),
+      insideDefense: a.float(),
+      rebounding: a.float(),
+      offensiveFlow: a.float(),
+    }),
+
+    LeagueSeasonSimulationTeamModifier: a.customType({
+      teamId: a.string().required(),
+      ratings: a.ref("LeagueSeasonSimulationRatingModifier").required(),
     }),
 
     LeagueSeasonSimulationCompletedPhase: a.customType({
@@ -2024,6 +2042,9 @@ const schema = a
       teamId: a.string().required(),
       teamName: a.string(),
       candidateGameCount: a.integer().required(),
+      ratings: a.ref("MatchBoxscoreTeamRatings"),
+      ratingModifiers: a.ref("MatchBoxscoreTeamRatings"),
+      effectiveRatings: a.ref("MatchBoxscoreTeamRatings"),
       sourceMatchId: a.string(),
       sourceSeason: a.integer(),
       sourceStartTime: a.datetime(),
@@ -2088,6 +2109,7 @@ const schema = a
       generatedAt: a.datetime().required(),
       leagueId: a.string().required(),
       leagueName: a.string(),
+      scenarioKey: a.string(),
       season: a.integer().required(),
       modelVersion: a.string(),
       simulationCount: a.integer().required(),
@@ -2168,7 +2190,9 @@ const schema = a
       teamId: a.string().required(),
       teamName: a.string(),
       candidateGameCount: a.integer().required(),
+      effectiveRatings: a.ref("MatchBoxscoreTeamRatings"),
       normalizedRatings: a.ref("MatchBoxscoreTeamRatings"),
+      ratingModifiers: a.ref("MatchBoxscoreTeamRatings"),
       sourceDefense: a.string().required(),
       sourceOffense: a.string().required(),
       sampleWarning: a.string(),
@@ -3762,6 +3786,7 @@ const schema = a
         requestJson: a.ref("LeagueSeasonSimulationStoredRequest").required(),
         progressJson: a.ref("LeagueSeasonSimulationProgress"),
         resultJson: a.ref("LeagueSeasonSimulationResult"),
+        scenarioKey: a.string(),
         error: a.string(),
         executionArn: a.string(),
         expiryKey: a.string().required(),
@@ -4098,6 +4123,7 @@ const schema = a
     getLatestLeagueSeasonSimulation: a
       .query()
       .arguments({
+        jobId: a.string(),
         leagueId: a.string(),
       })
       .returns(a.ref("LeagueSeasonSimulationSnapshot"))
@@ -4429,6 +4455,9 @@ const schema = a
       .mutation()
       .arguments({
         leagueId: a.string(),
+        snapshotModifiers: a
+          .ref("LeagueSeasonSimulationTeamModifier")
+          .array(),
       })
       .returns(a.ref("LeagueSeasonSimulationSubmitResult"))
       .authorization((allow) => [allow.authenticated()])

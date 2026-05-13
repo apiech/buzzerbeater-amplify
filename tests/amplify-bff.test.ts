@@ -137,10 +137,26 @@ test("submitLeagueSeasonSimulationJob is routed through the mutation BFF", async
 
   const result = await runMutationOperation("submitLeagueSeasonSimulationJob", {
     leagueId: "league-2",
+    snapshotModifiers: [
+      {
+        ratings: {
+          outsideScoring: 1.3,
+        },
+        teamId: "our-1",
+      },
+    ],
   });
 
   assert.deepStrictEqual(input, {
     leagueId: "league-2",
+    snapshotModifiers: [
+      {
+        ratings: {
+          outsideScoring: 1.3,
+        },
+        teamId: "our-1",
+      },
+    ],
   });
   assert.deepStrictEqual(result.data, {
     executionArn: "arn:simulation-1",
@@ -348,10 +364,12 @@ test("getLatestLeagueSeasonSimulation is routed through the query BFF", async (t
   assert.equal(isQueryName("getLatestLeagueSeasonSimulation"), true);
 
   const result = await runQueryOperation("getLatestLeagueSeasonSimulation", {
+    jobId: "scenario-job",
     leagueId: "league-2",
   });
 
   assert.deepStrictEqual(input, {
+    jobId: "scenario-job",
     leagueId: "league-2",
   });
   assert.equal((result.data as { jobId: string }).jobId, "simulation-1");

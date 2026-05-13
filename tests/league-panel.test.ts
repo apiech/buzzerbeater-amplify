@@ -170,6 +170,13 @@ test("league panel renders all five tabs, row highlighting, and scrollable table
   assert.match(source, /Remaining game probabilities/);
   assert.match(source, /League ID/);
   assert.match(source, /leagueIntelQueryOptions\(selectedLeagueArgs\)/);
-  assert.match(source, /leagueSeasonSimulationQueryOptions\(selectedLeagueArgs\)/);
-  assert.match(source, /submitLeagueSeasonSimulationJobMutation\(selectedLeagueArgs\)/);
+  assert.match(source, /Scenario modifiers/);
+  assert.match(source, /Run scenario/);
+  assert.match(source, /Back to baseline/);
+  assert.match(source, /ratingModifierFields/);
+  assert.match(source, /buildLeagueSeasonSimulationModifiers/);
+  assert.match(source, /scenarioJobId/);
+  assert.match(source, /jobId: scenarioJobId/);
+  assert.match(source, /snapshotModifiers/);
+  assert.match(source, /formatRatingModifierSummary/);
 });

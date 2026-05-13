@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -12,8 +12,10 @@ import {
 import type {
   LeagueIntelPayload,
   LeagueSeasonSimulationProgress,
+  LeagueSeasonSimulationRatingKey,
   LeagueSeasonSimulationResult,
   LeagueSeasonSimulationSnapshot,
+  LeagueSeasonSimulationTeamModifier,
 } from "@/app/types";
 import { Alert } from "@/app/ui/primitives/alert";
 import { Button } from "@/app/ui/primitives/button";
@@ -44,6 +46,24 @@ type LeagueViewId =
 type LeagueComparisonMetricTriplet = NonNullable<
   NonNullable<LeagueIntelPayload["comparisons"]>["offense"][number]["points"]
 >;
+
+type RatingModifierDraft = Record<
+  string,
+  Partial<Record<LeagueSeasonSimulationRatingKey, string>>
+>;
+
+const ratingModifierFields: Array<{
+  key: LeagueSeasonSimulationRatingKey;
+  label: string;
+  shortLabel: string;
+}> = [
+  { key: "outsideScoring", label: "Outside scoring", shortLabel: "OS" },
+  { key: "insideScoring", label: "Inside scoring", shortLabel: "IS" },
+  { key: "outsideDefense", label: "Outside defense", shortLabel: "OD" },
+  { key: "insideDefense", label: "Inside defense", shortLabel: "ID" },
+  { key: "rebounding", label: "Rebounding", shortLabel: "RB" },
+  { key: "offensiveFlow", label: "Offensive flow", shortLabel: "OF" },
+];
 
 const activeProjectionStatuses = new Set<
   LeagueSeasonSimulationSnapshot["status"]
@@ -109,7 +129,14 @@ export function LeaguePanel({
     (activeLeague?.standings.length ? "FRESH" : "UNAVAILABLE");
   const isFreshLeague = freshnessStatus === "FRESH";
   const queryClient = useQueryClient();
-  const projectionQuery = useQuery({
+  const [scenarioJobId, setScenarioJobId] = useState<string | null>(null);
+  const [modifierDraft, setModifierDraft] = useState<RatingModifierDraft>({});
+  const modifierPayload = useMemo(
+    () => buildLeagueSeasonSimulationModifiers(modifierDraft),
+    [modifierDraft],
+  );
+  const hasModifiers = modifierPayload.length > 0;
+  const baselineProjectionQuery = useQuery({
     ...leagueSeasonSimulationQueryOptions(selectedLeagueArgs),
     enabled:
       Boolean(activeLeague) && isFreshLeague && activeViewId === "projection",
@@ -123,10 +150,54 @@ export function LeaguePanel({
     },
     retry: false,
   });
+  const scenarioProjectionArgs = scenarioJobId
+    ? { ...(selectedLeagueArgs ?? {}), jobId: scenarioJobId }
+    : undefined;
+  const scenarioProjectionQuery = useQuery({
+    ...leagueSeasonSimulationQueryOptions(scenarioProjectionArgs),
+    enabled:
+      Boolean(activeLeague) &&
+      isFreshLeague &&
+      activeViewId === "projection" &&
+      Boolean(scenarioJobId),
+    placeholderData: (previous) => previous,
+    refetchInterval: (query) => {
+      const snapshot = query.state.data;
+      if (!snapshot || !activeProjectionStatuses.has(snapshot.status)) {
+        return false;
+      }
+      return 4000;
+    },
+    retry: false,
+  });
+  const activeProjectionQuery = scenarioJobId
+    ? scenarioProjectionQuery
+    : baselineProjectionQuery;
   const submitProjectionMutation = useMutation({
-    mutationFn: () =>
-      submitLeagueSeasonSimulationJobMutation(selectedLeagueArgs),
-    onSuccess: async () => {
+    mutationFn: async () => {
+      const snapshotModifiers = buildLeagueSeasonSimulationModifiers(modifierDraft);
+      const result = await submitLeagueSeasonSimulationJobMutation({
+        ...(selectedLeagueArgs ?? {}),
+        snapshotModifiers,
+      });
+      return {
+        result,
+        scenario: snapshotModifiers.length > 0,
+      };
+    },
+    onSuccess: async ({ result, scenario }) => {
+      if (scenario) {
+        setScenarioJobId(result.jobId);
+        await queryClient.invalidateQueries({
+          queryKey: workspaceQueryKeys.leagueSeasonSimulation({
+            ...(selectedLeagueArgs ?? {}),
+            jobId: result.jobId,
+          }),
+        });
+        return;
+      }
+
+      setScenarioJobId(null);
       await queryClient.invalidateQueries({
         queryKey: workspaceQueryKeys.leagueSeasonSimulation(selectedLeagueArgs),
       });
@@ -146,11 +217,13 @@ export function LeaguePanel({
     if (!leagueId || leagueId === connectedLeagueId) {
       setRequestedLeagueId(null);
       setLeagueIdInput(connectedLeagueId ?? "");
+      setScenarioJobId(null);
       return;
     }
 
     setRequestedLeagueId(leagueId);
     setLeagueIdInput(leagueId);
+    setScenarioJobId(null);
     void queryClient.invalidateQueries({
       queryKey: workspaceQueryKeys.leagueIntel({ leagueId }),
     });
@@ -159,6 +232,7 @@ export function LeaguePanel({
   function handleUseConnectedLeague() {
     setRequestedLeagueId(null);
     setLeagueIdInput(connectedLeagueId ?? "");
+    setScenarioJobId(null);
   }
 
   const leaguePicker = (
@@ -229,7 +303,8 @@ export function LeaguePanel({
   const comparisons = isFreshLeague
     ? (activeLeague.comparisons ?? null)
     : null;
-  const projection = projectionQuery.data ?? null;
+  const projection = activeProjectionQuery.data ?? null;
+  const baselineProjection = baselineProjectionQuery.data ?? null;
   const seasonLabel = activeLeague.season ?? comparisons?.season ?? null;
 
   return (
@@ -332,17 +407,40 @@ export function LeaguePanel({
           ) : null}
           {activeViewId === "projection" ? (
             <ProjectionView
+              baselineProjection={baselineProjection}
               currentTeamId={currentTeamId}
+              hasModifiers={hasModifiers}
+              isScenario={Boolean(scenarioJobId)}
+              modifierDraft={modifierDraft}
+              onBackToBaseline={() => setScenarioJobId(null)}
+              onModifierChange={(teamId, key, value) => {
+                setModifierDraft((current) => ({
+                  ...current,
+                  [teamId]: {
+                    ...(current[teamId] ?? {}),
+                    [key]: value,
+                  },
+                }));
+              }}
+              onResetAllModifiers={() => setModifierDraft({})}
+              onResetTeamModifiers={(teamId) => {
+                setModifierDraft((current) => {
+                  const next = { ...current };
+                  delete next[teamId];
+                  return next;
+                });
+              }}
               projection={projection}
               runProjection={() => submitProjectionMutation.mutate()}
               runningError={
-                projectionQuery.error instanceof Error
-                  ? projectionQuery.error.message
+                activeProjectionQuery.error instanceof Error
+                  ? activeProjectionQuery.error.message
                   : submitProjectionMutation.error instanceof Error
                     ? submitProjectionMutation.error.message
                     : null
               }
               submitPending={submitProjectionMutation.isPending}
+              teams={standingsRows}
             />
           ) : null}
           {activeViewId === "offense" ? (
@@ -389,17 +487,39 @@ export function LeaguePanel({
 }
 
 function ProjectionView({
+  baselineProjection,
   currentTeamId,
+  hasModifiers,
+  isScenario,
+  modifierDraft,
+  onBackToBaseline,
+  onModifierChange,
+  onResetAllModifiers,
+  onResetTeamModifiers,
   projection,
   runProjection,
   runningError,
   submitPending,
+  teams,
 }: {
+  baselineProjection: LeagueSeasonSimulationSnapshot | null;
   currentTeamId: string | null;
+  hasModifiers: boolean;
+  isScenario: boolean;
+  modifierDraft: RatingModifierDraft;
+  onBackToBaseline: () => void;
+  onModifierChange: (
+    teamId: string,
+    key: LeagueSeasonSimulationRatingKey,
+    value: string,
+  ) => void;
+  onResetAllModifiers: () => void;
+  onResetTeamModifiers: (teamId: string) => void;
   projection: LeagueSeasonSimulationSnapshot | null;
   runProjection: () => void;
   runningError: string | null;
   submitPending: boolean;
+  teams: ReturnType<typeof flattenLeagueStandings>;
 }) {
   const result = projection?.result ?? null;
   const progress = projection?.progress ?? null;
@@ -407,6 +527,7 @@ function ProjectionView({
   const currentTeamProjection = result
     ? findCurrentTeamProjection(result, currentTeamId)
     : null;
+  const baselineRatings = collectBaselineRatings(baselineProjection);
 
   return (
     <div className="space-y-5">
@@ -419,6 +540,7 @@ function ProjectionView({
           {projection ? (
             <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em] text-ink-muted">
               <span>Season {projection.season}</span>
+              {isScenario ? <span>Scenario</span> : null}
               <span>Status {projection.status}</span>
               <span>
                 Requested {new Date(projection.requestedAt).toLocaleString("en-US")}
@@ -432,9 +554,38 @@ function ProjectionView({
           size="sm"
           variant="secondary"
         >
-          {projection ? "Rerun projection" : "Run projection"}
+          {submitPending
+            ? "Submitting"
+            : hasModifiers
+              ? "Run scenario"
+              : projection
+                ? "Rerun projection"
+                : "Run projection"}
         </Button>
       </div>
+
+      <ScenarioModifiersPanel
+        baselineRatings={baselineRatings}
+        draft={modifierDraft}
+        hasModifiers={hasModifiers}
+        onChange={onModifierChange}
+        onResetAll={onResetAllModifiers}
+        onResetTeam={onResetTeamModifiers}
+        teams={teams}
+      />
+
+      {isScenario ? (
+        <Alert tone="note">
+          Showing scenario projection results.{" "}
+          <button
+            className="font-semibold text-accent underline-offset-4 hover:underline"
+            onClick={onBackToBaseline}
+            type="button"
+          >
+            Back to baseline
+          </button>
+        </Alert>
+      ) : null}
 
       {runningError ? <Alert tone="danger">{runningError}</Alert> : null}
 
@@ -507,6 +658,133 @@ function ProjectionView({
           <ProjectionGamesTable games={result.remainingGames} />
         </>
       ) : null}
+    </div>
+  );
+}
+
+function ScenarioModifiersPanel({
+  baselineRatings,
+  draft,
+  hasModifiers,
+  onChange,
+  onResetAll,
+  onResetTeam,
+  teams,
+}: {
+  baselineRatings: Map<string, Record<LeagueSeasonSimulationRatingKey, number>>;
+  draft: RatingModifierDraft;
+  hasModifiers: boolean;
+  onChange: (
+    teamId: string,
+    key: LeagueSeasonSimulationRatingKey,
+    value: string,
+  ) => void;
+  onResetAll: () => void;
+  onResetTeam: (teamId: string) => void;
+  teams: ReturnType<typeof flattenLeagueStandings>;
+}) {
+  const rows = teams.filter((team) => Boolean(team.teamId));
+
+  return (
+    <div className="space-y-3 rounded-[1.25rem] border border-border-soft bg-white/45 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold tracking-[0.08em] text-ink uppercase">
+            Scenario modifiers
+          </h3>
+          <p className="mt-1 text-sm leading-6 text-ink-muted">
+            Add or subtract from each team rating before scoring remaining games.
+          </p>
+        </div>
+        <Button
+          disabled={!hasModifiers}
+          onClick={onResetAll}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          Reset all
+        </Button>
+      </div>
+
+      {!baselineRatings.size ? (
+        <Alert tone="note">
+          Run a baseline projection to see current snapshot ratings beside each
+          scenario field.
+        </Alert>
+      ) : null}
+
+      <div className="overflow-x-auto">
+        <TableShell>
+          <thead>
+            <tr>
+              <TableHeadCell className="pl-0">Team</TableHeadCell>
+              {ratingModifierFields.map((field) => (
+                <TableHeadCell key={field.key}>{field.shortLabel}</TableHeadCell>
+              ))}
+              <TableHeadCell className="text-right">Reset</TableHeadCell>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((team) => {
+              const teamId = team.teamId!;
+              const baseline = baselineRatings.get(teamId) ?? null;
+              const teamDraft = draft[teamId] ?? {};
+              return (
+                <tr key={buildLeagueRowKey(team.teamId, team.standingsIndex)}>
+                  <TableCell className="min-w-44 pl-0">
+                    <span className="font-medium">
+                      {team.teamName ?? "Unknown team"}
+                    </span>
+                  </TableCell>
+                  {ratingModifierFields.map((field) => {
+                    const value = teamDraft[field.key] ?? "";
+                    const parsed = value.trim() ? Number(value) : 0;
+                    const base = baseline?.[field.key] ?? null;
+                    const effective =
+                      base === null || !Number.isFinite(parsed)
+                        ? null
+                        : Math.max(0, base + parsed);
+                    return (
+                      <TableCell key={field.key} className="min-w-28">
+                        <label className="grid gap-1 text-xs text-ink-muted">
+                          <span>{field.label}</span>
+                          <Input
+                            aria-label={`${team.teamName ?? "Team"} ${field.label} modifier`}
+                            inputMode="decimal"
+                            onChange={(event) =>
+                              onChange(teamId, field.key, event.target.value)
+                            }
+                            step="0.1"
+                            type="number"
+                            value={value}
+                          />
+                          <span className="tabular-nums">
+                            {base === null
+                              ? "Base --"
+                              : `${formatRatingValue(base)} -> ${formatRatingValue(effective)}`}
+                          </span>
+                        </label>
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell className="text-right">
+                    <Button
+                      disabled={!draft[teamId]}
+                      onClick={() => onResetTeam(teamId)}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      Reset team
+                    </Button>
+                  </TableCell>
+                </tr>
+              );
+            })}
+          </tbody>
+        </TableShell>
+      </div>
     </div>
   );
 }
@@ -613,6 +891,16 @@ function ProjectionConferenceTable({
                     {team.snapshot.sampleWarning ? (
                       <div className="text-ink-muted">
                         {team.snapshot.sampleWarning}
+                      </div>
+                    ) : null}
+                    {formatRatingModifierSummary(
+                      team.snapshot.ratingModifiers ?? null,
+                    ) ? (
+                      <div className="text-ink-muted">
+                        Modifiers:{" "}
+                        {formatRatingModifierSummary(
+                          team.snapshot.ratingModifiers ?? null,
+                        )}
                       </div>
                     ) : null}
                   </div>
@@ -1231,6 +1519,81 @@ function formatFinishDistribution(
     .map((entry) => `${entry.place}: ${formatProbability(entry.probability)}`)
     .join(" · ");
   return formatted || "—";
+}
+
+function buildLeagueSeasonSimulationModifiers(
+  draft: RatingModifierDraft,
+): LeagueSeasonSimulationTeamModifier[] {
+  return Object.entries(draft)
+    .map(([teamId, ratings]) => {
+      const parsedRatings = Object.fromEntries(
+        ratingModifierFields.map((field) => {
+          const raw = ratings[field.key]?.trim();
+          const parsed = raw ? Number(raw) : 0;
+          return [field.key, Number.isFinite(parsed) ? parsed : 0];
+        }),
+      ) as Record<LeagueSeasonSimulationRatingKey, number>;
+      return {
+        ratings: parsedRatings,
+        teamId,
+      };
+    })
+    .filter((modifier) =>
+      ratingModifierFields.some((field) => modifier.ratings[field.key] !== 0),
+    )
+    .sort((left, right) => left.teamId.localeCompare(right.teamId));
+}
+
+function collectBaselineRatings(
+  projection: LeagueSeasonSimulationSnapshot | null,
+): Map<string, Record<LeagueSeasonSimulationRatingKey, number>> {
+  const ratingsByTeamId = new Map<
+    string,
+    Record<LeagueSeasonSimulationRatingKey, number>
+  >();
+  if (projection?.status !== "SUCCEEDED" || !projection.result) {
+    return ratingsByTeamId;
+  }
+
+  for (const conference of projection.result.conferences) {
+    for (const team of conference.teams) {
+      const ratings = team.snapshot.ratings;
+      if (ratings) {
+        ratingsByTeamId.set(
+          team.teamId,
+          ratings as Record<LeagueSeasonSimulationRatingKey, number>,
+        );
+      }
+    }
+  }
+  return ratingsByTeamId;
+}
+
+function formatRatingValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? decimalFormatter.format(value)
+    : "--";
+}
+
+function formatRatingModifierSummary(
+  modifiers:
+    | Partial<Record<LeagueSeasonSimulationRatingKey, number | null>>
+    | null
+    | undefined,
+): string | null {
+  if (!modifiers) {
+    return null;
+  }
+  const parts = ratingModifierFields
+    .map((field) => {
+      const value = modifiers[field.key] ?? 0;
+      if (!value) {
+        return null;
+      }
+      return `${field.shortLabel} ${value > 0 ? "+" : ""}${decimalFormatter.format(value)}`;
+    })
+    .filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join(", ") : null;
 }
 
 function describeUnavailableLeagueState(message: string | null): string {
